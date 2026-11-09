@@ -6,9 +6,6 @@ Desktop applications for **Bun**.
 
 Written in TypeScript. Apps are shipped as one executable.
 
-`@n1h/sweetview` is one package with a module per part. This
-repository is that package; `demos/` holds two applications built on it.
-
 - [Install](#install)
 - [Documentation](#documentation)
 - [Quickstart](#quickstart)
