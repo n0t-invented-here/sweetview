@@ -1,0 +1,12 @@
+{
+  "name": "sweetview-web-app",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "One backend and one frontend, run two ways: `just demos web-app app` opens it in a sweetview window over IPC; `just demos web-app serve` serves it from Bun.serve over WebSockets.",
+  "dependencies": {
+    "web-app-backend": "workspace:*",
+    "web-app-frontend": "workspace:*",
+    "@n1h/sweetview-webview-bun": "^2.5.0"
+  }
+}

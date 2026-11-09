@@ -1,0 +1,12 @@
+{
+  "name": "web-app-backend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "The demo's Service: notes, a per-session folder watcher, runtime info. Transport-free; hosted by sweetview in the app and by sweetipc-ws on the web.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./protocol": "./src/protocol.ts"
+  },
+  "dependencies": {}
+}

@@ -1,0 +1,16 @@
+{
+  "name": "sweetview-desktop-pet",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A desktop pet: one of Kenney's Cube Pets, rendered with Babylon.js in a tiny see-through, borderless, always-on-top sweetview window that walks along the bottom of the screen. Pick it up with the mouse; pick the animal in the tray menu.",
+  "dependencies": {
+    "@babylonjs/core": "^9.35.0",
+    "@babylonjs/loaders": "^9.35.0",
+    "@mantine/core": "^9.7.4",
+    "@mantine/hooks": "^9.7.4",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "@n1h/sweetview-webview-bun": "^2.5.0"
+  }
+}

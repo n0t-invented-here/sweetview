@@ -1,0 +1,14 @@
+{
+  "name": "web-app-frontend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "The demo's React + Mantine page. Talks to the backend through a sweetipc Bridge; picks the sweetview transport inside the app and WebSockets in a browser.",
+  "dependencies": {
+    "@mantine/core": "^9.7.4",
+    "@mantine/hooks": "^9.7.4",
+    "web-app-backend": "workspace:*",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  }
+}

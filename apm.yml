@@ -1,0 +1,14 @@
+name: webview-bun-experiment
+version: 0.1.0
+
+targets:
+  - claude
+  - codex
+
+dependencies:
+  apm:
+    - git: ssh://git@git.mrowr.dev:2222/AI/mrowr-purr-core-prompts.git
+      path: packages/bundles/working-with-purr
+      ref: main
+
+includes: auto

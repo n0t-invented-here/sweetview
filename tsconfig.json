@@ -1,0 +1,37 @@
+{
+  "compilerOptions": {
+    "lib": [
+      "ESNext",
+      "DOM",
+      "DOM.Iterable"
+    ],
+    "target": "ESNext",
+    "module": "Preserve",
+    "moduleResolution": "bundler",
+    "moduleDetection": "force",
+    "jsx": "react-jsx",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "noEmit": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedIndexedAccess": true,
+    "types": [
+      "bun"
+    ],
+    "paths": {
+      "@n1h/sweetview": [
+        "./src/index.ts"
+      ],
+      "@n1h/sweetview/*": [
+        "./src/*"
+      ]
+    }
+  },
+  "include": [
+    "src",
+    "demos",
+    "file-imports.d.ts"
+  ]
+}

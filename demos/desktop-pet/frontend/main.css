@@ -1,0 +1,18 @@
+/* The page is transparent; only the pet's pixels show. */
+html,
+body {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: transparent;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+canvas {
+  display: block;
+  outline: none;
+  touch-action: none;
+  /* The page sets grab/grabbing on the canvas from a pick; nothing beside the model is a hand. */
+}

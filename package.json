@@ -1,0 +1,68 @@
+{
+  "name": "@n1h/sweetview",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Desktop windows for Bun applications: a webview window on the UI thread, the backend in a Worker, a typed IPC contract between page and backend (also over WebSockets), and bun:ffi helpers for tray, notifications, overlay windows and dialogs. One package with a module per part.",
+  "license": "MIT OR 0BSD",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/n0t-invented-here/sweetview.git"
+  },
+  "homepage": "https://github.com/n0t-invented-here/sweetview#readme",
+  "bugs": {
+    "url": "https://github.com/n0t-invented-here/sweetview/issues"
+  },
+  "files": [
+    "src",
+    "!src/**/*.test.ts",
+    "!src/**/*.test.worker.ts",
+    "file-imports.d.ts",
+    "docs",
+    "README.md",
+    "LICENSE",
+    "LICENSE-0BSD"
+  ],
+  "exports": {
+    ".": "./src/index.ts",
+    "./worker": "./src/worker.ts",
+    "./page": "./src/page.ts",
+    "./build": "./src/build.ts",
+    "./settings-store": "./src/settings-store.ts",
+    "./window-chrome": "./src/window-chrome.ts",
+    "./ipc": "./src/ipc/index.ts",
+    "./ipc-ws": "./src/ipc-ws/index.ts",
+    "./ipc-ws/server": "./src/ipc-ws/server.ts",
+    "./ipc-ws/client": "./src/ipc-ws/client.ts",
+    "./native": "./src/native/index.ts",
+    "./native/hit-regions": "./src/native/hit-regions.ts",
+    "./file-imports": {
+      "types": "./file-imports.d.ts"
+    }
+  },
+  "engines": {
+    "bun": ">=1.4.2"
+  },
+  "peerDependencies": {
+    "@n1h/sweetview-webview-bun": "^2.5.0"
+  },
+  "peerDependenciesMeta": {
+    "@n1h/sweetview-webview-bun": {
+      "optional": true
+    }
+  },
+  "workspaces": [
+    "demos/*",
+    "demos/web-app/packages/*"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "typescript": "^5.9.0",
+    "@n1h/sweetview-webview-bun": "^2.5.0"
+  }
+}

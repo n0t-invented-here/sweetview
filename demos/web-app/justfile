@@ -1,0 +1,46 @@
+# The web-app demo, run two ways. `just demos web-app <recipe>` from the repo root, or `just <recipe>` here.
+
+set shell := ["pwsh", "-NoProfile", "-Command"]
+
+exe := "web-app"
+chk := '; if ($LASTEXITCODE) { exit $LASTEXITCODE }'
+# Bun embeds the exe file icon only when the build host is Windows; a Mac-built Windows exe gets Bun's stock icon (README, "Platforms").
+win_icon := if os() == "windows" { "--windows-icon=build/app.ico" } else { "" }
+
+
+# Workspace dependencies (the repo root is the Bun workspace); fast when nothing changed
+install:
+    bun install --cwd ../.. {{chk}}
+
+# Bundle the React page into build/frontend (both modes serve the same files)
+frontend: install
+    bun build packages/web-app-frontend/src/main.tsx --outdir build/frontend --minify {{chk}}
+
+# Web app: Bun.serve + WebSockets on http://127.0.0.1:4747 (PORT and HOST to change)
+serve: frontend
+    bun run web.ts {{chk}}
+
+# Desktop app in dev: a sweetview window over IPC (WEBVIEW_DEBUG=1 for devtools)
+app: frontend
+    bun run app.ts {{chk}}
+
+# Single executables for Windows and macOS, plus the .app bundle
+compile: frontend compile-win compile-mac mac-app
+
+# The icon files the executables embed: build/app.ico (Windows) and build/AppIcon.icns (the .app bundle)
+icons:
+    bun scripts/write-icons.ts {{chk}}
+
+compile-win: icons
+    bun build --compile --target=bun-windows-x64 --windows-hide-console {{win_icon}} --minify --sourcemap app.ts app-worker.ts --outfile dist/{{exe}}-windows-x64.exe {{chk}}
+
+compile-mac:
+    bun build --compile --target=bun-darwin-arm64 --minify --sourcemap app.ts app-worker.ts --outfile dist/{{exe}}-macos-arm64 {{chk}}
+
+# The .app bundle around the macOS binary, with build/AppIcon.icns as its Finder and Dock icon (sweetview's make-app script)
+mac-app: icons
+    bun ../../src/make-app.ts --name "Web App" --bundle-id dev.mrowr.web-app --binary dist/{{exe}}-macos-arm64 --icns build/AppIcon.icns --out dist {{chk}}
+
+# Remove build/ and dist/
+clean:
+    ri build, dist -r -fo -ea ignore
