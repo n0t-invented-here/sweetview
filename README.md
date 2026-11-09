@@ -1,9 +1,10 @@
-# sweetview
+# 🥐 Sweetview
 
-Desktop applications for Bun, written in TypeScript and shipped as one
-executable. A webview window shows the page, a Worker runs the backend, and
-a typed contract connects the two. The same backend and page also serve
-browsers over WebSockets.
+Desktop applications for **Bun**.
+
+<img width="400" height="55" alt="DesktopPet-MacOS" src="https://github.com/user-attachments/assets/a77f1b5f-dd96-43cd-a01f-5d46cf5861cc" />
+
+Written in TypeScript. Apps are shipped as one executable.
 
 `@n1h/sweetview` is one package with a module per part. This
 repository is that package; `demos/` holds two applications built on it.
