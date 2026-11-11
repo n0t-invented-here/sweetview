@@ -11,6 +11,6 @@
     "@mantine/hooks": "^9.7.4",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
-    "@n1h/sweetview-webview-bun": "^2.5.0"
+    "@n1h/sweetview-webview-bun": "^2.7.0"
   }
 }

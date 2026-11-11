@@ -5,14 +5,14 @@
     "": {
       "name": "@n1h/sweetview",
       "devDependencies": {
-        "@n1h/sweetview-webview-bun": "^2.5.0",
+        "@n1h/sweetview-webview-bun": "^2.7.0",
         "@types/bun": "latest",
         "@types/react": "^19.1.0",
         "@types/react-dom": "^19.1.0",
         "typescript": "^5.9.0",
       },
       "peerDependencies": {
-        "@n1h/sweetview-webview-bun": "^2.5.0",
+        "@n1h/sweetview-webview-bun": "^2.7.0",
       },
       "optionalPeers": [
         "@n1h/sweetview-webview-bun",
@@ -26,7 +26,7 @@
         "@babylonjs/loaders": "^9.35.0",
         "@mantine/core": "^9.7.4",
         "@mantine/hooks": "^9.7.4",
-        "@n1h/sweetview-webview-bun": "^2.5.0",
+        "@n1h/sweetview-webview-bun": "^2.7.0",
         "react": "^19.1.0",
         "react-dom": "^19.1.0",
       },
@@ -35,7 +35,7 @@
       "name": "sweetview-web-app",
       "version": "0.1.0",
       "dependencies": {
-        "@n1h/sweetview-webview-bun": "^2.5.0",
+        "@n1h/sweetview-webview-bun": "^2.7.0",
         "web-app-backend": "workspace:*",
         "web-app-frontend": "workspace:*",
       },
@@ -75,7 +75,7 @@
 
     "@mantine/hooks": ["@mantine/hooks@9.8.0", "", { "peerDependencies": { "react": "^19.2.0" } }, "sha512-fUA3PS8Ys2kih6VEuozgdEO0UyiGhryTJqx+Bf2lxee1XpXQ0XFXsQY7lNB4f+eBDzYCczYykQjIIuUzyJft7A=="],
 
-    "@n1h/sweetview-webview-bun": ["@n1h/sweetview-webview-bun@2.5.0", "", {}, "sha512-dxxL7+oNvBT4RurYqrcWeYgYlj8d3iZmSd40qpslMjPIiIJLDvMtGMuXsg6Z89h2JVB1uLVzXXP4qWlEoRuUag=="],
+    "@n1h/sweetview-webview-bun": ["@n1h/sweetview-webview-bun@2.7.0", "", {}, "sha512-qagqmU0WMdOGmR+B6fEa2C/2qu7z6cm8BKEc3+uDF3ByNtB88JIKoYjnWevubr3Z8jKjbkiyweM6Wt3q3GlGJw=="],
 
     "@types/bun": ["@types/bun@1.4.4", "", { "dependencies": { "bun-types": "1.4.4" } }, "sha512-9wkRDXUXK124pEnAutE6n/l18j+i9GC5IAHK8TmX/2nlySETmky0OU6yL5U8pW1AoKh++AN9auDCr647BfurjQ=="],
 
