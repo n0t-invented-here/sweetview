@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { colorRef } from "./overlay";
+import { colorRef } from "./color-ref";
 
 describe("colorRef", () => {
   test("swaps #rrggbb into COLORREF 0x00bbggrr", () => {

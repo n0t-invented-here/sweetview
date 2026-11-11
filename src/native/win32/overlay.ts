@@ -69,13 +69,8 @@ import { setWindowIcon } from "./icon";
 import { createMessageWindow, type MessageWindow } from "./message-window";
 import { asHwnd } from "./window";
 
-/** `#rrggbb` -> COLORREF (0x00bbggrr). */
-export const colorRef = (hex: string): number => {
-  const m = /^#?([0-9a-f]{6})$/i.exec(hex);
-  if (!m) throw new Error(`sweetnative: colour key must be #rrggbb, got ${hex}`);
-  const n = Number.parseInt(m[1]!, 16);
-  return ((n & 0xff) << 16) | (n & 0xff00) | ((n >> 16) & 0xff);
-};
+import { colorRef } from "./color-ref";
+export { colorRef };
 
 const rectFrom = (buf: Int32Array): Rect => ({ x: buf[0]!, y: buf[1]!, width: buf[2]! - buf[0]!, height: buf[3]! - buf[1]! });
 
