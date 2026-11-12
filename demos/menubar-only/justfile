@@ -16,7 +16,6 @@ win_icon := if os() == "windows" { "--windows-icon=build/app.ico" } else { "" }
 install:
     bun install --cwd ../..
 
-# Out of the Dock even uncompiled: app.ts sets the activation policy itself
 app: install
     bun run app.ts
 

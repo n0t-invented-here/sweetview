@@ -314,8 +314,6 @@ function restyle(hwnd: bigint, options: OverlayOptions, framed: boolean): Overla
 
   if (transparent) enableAlphaComposition(hwnd);
 
-  // Style changes made with SetWindowLongPtr take effect only after SetWindowPos with
-  // SWP_FRAMECHANGED; the same call applies the z-order.
   user32.SetWindowPos(hwnd, topmost ? HWND_TOPMOST : HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED);
 
   const rectBuf = new Int32Array(4);

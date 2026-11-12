@@ -9,7 +9,6 @@ export type MenuItem =
       label: string;
       /** Greyed out and unclickable when false. Default true. */
       enabled?: boolean;
-      /** A click does not toggle it: change app state and use the function form of `MenuSource` so the next open shows the new value. */
       checked?: boolean;
       /** An image before the label: 16px from the .ico on Windows, a 16pt template image on macOS. */
       icon?: Icon;
@@ -33,7 +32,6 @@ export type MenuTemplate = MenuItem[];
  */
 export type MenuSource = MenuTemplate | (() => MenuTemplate);
 
-/** For code that renders a `MenuSource`: call it each time the menu opens, not once up front, or the function form goes stale. */
 export const resolveMenu = (source: MenuSource | undefined): MenuTemplate =>
   source === undefined ? [] : typeof source === "function" ? source() : source;
 

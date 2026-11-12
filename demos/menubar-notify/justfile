@@ -19,7 +19,6 @@ install:
 frontend: install
     bun build frontend/main.ts --outdir build/frontend --minify
 
-# On macOS a bare binary has no bundle id, so the menu and window work but notifications do not show; use `open`
 app: frontend
     bun run app.ts
 

@@ -400,7 +400,6 @@ function step() {
 
   play(wantedAnimation(), speed);
 
-  // Close a share of the gap each frame (time constant about 0.1 s), so a change of direction swings the face round instead of snapping.
   yaw += (yawFor(facing) - yaw) * Math.min(1, dt * 10);
   root.rotation.y = yaw;
 

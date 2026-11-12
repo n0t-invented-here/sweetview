@@ -45,7 +45,6 @@ const MIME: Record<string, string> = {
   wav: "audio/wav",
 };
 
-/** An unknown extension gets `application/octet-stream`, which browsers refuse for module scripts and stylesheets, so those must use an extension in the table above. */
 export const assetMime = (path: string): string => MIME[path.slice(path.lastIndexOf(".") + 1).toLowerCase()] ?? "application/octet-stream";
 
 export function indexHtml({ title, js = "main.js", css = "main.css", head = "", body = '<div id="root"></div>' }: IndexHtmlOptions): Blob {

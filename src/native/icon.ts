@@ -30,7 +30,6 @@ export type DotIconOptions = {
   color?: string;
   /** Hex colour of a thin outer ring; omitted = no ring. */
   ring?: string;
-  /** Pixel sizes of the entries `dotIcon` writes; `dotPng` and `dotIcns` ignore it. Default 16, 24, 32. */
   sizes?: number[];
 };
 

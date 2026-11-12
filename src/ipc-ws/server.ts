@@ -29,7 +29,6 @@ export type WsHost = {
   /** Upgrade a request to a session; returns false when it was not a websocket request or its Origin is not allowed. */
   upgrade(req: Request, server: Server<WsData>): boolean;
   websocket: WebSocketHandler<WsData>;
-  /** Sockets open right now: a session counts from the socket's open to its close, so an upgrade still in its handshake is not included. */
   readonly sessions: number;
   /** Close every socket and stop forwarding events. Does not dispose the service. */
   close(): void;

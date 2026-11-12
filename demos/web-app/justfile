@@ -15,7 +15,6 @@ win_icon := if os() == "windows" { "--windows-icon=build/app.ico" } else { "" }
 install:
     bun install --cwd ../..
 
-# The web app and the desktop app serve the same files
 frontend: install
     bun build packages/web-app-frontend/src/main.tsx --outdir build/frontend --minify
 
