@@ -19,6 +19,7 @@ import {
 import type { ColorScheme, Info, Note } from "web-app-backend/protocol";
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { inApp, notify, on, onDisconnect, rpc } from "./bridge";
+import { NotificationsCard } from "./NotificationsCard";
 import { WatchCard } from "./WatchCard";
 
 const platformLabel: Record<string, string> = {
@@ -66,6 +67,7 @@ export function App() {
             <NotesCard />
           </SimpleGrid>
           <WatchCard />
+          <NotificationsCard />
         </Stack>
       </AppShell.Main>
     </AppShell>

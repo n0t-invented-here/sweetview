@@ -5,7 +5,7 @@
 //   just demos web-app app        (dev)
 //   just demos web-app compile    (single executables)
 
-import type { ColorScheme, Events, FsChange, Methods, WatchStatus } from "web-app-backend/protocol";
+import type { ColorScheme, Events, FsChange, Methods, NotifyStatus, WatchStatus } from "web-app-backend/protocol";
 import { basename } from "node:path";
 import { createNotifier, createTray, installAppMenu, pickFolder, setAppIcon, type Notifier } from "@n1h/sweetview/native";
 import { createWebviewApp, indexHtml, WEBVIEW_VERSION, type WebviewApp } from "@n1h/sweetview";
@@ -21,6 +21,28 @@ let watch: WatchStatus = { watching: false, path: null };
 let theme: ColorScheme = "dark";
 let notifyOnChanges = false;
 let notifier: Notifier | undefined; // created after the tray, below
+let sentCount = 0;
+
+const notifyStatus = (): NotifyStatus => ({ onChanges: notifyOnChanges });
+const setNotifyOnChanges = (enabled: boolean) => {
+  notifyOnChanges = enabled;
+  app.emit("notify.status", notifyStatus());
+};
+
+/** Sends a system notification and tells the page about it. False when the OS showed nothing. */
+const sendNotification = (title: string, body: string, silent = false): boolean => {
+  const id = `web-app-${++sentCount}`;
+  const at = new Date().toISOString();
+  const shown = notifier?.notify({ id, title, body, silent, data: { at } }) ?? false;
+  if (shown) app.emit("notify.sent", { id, title, body, at });
+  else console.error("notification not shown (macOS: run the .app, not the bare binary)");
+  return shown;
+};
+
+const sendTestNotification = (): boolean => {
+  const where = process.platform === "darwin" ? "menu bar" : "tray";
+  return sendNotification(APP_NAME, `Hello from the ${where} at ${new Date().toLocaleTimeString()}`);
+};
 
 const app: WebviewApp<Methods, Events> = await createWebviewApp<Methods, Events>({
   title: APP_NAME,
@@ -30,6 +52,12 @@ const app: WebviewApp<Methods, Events> = await createWebviewApp<Methods, Events>
   uiMethods: {
     "pick.folder": () => pickFolder(app.windowHandle, "Pick a folder to watch"),
     "ui.theme": ({ scheme }) => void (theme = scheme),
+    "notify.status": notifyStatus,
+    "notify.onChanges": ({ enabled }) => {
+      setNotifyOnChanges(enabled);
+      return notifyStatus();
+    },
+    "notify.test": sendTestNotification,
   },
 });
 
@@ -47,7 +75,7 @@ const notifyChanges = (changes: FsChange[]) => {
   const first = changes[0];
   const body =
     changes.length === 1 && first ? `${first.kind} ${first.path}` : `${changes.length} changes, latest ${changes.at(-1)?.path ?? ""}`;
-  notifier?.notify({ title: folder, body, silent: true });
+  sendNotification(folder, body, true);
 };
 
 const tray = createTray({
@@ -73,18 +101,19 @@ const tray = createTray({
       },
       stopWatching: () => app.call("watch.stop"),
       notifyOnChanges: () => notifyOnChanges,
-      toggleNotifyOnChanges: () => (notifyOnChanges = !notifyOnChanges),
-      sendTestNotification: () => {
-        const where = process.platform === "darwin" ? "menu bar" : "tray";
-        const shown = notifier?.notify({ title: APP_NAME, body: `Hello from the ${where} at ${new Date().toLocaleTimeString()}` });
-        if (!shown) console.error("notification not shown (macOS: run the .app, not the bare binary)");
-      },
+      toggleNotifyOnChanges: () => setNotifyOnChanges(!notifyOnChanges),
+      sendTestNotification,
       quit: app.quit,
     }),
 });
 
-// Clicking a notification brings the window back.
-notifier = createNotifier({ onClick: () => app.window.show() });
+// Clicking a notification brings the window back and the page marks that notification as clicked.
+notifier = createNotifier({
+  onClick: ({ id }) => {
+    app.window.show();
+    app.emit("notify.clicked", { id, at: new Date().toISOString() });
+  },
+});
 
 // macOS only: webview creates NSApplication without a menu bar (no About, no Quit, no Cmd+C/V).
 installAppMenu({

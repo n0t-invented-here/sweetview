@@ -18,6 +18,12 @@ export type WatchStatus = { watching: boolean; path: string | null };
 
 export type ColorScheme = "light" | "dark" | "auto";
 
+/** The app's notification settings, held on the UI thread; the tray menu and the page both change them. */
+export type NotifyStatus = { onChanges: boolean };
+
+/** A system notification the app sent. */
+export type SentNotification = { id: string; title: string; body: string; at: string };
+
 export type FsChange = {
   kind: "created" | "modified" | "deleted" | "unknown";
   /** relative to the watched root, forward slashes */
@@ -38,6 +44,11 @@ export type Methods = {
   "watch.status": [void, WatchStatus];
   /** The page reports its colour scheme so the app's tray menu can show it. A no-op on the web. */
   "ui.theme": [{ scheme: ColorScheme }, void];
+  /** System notifications; the app answers these on the UI thread. Not available on the web. */
+  "notify.status": [void, NotifyStatus];
+  "notify.onChanges": [{ enabled: boolean }, NotifyStatus];
+  /** Sends a test notification. False when the OS showed nothing (macOS: not running as the .app). */
+  "notify.test": [void, boolean];
 };
 
 /** event name -> payload */
@@ -49,4 +60,10 @@ export type Events = {
   "fs.change": FsChange[];
   /** The app's tray menu changed the colour scheme. */
   "ui.theme": { scheme: ColorScheme };
+  /** The tray menu changed a notification setting. */
+  "notify.status": NotifyStatus;
+  /** The app sent a system notification, from the page, the tray or a folder change. */
+  "notify.sent": SentNotification;
+  /** The user clicked a system notification; the app has shown the window. */
+  "notify.clicked": { id: string; at: string };
 };

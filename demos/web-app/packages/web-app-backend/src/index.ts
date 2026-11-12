@@ -82,6 +82,15 @@ export function createService(): Service<Methods, Events> {
           throw new Error("no native folder picker outside the app; type a path instead");
         },
         "ui.theme": () => {},
+        "notify.status": () => {
+          throw new Error("system notifications come from the desktop app, not the web");
+        },
+        "notify.onChanges": () => {
+          throw new Error("system notifications come from the desktop app, not the web");
+        },
+        "notify.test": () => {
+          throw new Error("system notifications come from the desktop app, not the web");
+        },
 
         "watch.status": (_, ctx) => status(ctx.session.id),
         "watch.stop": (_, ctx) => {
