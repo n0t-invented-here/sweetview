@@ -127,7 +127,6 @@ build: clone
     Set-Content "{{stamp}}" $want -NoNewline
     Write-Host "built {{built_lib}}"
 
-# update, then build
 lib: update build
 
 # Push webview's branch, then webview-bun's; says when webview-bun still records an older webview commit

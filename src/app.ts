@@ -48,7 +48,7 @@ export type WebviewAppOptions<M extends MethodMap> = {
    * the page's origin and the webview opens the page.
    */
   page?: HTMLBundle;
-  /** The window title. Default: the page's `<title>`, else the entry script's name. */
+  /** Default: the page's `<title>`, else the entry script's name. */
   title?: string;
   /**
    * More files for the page's origin, by asset path: models, images, data
@@ -150,7 +150,6 @@ async function pageAssets(page: HTMLBundle): Promise<{ assets: Record<string, As
   return { assets, index };
 }
 
-/** The <title> of an HTML document, or undefined. */
 const htmlTitle = (html: string): string | undefined => {
   const m = /<title[^>]*>([^<]*)<\/title>/i.exec(html);
   return m ? m[1]!.replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'").trim() || undefined : undefined;

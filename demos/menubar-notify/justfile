@@ -17,11 +17,10 @@ win_icon := if os() == "windows" { "--windows-icon=build/app.ico" } else { "" }
 install:
     bun install --cwd ../..
 
-# Bundle the page into build/frontend
 frontend: install
     bun build frontend/main.ts --outdir build/frontend --minify
 
-# Run uncompiled. macOS: a bare binary has no bundle id, so the menu and window work but notifications do not show; use `open`.
+# macOS: a bare binary has no bundle id, so the menu and window work but notifications do not show; use `open`.
 app: frontend
     bun run app.ts
 

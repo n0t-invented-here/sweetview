@@ -16,7 +16,7 @@ win_icon := if os() == "windows" { "--windows-icon=build/app.ico" } else { "" }
 install:
     bun install --cwd ../..
 
-# Bundle the React page into build/frontend (both modes serve the same files)
+# Both modes serve the same files
 frontend: install
     bun build packages/web-app-frontend/src/main.tsx --outdir build/frontend --minify
 

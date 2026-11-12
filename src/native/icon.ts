@@ -30,7 +30,7 @@ export type DotIconOptions = {
   color?: string;
   /** Hex colour of a thin outer ring; omitted = no ring. */
   ring?: string;
-  /** Image sizes to include. Default 16, 24, 32. */
+  /** Default 16, 24, 32. */
   sizes?: number[];
 };
 
@@ -227,8 +227,6 @@ export function icoRgba(ico: Uint8Array, size: number): Uint8Array {
   return resampleRgba(decodeIcoEntry(ico, entry), entry.width, size);
 }
 
-// ---- PNG -----------------------------------------------------------------------
-
 function pngChunk(type: string, data: Uint8Array): Uint8Array {
   const out = new Uint8Array(12 + data.length);
   const dv = new DataView(out.buffer);
@@ -263,8 +261,6 @@ export function encodePng(size: number, rgba: Uint8Array): Uint8Array {
   }
   return out;
 }
-
-// ---- ICNS ----------------------------------------------------------------------
 
 /** The .icns element type that holds a PNG of this pixel size (the 1x types; Finder scales for Retina). */
 export const ICNS_TYPES: Record<number, string> = {
@@ -311,8 +307,6 @@ export function dotIcns(opts: DotIconOptions = {}): Uint8Array {
   const sizes = [16, 32, 64, 128, 256, 512, 1024];
   return encodeIcns(new Map(sizes.map((s) => [s, dotPng(s, opts)])));
 }
-
-// ---- PNG decoding ----------------------------------------------------------------
 
 export type DecodedPng = { width: number; height: number; rgba: Uint8Array };
 

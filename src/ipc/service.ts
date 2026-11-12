@@ -1,9 +1,8 @@
 // The backend side of the contract. A Service is transport-free: no sockets,
 // no window handles, no seq numbers. Hosts (sweetipc-ws, sweetview) wrap one.
 
-/** method name -> [params, result]. `void` params mean "no argument". */
+/** `void` params mean "no argument". */
 export type MethodMap = Record<string, [params: unknown, result: unknown]>;
-/** event name -> payload */
 export type EventMap = Record<string, unknown>;
 
 export type SessionKind = "webview" | "web";
@@ -18,7 +17,6 @@ export type Emit<E extends EventMap> = <N extends keyof E & string>(name: N, pay
 
 export interface Service<M extends MethodMap, E extends EventMap> {
   call<K extends keyof M & string>(method: K, params: M[K][0], ctx: Ctx): Promise<M[K][1]>;
-  /** Subscribe to events; returns an unsubscribe function. */
   onEvent(fn: (name: keyof E & string, payload: E[keyof E], to?: string) => void): () => void;
   /** A client went away: drop anything held for that session. */
   endSession(sessionId: string): void;

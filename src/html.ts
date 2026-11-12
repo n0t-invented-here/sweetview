@@ -45,7 +45,6 @@ const MIME: Record<string, string> = {
   wav: "audio/wav",
 };
 
-/** Content-Type for an asset path, from its extension. */
 export const assetMime = (path: string): string => MIME[path.slice(path.lastIndexOf(".") + 1).toLowerCase()] ?? "application/octet-stream";
 
 export function indexHtml({ title, js = "main.js", css = "main.css", head = "", body = '<div id="root"></div>' }: IndexHtmlOptions): Blob {

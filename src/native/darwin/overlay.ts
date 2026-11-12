@@ -109,8 +109,6 @@ function cursorPoint(): Point | null {
 
 const mouseButtonsDown = (): boolean => BigInt(sendInt(cls("NSEvent"), sel("pressedMouseButtons")) ?? 0) !== 0n;
 
-// ---- hit regions: the click-through poll ----------------------------------------
-
 type HitState = { packed: Int32Array; refine?: HitRefiner; inPolygon: boolean; asked?: Point; askSeq: number };
 const hits = new Map<Id, HitState>(); // window -> regions, while set
 const ignoring = new Map<Id, boolean>();
@@ -171,10 +169,7 @@ function ensureTimer() {
 
 /** Cocoa (bottom-left origin) -> ours (top-left origin). */
 const fromCocoa = (r: CocoaRect): Rect => ({ x: r.x, y: primaryHeight() - (r.y + r.h), width: r.w, height: r.h });
-/** Ours -> Cocoa. */
 const toCocoa = (r: Rect): CocoaRect => ({ x: r.x, y: primaryHeight() - (r.y + r.height), w: r.width, h: r.height });
-
-// ---- our own overlay window ---------------------------------------------------
 
 function defaultBounds(): Rect {
   const area = fromCocoa(rectOf(primaryScreen(), "visibleFrame"));
@@ -203,8 +198,6 @@ export function createOverlayWindow(options: OverlayWindowOptions): Overlay {
   }
   return restyle(win, options, framed);
 }
-
-// ---- restyling ---------------------------------------------------------------
 
 export function makeOverlay(handle: WindowHandle, options: OverlayOptions): Overlay {
   return restyle(asNSWindow(handle), options, false);

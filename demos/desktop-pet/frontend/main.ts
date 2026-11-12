@@ -400,7 +400,6 @@ function step() {
 
   play(wantedAnimation(), speed);
 
-  // Turn smoothly toward the way we face.
   yaw += (yawFor(facing) - yaw) * Math.min(1, dt * 10);
   root.rotation.y = yaw;
 

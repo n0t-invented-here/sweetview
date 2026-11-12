@@ -153,7 +153,6 @@ export const hInstance = (): bigint => kernel32.GetModuleHandleW(null);
 
 export const lastError = () => kernel32.GetLastError();
 
-// Window messages
 export const WM_CLOSE = 0x0010;
 export const WM_NCDESTROY = 0x0082;
 export const WM_TIMER = 0x0113;
@@ -177,7 +176,6 @@ export const SW_MINIMIZE = 6;
 export const WM_NCLBUTTONDOWN = 0x00a1;
 export const HTCAPTION = 2;
 
-// More window messages
 export const WM_DESTROY = 0x0002;
 export const WM_SIZE = 0x0005;
 

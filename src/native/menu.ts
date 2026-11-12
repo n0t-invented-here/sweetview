@@ -9,7 +9,6 @@ export type MenuItem =
       label: string;
       /** Greyed out and unclickable when false. Default true. */
       enabled?: boolean;
-      /** Shows a check mark. */
       checked?: boolean;
       /** An image before the label: 16px from the .ico on Windows, a 16pt template image on macOS. */
       icon?: Icon;
@@ -33,7 +32,6 @@ export type MenuTemplate = MenuItem[];
  */
 export type MenuSource = MenuTemplate | (() => MenuTemplate);
 
-/** A template from a source: calls the function form fresh each time. */
 export const resolveMenu = (source: MenuSource | undefined): MenuTemplate =>
   source === undefined ? [] : typeof source === "function" ? source() : source;
 

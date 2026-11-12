@@ -67,7 +67,6 @@ export const jsString = (nsstr: Id): string => {
   const utf8 = asId(send(nsstr, sel("UTF8String")));
   return utf8 === NIL ? "" : new CString(Number(utf8) as Pointer).toString();
 };
-/** [[Class alloc] init] */
 export const alloc = (className: string) => asId(send(allocRaw(className), sel("init")));
 /** [Class alloc] only, for objects that get an initWith...: next. */
 export const allocRaw = (className: string) => asId(send(cls(className), sel("alloc")));
@@ -131,8 +130,6 @@ export function defineYesClass(superclass: string, className: string, selectors:
   objc.symbols.objc_registerClassPair(klass);
 }
 
-// ---- Data symbols and blocks ------------------------------------------------
-
 const RTLD_NOW = 2;
 const dl = dlopen("/usr/lib/libSystem.B.dylib", {
   dlopen: { args: [FFIType.ptr, FFIType.i32], returns: FFIType.ptr },
@@ -192,8 +189,6 @@ export function invokeBlock(block: Id, argTypes: FFIType[], ...args: (bigint | n
   const fn = CFunction({ ptr: Number(invoke) as Pointer, args: [FFIType.u64, ...argTypes], returns: FFIType.void }) as unknown as (...a: unknown[]) => void;
   fn(block, ...args);
 }
-
-// ---- More objc_msgSend shapes (tray, menus, window) -------------------------
 
 /** [obj sel:double] -> id  (statusItemWithLength:) */
 export const sendF64 = fn([ID, ID, FFIType.f64], ID);

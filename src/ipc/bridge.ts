@@ -11,7 +11,6 @@ export interface Transport {
   call(method: string, params: unknown): Promise<unknown>;
   /** Fire and forget: no reply. */
   notify(method: string, params: unknown): void;
-  /** Receive every event; returns an unsubscribe function. */
   onEvent(fn: (name: string, payload: unknown) => void): () => void;
 }
 

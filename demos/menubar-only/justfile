@@ -17,7 +17,6 @@ win_icon := if os() == "windows" { "--windows-icon=build/app.ico" } else { "" }
 install:
     bun install --cwd ../..
 
-# Run uncompiled
 app: install
     bun run app.ts
 

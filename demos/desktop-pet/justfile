@@ -17,12 +17,11 @@ win_icon := if os() == "windows" { "--windows-icon=build/app.ico" } else { "" }
 install:
     bun install --cwd ../..
 
-# Bundle the pet page into build/frontend and the settings page into build/settings
 frontend: install
     bun build frontend/main.ts --outdir build/frontend --minify
     bun build settings/main.tsx --outdir build/settings --minify
 
-# Run the window uncompiled (WEBVIEW_DEBUG=1 for devtools)
+# WEBVIEW_DEBUG=1 for devtools
 app: frontend
     bun run app.ts
 

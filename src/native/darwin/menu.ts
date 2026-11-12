@@ -24,7 +24,6 @@ import {
 } from "./objc";
 
 const NSControlStateValueOn = 1n;
-/** Menu item images are 16x16 points. */
 const MENU_ITEM_POINTS = 16;
 // macOS 27 hides menu item images by default (NSMenuItemImageVisibilityAutomatic = 0):
 // symbol images for apps linked on the 26 SDK, every image on the 27 SDK. An

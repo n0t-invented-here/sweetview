@@ -97,8 +97,6 @@ function ensureResizeProc(): JSCallback {
   return resizeProc;
 }
 
-// ---- hit regions: the click-through poll ----------------------------------------
-
 const HIT_TIMER_ID = 1n;
 const HIT_TIMER_MS = 10; // USER_TIMER_MINIMUM
 const VK_LBUTTON = 0x01;
@@ -190,8 +188,6 @@ function enableAlphaComposition(hwnd: bigint) {
   gdi32.DeleteObject(region);
   if (hr < 0) throw new Error(`sweetnative: DwmEnableBlurBehindWindow failed (0x${(hr >>> 0).toString(16)})`);
 }
-
-// ---- our own overlay window ---------------------------------------------------
 
 const CLASS_NAME = "SweetnativeOverlay";
 const WNDCLASSEXW_SIZE = 80;
@@ -286,8 +282,6 @@ function defaultBounds(): Rect {
   return { x: area.x + Math.round((area.width - width) / 2), y: area.y + Math.round((area.height - height) / 2), width, height };
 }
 
-// ---- restyling ---------------------------------------------------------------
-
 export function makeOverlay(handle: WindowHandle, options: OverlayOptions): Overlay {
   return restyle(asHwnd(handle), options, false);
 }
@@ -320,7 +314,6 @@ function restyle(hwnd: bigint, options: OverlayOptions, framed: boolean): Overla
 
   if (transparent) enableAlphaComposition(hwnd);
 
-  // Apply the frame change and the z-order in one go.
   user32.SetWindowPos(hwnd, topmost ? HWND_TOPMOST : HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED);
 
   const rectBuf = new Int32Array(4);

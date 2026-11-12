@@ -10,7 +10,7 @@ import { backend } from "./platform";
 export type NotificationOptions = {
   title: string;
   body?: string;
-  /** No sound. Default false. */
+  /** Default false. */
   silent?: boolean;
   /**
    * Names the notification; `onClick` reports it. Default `sweetnative-<n>`,
@@ -26,7 +26,6 @@ export type NotificationOptions = {
 export type NotificationClick = { id: string; data: unknown };
 
 export type NotifierOptions = {
-  /** The user clicked a notification. */
   onClick?: (click: NotificationClick) => void;
 };
 
@@ -43,7 +42,6 @@ export interface Notifier {
 }
 
 let nextId = 1;
-/** The notification's `id`, or the next `sweetnative-<n>`. */
 export const notificationId = (n: NotificationOptions): string => n.id ?? `sweetnative-${nextId++}`;
 
 type Backend = { createNotifier(options?: NotifierOptions): Notifier };

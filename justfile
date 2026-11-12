@@ -14,7 +14,6 @@ mod webview
 @_default:
     just --justfile "{{justfile()}}" --list
 
-# Workspace dependencies
 install:
     bun install
 
