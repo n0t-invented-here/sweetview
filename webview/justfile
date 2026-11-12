@@ -10,6 +10,10 @@ fork := "git@github.com:n0t-invented-here/sweetview-webview-bun.git"
 fork_branch := "sweetview"
 sub_branch := "sweetview"
 upstream := "f1a9d6b"
+
+# `just webview`: the recipes here
+@_default:
+    just --justfile "{{module_file()}}" --list
 clone_dir := "webview-bun"
 sub_dir := clone_dir + "/webview"
 built_lib := if os() == "windows" { sub_dir + "/build/core/Release/webview.dll" } else { sub_dir + "/build/core/Release/libwebview.dylib" }
@@ -19,10 +23,6 @@ stamp := built_lib + ".commit"
 # Where both clones stand: branch, commit, ahead/behind origin, changed files, the submodule pointer and the built library
 [script("pwsh", "-NoProfile", "-File")]
 [extension(".ps1")]
-
-# `just webview`: the recipes here
-@_default:
-    just --justfile "{{module_file()}}" --list
 
 status:
     $ErrorActionPreference = "Stop"
