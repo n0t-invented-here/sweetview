@@ -198,21 +198,6 @@ does not discover `new Worker` targets on its own:
 bun build --compile --target=bun-windows-x64 app.ts worker.ts --outfile hello.exe
 ```
 
-## An app with no window
-
-A menu-bar or tray app skips `createWebviewApp` and the worker. It creates its tray and notifier from `@n1h/sweetview/native` and runs the OS loop with `runEventLoop`, which pumps OS events from Bun's own event loop, so `setTimeout`, promises and I/O work on the UI thread:
-
-```ts
-import { createTray, runEventLoop, setActivationPolicy } from "@n1h/sweetview/native";
-
-setActivationPolicy("accessory"); // macOS: no Dock tile
-const quit = new AbortController();
-createTray({ tooltip: "My app", menu: () => [{ label: "Quit", click: () => quit.abort() }] });
-await runEventLoop({ signal: quit.signal });
-```
-
-`demos/menubar-only/` is this app with an icon and a tooltip clock; `demos/menubar-notify/` adds notifications and a window. The reference is [Event loop](docs/native.md#event-loop) in the native page.
-
 ## How it works
 
 | Part | Runs | Does |
@@ -227,6 +212,12 @@ shared-memory ring; in a browser, the same call goes over a WebSocket.
 
 The contract is the same `Methods` and `Events` types on both sides. The
 mechanism is described under [Transport](docs/app.md#transport).
+
+An app with no window, such as a menu-bar app, has neither page nor worker.
+It creates its tray and notifier from `@n1h/sweetview/native` and runs the OS
+loop with `runEventLoop`, which pumps OS events from Bun's own event loop, so
+`setTimeout`, promises and I/O work on the UI thread. `demos/menubar-only/`
+is that app; the reference is [Event loop](docs/native.md#event-loop).
 
 ## Platforms
 
