@@ -19,6 +19,11 @@ stamp := built_lib + ".commit"
 # Where both clones stand: branch, commit, ahead/behind origin, changed files, the submodule pointer and the built library
 [script("pwsh", "-NoProfile", "-File")]
 [extension(".ps1")]
+
+# `just webview`: the recipes here
+@_default:
+    just --justfile "{{module_file()}}" --list
+
 status:
     $ErrorActionPreference = "Stop"
     if (!(Test-Path "{{clone_dir}}/.git")) { Write-Host "not cloned: just webview clone  (-> {{clone_dir}}/)"; exit 0 }
