@@ -1,7 +1,7 @@
 # sweetview workspace. The just modules mirror the folders: `just demos <app> <recipe>`
 # for the apps (web-app, desktop-pet, menubar-only, menubar-notify), `just webview <recipe>` for the webview-bun /
-# webview fork clones and the patched library built from them. `just --list <module>`
-# lists what is under it.
+# webview fork clones and the patched library built from them. `just demos` lists
+# every app's recipes, `just demos <app>` one app's; `just --list <module>` works too.
 
 set shell := ["pwsh", "-NoProfile", "-Command"]
 

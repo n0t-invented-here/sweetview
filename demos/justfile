@@ -2,6 +2,10 @@
 
 set shell := ["pwsh", "-NoProfile", "-Command"]
 
+# `just demos`: every app's recipes
+@_default:
+    just --justfile "{{module_file()}}" --list --list-submodules
+
 mod web-app
 mod desktop-pet
 mod menubar-only

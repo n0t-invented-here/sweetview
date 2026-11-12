@@ -7,6 +7,10 @@ chk := '; if ($LASTEXITCODE) { exit $LASTEXITCODE }'
 # Bun embeds the exe file icon only when the build host is Windows; a Mac-built Windows exe gets Bun's stock icon (README, "Platforms").
 win_icon := if os() == "windows" { "--windows-icon=build/app.ico" } else { "" }
 
+# `just demos web-app`: this app's recipes
+@_default:
+    just --justfile "{{module_file()}}" --list
+
 
 # Workspace dependencies (the repo root is the Bun workspace); fast when nothing changed
 install:
