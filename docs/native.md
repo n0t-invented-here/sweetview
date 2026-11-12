@@ -804,7 +804,7 @@ Throws: `RangeError` `intervalMs must be a number of at least 1, got <value>` wh
 
 Platforms: Windows: implemented. macOS: implemented. Linux: throws.
 
-Thread: UI thread. Do not combine it with `run()` on a webview app in the same process: one process has one OS loop, and `run()` already runs it.
+Thread: UI thread. One process has one OS loop, so an app calls either this or `run()` on a webview app, never both. A webview app can be hosted by this loop instead of `run()`: create the window with `createOverlayWindow`, pass it to `createWebviewApp`, show it, and call `runEventLoop`. The page loads, `uiMethods` are answered, and Bun timers and promises run on the UI thread, so such an app needs no worker (verified on macOS; not yet run on Windows). Without `run()` nothing destroys the webview or terminates a worker when the loop ends; an app that has either exits the process instead.
 
 ### pumpEvents
 
