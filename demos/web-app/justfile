@@ -47,5 +47,5 @@ mac-app: icons
 
 # Remove build/ and dist/
 clean:
-    if (Test-Path build) { Remove-Item build -Recurse -Force }
-    if (Test-Path dist) { Remove-Item dist -Recurse -Force }
+    if (Test-Path build) { ri build -r -fo }
+    if (Test-Path dist) { ri dist -r -fo }
