@@ -127,6 +127,8 @@ export type WebviewApp<M extends MethodMap, E extends EventMap> = {
    */
   run(): void;
   quit(): void;
+  /** run()'s teardown without the loop, for an app hosted under runEventLoop: worker terminated, drain callback released, webview destroyed. Safe to call twice. */
+  dispose(): void;
 };
 
 /** The bundled files of an HTML import, by asset path, plus the path of its HTML. */
@@ -282,7 +284,10 @@ export async function createWebviewApp<M extends MethodMap, E extends EventMap>(
   worker?.postMessage(init);
 
   // Worker first, then the handle: the worker calls webview_dispatch on the handle until it is terminated.
+  let down = false;
   const shutdown = () => {
+    if (down) return;
+    down = true;
     worker?.terminate();
     drain.close();
     if (webview.unsafeHandle !== null) webview.destroy();
@@ -347,6 +352,7 @@ export async function createWebviewApp<M extends MethodMap, E extends EventMap>(
       shutdown();
     },
     quit,
+    dispose: shutdown,
   };
   }
 }

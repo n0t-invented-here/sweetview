@@ -9,6 +9,10 @@ event loop. Install and the overview are in the [package README](../README.md).
 import { createWebviewApp, type Asset, type UiMethods, type WebviewApp, type WebviewAppOptions, assetMime, indexHtml, indexHtmlText, type IndexHtmlOptions, windowChromeMethods, type WindowChromeInfo, type WindowChromeKind, type WindowChromeMethodTable, type WindowChromeMethods, type WindowChromeOptions, Ring, SizeHint, WEBVIEW_VERSION, Webview } from "@n1h/sweetview";
 ```
 
+- [The event loop](#the-event-loop)
+  - [`run()`: the library's loop](#run-the-librarys-loop)
+  - [`runEventLoop`: the loop on a Bun timer](#runeventloop-the-loop-on-a-bun-timer)
+  - [Choosing](#choosing)
 - [Reference](#reference)
   - [createWebviewApp](#createwebviewapp)
   - [Asset](#asset)
@@ -32,6 +36,48 @@ import { createWebviewApp, type Asset, type UiMethods, type WebviewApp, type Web
 - [Page loading](#page-loading)
 - [Transport](#transport)
 - [Example](#example)
+
+## The event loop
+
+One process has one OS event loop, on the UI thread, the main thread of the Bun process. Every window, tray, notifier and menu is created on that thread and every handler runs on it, from inside the loop, while the loop is on the stack: a handler returns quickly and cannot wait for anything that needs the loop to turn. There are two ways to run the loop, and an app uses exactly one.
+
+### `run()`: the library's loop
+
+`app.run()` calls the webview library's `webview_run`, which is the platform's own blocking loop: `[NSApp run]` on macOS, a `GetMessage` loop on Windows. It returns when `quit()` is called (`webview_terminate`) or, when the library made the window, when that window closes. Then it tears the app down: the worker is terminated, the drain callback released, the webview destroyed, in that order.
+
+While `run()` runs, Bun's event loop on the UI thread does not turn: no `setTimeout`, no promise continuation, no I/O completes there. That is why a windowed app keeps its logic in a worker, which owns Bun's event loop; the page talks to the worker through the UI thread and the shared ring, and the worker wakes the UI thread with `webview_dispatch`. Code on the UI thread after `run()` starts runs only inside callbacks: `uiMethods`, `onEvent` listeners, tray and menu handlers, notification clicks.
+
+### `runEventLoop`: the loop on a Bun timer
+
+`runEventLoop` from `@n1h/sweetview/native` (also exported from the root module) never blocks. Every `intervalMs` (default 16) it calls `pumpEvents`, which dispatches every OS event waiting for the thread and returns: `PeekMessage` / `DispatchMessage` on Windows, `nextEventMatchingMask:` / `sendEvent:` on macOS with `finishLaunching` once. Between pumps the thread is Bun's, so `setTimeout`, promises and I/O work on the UI thread and the app needs no worker. The returned promise resolves when the `AbortSignal` passed in aborts, or when the OS ends the loop (`WM_QUIT` on Windows). A click reaches its handler at most one interval late; a menu, once open, tracks at native speed inside the pump.
+
+A menu-bar app with no window uses only this: its tray and notifier, then `await runEventLoop({ signal })`. A webview app can be hosted by it too: create the window with `createOverlayWindow`, pass `window: overlay.handle` to `createWebviewApp`, show the window, and `await runEventLoop(...)` instead of calling `run()`. The page loads, `uiMethods` are answered, page calls flow, Bun timers tick on the UI thread (verified on macOS; not yet run on Windows). Nothing is torn down when the loop ends; call `app.dispose()` for `run()`'s cleanup, or exit the process.
+
+```ts
+import { createWebviewApp, indexHtml } from "@n1h/sweetview";
+import { createOverlayWindow, createTray, runEventLoop } from "@n1h/sweetview/native";
+
+const win = createOverlayWindow({ frame: true, title: "Hello", topmost: false, hideFromTaskbar: false, noActivate: false });
+const app = await createWebviewApp({ window: win.handle, assets: { "index.html": indexHtml({ title: "Hello", body: "<h1>Hello</h1>" }) }, uiMethods: {} });
+const quit = new AbortController();
+createTray({ tooltip: "Hello", menu: () => [{ label: "Show", click: () => win.show() }, { label: "Quit", click: () => quit.abort() }] });
+win.show();
+setInterval(() => app.emit("tick", Date.now()), 1000); // a plain Bun timer on the UI thread
+await runEventLoop({ signal: quit.signal });
+app.dispose();
+```
+
+### Choosing
+
+| | `run()` | `runEventLoop` |
+|---|---|---|
+| Loop | the platform's blocking loop | pumped from a Bun timer |
+| Bun on the UI thread | blocked: timers, promises, I/O wait | alive |
+| App logic | in a worker | on the UI thread, or in a worker if you want one |
+| Ends when | `quit()`, or the library's window closes | the signal aborts, or `WM_QUIT` |
+| Cleanup | automatic on return | `app.dispose()` |
+| Idle cost | none | one wake per interval, about 0.5 % CPU at 16 ms |
+| Verified | Windows and macOS | macOS; Windows not yet |
 
 ## Reference
 
@@ -134,6 +180,7 @@ export type WebviewApp<M extends MethodMap, E extends EventMap> = {
   onEvent(fn: (event: AnyEvent<E>) => void): () => void;
   run(): void;
   quit(): void;
+  dispose(): void;
 };
 ```
 
@@ -147,6 +194,7 @@ export type WebviewApp<M extends MethodMap, E extends EventMap> = {
 | `onEvent(fn)` | `() => void` | Registers `fn` for every event the worker sends, called before the page receives it. Returns a function that removes `fn`. |
 | `run()` | `void` | Runs the OS loop. Returns when `quit()` is called or, without `window`, when the window closes. With `window`, the caller ends the loop; on Windows `createOverlayWindow` ends it when its window is destroyed. This app's worker is then terminated, the drain callback released and the webview destroyed, in that order. The alternative is not calling `run()` at all and hosting the window under [`runEventLoop`](native.md#runeventloop) from the native module, which keeps Bun's event loop alive on the UI thread, so the app needs no worker; see the thread note there. |
 | `quit()` | `void` | Calls `webview_terminate`, which makes `run()` return. |
+| `dispose()` | `void` | `run()`'s teardown without the loop, for an app hosted under `runEventLoop`: the worker is terminated, the drain callback released and the webview destroyed, in that order. Safe to call twice; `run()` calls it itself on return. |
 
 Thread: every member runs on the UI thread. `run()` blocks that thread and
 Bun's event loop until it returns, so promises, timers and other asynchronous
