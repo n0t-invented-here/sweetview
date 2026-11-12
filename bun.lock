@@ -34,6 +34,13 @@
     "demos/menubar-notify": {
       "name": "sweetview-menubar-notify",
       "version": "0.1.0",
+      "dependencies": {
+        "@n1h/sweetview-webview-bun": "^2.7.0",
+      },
+    },
+    "demos/menubar-only": {
+      "name": "sweetview-menubar-only",
+      "version": "0.1.0",
     },
     "demos/web-app": {
       "name": "sweetview-web-app",
@@ -118,6 +125,8 @@
     "sweetview-desktop-pet": ["sweetview-desktop-pet@workspace:demos/desktop-pet"],
 
     "sweetview-menubar-notify": ["sweetview-menubar-notify@workspace:demos/menubar-notify"],
+
+    "sweetview-menubar-only": ["sweetview-menubar-only@workspace:demos/menubar-only"],
 
     "sweetview-web-app": ["sweetview-web-app@workspace:demos/web-app"],
 
