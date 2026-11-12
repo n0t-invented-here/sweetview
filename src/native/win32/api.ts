@@ -79,6 +79,10 @@ export const user32 = dlopen("user32.dll", {
   SetLayeredWindowAttributes: { args: [FFIType.u64, FFIType.u32, FFIType.u8, FFIType.u32], returns: FFIType.i32 },
   SystemParametersInfoW: { args: [FFIType.u32, FFIType.u32, FFIType.ptr, FFIType.u32], returns: FFIType.i32 },
   PostQuitMessage: { args: [FFIType.i32], returns: FFIType.void },
+  // (MSG*, HWND filter, UINT min, UINT max, UINT flags) -> BOOL; nonzero when a message was fetched
+  PeekMessageW: { args: [FFIType.ptr, FFIType.u64, FFIType.u32, FFIType.u32, FFIType.u32], returns: FFIType.i32 },
+  TranslateMessage: { args: [FFIType.ptr], returns: FFIType.i32 },
+  DispatchMessageW: { args: [FFIType.ptr], returns: FFIType.i64 },
   // (DPI_AWARENESS_CONTEXT) -> BOOL; the webview library does this only for windows it creates itself
   SetProcessDpiAwarenessContext: { args: [FFIType.i64], returns: FFIType.i32 },
   GetDpiForWindow: { args: [FFIType.u64], returns: FFIType.u32 },
@@ -157,6 +161,7 @@ export const WM_LBUTTONUP = 0x0202;
 export const WM_LBUTTONDBLCLK = 0x0203;
 export const WM_RBUTTONUP = 0x0205;
 export const WM_NULL = 0x0000;
+export const WM_QUIT = 0x0012;
 export const WM_APP = 0x8000;
 export const WM_SETICON = 0x0080;
 export const ICON_SMALL = 0n;
@@ -232,3 +237,5 @@ export const DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = -4n;
 // DWM_BLURBEHIND.dwFlags
 export const DWM_BB_ENABLE = 0x1;
 export const DWM_BB_BLURREGION = 0x2;
+
+export const PM_REMOVE = 0x0001;

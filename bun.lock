@@ -31,6 +31,10 @@
         "react-dom": "^19.1.0",
       },
     },
+    "demos/menubar-notify": {
+      "name": "sweetview-menubar-notify",
+      "version": "0.1.0",
+    },
     "demos/web-app": {
       "name": "sweetview-web-app",
       "version": "0.1.0",
@@ -112,6 +116,8 @@
     "scheduler": ["scheduler@0.28.0", "", {}, "sha512-juorfCmIkIw8tT+p5BXSm6PJjQF/ycEYmKyzURCIt/RaZIhL+PulbQ9Yu2z1HdOJDdqDTlxA1+xKBmHXJsczAw=="],
 
     "sweetview-desktop-pet": ["sweetview-desktop-pet@workspace:demos/desktop-pet"],
+
+    "sweetview-menubar-notify": ["sweetview-menubar-notify@workspace:demos/menubar-notify"],
 
     "sweetview-web-app": ["sweetview-web-app@workspace:demos/web-app"],
 

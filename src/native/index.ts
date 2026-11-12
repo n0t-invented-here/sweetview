@@ -36,3 +36,4 @@ export {
   type DotIconOptions,
   type Icon,
 } from "./icon";
+export { pumpEvents, runEventLoop, setActivationPolicy, type ActivationPolicy, type EventLoopOptions } from "./event-loop";

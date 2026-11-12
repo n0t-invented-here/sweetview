@@ -44,7 +44,7 @@ platform differences and thread rules.
 | [`@n1h/sweetview/page`](docs/page.md) | `isWebview`, `webviewTransport` |
 | [`@n1h/sweetview/ipc`](docs/ipc.md) | the contract: `defineService`, `createBridge`, `memoryTransport`, the wire frames |
 | [`@n1h/sweetview/ipc-ws`](docs/ipc-ws.md) | the contract over WebSockets: `wsHost` for `Bun.serve`, `wsTransport` and `wsUrl` for the browser; each side alone as `/ipc-ws/server` and `/ipc-ws/client` |
-| [`@n1h/sweetview/native`](docs/native.md) | tray, notifications, windows and overlays, click-through hit regions, folder picker, app menu, icons; the hit-region helpers alone, without FFI, as `/native/hit-regions` |
+| [`@n1h/sweetview/native`](docs/native.md) | tray, notifications, windows and overlays, click-through hit regions, folder picker, app menu, the OS event loop for an app with no window, icons; the hit-region helpers alone, without FFI, as `/native/hit-regions` |
 | [`@n1h/sweetview/settings-store`](docs/settings-store.md) | a JSON settings file in the user's application data folder |
 | [`@n1h/sweetview/window-chrome`](docs/window-chrome.md) | a page-drawn title bar and resize handles backed by OS moves and resizes |
 | [`@n1h/sweetview/build`](docs/build.md) | `writeIconFiles` and `makeMacApp`; the page also covers the `make-app.ts` script and the `/file-imports` types |
@@ -218,7 +218,7 @@ mechanism is described under [Transport](docs/app.md#transport).
 | | Windows x64 | macOS arm64 | Linux x64 |
 |---|---|---|---|
 | Window, asset serving, transparency | yes | yes | no: `createWebviewApp` throws |
-| `native` (tray, notifications, overlays, folder picker, app menu) | yes | yes | throws on first call; icons and hit regions work |
+| `native` (tray, notifications, overlays, folder picker, app menu, event loop) | yes | yes | throws on first call; icons and hit regions work |
 | Build host that can embed the Windows exe file icon | yes | no, Bun's stock icon | no, Bun's stock icon |
 
 - Bun accepts `--windows-icon` only on a Windows host; the demos pass it
@@ -242,6 +242,7 @@ codesign --sign - --force --deep "App.app"
 | `docs/` | the reference pages, indexed by the [reference index](docs/README.md) |
 | `demos/web-app/` | one backend and one React page run two ways: a desktop window with tray and notifications, or `Bun.serve` with WebSockets |
 | [`demos/desktop-pet/`](demos/desktop-pet/README.md) | a transparent always-on-top pet rendered with Babylon.js, with click-through hit regions and a page-drawn settings window |
+| [`demos/menubar-notify/`](demos/menubar-notify/README.md) | a menu-bar app with no window, no webview and no worker: a tray menu that sends a system notification now or five seconds later, on `runEventLoop` |
 | [`webview/`](webview/README.md) | recipes that clone the webview-bun fork, with the webview fork as its submodule, and build the library from it, for working on the library itself; not needed to build the demos |
 
 Inside this repository `@n1h/sweetview` resolves to `src/` through the

@@ -1,0 +1,43 @@
+# The menu-bar demo. `just demos menubar-notify <recipe>` from the repo root, or `just <recipe>` here.
+
+set shell := ["pwsh", "-NoProfile", "-Command"]
+
+exe := "menubar-notify"
+name := "Menubar Notify"
+chk := '; if ($LASTEXITCODE) { exit $LASTEXITCODE }'
+# Bun embeds the exe file icon only when the build host is Windows; a Mac-built Windows exe gets Bun's stock icon (README, "Platforms").
+win_icon := if os() == "windows" { "--windows-icon=build/app.ico" } else { "" }
+
+
+# Workspace dependencies (the repo root is the Bun workspace); fast when nothing changed
+install:
+    bun install --cwd ../.. {{chk}}
+
+# Run uncompiled. macOS: a bare binary has no bundle id, so the menu works but notifications do not show; use `open`.
+app: install
+    bun run app.ts {{chk}}
+
+# Everything: the Windows exe, the macOS binary and the .app bundle, into dist/
+compile: compile-win compile-mac mac-app
+
+# The icon files the executables embed: build/app.ico (Windows) and build/AppIcon.icns (the .app bundle)
+icons: install
+    bun scripts/write-icons.ts {{chk}}
+
+compile-win: icons
+    bun build --compile --target=bun-windows-x64 --windows-hide-console {{win_icon}} --minify --sourcemap app.ts --outfile dist/{{exe}}-windows-x64.exe {{chk}}
+
+compile-mac: install
+    bun build --compile --target=bun-darwin-arm64 --minify --sourcemap app.ts --outfile dist/{{exe}}-macos-arm64 {{chk}}
+
+# The .app bundle around the macOS binary. LSUIElement keeps it out of the Dock; the bundle id is what lets it send notifications.
+mac-app: icons compile-mac
+    bun ../../src/make-app.ts --name "{{name}}" --bundle-id dev.mrowr.menubar-notify --binary dist/{{exe}}-macos-arm64 --icns build/AppIcon.icns --plist LSUIElement=true --out dist {{chk}}
+
+# macOS: build the .app and launch it. Quit from its menu.
+open: mac-app
+    open "dist/{{name}}.app" {{chk}}
+
+# Remove build/ and dist/
+clean:
+    ri build, dist -r -fo -ea ignore

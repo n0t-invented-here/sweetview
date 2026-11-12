@@ -244,3 +244,5 @@ export const retain = (obj: Id): Id => asId(send(obj, sel("retain")));
 export const release = (obj: Id): void => {
   if (obj !== NIL) send(obj, sel("release"));
 };
+/** [obj sel:NSUInteger :id :id :BOOL] -> id  (nextEventMatchingMask:untilDate:inMode:dequeue:) */
+export const sendUIntPtrPtrBool = fn([ID, ID, FFIType.u64, ID, ID, FFIType.bool], ID);
