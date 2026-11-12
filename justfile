@@ -13,10 +13,10 @@ mod webview
 install:
     bun install
 
-typecheck:
+typecheck: install
     bun run typecheck
 
-test:
+test: install
     bun test
 
 check: typecheck test
