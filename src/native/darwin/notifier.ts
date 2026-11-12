@@ -1,9 +1,19 @@
 // macOS notifications through UNUserNotificationCenter. It needs a bundle
 // identifier, so this works from the .app and silently does nothing from the
 // bare binary (`bun run dev`): currentNotificationCenter would raise there.
+// The bundle must also be signed (makeMacApp signs it ad-hoc) and not live in
+// a temporary folder, or macOS refuses the permission request outright with
+// UNErrorDomain code 1 and never shows the prompt.
 //
 // The first notify() asks for permission (system prompt, once per bundle id).
 // A delegate makes banners show while the app is frontmost and routes clicks.
+//
+// The completion handlers log a refused permission or a rejected request to
+// the console. Bun runs a threadsafe callback's body later, on its own event
+// loop, so they report in an app on `runEventLoop`; behind a webview's `run()`
+// the loop is blocked and they never run, which is why `notify` does not wait
+// for them. By the time a body runs the NSError the framework passed has been
+// released, so the bodies read only the scalar arguments and never touch it.
 
 import { FFIType } from "bun:ffi";
 import type { Notifier, NotifierOptions } from "../notifications";
@@ -66,11 +76,27 @@ export function createNotifier(options: NotifierOptions = {}): Notifier {
     return true;
   };
 
+  // (BOOL granted, NSError*) on a background queue
+  const authorizationDone = makeBlock(
+    (granted, error) => {
+      if (!granted) console.error(`sweetnative: notification permission ${error === NIL ? "denied by the user" : "refused by macOS: the app is not a signed .app bundle (makeMacApp signs one), or it runs from a temporary folder"}`);
+    },
+    [FFIType.bool, FFIType.u64],
+    true,
+  );
+  // (NSError*) on a background queue
+  const requestDone = makeBlock(
+    (error) => {
+      if (error !== NIL) console.error("sweetnative: notification not shown: macOS rejected it (permission refused, denied, or not answered yet)");
+    },
+    [FFIType.u64],
+    true,
+  );
+
   const ensureAuthorized = () => {
     if (authorized) return;
     authorized = true;
-    const done = makeBlock(() => {}, [FFIType.bool, FFIType.u64], true); // (BOOL granted, NSError*) on a background queue
-    sendUIntPtrVoid(center, sel("requestAuthorizationWithOptions:completionHandler:"), UNAuthorizationOptionAlert | UNAuthorizationOptionSound | UNAuthorizationOptionBadge, done);
+    sendUIntPtrVoid(center, sel("requestAuthorizationWithOptions:completionHandler:"), UNAuthorizationOptionAlert | UNAuthorizationOptionSound | UNAuthorizationOptionBadge, authorizationDone);
   };
 
   return {
@@ -82,7 +108,7 @@ export function createNotifier(options: NotifierOptions = {}): Notifier {
       if (n.body) sendPtr(content, sel("setBody:"), nsString(n.body));
       if (!n.silent) sendPtr(content, sel("setSound:"), asId(send(cls("UNNotificationSound"), sel("defaultSound"))));
       const request = asId(sendPtrPtrPtr(cls("UNNotificationRequest"), sel("requestWithIdentifier:content:trigger:"), nsString(`sweetnative-${nextId++}`), content, NIL));
-      sendPtrPtr(center, sel("addNotificationRequest:withCompletionHandler:"), request, NIL);
+      sendPtrPtr(center, sel("addNotificationRequest:withCompletionHandler:"), request, requestDone);
       release(content); // the request retains it
       return true;
     },

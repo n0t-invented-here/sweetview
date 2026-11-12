@@ -5,13 +5,14 @@
 //
 //   bun src/make-app.ts --name "My App" --bundle-id dev.example.my-app \
 //     --binary dist/my-app-macos-arm64 --out dist [--icns build/AppIcon.icns] \
-//     [--version 1.0.0] [--min-macos 11.0] [--plist LSUIElement=true]
+//     [--version 1.0.0] [--min-macos 11.0] [--plist LSUIElement=true] [--sign "Developer ID Application: …" | --no-sign]
 
 import { parseArgs } from "node:util";
 import { makeMacApp, type MacAppOptions } from "./build";
 
 const USAGE = `usage: bun src/make-app.ts --name <name> --bundle-id <id> --binary <path> --out <dir>
                           [--icns <path>] [--version <x.y.z>] [--min-macos <x.y>] [--plist <Key=value>]...
+                          [--sign <identity> | --no-sign]
 
   --name       what Finder and the Dock show; the bundle is <name>.app
   --bundle-id  reverse-DNS id (dev.example.my-app); macOS notifications need one
@@ -21,6 +22,8 @@ const USAGE = `usage: bun src/make-app.ts --name <name> --bundle-id <id> --binar
   --version    CFBundleVersion and CFBundleShortVersionString (default 0.1.0)
   --min-macos  LSMinimumSystemVersion (default 11.0)
   --plist      an extra Info.plist entry; true/false and numbers are typed, anything else is a string. Repeatable
+  --sign       the codesign identity (default: ad-hoc on macOS, none elsewhere); an unsigned bundle shows no notifications
+  --no-sign    leave the bundle unsigned
 `;
 
 const SPEC = {
@@ -32,6 +35,8 @@ const SPEC = {
   version: { type: "string" },
   "min-macos": { type: "string" },
   plist: { type: "string", multiple: true },
+  sign: { type: "string" },
+  "no-sign": { type: "boolean" },
   help: { type: "boolean", short: "h" },
 } as const;
 
@@ -59,6 +64,11 @@ function main(argv: string[]): number {
     return 2;
   }
 
+  if (args.sign !== undefined && args["no-sign"]) {
+    console.error("--sign and --no-sign exclude each other");
+    return 2;
+  }
+
   const plist: Record<string, string | number | boolean> = {};
   for (const entry of args.plist ?? []) {
     const eq = entry.indexOf("=");
@@ -80,6 +90,7 @@ function main(argv: string[]): number {
     ...(args.version !== undefined ? { version: args.version } : {}),
     ...(args["min-macos"] !== undefined ? { minimumSystemVersion: args["min-macos"] } : {}),
     ...(Object.keys(plist).length > 0 ? { plist } : {}),
+    ...(args["no-sign"] ? { sign: false } : args.sign !== undefined ? { sign: args.sign } : {}),
   };
   try {
     console.log(`wrote ${makeMacApp(options)}`);

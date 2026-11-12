@@ -7,6 +7,7 @@
 //
 // The bundle is also a script to run: src/make-app.ts.
 
+import { spawnSync } from "node:child_process";
 import { chmodSync, cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 
@@ -27,6 +28,16 @@ export type MacAppOptions = {
   minimumSystemVersion?: string;
   /** More `Info.plist` entries, by key: `{ LSUIElement: true }` for a menu-bar-only app with no Dock tile, say. These win over the defaults. */
   plist?: Record<string, string | number | boolean>;
+  /**
+   * The `codesign` identity for the bundle: `"-"` for an ad-hoc signature, or a
+   * certificate name such as `"Developer ID Application: Example (TEAMID)"`;
+   * `false` leaves the bundle unsigned. Default: ad-hoc on macOS, `false`
+   * elsewhere, where `codesign` does not exist. A bundle that is not signed
+   * is refused by macOS's notification service, so it can show no
+   * notifications: Bun's compiled binary carries only a linker signature with
+   * the identifier `a.out`, and the bundle around it has no seal.
+   */
+  sign?: string | false;
 };
 
 const plistValue = (value: string | number | boolean): string =>
@@ -38,11 +49,13 @@ const escapeXml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").
  * Wraps the compiled macOS binary in a `.app` bundle: `Contents/MacOS/<binary>`
  * (made executable), `Contents/Resources/AppIcon.icns`, `Info.plist`,
  * `PkgInfo`. Finder then launches it without a Terminal window and
- * notifications have the bundle id they need. Returns the bundle's path.
+ * notifications have the bundle id they need. On macOS the bundle is then
+ * signed, ad-hoc unless `sign` names an identity, because an unsigned bundle
+ * is refused by the notification service. Returns the bundle's path.
  *
- * The bundle is unsigned. If Finder calls it damaged on the Mac it was copied
- * to: `xattr -dr com.apple.quarantine "<name>.app"`, `chmod +x
- * "<name>.app/Contents/MacOS/"*`, `codesign --sign - --force --deep "<name>.app"`.
+ * If Finder calls the bundle damaged on the Mac it was copied to: `xattr -dr
+ * com.apple.quarantine "<name>.app"`, `chmod +x "<name>.app/Contents/MacOS/"*`,
+ * `codesign --sign - --force --deep "<name>.app"`.
  */
 export function makeMacApp(options: MacAppOptions): string {
   if (!existsSync(options.binary)) throw new Error(`makeMacApp: ${options.binary} not found (compile the macOS binary first)`);
@@ -91,7 +104,17 @@ ${dict}
 `,
   );
   writeFileSync(join(app, "Contents", "PkgInfo"), "APPL????");
+
+  const sign = options.sign ?? (process.platform === "darwin" ? "-" : false);
+  if (sign !== false) signMacApp(app, sign);
   return app;
+}
+
+/** `codesign --sign <identity> --force --deep <app>`; throws with codesign's message when it fails. */
+function signMacApp(app: string, identity: string): void {
+  const result = spawnSync("codesign", ["--sign", identity, "--force", "--deep", app], { encoding: "utf8" });
+  if (result.error) throw new Error(`makeMacApp: codesign could not run (${result.error.message}); pass sign: false to leave the bundle unsigned`);
+  if (result.status !== 0) throw new Error(`makeMacApp: codesign failed for ${app}: ${(result.stderr || result.stdout).trim()}`);
 }
 
 /**

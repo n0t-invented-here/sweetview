@@ -224,7 +224,9 @@ mechanism is described under [Transport](docs/app.md#transport).
 - Bun accepts `--windows-icon` only on a Windows host; the demos pass it
   only there.
 - The macOS `.app` bundle is assembled on any OS by `makeMacApp` or
-  `src/make-app.ts`. It is unsigned.
+  `src/make-app.ts`, and signed ad-hoc when assembled on macOS. macOS shows
+  no notifications from an unsigned bundle, or from one in a temporary
+  folder.
 - On a Mac that reports a copied bundle as damaged, these commands remove the
   quarantine flag, restore the executable bit and add an ad-hoc signature:
 

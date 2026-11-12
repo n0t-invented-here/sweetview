@@ -20,6 +20,7 @@ export type MacAppOptions = {
   version?: string;
   minimumSystemVersion?: string;
   plist?: Record<string, string | number | boolean>;
+  sign?: string | false;
 };
 ```
 
@@ -35,6 +36,7 @@ The options of `makeMacApp`.
 | `version` | `string` | `"0.1.0"` | Written as `CFBundleVersion` and `CFBundleShortVersionString`. |
 | `minimumSystemVersion` | `string` | `"11.0"` | Written as `LSMinimumSystemVersion`. |
 | `plist` | `Record<string, string \| number \| boolean>` | none | More `Info.plist` entries by key, such as `{ LSUIElement: true }` for a menu-bar app with no Dock tile. An entry with a new key is written after the defaults. An entry with the key of a default replaces that default's value in the default's position. |
+| `sign` | `string \| false` | `"-"` on macOS, `false` elsewhere | The `codesign` identity for the bundle: `"-"` for an ad-hoc signature, a certificate name such as `"Developer ID Application: Example (TEAMID)"`, or `false` to leave the bundle unsigned. A bundle that is not signed is refused by macOS's notification service and shows no notifications: Bun's compiled binary carries only a linker signature with the identifier `a.out`, and the bundle around it has no seal. |
 
 ### makeMacApp
 
@@ -42,7 +44,7 @@ The options of `makeMacApp`.
 export function makeMacApp(options: MacAppOptions): string
 ```
 
-Wraps the compiled macOS binary in a `.app` bundle at `<outDir>/<name>.app`. Finder then launches it without a Terminal window, and notifications have the bundle id they need.
+Wraps the compiled macOS binary in a `.app` bundle at `<outDir>/<name>.app`, and on macOS signs it. Finder then launches it without a Terminal window, and notifications have the signed bundle they need.
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
@@ -76,7 +78,9 @@ It checks that `binary` exists, and `icns` when set. It then deletes any existin
 
 A boolean value is written as `<true/>` or `<false/>`, an integer as `<integer>`, any other number as `<real>`, and a string as `<string>`. `NaN` and infinities throw, because a plist cannot hold them. `&`, `<` and `>` in keys and strings are escaped.
 
-The bundle is unsigned. On a Mac that calls a copied bundle damaged, `xattr -dr com.apple.quarantine "<name>.app"`, `chmod +x "<name>.app/Contents/MacOS/"*` and `codesign --sign - --force --deep "<name>.app"` remove the quarantine flag, restore the executable bit and add an ad-hoc signature.
+With `sign` set, or left at its macOS default, the files are then signed with `codesign --sign <identity> --force --deep "<name>.app"`, which gives the bundle a signature whose identifier is the bundle id. The ad-hoc signature is what macOS's notification service wants before it shows the permission prompt; it also refuses an app that runs from a temporary folder such as `/tmp`, signed or not, so keep the bundle where it is built or in an Applications folder.
+
+On a Mac that calls a copied bundle damaged, `xattr -dr com.apple.quarantine "<name>.app"`, `chmod +x "<name>.app/Contents/MacOS/"*` and `codesign --sign - --force --deep "<name>.app"` remove the quarantine flag, restore the executable bit and sign it again.
 
 Returns: the bundle's path, `<outDir>/<name>.app`.
 
@@ -86,7 +90,9 @@ Throws: `makeMacApp: <icns> not found (write the .icns first)` when `icns` is se
 
 Throws: any file-system error from deleting, copying or writing, unchanged.
 
-Platforms: Windows / macOS / Linux: implemented. On Windows `chmodSync` cannot set an executable bit, so a bundle built there needs the `chmod +x` above on the Mac.
+Throws: `makeMacApp: codesign failed for <app>: <codesign's message>` when `codesign` exits non-zero, for example when `binary` is not a Mach-O file; `makeMacApp: codesign could not run (<reason>); pass sign: false to leave the bundle unsigned` when `sign` is set on a machine without `codesign`. The bundle's files are already written in both cases.
+
+Platforms: Windows / macOS / Linux: implemented; only macOS signs by default, and only macOS has `codesign`. On Windows `chmodSync` cannot set an executable bit, so a bundle built there needs the `chmod +x` above on the Mac, and a bundle built on any other OS needs the `codesign` line above before it can show notifications.
 
 Thread: blocks the calling thread on file I/O.
 
@@ -124,6 +130,8 @@ Thread: blocks the calling thread on file I/O.
 | `--version` | text | `0.1.0` | `version`: `CFBundleVersion` and `CFBundleShortVersionString`. |
 | `--min-macos` | text | `11.0` | `minimumSystemVersion`: `LSMinimumSystemVersion`. |
 | `--plist` | `Key=value` | none | One extra `Info.plist` entry. Repeatable; a later entry with the same key wins. |
+| `--sign` | text | ad-hoc on macOS, none elsewhere | `sign`: the `codesign` identity. |
+| `--no-sign` | none | off | `sign: false`: leave the bundle unsigned. Excludes `--sign`. |
 | `--help`, `-h` | none | off | Prints the usage text to stdout and exits. |
 
 A `--plist` entry splits at its first `=`. The value may contain further `=` signs. The value `true` or `false` becomes a boolean. A `--name` of empty text counts as missing. A non-blank value that `Number()` reads as a finite number, such as `42`, `1.5` or `0x10`, becomes a number and is written as `<integer>` or `<real>`. Anything else stays a string.
@@ -136,6 +144,7 @@ A `--plist` entry splits at its first `=`. The value may contain further `=` sig
 | `2` | An unknown flag, a positional argument, or a flag without its value. | The parser's message and the usage text on stderr. |
 | `2` | One or more required flags missing. | `missing: --name, --bundle-id, ...` listing the missing ones, then the usage text, on stderr. |
 | `2` | A `--plist` entry with no `=` or an empty key. | `--plist wants Key=value, got "<entry>"` on stderr. |
+| `2` | Both `--sign` and `--no-sign`. | `--sign and --no-sign exclude each other` on stderr. |
 
 ## File-import types
 
