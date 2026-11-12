@@ -3,7 +3,8 @@
 # webview fork clones and the patched library built from them. `just demos` lists
 # every app's recipes, `just demos <app>` one app's; `just --list <module>` works too.
 
-set shell := ["pwsh", "-NoProfile", "-Command"]
+# pwsh with errors terminating; a failing native command ends the recipe with its own exit code
+set shell := ["pwsh", "-NoProfile", "-Command", "$ErrorActionPreference = 'Stop'; $PSNativeCommandUseErrorActionPreference = $true; trap { if ($_.Exception -is [System.Management.Automation.NativeCommandExitException]) { exit $_.Exception.ExitCode }; break };"]
 
 mod demos
 mod webview

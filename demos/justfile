@@ -1,6 +1,7 @@
 # The apps built on the sweet* packages: `just demos web-app <recipe>`, `just demos desktop-pet <recipe>`, `just demos menubar-only <recipe>`, `just demos menubar-notify <recipe>` from the repo root. `just demos <app>` lists an app's recipes.
 
-set shell := ["pwsh", "-NoProfile", "-Command"]
+# pwsh with errors terminating; a failing native command ends the recipe with its own exit code
+set shell := ["pwsh", "-NoProfile", "-Command", "$ErrorActionPreference = 'Stop'; $PSNativeCommandUseErrorActionPreference = $true; trap { if ($_.Exception -is [System.Management.Automation.NativeCommandExitException]) { exit $_.Exception.ExitCode }; break };"]
 
 # `just demos`: the apps
 @_default:

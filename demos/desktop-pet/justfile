@@ -1,7 +1,8 @@
 # The desktop pet. `just demos desktop-pet <recipe>` from the repo root, or
 # `just <recipe>` here. `compile` does everything: the pages, the executables.
 
-set shell := ["pwsh", "-NoProfile", "-Command"]
+# pwsh with errors terminating; a failing native command ends the recipe with its own exit code
+set shell := ["pwsh", "-NoProfile", "-Command", "$ErrorActionPreference = 'Stop'; $PSNativeCommandUseErrorActionPreference = $true; trap { if ($_.Exception -is [System.Management.Automation.NativeCommandExitException]) { exit $_.Exception.ExitCode }; break };"]
 
 exe := "desktop-pet"
 # Bun embeds the exe file icon only when the build host is Windows; a Mac-built Windows exe gets Bun's stock icon (README, "Platforms").
@@ -44,5 +45,6 @@ mac-app: icons
 
 # Remove build/ and dist/
 clean:
-    ri build, dist -r -fo -ea ignore
+    if (Test-Path build) { Remove-Item build -Recurse -Force }
+    if (Test-Path dist) { Remove-Item dist -Recurse -Force }
 

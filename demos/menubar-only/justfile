@@ -1,6 +1,7 @@
 # The menu-bar-only demo. `just demos menubar-only <recipe>` from the repo root, or `just <recipe>` here.
 
-set shell := ["pwsh", "-NoProfile", "-Command"]
+# pwsh with errors terminating; a failing native command ends the recipe with its own exit code
+set shell := ["pwsh", "-NoProfile", "-Command", "$ErrorActionPreference = 'Stop'; $PSNativeCommandUseErrorActionPreference = $true; trap { if ($_.Exception -is [System.Management.Automation.NativeCommandExitException]) { exit $_.Exception.ExitCode }; break };"]
 
 exe := "menubar-only"
 name := "Menubar Only"
@@ -43,4 +44,5 @@ open: mac-app
 
 # Remove build/ and dist/
 clean:
-    ri build, dist -r -fo -ea ignore
+    if (Test-Path build) { Remove-Item build -Recurse -Force }
+    if (Test-Path dist) { Remove-Item dist -Recurse -Force }
