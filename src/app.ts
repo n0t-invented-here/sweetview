@@ -110,7 +110,6 @@ export type WebviewApp<M extends MethodMap, E extends EventMap> = {
   readonly window: NativeWindow;
   /** The native window (HWND / NSWindow*), for sweetnative's dialogs. */
   readonly windowHandle: WindowHandle;
-  /** Push an event to the page. */
   emit<N extends keyof E & string>(name: N, payload: E[N]): void;
   /** Call the worker's service without waiting; whatever it emits comes back as events. */
   call<K extends keyof M & string>(method: K, ...params: M[K][0] extends void ? [] : [M[K][0]]): void;

@@ -58,7 +58,6 @@ export type UiMethods = WindowChromeMethods & {
   "pet.quit": [void, void];
 };
 
-/** Everything the page can call. */
 export type Methods = WorkerMethods & UiMethods;
 
 export type Events = {

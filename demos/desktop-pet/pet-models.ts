@@ -30,7 +30,6 @@ import pig from "./assets/kenney-cube-pets/animal-pig.glb" with { type: "file" }
 import polar from "./assets/kenney-cube-pets/animal-polar.glb" with { type: "file" };
 import tiger from "./assets/kenney-cube-pets/animal-tiger.glb" with { type: "file" };
 
-/** Path to read each pet's model file from. */
 export const PET_MODEL_FILES: Record<Pet, string> = {
   beaver,
   bee,

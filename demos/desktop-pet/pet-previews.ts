@@ -30,7 +30,6 @@ import pig from "./assets/kenney-cube-pets/Previews/animal-pig.png" with { type:
 import polar from "./assets/kenney-cube-pets/Previews/animal-polar.png" with { type: "file" };
 import tiger from "./assets/kenney-cube-pets/Previews/animal-tiger.png" with { type: "file" };
 
-/** Path to read each pet's preview PNG from. */
 export const PET_PREVIEW_FILES: Record<Pet, string> = {
   beaver,
   bee,

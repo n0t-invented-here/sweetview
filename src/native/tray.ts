@@ -26,7 +26,7 @@ export interface Tray {
   setTooltip(text: string): void;
   setIcon(icon: TrayIcon): void;
   setMenu(menu: MenuSource | undefined): void;
-  /** Removes the icon. Safe to call twice. */
+  /** Safe to call twice. */
   dispose(): void;
 }
 

@@ -166,7 +166,6 @@ export const WM_SETICON = 0x0080;
 export const ICON_SMALL = 0n;
 export const ICON_BIG = 1n;
 
-// ShowWindow
 export const SW_HIDE = 0;
 export const SW_SHOWNOACTIVATE = 4;
 export const SW_SHOW = 5;
@@ -179,10 +178,8 @@ export const HTCAPTION = 2;
 export const WM_DESTROY = 0x0002;
 export const WM_SIZE = 0x0005;
 
-// GetWindow
 export const GW_CHILD = 5;
 
-// GetSystemMetrics
 export const SM_CXICON = 11;
 export const SM_CXSMICON = 49;
 export const SM_CXSCREEN = 0;
@@ -192,12 +189,10 @@ export const SM_YVIRTUALSCREEN = 77;
 export const SM_CXVIRTUALSCREEN = 78;
 export const SM_CYVIRTUALSCREEN = 79;
 
-// MonitorFromRect
 export const MONITOR_DEFAULTTONEAREST = 2;
 /** MONITORINFO: cbSize, rcMonitor, rcWork, dwFlags; 40 bytes. */
 export const MONITORINFO_SIZE = 40;
 
-// Get/SetWindowLongPtr
 export const GWL_STYLE = -16;
 export const GWL_EXSTYLE = -20;
 export const WS_POPUP = 0x80000000;
@@ -209,7 +204,6 @@ export const WS_EX_APPWINDOW = 0x00040000;
 export const WS_EX_LAYERED = 0x00080000;
 export const WS_EX_NOACTIVATE = 0x08000000;
 
-// SetWindowPos
 export const HWND_TOPMOST = -1n;
 export const HWND_NOTOPMOST = -2n;
 export const SWP_NOSIZE = 0x0001;
@@ -218,21 +212,16 @@ export const SWP_NOZORDER = 0x0004;
 export const SWP_NOACTIVATE = 0x0010;
 export const SWP_FRAMECHANGED = 0x0020;
 
-// SetLayeredWindowAttributes
 export const LWA_COLORKEY = 0x1;
 export const LWA_ALPHA = 0x2;
 
-// SystemParametersInfo
 export const SPI_GETWORKAREA = 0x0030;
 
-// CoInitializeEx
 export const COINIT_APARTMENTTHREADED = 0x2;
 export const RPC_E_CHANGED_MODE = -2147417850; // 0x80010106
 
-// SetProcessDpiAwarenessContext
 export const DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = -4n;
 
-// DWM_BLURBEHIND.dwFlags
 export const DWM_BB_ENABLE = 0x1;
 export const DWM_BB_BLURREGION = 0x2;
 

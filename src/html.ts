@@ -51,7 +51,6 @@ export function indexHtml({ title, js = "main.js", css = "main.css", head = "", 
   return new Blob([indexHtmlText({ title, js, css, head, body })], { type: "text/html; charset=utf-8" });
 }
 
-/** The same document as a string. */
 export function indexHtmlText({ title, js = "main.js", css = "main.css", head = "", body = '<div id="root"></div>' }: IndexHtmlOptions): string {
   return `<!doctype html>
 <html lang="en">

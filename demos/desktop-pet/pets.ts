@@ -42,7 +42,6 @@ export type PetAnimation = "static" | "idle" | "walk" | "run" | "eat" | "dance" 
 export const BIRDS: ReadonlySet<Pet> = new Set<Pet>(["chick", "parrot", "penguin"]);
 export const isBird = (pet: Pet): boolean => BIRDS.has(pet);
 
-/** Menu label. */
 export const petLabel = (pet: Pet): string => (pet === "polar" ? "Polar bear" : pet[0]!.toUpperCase() + pet.slice(1));
 
 /** Asset path of a pet's model; its texture is referenced from inside the file, relative to it. */

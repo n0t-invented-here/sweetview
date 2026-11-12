@@ -36,7 +36,6 @@ const NIF_ICON = 0x2;
 const NIF_TIP = 0x4;
 const NIF_INFO = 0x10;
 
-// dwInfoFlags
 const NIIF_INFO = 0x1;
 const NIIF_USER = 0x4;
 const NIIF_NOSOUND = 0x10;
