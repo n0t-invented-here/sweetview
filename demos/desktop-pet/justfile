@@ -43,7 +43,7 @@ compile-mac: frontend
 mac-app: icons
     bun ../../src/make-app.ts --name Pet --bundle-id dev.mrowr.pet --binary dist/{{exe}}-macos-arm64 --icns build/AppIcon.icns --out dist
 
-# Remove build/ and dist/
+# Remove build/ and dist/, each only if present: ri on a missing path fails the recipe
 clean:
     if (Test-Path build) { ri build -r -fo }
     if (Test-Path dist) { ri dist -r -fo }
