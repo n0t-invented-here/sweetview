@@ -19,7 +19,6 @@ export type ScreenArea = Rect & { scale: number; debug: boolean; still: boolean 
 export type Mood = "idle" | "walk" | "run" | "eat" | "dance";
 export type Command = { mood: Mood; dir: -1 | 1; seconds: number };
 
-/** Answered on the worker thread (app-worker.ts hosts createService below), which also sends `pet.command` nudges on its own timer. */
 export type WorkerMethods = {
   /** A new behaviour for this pet, picked at random; the worker remembers the pet for its own nudges. */
   "pet.next": [Pet, Command];

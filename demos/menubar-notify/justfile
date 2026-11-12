@@ -13,15 +13,13 @@ win_icon := if os() == "windows" { "--windows-icon=build/app.ico" } else { "" }
     just --justfile "{{module_file()}}" --list
 
 
-# Workspace dependencies (the repo root is the Bun workspace); fast when nothing changed
 install:
     bun install --cwd ../..
 
-# Bundle the page the window loads into build/frontend
 frontend: install
     bun build frontend/main.ts --outdir build/frontend --minify
 
-# Run from source without compiling. On macOS a bare binary has no bundle id, so the menu and window work but notifications do not show; use `open`.
+# On macOS a bare binary has no bundle id, so the menu and window work but notifications do not show; use `open`
 app: frontend
     bun run app.ts
 

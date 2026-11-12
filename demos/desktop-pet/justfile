@@ -13,16 +13,14 @@ win_icon := if os() == "windows" { "--windows-icon=build/app.ico" } else { "" }
     just --justfile "{{module_file()}}" --list
 
 
-# Workspace dependencies (the repo root is the Bun workspace); fast when nothing changed
 install:
     bun install --cwd ../..
 
-# The two pages the windows load: the pet into build/frontend, the settings into build/settings
 frontend: install
     bun build frontend/main.ts --outdir build/frontend --minify
     bun build settings/main.tsx --outdir build/settings --minify
 
-# Run from source without compiling; set WEBVIEW_DEBUG=1 for devtools
+# WEBVIEW_DEBUG=1 opens devtools
 app: frontend
     bun run app.ts
 

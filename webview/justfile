@@ -127,7 +127,6 @@ build: clone
     Set-Content "{{stamp}}" $want -NoNewline
     Write-Host "built {{built_lib}}"
 
-# Fast-forward both clones, then rebuild the library only if that changed the checkout: the usual way to get current
 lib: update build
 
 # Push webview's branch, then webview-bun's; says when webview-bun still records an older webview commit

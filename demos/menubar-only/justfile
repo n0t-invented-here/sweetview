@@ -13,11 +13,10 @@ win_icon := if os() == "windows" { "--windows-icon=build/app.ico" } else { "" }
     just --justfile "{{module_file()}}" --list
 
 
-# Workspace dependencies (the repo root is the Bun workspace); fast when nothing changed
 install:
     bun install --cwd ../..
 
-# Run from source without compiling; it stays out of the Dock here too, because app.ts sets the activation policy itself
+# Out of the Dock even uncompiled: app.ts sets the activation policy itself
 app: install
     bun run app.ts
 
