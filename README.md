@@ -215,7 +215,7 @@ shared-memory ring; in a browser, the same call goes over a WebSocket.
 The contract is the same `Methods` and `Events` types on both sides. The
 mechanism is described under [Transport](docs/app.md#transport).
 
-### An app with no window
+## An app with no window
 
 A menu-bar app has neither page nor worker. It creates its tray and notifier
 from `@n1h/sweetview/native` and runs the OS loop with `runEventLoop`, which
