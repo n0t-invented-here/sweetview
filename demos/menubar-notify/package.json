@@ -3,5 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "A menu-bar app with no window: a status item (macOS) or tray icon (Windows) whose menu sends a system notification, now or five seconds later. No webview and no worker; the OS loop runs from Bun's event loop through `runEventLoop`."
+  "description": "A menu-bar app: a status item (macOS) or tray icon (Windows) whose menu sends a system notification, now or five seconds later, and a window that shows what was sent and clicked; a notification click opens it.",
+  "dependencies": {
+    "@n1h/sweetview-webview-bun": "^2.7.0"
+  }
 }

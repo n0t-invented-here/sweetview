@@ -13,22 +13,26 @@ win_icon := if os() == "windows" { "--windows-icon=build/app.ico" } else { "" }
 install:
     bun install --cwd ../.. {{chk}}
 
-# Run uncompiled. macOS: a bare binary has no bundle id, so the menu works but notifications do not show; use `open`.
-app: install
+# Bundle the page into build/frontend
+frontend: install
+    bun build frontend/main.ts --outdir build/frontend --minify {{chk}}
+
+# Run uncompiled. macOS: a bare binary has no bundle id, so the menu and window work but notifications do not show; use `open`.
+app: frontend
     bun run app.ts {{chk}}
 
-# Everything: the Windows exe, the macOS binary and the .app bundle, into dist/
-compile: compile-win compile-mac mac-app
+# Everything: the page, the Windows exe, the macOS binary and the .app bundle, into dist/
+compile: frontend compile-win compile-mac mac-app
 
 # The icon files the executables embed: build/app.ico (Windows) and build/AppIcon.icns (the .app bundle)
 icons: install
     bun scripts/write-icons.ts {{chk}}
 
-compile-win: icons
-    bun build --compile --target=bun-windows-x64 --windows-hide-console {{win_icon}} --minify --sourcemap app.ts --outfile dist/{{exe}}-windows-x64.exe {{chk}}
+compile-win: frontend icons
+    bun build --compile --target=bun-windows-x64 --windows-hide-console {{win_icon}} --minify --sourcemap app.ts app-worker.ts --outfile dist/{{exe}}-windows-x64.exe {{chk}}
 
-compile-mac: install
-    bun build --compile --target=bun-darwin-arm64 --minify --sourcemap app.ts --outfile dist/{{exe}}-macos-arm64 {{chk}}
+compile-mac: frontend
+    bun build --compile --target=bun-darwin-arm64 --minify --sourcemap app.ts app-worker.ts --outfile dist/{{exe}}-macos-arm64 {{chk}}
 
 # The .app bundle around the macOS binary. LSUIElement keeps it out of the Dock; the bundle id is what lets it send notifications.
 mac-app: icons compile-mac

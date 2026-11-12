@@ -1,0 +1,7 @@
+{
+  "name": "sweetview-menubar-only",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A menu-bar app with no window: a status item (macOS) or tray icon (Windows) and its menu. No webview and no worker; the OS loop runs from Bun's event loop through `runEventLoop`, so a plain setInterval drives the menu's uptime line and the tooltip clock."
+}

@@ -1,8 +1,9 @@
-# The apps built on the sweet* packages: `just demos web-app <recipe>`, `just demos desktop-pet <recipe>`, `just demos menubar-notify <recipe>` from the repo root. `just demos <app>` lists an app's recipes.
+# The apps built on the sweet* packages: `just demos web-app <recipe>`, `just demos desktop-pet <recipe>`, `just demos menubar-only <recipe>`, `just demos menubar-notify <recipe>` from the repo root. `just demos <app>` lists an app's recipes.
 
 set shell := ["pwsh", "-NoProfile", "-Command"]
 
 mod web-app
 mod desktop-pet
+mod menubar-only
 mod menubar-notify
 

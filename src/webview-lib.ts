@@ -18,8 +18,12 @@ export async function webviewLibPath(): Promise<string> {
     case "darwin":
       //@ts-expect-error file import
       return (await import("@n1h/sweetview-webview-bun/build/libwebview.dylib")).default;
+    case "linux":
+      if (process.arch !== "x64") throw new Error(`sweetview: @n1h/sweetview-webview-bun ships no library for linux ${process.arch} (x64 only); set WEBVIEW_PATH to one you built`);
+      //@ts-expect-error file import
+      return (await import("@n1h/sweetview-webview-bun/build/libwebview-x64.so")).default;
     default:
-      return (await import(`@n1h/sweetview-webview-bun/build/libwebview-${process.arch}.so`)).default;
+      throw new Error(`sweetview: ${process.platform} is not supported (win32, darwin and linux x64 are)`);
   }
 }
 
