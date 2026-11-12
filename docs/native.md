@@ -3,7 +3,7 @@
 Native desktop pieces for a Bun app, called over `bun:ffi`: a tray icon, notifications, control of the webview's window, overlay windows with click-through hit regions, a folder dialog, the macOS app menu and Dock icon, the OS event loop for an app with no webview window, menus as data, and icon encoders. Every function that touches the OS is implemented for Windows and macOS and runs on the UI thread, the thread that owns the window and spins the webview's run loop. The menu, icon and hit-region helpers are plain TypeScript; all but `createHitRelay` run on any thread. Install and the overview are in [../README.md](../README.md).
 
 ```ts
-import { createTray, createNotifier, nativeWindow, createOverlayWindow, makeOverlay, convexHull, createHitRelay, flattenRegions, hitRegions, packRegions, unpackRegions, pickFolder, installAppMenu, setAppIcon, setActivationPolicy, pumpEvents, runEventLoop, resolveMenu, decodePng, dotIcns, dotIcon, dotPng, encodeIcns, encodeIco, encodePng, icnsFromPng, icnsFromRgba, icoFromPng, icoFromRgba, renderDot, trimTransparent, type Tray, type TrayIcon, type TrayOptions, type NotificationClick, type NotificationOptions, type Notifier, type NotifierOptions, type NativeWindow, type WindowHandle, type Overlay, type OverlayOptions, type OverlayWindowOptions, type HitRefiner, type Point, type Rect, type ResizeEdge, type HitPolygon, type HitProbe, type HitRelay, type AppMenuOptions, type ActivationPolicy, type EventLoopOptions, type MenuItem, type MenuSource, type MenuTemplate, type DecodedPng, type DotIconOptions, type Icon } from "@n1h/sweetview/native";
+import { createTray, createNotifier, nativeWindow, createOverlayWindow, makeOverlay, convexHull, createHitRelay, flattenRegions, hitRegions, packRegions, unpackRegions, pickFolder, installAppMenu, setAppIcon, setActivationPolicy, pumpEvents, runEventLoop, quitEventLoop, resolveMenu, decodePng, dotIcns, dotIcon, dotPng, encodeIcns, encodeIco, encodePng, icnsFromPng, icnsFromRgba, icoFromPng, icoFromRgba, renderDot, trimTransparent, type Tray, type TrayIcon, type TrayOptions, type NotificationClick, type NotificationOptions, type Notifier, type NotifierOptions, type NativeWindow, type WindowHandle, type Overlay, type OverlayOptions, type OverlayWindowOptions, type HitRefiner, type Point, type Rect, type ResizeEdge, type HitPolygon, type HitProbe, type HitRelay, type AppMenuOptions, type ActivationPolicy, type EventLoopOptions, type MenuItem, type MenuSource, type MenuTemplate, type DecodedPng, type DotIconOptions, type Icon } from "@n1h/sweetview/native";
 ```
 
 Every function that touches the OS picks its Windows or macOS implementation on its first call. On any other OS that call throws `sweetnative: <platform> is not supported (win32 and darwin are)`. Importing the module does not throw on any OS.
@@ -51,6 +51,7 @@ Every function that touches the OS picks its Windows or macOS implementation on 
   - [setAppIcon](#setappicon)
 - [Event loop](#event-loop)
   - [runEventLoop](#runeventloop)
+  - [quitEventLoop](#quiteventloop)
   - [pumpEvents](#pumpevents)
   - [EventLoopOptions](#eventloopoptions)
 - [App activation](#app-activation)
@@ -792,19 +793,31 @@ An app with no webview window, such as a menu-bar app, has nothing to call `run(
 function runEventLoop(options: EventLoopOptions = {}): Promise<void>
 ```
 
-Runs the OS loop from Bun's event loop: calls [`pumpEvents`](#pumpevents) every `intervalMs` until `signal` aborts or the OS ends the loop, then resolves. Create the tray, notifier and windows on the same thread, before or after the call.
+Runs the OS loop from Bun's event loop: calls [`pumpEvents`](#pumpevents) every `intervalMs` until [`quitEventLoop`](#quiteventloop) is called or the OS ends the loop, then resolves. Create the tray, notifier and windows on the same thread, before or after the call. One loop per process.
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
-| `options` | [`EventLoopOptions`](#eventloopoptions) | `{}` | The signal that ends the loop and the tick interval. |
+| `options` | [`EventLoopOptions`](#eventloopoptions) | `{}` | The tick interval. |
 
-Returns: a promise that resolves when `signal` aborts, at once for a signal already aborted, or when `pumpEvents` returns false. Without a signal the loop runs until the process exits.
+Returns: a promise that resolves when `quitEventLoop` is called or when `pumpEvents` returns false.
 
-Throws: `RangeError` `intervalMs must be a number of at least 1, got <value>` when `intervalMs` is below 1 or not a number. Linux: throws like every other native call, synchronously.
+Throws: `RangeError` `intervalMs must be a number of at least 1, got <value>` when `intervalMs` is below 1 or not a number; `Error` `sweetnative: runEventLoop is already running` for a second call while one runs. Linux: throws like every other native call, synchronously.
 
 Platforms: Windows: implemented. macOS: implemented. Linux: throws.
 
 Thread: UI thread. One process has one OS loop, so an app calls either this or `run()` on a webview app, never both. A webview app can be hosted by this loop instead of `run()`: create the window with `createOverlayWindow`, pass it to `createWebviewApp`, show it, and call `runEventLoop`. The page loads, `uiMethods` are answered, and Bun timers and promises run on the UI thread, so such an app needs no worker (verified on macOS; not yet run on Windows). Without `run()` nothing destroys the webview or terminates a worker when the loop ends; an app that has either exits the process instead.
+
+### quitEventLoop
+
+```ts
+function quitEventLoop(): void
+```
+
+Ends the loop `runEventLoop` is running, so its promise resolves; the pair of `run()` and `quit()` on a webview app. Call it from a menu item, a timer, a `uiMethods` handler or `process.on("SIGINT", quitEventLoop)`. A no-op when no loop runs.
+
+Platforms: Windows: implemented. macOS: implemented. Linux: throws.
+
+Thread: UI thread.
 
 ### pumpEvents
 
@@ -824,14 +837,12 @@ Thread: UI thread. Handlers run from inside this call: the tray's click and menu
 
 ```ts
 type EventLoopOptions = {
-  signal?: AbortSignal;
   intervalMs?: number;
 };
 ```
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
-| `signal` | `AbortSignal` | none | Ends the loop when aborted. A standard `AbortSignal` from an `AbortController` (`controller.signal`; `controller.abort()` ends the loop), or a combined one from `AbortSignal.any` / `AbortSignal.timeout`. sweetview has no signal type of its own. |
 | `intervalMs` | `number` | `16` | How often pending events are drained, in milliseconds. The delay before a click reaches its handler is at most this; the menu, once open, tracks at native speed inside the pump. |
 
 ## App activation
@@ -1247,18 +1258,17 @@ app.run();
 No webview and no worker: `runEventLoop` runs the OS loop from Bun's event loop, so the delay below is a plain `setTimeout` on the UI thread.
 
 ```ts
-import { createNotifier, createTray, dotIcon, runEventLoop, setActivationPolicy, type MenuTemplate } from "@n1h/sweetview/native";
+import { createNotifier, createTray, dotIcon, quitEventLoop, runEventLoop, setActivationPolicy, type MenuTemplate } from "@n1h/sweetview/native";
 
 setActivationPolicy("accessory"); // macOS: no Dock tile
-const quit = new AbortController();
 const notify = () => notifier.notify({ title: "My app", body: "Hello from the menu bar" });
 const menu = (): MenuTemplate => [
   { label: "Notify Now", click: notify },
   { label: "Notify in 5 Seconds", click: () => setTimeout(notify, 5000) },
   { type: "separator" },
-  { label: "Quit", click: () => quit.abort() },
+  { label: "Quit", click: quitEventLoop },
 ];
 createTray({ tooltip: "My app", icon: { windows: { ico: dotIcon() }, macos: { symbol: "bell.fill" } }, menu });
 const notifier = createNotifier();
-await runEventLoop({ signal: quit.signal });
+await runEventLoop();
 ```

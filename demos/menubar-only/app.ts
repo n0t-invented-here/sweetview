@@ -8,7 +8,7 @@
 //   just demos menubar-only compile  (executables and the .app bundle)
 //   just demos menubar-only open     (compile, then launch the .app on macOS)
 
-import { createTray, runEventLoop, setActivationPolicy, type MenuTemplate } from "@n1h/sweetview/native";
+import { createTray, quitEventLoop, runEventLoop, setActivationPolicy, type MenuTemplate } from "@n1h/sweetview/native";
 import { TRAY_ICON } from "./icon";
 
 const APP_NAME = "Menubar Only";
@@ -21,14 +21,13 @@ const upFor = () => {
 };
 
 setActivationPolicy("accessory"); // macOS: no Dock tile and no app menu; the status item is the whole app
-const quit = new AbortController();
 
 const menu = (): MenuTemplate => [
   { label: upFor(), enabled: false },
   { type: "separator" },
   { label: "Clock in Tooltip", checked: clockInTooltip, click: () => (clockInTooltip = !clockInTooltip) },
   { type: "separator" },
-  { label: `Quit ${APP_NAME}`, click: () => quit.abort() },
+  { label: `Quit ${APP_NAME}`, click: quitEventLoop },
 ];
 
 const tray = createTray({ tooltip: APP_NAME, icon: TRAY_ICON, menu });
@@ -36,7 +35,7 @@ const tray = createTray({ tooltip: APP_NAME, icon: TRAY_ICON, menu });
 // A plain Bun timer on the UI thread: it runs because runEventLoop leaves Bun's event loop in charge.
 const clock = setInterval(() => tray.setTooltip(clockInTooltip ? `${APP_NAME} · ${new Date().toLocaleTimeString()}` : APP_NAME), 1000);
 
-await runEventLoop({ signal: quit.signal });
+await runEventLoop();
 
 clearInterval(clock);
 tray.dispose();

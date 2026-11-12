@@ -3,7 +3,7 @@
 // gets a Dock tile from finishLaunching.
 
 import { describe, expect, test } from "bun:test";
-import { pumpEvents, runEventLoop, setActivationPolicy } from "./event-loop";
+import { pumpEvents, quitEventLoop, runEventLoop, setActivationPolicy } from "./event-loop";
 
 const supported = process.platform === "win32" || process.platform === "darwin";
 
@@ -25,19 +25,16 @@ describe("event loop", () => {
     expect(pumpEvents()).toBe(true); // a second pump reuses the launched app
   });
 
-  test.if(supported)("runEventLoop resolves when its signal aborts, and at once for a signal already aborted", async () => {
+  test.if(supported)("runEventLoop resolves when quitEventLoop is called; a second loop at the same time throws; quit with no loop is a no-op", async () => {
     setActivationPolicy("prohibited");
-    const controller = new AbortController();
+    quitEventLoop();
     let settled = false;
-    const loop = runEventLoop({ signal: controller.signal, intervalMs: 1 }).then(() => (settled = true));
+    const loop = runEventLoop({ intervalMs: 1 }).then(() => (settled = true));
     await Bun.sleep(10); // a few pumps happen meanwhile
     expect(settled).toBe(false);
-    controller.abort();
+    expect(() => runEventLoop()).toThrow(/already running/);
+    quitEventLoop();
     await loop;
     expect(settled).toBe(true);
-
-    const done = new AbortController();
-    done.abort();
-    await runEventLoop({ signal: done.signal });
   });
 });

@@ -5,5 +5,5 @@ export { createWebviewApp, type Asset, type UiMethods, type WebviewApp, type Web
 export { assetMime, indexHtml, indexHtmlText, type IndexHtmlOptions } from "./html";
 export { windowChromeMethods, type WindowChromeInfo, type WindowChromeKind, type WindowChromeMethodTable, type WindowChromeMethods, type WindowChromeOptions } from "./window-chrome";
 export { Ring } from "./ring";
-export { pumpEvents, runEventLoop, setActivationPolicy, type ActivationPolicy, type EventLoopOptions } from "./native/event-loop";
+export { pumpEvents, quitEventLoop, runEventLoop, setActivationPolicy, type ActivationPolicy, type EventLoopOptions } from "./native/event-loop";
 export { SizeHint, WEBVIEW_VERSION, Webview } from "@n1h/sweetview-webview-bun";

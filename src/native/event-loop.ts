@@ -11,8 +11,6 @@ import { backend } from "./platform";
 export type ActivationPolicy = "regular" | "accessory" | "prohibited";
 
 export type EventLoopOptions = {
-  /** Ends the loop when aborted. Without one the loop runs until the process exits. */
-  signal?: AbortSignal;
   /** How often pending OS events are drained, in milliseconds. Default 16. */
   intervalMs?: number;
 };
@@ -35,30 +33,34 @@ export function pumpEvents(): boolean {
   return impl().pumpEvents();
 }
 
+let stopRunning: (() => void) | undefined;
+
 /**
  * Runs the OS loop from Bun's event loop: `pumpEvents` every `intervalMs`
- * until `signal` aborts or the OS ends the loop. Resolves then. Create the
- * tray, notifier and windows before or after calling it, on this thread.
+ * until `quitEventLoop` is called or the OS ends the loop. Resolves then.
+ * Create the tray, notifier and windows before or after calling it, on this
+ * thread. One loop per process: a second call while one runs throws.
  */
 export function runEventLoop(options: EventLoopOptions = {}): Promise<void> {
-  const { signal, intervalMs = 16 } = options;
+  const { intervalMs = 16 } = options;
   if (!Number.isFinite(intervalMs) || intervalMs < 1) throw new RangeError(`intervalMs must be a number of at least 1, got ${intervalMs}`);
+  if (stopRunning) throw new Error("sweetnative: runEventLoop is already running");
   const { pumpEvents: pump } = impl(); // an unsupported OS throws here, synchronously, like every other native call
   return new Promise((resolve) => {
-    if (signal?.aborted) {
-      resolve();
-      return;
-    }
-    const stop = () => {
+    const timer = setInterval(() => {
+      if (!pump()) stopRunning?.();
+    }, intervalMs);
+    stopRunning = () => {
       clearInterval(timer);
-      signal?.removeEventListener("abort", stop);
+      stopRunning = undefined;
       resolve();
     };
-    const timer = setInterval(() => {
-      if (!pump()) stop();
-    }, intervalMs);
-    signal?.addEventListener("abort", stop);
   });
+}
+
+/** Ends the loop `runEventLoop` is running, so its promise resolves; the pair of `run()` and `quit()` on a webview app. A no-op when no loop runs. */
+export function quitEventLoop(): void {
+  stopRunning?.();
 }
 
 /** macOS: how the app appears in the Dock and the app switcher; `accessory` for a menu-bar app. Windows: no-op. */

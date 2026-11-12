@@ -49,21 +49,20 @@ While `run()` runs, Bun's event loop on the UI thread does not turn: no `setTime
 
 ### `runEventLoop`: the loop on a Bun timer
 
-`runEventLoop` from `@n1h/sweetview/native` (also exported from the root module) never blocks. Every `intervalMs` (default 16) it calls `pumpEvents`, which dispatches every OS event waiting for the thread and returns: `PeekMessage` / `DispatchMessage` on Windows, `nextEventMatchingMask:` / `sendEvent:` on macOS with `finishLaunching` once. Between pumps the thread is Bun's, so `setTimeout`, promises and I/O work on the UI thread and the app needs no worker. The returned promise resolves when the `AbortSignal` passed in aborts, or when the OS ends the loop (`WM_QUIT` on Windows). A click reaches its handler at most one interval late; a menu, once open, tracks at native speed inside the pump.
+`runEventLoop` from `@n1h/sweetview/native` (also exported from the root module) never blocks. Every `intervalMs` (default 16) it calls `pumpEvents`, which dispatches every OS event waiting for the thread and returns: `PeekMessage` / `DispatchMessage` on Windows, `nextEventMatchingMask:` / `sendEvent:` on macOS with `finishLaunching` once. Between pumps the thread is Bun's, so `setTimeout`, promises and I/O work on the UI thread and the app needs no worker. The returned promise resolves when `quitEventLoop()` is called, the pair of `run()` and `quit()`, or when the OS ends the loop (`WM_QUIT` on Windows). A click reaches its handler at most one interval late; a menu, once open, tracks at native speed inside the pump.
 
-`signal` is a standard `AbortSignal`, the platform's one-shot "stop" token (the same type `fetch` takes); sweetview defines no signal type of its own. You get one from an `AbortController`: `controller.signal` is handed to the loop, `controller.abort()` ends it, from anywhere on the UI thread: a menu item, a timer, a page call answered in `uiMethods`, or the process signal `SIGINT` via `process.on("SIGINT", () => controller.abort())`. To stop on any of several conditions, pass `AbortSignal.any([a, b])`; to stop after a time, `AbortSignal.timeout(ms)`. A signal already aborted resolves the loop at once; no signal at all means the loop runs until the process exits. A menu-bar app with no window uses only this: its tray and notifier, then `await runEventLoop({ signal })`. A webview app can be hosted by it too: create the window with `createOverlayWindow`, pass `window: overlay.handle` to `createWebviewApp`, show the window, and `await runEventLoop(...)` instead of calling `run()`. The page loads, `uiMethods` are answered, page calls flow, Bun timers tick on the UI thread (verified on macOS; not yet run on Windows). Nothing is torn down when the loop ends; call `app.dispose()` for `run()`'s cleanup, or exit the process.
+`quitEventLoop()` can be called from anywhere on the UI thread: a menu item, a timer, a page call answered in `uiMethods`, or `process.on("SIGINT", quitEventLoop)`. A menu-bar app with no window uses only this: its tray and notifier, then `await runEventLoop()`. A webview app can be hosted by it too: create the window with `createOverlayWindow`, pass `window: overlay.handle` to `createWebviewApp`, show the window, and `await runEventLoop(...)` instead of calling `run()`. The page loads, `uiMethods` are answered, page calls flow, Bun timers tick on the UI thread (verified on macOS; not yet run on Windows). Nothing is torn down when the loop ends; call `app.dispose()` for `run()`'s cleanup, or exit the process.
 
 ```ts
 import { createWebviewApp, indexHtml } from "@n1h/sweetview";
-import { createOverlayWindow, createTray, runEventLoop } from "@n1h/sweetview/native";
+import { createOverlayWindow, createTray, quitEventLoop, runEventLoop } from "@n1h/sweetview/native";
 
 const win = createOverlayWindow({ frame: true, title: "Hello", topmost: false, hideFromTaskbar: false, noActivate: false });
 const app = await createWebviewApp({ window: win.handle, assets: { "index.html": indexHtml({ title: "Hello", body: "<h1>Hello</h1>" }) }, uiMethods: {} });
-const quit = new AbortController();
-createTray({ tooltip: "Hello", menu: () => [{ label: "Show", click: () => win.show() }, { label: "Quit", click: () => quit.abort() }] });
+createTray({ tooltip: "Hello", menu: () => [{ label: "Show", click: () => win.show() }, { label: "Quit", click: quitEventLoop }] });
 win.show();
 setInterval(() => app.emit("tick", Date.now()), 1000); // a plain Bun timer on the UI thread
-await runEventLoop({ signal: quit.signal });
+await runEventLoop();
 app.dispose();
 ```
 
@@ -74,7 +73,7 @@ app.dispose();
 | Loop | the platform's blocking loop | pumped from a Bun timer |
 | Bun on the UI thread | blocked: timers, promises, I/O wait | alive |
 | App logic | in a worker | on the UI thread, or in a worker if you want one |
-| Ends when | `quit()`, or the library's window closes | the signal aborts, or `WM_QUIT` |
+| Ends when | `quit()`, or the library's window closes | `quitEventLoop()`, or `WM_QUIT` |
 | Cleanup | automatic on return | `app.dispose()` |
 | Idle cost | none | one wake per interval, about 0.5 % CPU at 16 ms |
 | Verified | Windows and macOS | macOS; Windows not yet |
