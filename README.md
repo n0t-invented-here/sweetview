@@ -39,7 +39,7 @@ platform differences and thread rules.
 
 | Module | Contents |
 |---|---|
-| [`@n1h/sweetview`](docs/app.md) | `createWebviewApp`: the window, the page, assets, the transport between page, UI thread and worker; `indexHtml`, `assetMime`, `Ring`, and `Webview` from the webview library |
+| [`@n1h/sweetview`](docs/app.md) | `createWebviewApp`: the window, the page, assets, the transport between page, UI thread and worker; `runEventLoop` and `quitEventLoop` for an app with no window, or a window with no worker; `indexHtml`, `assetMime`, `Ring`, and `Webview` from the webview library |
 | [`@n1h/sweetview/worker`](docs/worker.md) | `hostService` |
 | [`@n1h/sweetview/page`](docs/page.md) | `isWebview`, `webviewTransport` |
 | [`@n1h/sweetview/ipc`](docs/ipc.md) | the contract: `defineService`, `createBridge`, `memoryTransport`, the wire frames |
@@ -212,6 +212,11 @@ shared-memory ring; in a browser, the same call goes over a WebSocket.
 
 The contract is the same `Methods` and `Events` types on both sides. The
 mechanism is described under [Transport](docs/app.md#transport).
+
+The loop can instead be run from a Bun timer with `runEventLoop`, which keeps
+Bun's event loop alive on the UI thread, so an app needs no worker and a
+menu-bar app needs no window; [The event loop](docs/app.md#the-event-loop)
+explains both ways and when to use which.
 
 ## Platforms
 
