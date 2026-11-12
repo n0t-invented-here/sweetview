@@ -259,8 +259,8 @@ from the repository root:
 |---|---|
 | `just check` | `tsc --noEmit` over `src/` and `demos/`, then `bun test` |
 | `just demos web-app serve` | the web build on `http://127.0.0.1:4747` (`PORT`, `HOST`) |
-| `just demos web-app app`, `just demos desktop-pet app` | the desktop application from source, with `bun run` (`WEBVIEW_DEBUG=1` opens devtools) |
-| `just demos web-app compile`, `just demos desktop-pet compile` | Windows exe, macOS arm64 binary and `.app` into each demo's `dist/` |
+| `just demos web-app app`, `just demos desktop-pet app`, `just demos menubar-only app`, `just demos menubar-notify app` | the desktop application from source, with `bun run` (`WEBVIEW_DEBUG=1` opens devtools) |
+| `just demos web-app compile`, `just demos desktop-pet compile`, `just demos menubar-only compile`, `just demos menubar-notify compile` | Windows exe, macOS arm64 binary and `.app` into each demo's `dist/` |
 | `just compile`, `just clean` | both demos |
 | `just pack` | what `bun publish` would upload |
 | `just publish` | publishes `@n1h/sweetview`; needs a registry login |
