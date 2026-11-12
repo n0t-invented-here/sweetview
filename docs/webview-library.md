@@ -85,6 +85,9 @@ does.
 | `webview_set_asset` returns an error | Throws `sweetview: webview_set_asset(<path>) failed (<code>)`. |
 | Asset `mime` | From the path's extension; unknown extensions get `application/octet-stream`. |
 
+- [Source](#source)
+- [Rebuilding](#rebuilding)
+
 ## Source
 
 - Library: https://github.com/n0t-invented-here/sweetview-webview, default

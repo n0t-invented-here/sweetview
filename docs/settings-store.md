@@ -6,6 +6,13 @@ A settings file for a small app: one JSON document in the user's per-app folder,
 import { appDataDir, createSettingsStore, type SettingsStore, type SettingsStoreOptions } from "@n1h/sweetview/settings-store";
 ```
 
+- [Reference](#reference)
+  - [appDataDir](#appdatadir)
+  - [SettingsStoreOptions](#settingsstoreoptions)
+  - [SettingsStore](#settingsstore)
+  - [createSettingsStore](#createsettingsstore)
+- [Example](#example)
+
 ## Reference
 
 ### appDataDir

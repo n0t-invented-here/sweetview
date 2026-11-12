@@ -6,6 +6,18 @@ The [`ipc`](ipc.md) contract over WebSockets, so a `Service` served by `Bun.serv
 import { wsHost, type WsData, type WsHost, type WsHostOptions, wsTransport, wsUrl, type WsTransport } from "@n1h/sweetview/ipc-ws";
 ```
 
+- [Server: `@n1h/sweetview/ipc-ws/server`](#server-n1hsweetviewipc-wsserver)
+  - [wsHost](#wshost)
+  - [WsData](#wsdata)
+  - [WsHost](#wshost-1)
+  - [WsHostOptions](#wshostoptions)
+- [Client: `@n1h/sweetview/ipc-ws/client`](#client-n1hsweetviewipc-wsclient)
+  - [wsTransport](#wstransport)
+  - [wsUrl](#wsurl)
+  - [WsTransport](#wstransport-1)
+- [Wire protocol](#wire-protocol)
+- [Example](#example)
+
 ## Server: `@n1h/sweetview/ipc-ws/server`
 
 Bun only. Its types come from `bun`. It works with `Bun.serve`, on the main thread or in a Worker.

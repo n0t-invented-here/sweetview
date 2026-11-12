@@ -6,6 +6,14 @@ Build-time helpers for shipping an app: the icon files a build uses, and the mac
 import { makeMacApp, writeIconFiles, type MacAppOptions } from "@n1h/sweetview/build";
 ```
 
+- [Reference](#reference)
+  - [MacAppOptions](#macappoptions)
+  - [makeMacApp](#makemacapp)
+  - [writeIconFiles](#writeiconfiles)
+- [make-app command line](#make-app-command-line)
+- [File-import types](#file-import-types)
+- [Example](#example)
+
 ## Reference
 
 ### MacAppOptions

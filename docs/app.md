@@ -9,6 +9,30 @@ event loop. Install and the overview are in the [package README](../README.md).
 import { createWebviewApp, type Asset, type UiMethods, type WebviewApp, type WebviewAppOptions, assetMime, indexHtml, indexHtmlText, type IndexHtmlOptions, windowChromeMethods, type WindowChromeInfo, type WindowChromeKind, type WindowChromeMethodTable, type WindowChromeMethods, type WindowChromeOptions, Ring, SizeHint, WEBVIEW_VERSION, Webview } from "@n1h/sweetview";
 ```
 
+- [Reference](#reference)
+  - [createWebviewApp](#createwebviewapp)
+  - [Asset](#asset)
+  - [UiMethods](#uimethods)
+  - [WebviewApp](#webviewapp)
+  - [WebviewAppOptions](#webviewappoptions)
+  - [assetMime](#assetmime)
+  - [indexHtml](#indexhtml)
+  - [indexHtmlText](#indexhtmltext)
+  - [IndexHtmlOptions](#indexhtmloptions)
+  - [windowChromeMethods](#windowchromemethods)
+  - [WindowChromeInfo](#windowchromeinfo)
+  - [WindowChromeKind](#windowchromekind)
+  - [WindowChromeMethodTable](#windowchromemethodtable)
+  - [WindowChromeMethods](#windowchromemethods-1)
+  - [WindowChromeOptions](#windowchromeoptions)
+  - [Ring](#ring)
+  - [SizeHint](#sizehint)
+  - [WEBVIEW_VERSION](#webview_version)
+  - [Webview](#webview)
+- [Page loading](#page-loading)
+- [Transport](#transport)
+- [Example](#example)
+
 ## Reference
 
 ### createWebviewApp

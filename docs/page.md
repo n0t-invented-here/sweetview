@@ -6,6 +6,12 @@ The page module gives browser code a transport to the window host. It runs in th
 import { isWebview, webviewTransport } from "@n1h/sweetview/page";
 ```
 
+- [Reference](#reference)
+  - [isWebview](#iswebview)
+  - [webviewTransport](#webviewtransport)
+- [Globals](#globals)
+- [Example](#example)
+
 ## Reference
 
 ### isWebview

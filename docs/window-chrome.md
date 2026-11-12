@@ -6,6 +6,21 @@ A window chrome drawn by the page: the title bar, the minimise, maximise and clo
 import { resizeHandles, windowChromeControls, windowChromeMethods, type ResizeHandle, type WindowChromeControls, type WindowChromeInfo, type WindowChromeKind, type WindowChromeMethods, type WindowChromeMethodTable, type WindowChromeOptions } from "@n1h/sweetview/window-chrome";
 ```
 
+- [Shared types](#shared-types)
+  - [WindowChromeKind](#windowchromekind)
+  - [WindowChromeInfo](#windowchromeinfo)
+  - [WindowChromeMethods](#windowchromemethods)
+  - [WindowChromeMethodTable](#windowchromemethodtable)
+- [UI thread](#ui-thread)
+  - [WindowChromeOptions](#windowchromeoptions)
+  - [windowChromeMethods](#windowchromemethods-1)
+- [Page](#page)
+  - [WindowChromeControls](#windowchromecontrols)
+  - [windowChromeControls](#windowchromecontrols-1)
+  - [ResizeHandle](#resizehandle)
+  - [resizeHandles](#resizehandles)
+- [Example](#example)
+
 ## Shared types
 
 These types describe the contract between the two halves. They are usable in both environments.

@@ -6,6 +6,10 @@ The worker module hosts the app's Service behind a sweetview window. It runs ins
 import { hostService } from "@n1h/sweetview/worker";
 ```
 
+- [Reference](#reference)
+  - [hostService](#hostservice)
+- [Example](#example)
+
 ## Reference
 
 ### hostService

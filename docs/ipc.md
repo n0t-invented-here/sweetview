@@ -6,6 +6,29 @@ The typed contract between a page and its backend: a `Service` on the backend, a
 import { type CallFrame, type EventFrame, type Frame, type ReplyFrame, defineService, type AnyEvent, type Ctx, type Emit, type EventMap, type Handlers, type MethodMap, type Service, type ServiceDefinition, type Session, type SessionKind, createBridge, type Bridge, type Transport, type TransportKind, memoryTransport } from "@n1h/sweetview/ipc";
 ```
 
+- [Reference](#reference)
+  - [CallFrame](#callframe)
+  - [EventFrame](#eventframe)
+  - [Frame](#frame)
+  - [ReplyFrame](#replyframe)
+  - [defineService](#defineservice)
+  - [AnyEvent](#anyevent)
+  - [Ctx](#ctx)
+  - [Emit](#emit)
+  - [EventMap](#eventmap)
+  - [Handlers](#handlers)
+  - [MethodMap](#methodmap)
+  - [Service](#service)
+  - [ServiceDefinition](#servicedefinition)
+  - [Session](#session)
+  - [SessionKind](#sessionkind)
+  - [createBridge](#createbridge)
+  - [Bridge](#bridge)
+  - [Transport](#transport)
+  - [TransportKind](#transportkind)
+  - [memoryTransport](#memorytransport)
+- [Example](#example)
+
 ## Reference
 
 ### CallFrame
