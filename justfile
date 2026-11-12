@@ -11,6 +11,11 @@ mod webview
 chk := '; if ($LASTEXITCODE) { exit $LASTEXITCODE }'
 
 
+# `just`: the recipes and modules here
+@_default:
+    just --justfile "{{justfile()}}" --list
+
+# Workspace dependencies
 install:
     bun install {{chk}}
 
