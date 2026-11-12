@@ -10,7 +10,7 @@ import { backend } from "./platform";
 export type NotificationOptions = {
   title: string;
   body?: string;
-  /** Default false. */
+  /** Suppresses only the sound; the notification still shows. Default false. */
   silent?: boolean;
   /**
    * Names the notification; `onClick` reports it. Default `sweetnative-<n>`,
@@ -26,6 +26,7 @@ export type NotificationOptions = {
 export type NotificationClick = { id: string; data: unknown };
 
 export type NotifierOptions = {
+  /** Runs on the UI thread. On Windows the tray holds a single handler, so only the newest notifier's `onClick` fires. */
   onClick?: (click: NotificationClick) => void;
 };
 
@@ -42,6 +43,7 @@ export interface Notifier {
 }
 
 let nextId = 1;
+/** Call once per notification: without an `id`, every call takes the next number. */
 export const notificationId = (n: NotificationOptions): string => n.id ?? `sweetnative-${nextId++}`;
 
 type Backend = { createNotifier(options?: NotifierOptions): Notifier };

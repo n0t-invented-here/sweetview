@@ -11,6 +11,7 @@ export interface Transport {
   call(method: string, params: unknown): Promise<unknown>;
   /** Fire and forget: no reply. */
   notify(method: string, params: unknown): void;
+  /** Only events for this session: the transport drops those whose `to` names another one. Nothing is buffered, so a listener added late misses earlier events. */
   onEvent(fn: (name: string, payload: unknown) => void): () => void;
 }
 

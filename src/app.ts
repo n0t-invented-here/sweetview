@@ -48,7 +48,7 @@ export type WebviewAppOptions<M extends MethodMap> = {
    * the page's origin and the webview opens the page.
    */
   page?: HTMLBundle;
-  /** Default: the page's `<title>`, else the entry script's name. */
+  /** Also the `<title>` of the generated `index.html` when there is no page. Default: the page's `<title>`, else the entry script's file name without its extension. */
   title?: string;
   /**
    * More files for the page's origin, by asset path: models, images, data
@@ -150,6 +150,7 @@ async function pageAssets(page: HTMLBundle): Promise<{ assets: Record<string, As
   return { assets, index };
 }
 
+// An empty or blank <title> counts as none, so the window falls back to the script's name.
 const htmlTitle = (html: string): string | undefined => {
   const m = /<title[^>]*>([^<]*)<\/title>/i.exec(html);
   return m ? m[1]!.replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'").trim() || undefined : undefined;

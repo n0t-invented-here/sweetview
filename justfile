@@ -14,6 +14,7 @@ mod webview
 @_default:
     just --justfile "{{justfile()}}" --list
 
+# Dependencies for every workspace package and demo; the demos' own `install` runs this
 install:
     bun install
 

@@ -1,8 +1,9 @@
 // The backend side of the contract. A Service is transport-free: no sockets,
 // no window handles, no seq numbers. Hosts (sweetipc-ws, sweetview) wrap one.
 
-/** `void` params mean "no argument". */
+/** Params and results cross the webview and websocket hosts as JSON, so both must survive it. `void` params make the bridge method take no argument; it sends `null`. */
 export type MethodMap = Record<string, [params: unknown, result: unknown]>;
+/** Payloads cross the webview and websocket hosts as JSON, so they must survive it. */
 export type EventMap = Record<string, unknown>;
 
 export type SessionKind = "webview" | "web";
@@ -17,6 +18,7 @@ export type Emit<E extends EventMap> = <N extends keyof E & string>(name: N, pay
 
 export interface Service<M extends MethodMap, E extends EventMap> {
   call<K extends keyof M & string>(method: K, params: M[K][0], ctx: Ctx): Promise<M[K][1]>;
+  /** Every event, for every session: `to` is the target session id, or undefined for all of them, and routing it is the host's job. */
   onEvent(fn: (name: keyof E & string, payload: E[keyof E], to?: string) => void): () => void;
   /** A client went away: drop anything held for that session. */
   endSession(sessionId: string): void;

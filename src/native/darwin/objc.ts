@@ -67,6 +67,7 @@ export const jsString = (nsstr: Id): string => {
   const utf8 = asId(send(nsstr, sel("UTF8String")));
   return utf8 === NIL ? "" : new CString(Number(utf8) as Pointer).toString();
 };
+/** For classes whose plain `init` is the initializer. The caller owns the result (+1). */
 export const alloc = (className: string) => asId(send(allocRaw(className), sel("init")));
 /** [Class alloc] only, for objects that get an initWith...: next. */
 export const allocRaw = (className: string) => asId(send(cls(className), sel("alloc")));

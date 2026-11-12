@@ -8,7 +8,7 @@ export type LogEntry = { at: string; text: string };
 
 /** method name -> [params, result] */
 export type Methods = {
-  /** Answered on the UI thread. */
+  /** Answered on the UI thread, which sends the native notification at once. */
   "notify.now": [void, void];
   /** Worker: emits `notify.due` after `seconds`. A newer request replaces an older one still pending. */
   "notify.later": [{ seconds: number }, void];
