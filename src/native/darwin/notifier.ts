@@ -16,7 +16,7 @@
 // released, so the bodies read only the scalar arguments and never touch it.
 
 import { FFIType } from "bun:ffi";
-import type { Notifier, NotifierOptions } from "../notifications";
+import { type NotificationClick, type Notifier, type NotifierOptions, notificationId } from "../notifications";
 import {
   NIL,
   type Id,
@@ -24,6 +24,7 @@ import {
   asId,
   cls,
   invokeBlock,
+  jsString,
   makeBlock,
   makeTarget,
   nsString,
@@ -42,7 +43,17 @@ const UNAuthorizationOptionAlert = 4n;
 // UNNotificationPresentationOptions (macOS 11+): list | banner | sound
 const PRESENT_BANNER_LIST_SOUND = 8n | 16n | 2n;
 
-let nextId = 1;
+// userInfo key under which `data` travels, as JSON text.
+const DATA_KEY = "sweetnative.data";
+
+/** The clicked notification's request identifier and the JSON under DATA_KEY in its userInfo. */
+function readClick(response: Id): NotificationClick {
+  const request = asId(send(asId(send(response, sel("notification"))), sel("request")));
+  const id = jsString(asId(send(request, sel("identifier"))));
+  const userInfo = asId(send(asId(send(request, sel("content"))), sel("userInfo")));
+  const json = userInfo === NIL ? NIL : asId(sendPtr(userInfo, sel("objectForKey:"), nsString(DATA_KEY)));
+  return { id, data: json === NIL ? undefined : JSON.parse(jsString(json)) };
+}
 
 const bundled = (): boolean => asId(send(asId(send(cls("NSBundle"), sel("mainBundle"))), sel("bundleIdentifier"))) !== NIL;
 
@@ -57,11 +68,17 @@ export function createNotifier(options: NotifierOptions = {}): Notifier {
       args: 3,
       impl: (_center, _notification, handler) => invokeBlock(handler, [FFIType.u64], PRESENT_BANNER_LIST_SOUND),
     },
-    // Main thread: the user clicked (or dismissed) a notification.
+    // Main thread: the user clicked a notification. The response is alive for this call, so reading it here is safe.
     "userNotificationCenter:didReceiveNotificationResponse:withCompletionHandler:": {
       args: 3,
-      impl: (_center, _response, handler) => {
-        if (!disposed) options.onClick?.();
+      impl: (_center, response, handler) => {
+        if (!disposed && options.onClick) {
+          try {
+            options.onClick(readClick(response));
+          } catch (err) {
+            console.error("sweetnative: notification onClick threw:", err); // never unwind into AppKit
+          }
+        }
         invokeBlock(handler, []);
       },
     },
@@ -107,7 +124,11 @@ export function createNotifier(options: NotifierOptions = {}): Notifier {
       sendPtr(content, sel("setTitle:"), nsString(n.title));
       if (n.body) sendPtr(content, sel("setBody:"), nsString(n.body));
       if (!n.silent) sendPtr(content, sel("setSound:"), asId(send(cls("UNNotificationSound"), sel("defaultSound"))));
-      const request = asId(sendPtrPtrPtr(cls("UNNotificationRequest"), sel("requestWithIdentifier:content:trigger:"), nsString(`sweetnative-${nextId++}`), content, NIL));
+      if (n.data !== undefined) {
+        const userInfo = asId(sendPtrPtr(cls("NSDictionary"), sel("dictionaryWithObject:forKey:"), nsString(JSON.stringify(n.data)), nsString(DATA_KEY)));
+        sendPtr(content, sel("setUserInfo:"), userInfo);
+      }
+      const request = asId(sendPtrPtrPtr(cls("UNNotificationRequest"), sel("requestWithIdentifier:content:trigger:"), nsString(notificationId(n)), content, NIL));
       sendPtrPtr(center, sel("addNotificationRequest:withCompletionHandler:"), request, requestDone);
       release(content); // the request retains it
       return true;

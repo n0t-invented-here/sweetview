@@ -3,7 +3,7 @@
 Native desktop pieces for a Bun app, called over `bun:ffi`: a tray icon, notifications, control of the webview's window, overlay windows with click-through hit regions, a folder dialog, the macOS app menu and Dock icon, the OS event loop for an app with no webview window, menus as data, and icon encoders. Every function that touches the OS is implemented for Windows and macOS and runs on the UI thread, the thread that owns the window and spins the webview's run loop. The menu, icon and hit-region helpers are plain TypeScript; all but `createHitRelay` run on any thread. Install and the overview are in [../README.md](../README.md).
 
 ```ts
-import { createTray, createNotifier, nativeWindow, createOverlayWindow, makeOverlay, convexHull, createHitRelay, flattenRegions, hitRegions, packRegions, unpackRegions, pickFolder, installAppMenu, setAppIcon, setActivationPolicy, pumpEvents, runEventLoop, resolveMenu, decodePng, dotIcns, dotIcon, dotPng, encodeIcns, encodeIco, encodePng, icnsFromPng, icnsFromRgba, icoFromPng, icoFromRgba, renderDot, trimTransparent, type Tray, type TrayIcon, type TrayOptions, type NotificationOptions, type Notifier, type NotifierOptions, type NativeWindow, type WindowHandle, type Overlay, type OverlayOptions, type OverlayWindowOptions, type HitRefiner, type Point, type Rect, type ResizeEdge, type HitPolygon, type HitProbe, type HitRelay, type AppMenuOptions, type ActivationPolicy, type EventLoopOptions, type MenuItem, type MenuSource, type MenuTemplate, type DecodedPng, type DotIconOptions, type Icon } from "@n1h/sweetview/native";
+import { createTray, createNotifier, nativeWindow, createOverlayWindow, makeOverlay, convexHull, createHitRelay, flattenRegions, hitRegions, packRegions, unpackRegions, pickFolder, installAppMenu, setAppIcon, setActivationPolicy, pumpEvents, runEventLoop, resolveMenu, decodePng, dotIcns, dotIcon, dotPng, encodeIcns, encodeIco, encodePng, icnsFromPng, icnsFromRgba, icoFromPng, icoFromRgba, renderDot, trimTransparent, type Tray, type TrayIcon, type TrayOptions, type NotificationClick, type NotificationOptions, type Notifier, type NotifierOptions, type NativeWindow, type WindowHandle, type Overlay, type OverlayOptions, type OverlayWindowOptions, type HitRefiner, type Point, type Rect, type ResizeEdge, type HitPolygon, type HitProbe, type HitRelay, type AppMenuOptions, type ActivationPolicy, type EventLoopOptions, type MenuItem, type MenuSource, type MenuTemplate, type DecodedPng, type DotIconOptions, type Icon } from "@n1h/sweetview/native";
 ```
 
 Every function that touches the OS picks its Windows or macOS implementation on its first call. On any other OS that call throws `sweetnative: <platform> is not supported (win32 and darwin are)`. Importing the module does not throw on any OS.
@@ -115,6 +115,8 @@ type NotificationOptions = {
   title: string;
   body?: string;
   silent?: boolean;
+  id?: string;
+  data?: unknown;
 };
 ```
 
@@ -123,6 +125,8 @@ type NotificationOptions = {
 | `title` | `string` | required | The heading. Windows keeps the first 63 UTF-16 code units. |
 | `body` | `string` | `""` | The text. Windows keeps the first 255 UTF-16 code units. |
 | `silent` | `boolean` | `false` | No sound. |
+| `id` | `string` | `sweetnative-<n>`, counting up per process | Names the notification; `onClick` reports it. macOS: a new notification with the id of one still showing replaces it. |
+| `data` | `unknown` | none | Anything `JSON.stringify` accepts, such as a route or a record id; `onClick` gets it back as parsed JSON. macOS: travels in the request's `userInfo`. Windows: kept in the process for the newest balloon. |
 
 ### Notifier
 
@@ -135,20 +139,33 @@ interface Notifier {
 
 | Member | Meaning |
 |---|---|
-| `notify(notification)` | Shows a notification. Returns false when nothing is shown: after `dispose`; on Windows once the tray is disposed or when the shell refuses; on macOS without a bundle identifier. macOS returns true without waiting for the permission answer, so a denied permission still returns true. |
+| `notify(notification)` | Shows a notification. Returns false when nothing is shown: after `dispose`; on Windows once the tray is disposed or when the shell refuses; on macOS without a bundle identifier. macOS returns true without waiting for the permission answer, so a denied permission still returns true. Windows shows one balloon per tray icon, so a new one replaces the one still showing. |
 | `dispose()` | Stops showing notifications and stops calling `onClick`. Safe to call twice. |
 
 ### NotifierOptions
 
 ```ts
 type NotifierOptions = {
-  onClick?: () => void;
+  onClick?: (click: NotificationClick) => void;
 };
 ```
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
-| `onClick` | `() => void` | none | The user clicked a notification. |
+| `onClick` | `(click: NotificationClick) => void` | none | The user clicked a notification. An exception it throws is logged and swallowed. Windows: reports the newest balloon shown through this tray, because the shell says only that the balloon was clicked. |
+
+### NotificationClick
+
+```ts
+type NotificationClick = { id: string; data: unknown };
+```
+
+| Field | Type | Meaning |
+|---|---|---|
+| `id` | `string` | The clicked notification's `id`, given or generated. |
+| `data` | `unknown` | Its `data`, parsed from JSON, or `undefined` when it had none. |
+
+macOS delivers a click to the app even when it has quit since: the system launches the bundle and the delegate gets the response once the notifier exists and the loop runs, so create the notifier before `runEventLoop` or `run()`. Windows balloons belong to the running tray icon, so a click reaches only a running app.
 
 ## Windows and overlays
 

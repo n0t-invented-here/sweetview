@@ -1,6 +1,6 @@
 // One module per feature. Import what you use.
 export { createTray, type Tray, type TrayIcon, type TrayOptions } from "./tray";
-export { createNotifier, type NotificationOptions, type Notifier, type NotifierOptions } from "./notifications";
+export { createNotifier, type NotificationClick, type NotificationOptions, type Notifier, type NotifierOptions } from "./notifications";
 export { nativeWindow, type NativeWindow, type WindowHandle } from "./window";
 export {
   createOverlayWindow,

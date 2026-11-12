@@ -16,6 +16,7 @@ const DELAY_SECONDS = 5;
 
 let status = "No notification sent yet";
 let pending: ReturnType<typeof setTimeout> | undefined;
+let sent = 0;
 const now = () => new Date().toLocaleTimeString();
 
 setActivationPolicy("accessory"); // macOS: no Dock tile and no app menu; the status item is the whole app
@@ -23,11 +24,14 @@ const quit = new AbortController();
 
 const tray = createTray({ tooltip: APP_NAME, icon: TRAY_ICON, menu: () => menu() });
 // Windows: the notifier hangs off the tray, so it comes after.
-const notifier = createNotifier({ onClick: () => (status = `Notification clicked at ${now()}`) });
+// A click says which notification it was and what it carried: here the time it was sent.
+const notifier = createNotifier({
+  onClick: ({ id, data }) => (status = `Clicked ${id} (sent at ${(data as { sentAt: string }).sentAt}) at ${now()}`),
+});
 
 const send = (body: string) => {
   pending = undefined;
-  const shown = notifier.notify({ title: APP_NAME, body });
+  const shown = notifier.notify({ id: `menubar-notify-${++sent}`, title: APP_NAME, body, data: { sentAt: now() } });
   status = shown ? `Sent at ${now()}` : "Not shown: on macOS run the .app, not the bare binary";
   if (!shown) console.error(status);
 };

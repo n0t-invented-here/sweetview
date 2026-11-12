@@ -7,7 +7,7 @@
 
 import { resolveMenu } from "../menu";
 import type { MenuSource } from "../menu";
-import type { NotificationOptions } from "../notifications";
+import { type NotificationClick, type NotificationOptions, notificationId } from "../notifications";
 import type { Tray, TrayOptions } from "../tray";
 import {
   SM_CXICON,
@@ -68,9 +68,10 @@ let taskbarCreated: number | undefined;
  */
 export interface Win32Tray extends Tray {
   readonly balloon: {
-    /** Shows a balloon (a toast on Windows 10/11). False once the tray is disposed or when the shell refuses. */
+    /** Shows a balloon (a toast on Windows 10/11), replacing the one still showing. False once the tray is disposed or when the shell refuses. */
     show(n: NotificationOptions): boolean;
-    onClick(fn: (() => void) | undefined): void;
+    /** Called with the newest balloon's id and data: the shell reports only that the balloon was clicked. */
+    onClick(fn: ((click: NotificationClick) => void) | undefined): void;
   };
 }
 
@@ -114,7 +115,8 @@ export function createTray(options: TrayOptions): Win32Tray {
   let icon = loadIcon(options.icon?.windows?.ico);
   let balloonIcon = loadIcon(options.icon?.windows?.ico, SM_CXICON); // toasts want the 32px image
   let tooltip = options.tooltip ?? "";
-  let balloonClick: (() => void) | undefined;
+  let balloonClick: ((click: NotificationClick) => void) | undefined;
+  let lastBalloon: NotificationClick | undefined; // the shell shows one balloon per icon, so the click is for this one
   let menu: MenuSource | undefined = options.menu;
   let disposed = false;
   let menuOpen = false;
@@ -146,7 +148,7 @@ export function createTray(options: TrayOptions): Win32Tray {
   const onTrayMessage = (mouse: number) => {
     switch (mouse) {
       case NIN_BALLOONUSERCLICK:
-        balloonClick?.();
+        if (lastBalloon) balloonClick?.(lastBalloon);
         return;
       case WM_RBUTTONUP: {
         if (menuOpen || menu === undefined) return;
@@ -187,6 +189,7 @@ export function createTray(options: TrayOptions): Win32Tray {
         const nid = notifyIconData(window.hwnd, uid, icon.handle, tooltip, { title: n.title, body: n.body ?? "", silent: n.silent === true, hIcon });
         const ok = shell32.Shell_NotifyIconW(NIM_MODIFY, nid) !== 0;
         if (!ok) console.error(`sweetnative: Shell_NotifyIcon balloon failed (${lastError()})`);
+        if (ok) lastBalloon = { id: notificationId(n), data: n.data };
         return ok;
       },
       onClick(fn) {
