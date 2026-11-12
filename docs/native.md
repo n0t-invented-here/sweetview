@@ -78,7 +78,9 @@ Every function that touches the OS picks its Windows or macOS implementation on 
   - [DecodedPng](#decodedpng)
   - [DotIconOptions](#doticonoptions)
   - [Icon](#icon)
-- [Example](#example)
+- [Examples](#examples)
+  - [A tray beside a window](#a-tray-beside-a-window)
+  - [A menu-bar app with no window](#a-menu-bar-app-with-no-window)
 
 ## Tray
 
@@ -1216,7 +1218,11 @@ An icon with one section per platform; each platform reads only its own. A missi
 | `macos.png` | `Uint8Array` | none | PNG bytes. Sized by the use: 18x18 points in the menu bar, 16x16 in menus, the PNG's own size in the Dock. Supply 2x pixels for Retina. |
 | `macos.template` | `boolean` | `true` in the menu bar and menus, `false` for the Dock | A monochrome image the system recolours for light and dark. A colour image wants `false`. |
 
-## Example
+## Examples
+
+### A tray beside a window
+
+The window is hidden until the tray's menu or a notification click shows it; `run()` on the webview app runs the OS loop.
 
 ```ts
 import { createWebviewApp } from "@n1h/sweetview";
@@ -1236,7 +1242,9 @@ createNotifier({ onClick: () => settings.show() }).notify({ title: "My app", bod
 app.run();
 ```
 
-The same tray with no window at all, so the delay below is a plain `setTimeout` on the UI thread:
+### A menu-bar app with no window
+
+No webview and no worker: `runEventLoop` runs the OS loop from Bun's event loop, so the delay below is a plain `setTimeout` on the UI thread.
 
 ```ts
 import { createNotifier, createTray, dotIcon, runEventLoop, setActivationPolicy, type MenuTemplate } from "@n1h/sweetview/native";
