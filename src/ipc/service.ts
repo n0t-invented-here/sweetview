@@ -3,6 +3,7 @@
 
 /** `void` params mean "no argument". */
 export type MethodMap = Record<string, [params: unknown, result: unknown]>;
+/** event name -> payload */
 export type EventMap = Record<string, unknown>;
 
 export type SessionKind = "webview" | "web";
