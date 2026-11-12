@@ -32,14 +32,14 @@ compile-win: frontend icons
 compile-mac: frontend
     bun build --compile --target=bun-darwin-arm64 --minify --sourcemap app.ts app-worker.ts --outfile dist/{{exe}}-macos-arm64
 
-# make-app signs it ad-hoc; notifications need that and the bundle id
+# Signed ad-hoc by make-app; notifications need that and the bundle id
 mac-app: icons compile-mac
     bun ../../src/make-app.ts --name "{{name}}" --bundle-id dev.mrowr.menubar-notify --binary dist/{{exe}}-macos-arm64 --icns build/AppIcon.icns --plist LSUIElement=true --out dist
 
 open: mac-app
     open "dist/{{name}}.app"
 
-# ri on a missing path fails the recipe
+# A missing path makes ri fail the recipe
 clean:
     if (Test-Path build) { ri build -r -fo }
     if (Test-Path dist) { ri dist -r -fo }

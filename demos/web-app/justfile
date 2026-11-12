@@ -39,7 +39,7 @@ compile-mac:
 mac-app: icons
     bun ../../src/make-app.ts --name "Web App" --bundle-id dev.mrowr.web-app --binary dist/{{exe}}-macos-arm64 --icns build/AppIcon.icns --out dist
 
-# ri on a missing path fails the recipe
+# A missing path makes ri fail the recipe
 clean:
     if (Test-Path build) { ri build -r -fo }
     if (Test-Path dist) { ri dist -r -fo }
