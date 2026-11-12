@@ -831,7 +831,7 @@ type EventLoopOptions = {
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
-| `signal` | `AbortSignal` | none | Ends the loop when aborted. |
+| `signal` | `AbortSignal` | none | Ends the loop when aborted. A standard `AbortSignal` from an `AbortController` (`controller.signal`; `controller.abort()` ends the loop), or a combined one from `AbortSignal.any` / `AbortSignal.timeout`. sweetview has no signal type of its own. |
 | `intervalMs` | `number` | `16` | How often pending events are drained, in milliseconds. The delay before a click reaches its handler is at most this; the menu, once open, tracks at native speed inside the pump. |
 
 ## App activation
