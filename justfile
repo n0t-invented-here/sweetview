@@ -28,6 +28,5 @@ clean: demos::web-app::clean demos::desktop-pet::clean demos::menubar-only::clea
 pack:
     bun pm pack --dry-run
 
-# Needs an npm login
 publish:
     bun publish --access public
