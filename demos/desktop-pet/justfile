@@ -4,8 +4,6 @@
 set shell := ["pwsh", "-NoProfile", "-Command"]
 
 exe := "desktop-pet"
-# appended to native commands so a failure stops the recipe
-chk := '; if ($LASTEXITCODE) { exit $LASTEXITCODE }'
 # Bun embeds the exe file icon only when the build host is Windows; a Mac-built Windows exe gets Bun's stock icon (README, "Platforms").
 win_icon := if os() == "windows" { "--windows-icon=build/app.ico" } else { "" }
 
@@ -16,33 +14,33 @@ win_icon := if os() == "windows" { "--windows-icon=build/app.ico" } else { "" }
 
 # Workspace dependencies (the repo root is the Bun workspace); fast when nothing changed
 install:
-    bun install --cwd ../.. {{chk}}
+    bun install --cwd ../..
 
 # Bundle the pet page into build/frontend and the settings page into build/settings
 frontend: install
-    bun build frontend/main.ts --outdir build/frontend --minify {{chk}}
-    bun build settings/main.tsx --outdir build/settings --minify {{chk}}
+    bun build frontend/main.ts --outdir build/frontend --minify
+    bun build settings/main.tsx --outdir build/settings --minify
 
 # Run the window uncompiled (WEBVIEW_DEBUG=1 for devtools)
 app: frontend
-    bun run app.ts {{chk}}
+    bun run app.ts
 
 # Everything: page, Windows exe, macOS binary, into dist/
 compile: frontend compile-win compile-mac mac-app
 
 # The icon files the executables embed: build/app.ico (Windows) and build/AppIcon.icns (macOS bundle)
 icons: install
-    bun scripts/write-icons.ts {{chk}}
+    bun scripts/write-icons.ts
 
 compile-win: frontend icons
-    bun build --compile --target=bun-windows-x64 --windows-hide-console {{win_icon}} --minify --sourcemap app.ts app-worker.ts --outfile dist/{{exe}}-windows-x64.exe {{chk}}
+    bun build --compile --target=bun-windows-x64 --windows-hide-console {{win_icon}} --minify --sourcemap app.ts app-worker.ts --outfile dist/{{exe}}-windows-x64.exe
 
 compile-mac: frontend
-    bun build --compile --target=bun-darwin-arm64 --minify --sourcemap app.ts app-worker.ts --outfile dist/{{exe}}-macos-arm64 {{chk}}
+    bun build --compile --target=bun-darwin-arm64 --minify --sourcemap app.ts app-worker.ts --outfile dist/{{exe}}-macos-arm64
 
 # The .app bundle around the macOS binary, with build/AppIcon.icns (the cat) as its Finder and Dock icon (sweetview's make-app script)
 mac-app: icons
-    bun ../../src/make-app.ts --name Pet --bundle-id dev.mrowr.pet --binary dist/{{exe}}-macos-arm64 --icns build/AppIcon.icns --out dist {{chk}}
+    bun ../../src/make-app.ts --name Pet --bundle-id dev.mrowr.pet --binary dist/{{exe}}-macos-arm64 --icns build/AppIcon.icns --out dist
 
 # Remove build/ and dist/
 clean:

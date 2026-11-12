@@ -4,7 +4,6 @@ set shell := ["pwsh", "-NoProfile", "-Command"]
 
 exe := "menubar-only"
 name := "Menubar Only"
-chk := '; if ($LASTEXITCODE) { exit $LASTEXITCODE }'
 # Bun embeds the exe file icon only when the build host is Windows; a Mac-built Windows exe gets Bun's stock icon (README, "Platforms").
 win_icon := if os() == "windows" { "--windows-icon=build/app.ico" } else { "" }
 
@@ -15,32 +14,32 @@ win_icon := if os() == "windows" { "--windows-icon=build/app.ico" } else { "" }
 
 # Workspace dependencies (the repo root is the Bun workspace); fast when nothing changed
 install:
-    bun install --cwd ../.. {{chk}}
+    bun install --cwd ../..
 
 # Run uncompiled
 app: install
-    bun run app.ts {{chk}}
+    bun run app.ts
 
 # Everything: the Windows exe, the macOS binary and the .app bundle, into dist/
 compile: compile-win compile-mac mac-app
 
 # The icon files the executables embed: build/app.ico (Windows) and build/AppIcon.icns (the .app bundle)
 icons: install
-    bun scripts/write-icons.ts {{chk}}
+    bun scripts/write-icons.ts
 
 compile-win: icons
-    bun build --compile --target=bun-windows-x64 --windows-hide-console {{win_icon}} --minify --sourcemap app.ts --outfile dist/{{exe}}-windows-x64.exe {{chk}}
+    bun build --compile --target=bun-windows-x64 --windows-hide-console {{win_icon}} --minify --sourcemap app.ts --outfile dist/{{exe}}-windows-x64.exe
 
 compile-mac: install
-    bun build --compile --target=bun-darwin-arm64 --minify --sourcemap app.ts --outfile dist/{{exe}}-macos-arm64 {{chk}}
+    bun build --compile --target=bun-darwin-arm64 --minify --sourcemap app.ts --outfile dist/{{exe}}-macos-arm64
 
 # The .app bundle around the macOS binary, signed ad-hoc by make-app. LSUIElement keeps it out of the Dock.
 mac-app: icons compile-mac
-    bun ../../src/make-app.ts --name "{{name}}" --bundle-id dev.mrowr.menubar-only --binary dist/{{exe}}-macos-arm64 --icns build/AppIcon.icns --plist LSUIElement=true --out dist {{chk}}
+    bun ../../src/make-app.ts --name "{{name}}" --bundle-id dev.mrowr.menubar-only --binary dist/{{exe}}-macos-arm64 --icns build/AppIcon.icns --plist LSUIElement=true --out dist
 
 # macOS: build the .app and launch it. Quit from its menu.
 open: mac-app
-    open "dist/{{name}}.app" {{chk}}
+    open "dist/{{name}}.app"
 
 # Remove build/ and dist/
 clean:

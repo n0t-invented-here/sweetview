@@ -8,8 +8,6 @@ set shell := ["pwsh", "-NoProfile", "-Command"]
 mod demos
 mod webview
 
-chk := '; if ($LASTEXITCODE) { exit $LASTEXITCODE }'
-
 
 # `just`: the recipes and modules here
 @_default:
@@ -17,13 +15,13 @@ chk := '; if ($LASTEXITCODE) { exit $LASTEXITCODE }'
 
 # Workspace dependencies
 install:
-    bun install {{chk}}
+    bun install
 
 typecheck:
-    bun run typecheck {{chk}}
+    bun run typecheck
 
 test:
-    bun test {{chk}}
+    bun test
 
 # Everything the branch must pass
 check: typecheck test
@@ -36,8 +34,8 @@ clean: demos::web-app::clean demos::desktop-pet::clean demos::menubar-only::clea
 
 # What `bun publish` would upload for @n1h/sweetview, without uploading
 pack:
-    bun pm pack --dry-run {{chk}}
+    bun pm pack --dry-run
 
 # Publish @n1h/sweetview to npmjs (needs an npm login)
 publish:
-    bun publish --access public {{chk}}
+    bun publish --access public
