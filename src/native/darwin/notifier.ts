@@ -46,7 +46,6 @@ const PRESENT_BANNER_LIST_SOUND = 8n | 16n | 2n;
 // userInfo key under which `data` travels, as JSON text.
 const DATA_KEY = "sweetnative.data";
 
-/** The clicked notification's request identifier and the JSON under DATA_KEY in its userInfo. */
 function readClick(response: Id): NotificationClick {
   const request = asId(send(asId(send(response, sel("notification"))), sel("request")));
   const id = jsString(asId(send(request, sel("identifier"))));

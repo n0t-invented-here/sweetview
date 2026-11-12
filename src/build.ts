@@ -110,7 +110,6 @@ ${dict}
   return app;
 }
 
-/** `codesign --sign <identity> --force --deep <app>`; throws with codesign's message when it fails. */
 function signMacApp(app: string, identity: string): void {
   const result = spawnSync("codesign", ["--sign", identity, "--force", "--deep", app], { encoding: "utf8" });
   if (result.error) throw new Error(`makeMacApp: codesign could not run (${result.error.message}); pass sign: false to leave the bundle unsigned`);

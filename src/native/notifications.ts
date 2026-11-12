@@ -10,7 +10,6 @@ import { backend } from "./platform";
 export type NotificationOptions = {
   title: string;
   body?: string;
-  /** Default false. */
   silent?: boolean;
   /**
    * Names the notification; `onClick` reports it. Default `sweetnative-<n>`,

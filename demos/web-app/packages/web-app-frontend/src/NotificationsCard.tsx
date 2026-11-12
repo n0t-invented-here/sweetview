@@ -7,7 +7,6 @@ type Row = SentNotification & { clickedAt?: string };
 
 const MAX_ROWS = 50;
 
-/** System notifications: a test button, the folder-change toggle (shared with the tray menu), and what was sent and clicked. */
 export function NotificationsCard() {
   const [status, setStatus] = useState<NotifyStatus>({ onChanges: false });
   const [rows, setRows] = useState<Row[]>([]);

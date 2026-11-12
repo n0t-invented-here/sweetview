@@ -46,7 +46,6 @@ let status = "Nothing sent yet";
 let sent = 0;
 const history: LogEntry[] = [];
 
-/** Records what happened: the log file, the menu's status line and the window's list. */
 const happened = (text: string) => {
   const entry = { at: now(), text };
   history.push(entry);
@@ -57,7 +56,6 @@ const happened = (text: string) => {
 
 setActivationPolicy("accessory"); // macOS: no Dock tile; the status item and the window are the whole app
 
-// The window, created hidden; a normal framed window that takes focus, centred on the primary screen.
 const win = createOverlayWindow({ frame: true, title: APP_NAME, topmost: false, hideFromTaskbar: false, noActivate: false, icon: TRAY_ICON });
 const screen = win.screen();
 win.setBounds({ x: screen.x + Math.round((screen.width - WINDOW_SIZE.width) / 2), y: screen.y + Math.round((screen.height - WINDOW_SIZE.height) / 2), ...WINDOW_SIZE });
@@ -90,8 +88,7 @@ const app: WebviewApp<Methods, Events> = await createWebviewApp<Methods, Events>
 });
 
 const tray = createTray({ tooltip: APP_NAME, icon: TRAY_ICON, menu: () => menu() });
-// Windows: the notifier hangs off the tray, so it comes after. A click opens the window and says which
-// notification it was and what it carried, here the time it was sent.
+// Windows: the notifier hangs off the tray, so it comes after.
 const notifier = createNotifier({
   onClick: ({ id, data }) => {
     const sentAt = (data as { sentAt?: string } | undefined)?.sentAt;

@@ -21,7 +21,6 @@ export type ColorScheme = "light" | "dark" | "auto";
 /** The app's notification settings, held on the UI thread; the tray menu and the page both change them. */
 export type NotifyStatus = { onChanges: boolean };
 
-/** A system notification the app sent. */
 export type SentNotification = { id: string; title: string; body: string; at: string };
 
 export type FsChange = {
@@ -60,9 +59,7 @@ export type Events = {
   "fs.change": FsChange[];
   /** The app's tray menu changed the colour scheme. */
   "ui.theme": { scheme: ColorScheme };
-  /** The tray menu changed a notification setting. */
   "notify.status": NotifyStatus;
-  /** The app sent a system notification, from the page, the tray or a folder change. */
   "notify.sent": SentNotification;
   /** The user clicked a system notification; the app has shown the window. */
   "notify.clicked": { id: string; at: string };
