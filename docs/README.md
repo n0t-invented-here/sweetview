@@ -6,7 +6,7 @@ overview, install and quickstart are in the [package README](../README.md).
 
 | Module | Contents |
 |---|---|
-| [`@n1h/sweetview`](app.md) | `createWebviewApp`: the window, the page, assets, the transport between page, UI thread and worker; `indexHtml`, `assetMime`, `Ring`, and `Webview` from the webview library |
+| [`@n1h/sweetview`](app.md) | `createWebviewApp`: the window, the page, assets, the transport between page, UI thread and worker; `runEventLoop` for an app with no window; `indexHtml`, `assetMime`, `Ring`, and `Webview` from the webview library |
 | [`@n1h/sweetview/worker`](worker.md) | `hostService` |
 | [`@n1h/sweetview/page`](page.md) | `isWebview`, `webviewTransport` |
 | [`@n1h/sweetview/ipc`](ipc.md) | the contract: `defineService`, `createBridge`, `memoryTransport`, the wire frames |

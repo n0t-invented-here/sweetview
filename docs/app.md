@@ -6,8 +6,12 @@ UI thread: the main thread of the Bun process, which `run()` hands to the OS
 event loop. Install and the overview are in the [package README](../README.md).
 
 ```ts
-import { createWebviewApp, type Asset, type UiMethods, type WebviewApp, type WebviewAppOptions, assetMime, indexHtml, indexHtmlText, type IndexHtmlOptions, windowChromeMethods, type WindowChromeInfo, type WindowChromeKind, type WindowChromeMethodTable, type WindowChromeMethods, type WindowChromeOptions, Ring, SizeHint, WEBVIEW_VERSION, Webview } from "@n1h/sweetview";
+import { createWebviewApp, type Asset, type UiMethods, type WebviewApp, type WebviewAppOptions, assetMime, indexHtml, indexHtmlText, type IndexHtmlOptions, windowChromeMethods, type WindowChromeInfo, type WindowChromeKind, type WindowChromeMethodTable, type WindowChromeMethods, type WindowChromeOptions, Ring, SizeHint, WEBVIEW_VERSION, Webview, runEventLoop, pumpEvents, setActivationPolicy, type EventLoopOptions, type ActivationPolicy } from "@n1h/sweetview";
 ```
+
+## An app with no window
+
+A menu-bar or tray app has no page to show, so it does not call `createWebviewApp` at all. It creates its tray and notifier from `@n1h/sweetview/native` and runs the OS loop with `runEventLoop`, which pumps OS events from Bun's own event loop; `setTimeout`, promises and I/O then work on the UI thread and no worker is needed. `setActivationPolicy("accessory")` keeps it out of the macOS Dock. All three are also exported from the root module. The reference is under [Event loop](native.md#event-loop) and [App activation](native.md#app-activation); `demos/menubar-only/` is the smallest such app.
 
 ## Reference
 

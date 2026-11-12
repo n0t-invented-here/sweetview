@@ -1,5 +1,9 @@
 // UI thread. Owns the native window and the OS event loop.
 //
+// An app with no window (a menu-bar app) uses none of this: it runs the OS loop
+// with `runEventLoop` from ./native/event-loop, on Bun's own event loop, and
+// needs no worker. demos/menubar-only is that app.
+//
 // webview.run() blocks this thread, and with it Bun's event loop, so nothing
 // async can live here. The worker ("@n1h/sweetview/worker") owns the Bun event
 // loop and the app's Service. Transport:
