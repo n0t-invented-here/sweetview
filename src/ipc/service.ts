@@ -1,6 +1,7 @@
 // The backend side of the contract. A Service is transport-free: no sockets,
 // no window handles, no seq numbers. Hosts (sweetipc-ws, sweetview) wrap one.
 
+/** `void` params mean "no argument". */
 export type MethodMap = Record<string, [params: unknown, result: unknown]>;
 export type EventMap = Record<string, unknown>;
 

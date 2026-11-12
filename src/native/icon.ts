@@ -30,6 +30,7 @@ export type DotIconOptions = {
   color?: string;
   /** Hex colour of a thin outer ring; omitted = no ring. */
   ring?: string;
+  /** Default 16, 24, 32. */
   sizes?: number[];
 };
 

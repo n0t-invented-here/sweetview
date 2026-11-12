@@ -48,6 +48,7 @@ export type WebviewAppOptions<M extends MethodMap> = {
    * the page's origin and the webview opens the page.
    */
   page?: HTMLBundle;
+  /** Default: the page's `<title>`, else the entry script's name. */
   title?: string;
   /**
    * More files for the page's origin, by asset path: models, images, data

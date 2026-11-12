@@ -20,6 +20,7 @@ frontend: install
     bun build frontend/main.ts --outdir build/frontend --minify
     bun build settings/main.tsx --outdir build/settings --minify
 
+# WEBVIEW_DEBUG=1 for devtools
 app: frontend
     bun run app.ts
 
