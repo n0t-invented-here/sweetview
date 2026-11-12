@@ -1,5 +1,5 @@
 # sweetview workspace. The just modules mirror the folders: `just demos <app> <recipe>`
-# for the apps (web-app, desktop-pet), `just webview <recipe>` for the webview-bun /
+# for the apps (web-app, desktop-pet, menubar-only, menubar-notify), `just webview <recipe>` for the webview-bun /
 # webview fork clones and the patched library built from them. `just --list <module>`
 # lists what is under it.
 
@@ -23,11 +23,11 @@ test:
 # Everything the branch must pass
 check: typecheck test
 
-# Both apps: pages, executables and .app bundles, into each app's dist/
-compile: demos::web-app::compile demos::desktop-pet::compile
+# Every app: pages, executables and .app bundles, into each app's dist/
+compile: demos::web-app::compile demos::desktop-pet::compile demos::menubar-only::compile demos::menubar-notify::compile
 
-# Both apps' build/ and dist/
-clean: demos::web-app::clean demos::desktop-pet::clean
+# Every app's build/ and dist/
+clean: demos::web-app::clean demos::desktop-pet::clean demos::menubar-only::clean demos::menubar-notify::clean
 
 # What `bun publish` would upload for @n1h/sweetview, without uploading
 pack:
