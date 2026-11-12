@@ -1,6 +1,5 @@
-# The menu-bar-only demo. `just demos menubar-only <recipe>` from the repo root, or `just <recipe>` here.
+# The menu-bar-only demo.
 
-# pwsh with errors terminating; a failing native command ends the recipe with its own exit code
 set shell := ["pwsh", "-NoProfile", "-Command", "$ErrorActionPreference = 'Stop'; $PSNativeCommandUseErrorActionPreference = $true; trap { if ($_.Exception -is [System.Management.Automation.NativeCommandExitException]) { exit $_.Exception.ExitCode }; break };"]
 
 exe := "menubar-only"
@@ -8,7 +7,6 @@ name := "Menubar Only"
 # Bun embeds the exe file icon only when the build host is Windows; a Mac-built Windows exe gets Bun's stock icon (README, "Platforms").
 win_icon := if os() == "windows" { "--windows-icon=build/app.ico" } else { "" }
 
-# `just demos menubar-only`: this app's recipes
 @_default:
     just --justfile "{{module_file()}}" --list
 
@@ -19,10 +17,8 @@ install:
 app: install
     bun run app.ts
 
-# Everything: the Windows exe, the macOS binary and the .app bundle, into dist/
 compile: compile-win compile-mac mac-app
 
-# The icon files the executables embed: build/app.ico (Windows) and build/AppIcon.icns (the .app bundle)
 icons: install
     bun scripts/write-icons.ts
 
@@ -32,15 +28,14 @@ compile-win: icons
 compile-mac: install
     bun build --compile --target=bun-darwin-arm64 --minify --sourcemap app.ts --outfile dist/{{exe}}-macos-arm64
 
-# The .app bundle around the macOS binary, signed ad-hoc by make-app. LSUIElement keeps it out of the Dock.
+# make-app signs it ad-hoc
 mac-app: icons compile-mac
     bun ../../src/make-app.ts --name "{{name}}" --bundle-id dev.mrowr.menubar-only --binary dist/{{exe}}-macos-arm64 --icns build/AppIcon.icns --plist LSUIElement=true --out dist
 
-# macOS: build the .app and launch it. Quit from its menu.
 open: mac-app
     open "dist/{{name}}.app"
 
-# Remove build/ and dist/, each only if present: ri on a missing path fails the recipe
+# ri on a missing path fails the recipe
 clean:
     if (Test-Path build) { ri build -r -fo }
     if (Test-Path dist) { ri dist -r -fo }

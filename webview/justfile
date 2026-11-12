@@ -4,7 +4,6 @@
 # or `just <recipe>` here. The apps do not need this: they load the library
 # from the npm package.
 
-# pwsh with errors terminating; a failing native command ends the recipe with its own exit code
 set shell := ["pwsh", "-NoProfile", "-Command", "$ErrorActionPreference = 'Stop'; $PSNativeCommandUseErrorActionPreference = $true; trap { if ($_.Exception -is [System.Management.Automation.NativeCommandExitException]) { exit $_.Exception.ExitCode }; break };"]
 
 fork := "git@github.com:n0t-invented-here/sweetview-webview-bun.git"
@@ -12,7 +11,6 @@ fork_branch := "sweetview"
 sub_branch := "sweetview"
 upstream := "f1a9d6b"
 
-# `just webview`: the recipes here
 @_default:
     just --justfile "{{module_file()}}" --list
 clone_dir := "webview-bun"

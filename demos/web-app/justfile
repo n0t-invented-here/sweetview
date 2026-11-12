@@ -1,13 +1,11 @@
-# The web-app demo, run two ways. `just demos web-app <recipe>` from the repo root, or `just <recipe>` here.
+# The web-app demo, run two ways: a desktop window, or Bun.serve in a browser.
 
-# pwsh with errors terminating; a failing native command ends the recipe with its own exit code
 set shell := ["pwsh", "-NoProfile", "-Command", "$ErrorActionPreference = 'Stop'; $PSNativeCommandUseErrorActionPreference = $true; trap { if ($_.Exception -is [System.Management.Automation.NativeCommandExitException]) { exit $_.Exception.ExitCode }; break };"]
 
 exe := "web-app"
 # Bun embeds the exe file icon only when the build host is Windows; a Mac-built Windows exe gets Bun's stock icon (README, "Platforms").
 win_icon := if os() == "windows" { "--windows-icon=build/app.ico" } else { "" }
 
-# `just demos web-app`: this app's recipes
 @_default:
     just --justfile "{{module_file()}}" --list
 
@@ -23,14 +21,12 @@ frontend: install
 serve: frontend
     bun run web.ts
 
-# Desktop app in dev: a sweetview window over IPC (WEBVIEW_DEBUG=1 for devtools)
+# WEBVIEW_DEBUG=1 for devtools
 app: frontend
     bun run app.ts
 
-# Single executables for Windows and macOS, plus the .app bundle
 compile: frontend compile-win compile-mac mac-app
 
-# The icon files the executables embed: build/app.ico (Windows) and build/AppIcon.icns (the .app bundle)
 icons:
     bun scripts/write-icons.ts
 
@@ -40,11 +36,10 @@ compile-win: icons
 compile-mac:
     bun build --compile --target=bun-darwin-arm64 --minify --sourcemap app.ts app-worker.ts --outfile dist/{{exe}}-macos-arm64
 
-# The .app bundle around the macOS binary, with build/AppIcon.icns as its Finder and Dock icon (sweetview's make-app script)
 mac-app: icons
     bun ../../src/make-app.ts --name "Web App" --bundle-id dev.mrowr.web-app --binary dist/{{exe}}-macos-arm64 --icns build/AppIcon.icns --out dist
 
-# Remove build/ and dist/, each only if present: ri on a missing path fails the recipe
+# ri on a missing path fails the recipe
 clean:
     if (Test-Path build) { ri build -r -fo }
     if (Test-Path dist) { ri dist -r -fo }
