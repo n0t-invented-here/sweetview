@@ -60,12 +60,9 @@ page bundle contains no Bun code.
 
 ## Quickstart
 
-An application with a window has three parts, each importing its own module:
-the UI thread, which owns the window; a Worker, which hosts the backend; and
-the page. They share one typed contract. Six files and two commands. An
-application with no window, a menu-bar app, is one file and needs none of
-the three: a tray and [`runEventLoop`](docs/native.md#event-loop), as in
-[`demos/menubar-only/`](demos/menubar-only/README.md).
+An application has three parts, each importing its own module: the UI
+thread, which owns the window; a Worker, which hosts the backend; and the
+page. They share one typed contract. Six files and two commands:
 
 1. [Declare the contract in `protocol.ts`](#1-declare-the-contract-in-protocolts)
 2. [Write the backend in `service.ts`](#2-write-the-backend-in-servicets)

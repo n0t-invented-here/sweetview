@@ -3,13 +3,10 @@
 The root module opens a webview window, serves the page to it, and connects
 the page to a worker that hosts the application's `Service`. It runs on the
 UI thread: the main thread of the Bun process, which `run()` hands to the OS
-event loop. An app with no window does not use this module: it runs
-`runEventLoop` from the [native module](native.md#event-loop) instead, which
-the root module also exports. Install and the overview are in the
-[package README](../README.md).
+event loop. Install and the overview are in the [package README](../README.md).
 
 ```ts
-import { createWebviewApp, type Asset, type UiMethods, type WebviewApp, type WebviewAppOptions, assetMime, indexHtml, indexHtmlText, type IndexHtmlOptions, windowChromeMethods, type WindowChromeInfo, type WindowChromeKind, type WindowChromeMethodTable, type WindowChromeMethods, type WindowChromeOptions, Ring, SizeHint, WEBVIEW_VERSION, Webview, runEventLoop, pumpEvents, setActivationPolicy, type EventLoopOptions, type ActivationPolicy } from "@n1h/sweetview";
+import { createWebviewApp, type Asset, type UiMethods, type WebviewApp, type WebviewAppOptions, assetMime, indexHtml, indexHtmlText, type IndexHtmlOptions, windowChromeMethods, type WindowChromeInfo, type WindowChromeKind, type WindowChromeMethodTable, type WindowChromeMethods, type WindowChromeOptions, Ring, SizeHint, WEBVIEW_VERSION, Webview } from "@n1h/sweetview";
 ```
 
 ## Reference
