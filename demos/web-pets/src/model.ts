@@ -1,7 +1,7 @@
 // What a pet is made of, as data: which file, how to fit it, which clips
 // play for which states, and which moods it draws from on the ground. The
-// built-in packs are specs of this shape (src/packs); a page can pass its
-// own for any glTF with animations.
+// packs in src/packs are specs of this shape, one named export per model;
+// a page passes its own for any glTF with animations.
 
 export type Direction = -1 | 1;
 
@@ -29,10 +29,15 @@ export type MoodSpec = {
 export type PetModel = {
   /** For labels. */
   name: string;
-  /** The assets subfolder the file is in, under `assetsUrl`. Also what a consumer copies to ship this model. */
-  pack: string;
-  /** The glTF file within the pack. Its textures are referenced from inside it, relative to it. */
-  file: string;
+  /** Where the glTF is fetched from: an imported file (`import url from "./robot.glb"`), so the build ships it, or any URL. */
+  url: string;
+  /**
+   * Where the textures the file references by relative path are fetched
+   * from, by that path: `{ "Textures/colormap.png": colormapUrl }`. A
+   * bundler renames files, so a texture beside the glTF is found only
+   * through this. Not needed for a glTF with its textures embedded.
+   */
+  textures?: Record<string, string>;
   /** Fit the model to this height in scene units (the cube pets are about 1 to 1.4). None: as modelled. */
   height?: number;
   /** Which way the model faces as modelled. `+z` by default. */
@@ -96,4 +101,4 @@ export function drawMood(model: PetModel, has: (clip: string) => boolean = () =>
 }
 
 /** The same model, by what it loads from. */
-export const sameModel = (a: PetModel, b: PetModel): boolean => a.pack === b.pack && a.file === b.file;
+export const sameModel = (a: PetModel, b: PetModel): boolean => a.url === b.url;

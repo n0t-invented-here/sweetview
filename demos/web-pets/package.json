@@ -11,10 +11,16 @@
     "assets",
     "README.md"
   ],
+  "sideEffects": false,
   "exports": {
     ".": "./src/index.ts",
     "./react": "./src/react.tsx",
-    "./packs/*": "./src/packs/*.ts",
+    "./packs/cube-pets": "./src/packs/cube-pets/index.ts",
+    "./packs/cube-pets/*": "./src/packs/cube-pets/*.ts",
+    "./packs/mini-characters": "./src/packs/mini-characters/index.ts",
+    "./packs/mini-characters/*": "./src/packs/mini-characters/*.ts",
+    "./packs/blocky-characters": "./src/packs/blocky-characters/index.ts",
+    "./packs/blocky-characters/*": "./src/packs/blocky-characters/*.ts",
     "./assets/*": "./assets/*"
   },
   "dependencies": {

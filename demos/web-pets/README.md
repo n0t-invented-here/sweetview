@@ -12,14 +12,17 @@ No sweetview and no Bun at runtime, only a browser with WebGL.
 ## Use it
 
 ```ts
-import { createPet, MINI_CHARACTERS } from "@n1h/web-pets";
+import { createPet } from "@n1h/web-pets";
+import { cat } from "@n1h/web-pets/packs/cube-pets/cat";
+import { fox } from "@n1h/web-pets/packs/cube-pets/fox";
+import { femaleA } from "@n1h/web-pets/packs/mini-characters/female-a";
 
-const cat = createPet({ pet: "cat", spawn: { x: 300, y: 0 }, scale: 1.5, assetsUrl: "/pets/" });
-const person = createPet({ pet: MINI_CHARACTERS[0], spawn: { x: 500, y: 0 }, scale: 1.5, assetsUrl: "/pets/" });
-cat.setSettings({ scale: 2 }); // the reply is the clamped result
-cat.setPet("fox");
-cat.spawn({ x: 800, y: 0 }); // teleport and fall again
-cat.dispose();
+const kitty = createPet({ pet: cat, spawn: { x: 300, y: 0 }, scale: 1.5 });
+const person = createPet({ pet: femaleA, spawn: { x: 500, y: 0 }, scale: 1.5 });
+kitty.setSettings({ scale: 2 }); // the reply is the clamped result
+kitty.setPet(fox);
+kitty.spawn({ x: 800, y: 0 }); // teleport and fall again
+kitty.dispose();
 person.dispose();
 ```
 
@@ -27,42 +30,54 @@ In React:
 
 ```tsx
 import { Pet, type PetHandle } from "@n1h/web-pets/react";
-import { BLOCKY_CHARACTERS } from "@n1h/web-pets/packs/blocky-characters";
+import { cat } from "@n1h/web-pets/packs/cube-pets/cat";
+import { characterA } from "@n1h/web-pets/packs/blocky-characters/a";
 
 function Page() {
-  const cat = useRef<PetHandle>(null);
+  const kitty = useRef<PetHandle>(null);
   const [more, setMore] = useState<{ id: number; spawn: Point }[]>([]);
   return (
     <>
-      <Pet ref={cat} pet="cat" spawn={{ x: 300, y: 0 }} scale={1.5} assetsUrl="/pets/" />
+      <Pet ref={kitty} pet={cat} spawn={{ x: 300, y: 0 }} scale={1.5} />
       {more.map((p) => (
-        <Pet key={p.id} pet={BLOCKY_CHARACTERS[p.id % 4]} spawn={p.spawn} scale={1.5} assetsUrl="/pets/" />
+        <Pet key={p.id} pet={characterA} spawn={p.spawn} scale={1.5} />
       ))}
-      <button onClick={() => cat.current?.spawn({ x: 100, y: 0 })}>Again</button>
+      <button onClick={() => kitty.current?.spawn({ x: 100, y: 0 })}>Again</button>
       <button onClick={() => setMore((ps) => [...ps, { id: ps.length, spawn: { x: 600, y: 0 } }])}>Someone too</button>
     </>
   );
 }
 ```
 
-`<Pet>` renders nothing in React's tree: the canvas is appended to the body (or `host`) and removed on unmount. `pet`, `scale` and `bottom` apply when they change (a spec is compared by its file, so an object literal in the render body is fine); `spawn` is where the pet first appears (use the handle's `spawn` to move it later); `host`, `assetsUrl` and `zIndex` re-create the pet.
+`<Pet>` renders nothing in React's tree: the canvas is appended to the body (or `host`) and removed on unmount. `pet`, `scale` and `bottom` apply when they change (a model is compared by its URL, so an object literal in the render body is fine); `spawn` is where the pet first appears (use the handle's `spawn` to move it later); `host` and `zIndex` re-create the pet.
 
-### Serving the models, and shipping only some
+### What ships: only the models you import
 
-The models are files under this package's `assets/` folder, one subfolder per pack:
+Every model is its own module that imports its own file:
 
-| Pack | Folder | Files |
+```ts
+// the whole of packs/cube-pets/cat.ts
+import colormap from "../../../assets/kenney-cube-pets/Textures/colormap.png";
+import url from "../../../assets/kenney-cube-pets/animal-cat.glb";
+import { PET_TEXTURE_FILE, cubePetSpec } from "./spec";
+
+export const cat = cubePetSpec("cat", url, { [PET_TEXTURE_FILE]: colormap });
+```
+
+So `import { cat } from "@n1h/web-pets/packs/cube-pets/cat"` puts the cat's glTF and the pack's shared texture in your build, as hashed assets your bundler emits, and nothing else: a bundler ships every file a module it resolves imports, used or not, which is why each model has a module of its own rather than a named export in a shared one. Bun, Vite and esbuild handle `.glb` and `.png` imports as asset URLs by default; webpack needs asset modules for them.
+There is nothing to copy and no folder to serve. The root module exports no model at all, and `pet` is required, so a page that imports nothing ships nothing.
+A page that imports only the cat and one Blocky character ships four files: the two glTFs and their two textures.
+
+| Pack | One model | The whole pack (ships every file) |
 |---|---|---|
-| Cube Pets | `assets/kenney-cube-pets/` | 24 `.glb` (130 to 170 KB each), one shared texture under `Textures/`, the previews, the licence |
-| Mini Characters | `assets/kenney-mini-characters/` | 6 `.glb` (about 250 KB each), one shared texture, the licence |
-| Blocky Characters | `assets/kenney-blocky-characters/` | 4 `.glb` (about 110 KB each), one texture each, the licence |
+| Cube Pets, 24 glTF of 130 to 170 KB and one shared texture | `@n1h/web-pets/packs/cube-pets/<name>` exports `<name>`, the names as in `PETS` (`cat`, `polar`, …) | `@n1h/web-pets/packs/cube-pets` exports all 24 and `CUBE_PETS` by name |
+| Mini Characters, 6 glTF of about 250 KB and one shared texture | `.../packs/mini-characters/female-a` … `male-c` export `femaleA` … `maleC` | `.../packs/mini-characters` exports all six and `MINI_CHARACTERS` |
+| Blocky Characters, 4 glTF of about 110 KB with a texture each | `.../packs/blocky-characters/a` … `d` export `characterA` … `characterD` | `.../packs/blocky-characters` exports all four and `BLOCKY_CHARACTERS` |
 
-Serve the packs you use from your page's origin and pass the folder they are in as `assetsUrl` (`/pets/` by default): a model loads from `assetsUrl + pack + "/" + file`, so `/pets/kenney-cube-pets/animal-cat.glb`.
-Copy the subfolders you want to your static folder, or point your server at `node_modules/@n1h/web-pets/assets/`.
-That is the whole of "which files get included": a pack's specs are data in its own module (`@n1h/web-pets/packs/cube-pets`, `.../mini-characters`, `.../blocky-characters`), and a pack whose folder you do not serve costs nothing but a 404 if something asks for it.
-The root module re-exports all three, which is a few kilobytes of specs, no models.
+Each pack's `spec` module (`.../packs/cube-pets/spec` and the others) is the pack as data with no files in it: the clips, the moods and the function that makes a model from a file URL. The desktop pet imports the cube pets' one for the names and moods.
+The files themselves are under the package's `assets/`, with each pack's licence, for a build that wants them another way.
 
-The package ships TypeScript sources, like `@n1h/sweetview`; the consuming app's bundler compiles them.
+The package ships TypeScript sources, like `@n1h/sweetview`; the consuming app's bundler compiles them. `src/assets.d.ts` declares the `.glb` and `.png` imports.
 
 ### Your own model
 
@@ -70,13 +85,15 @@ A pet is a `PetModel`: where the file is, how to fit it, which clip plays in whi
 
 ```ts
 import { createPet, type PetModel } from "@n1h/web-pets";
+import robotUrl from "./robot.glb";
+import robotSkin from "./robot-skin.png";
 
 const robot: PetModel = {
   name: "Robot",
-  pack: "my-models", // served at assetsUrl + "my-models/"
-  file: "robot.glb",
+  url: robotUrl,
+  textures: { "robot-skin.png": robotSkin }, // what the file references by relative path, by that path; not needed when the textures are embedded
   height: 1.3, // scene units; the cube pets are 1 to 1.4 tall as modelled
-  forward: "-z", // which way it faces as modelled; +z by default
+  forward: "-z", // which way it faces as modelled; +z by default, as glTF says
   clips: {
     idle: "Idle",
     carried: "Flail",
@@ -89,18 +106,18 @@ const robot: PetModel = {
     { name: "spin", clip: "Spin", seconds: [1, 2] },
   ],
 };
-createPet({ pet: robot, assetsUrl: "/pets/" });
+createPet({ pet: robot });
 ```
 
 What happens with it:
 
-- The file is loaded, posed on the first frame of its idle clip (a bind pose is a T-pose), measured, centred, its feet put at y = 0, scaled to `height` when given, and turned by `forward` so it faces +z. Kenney's packs all face +z as glTF says they should; the camera never changes, the model is fitted to it.
+- The file is loaded from `url`; a texture it references by relative path is fetched from `textures[path]` when there is one, else from beside the file. It is posed on the first frame of its idle clip (a bind pose is a T-pose), measured, centred, its feet put at y = 0, scaled to `height` when given, and turned by `forward` so it faces +z. The camera never changes; the model is fitted to it.
 - Its posed geometry through the camera gives its width (the lower three quarters, so a raised tail or a hat does not count), its head (the surface straight above its middle) and where its feet are drawn, which is what other pets bump into and stand on. No numbers to supply. The canvas carries them as `data-body`, `data-head` and `data-feet`, fractions of its edge, for a look.
 - `moods` is a weighted draw; a mood whose clip the file lacks is never drawn. A mood with `speed` moves the pet along the ground at that many CSS pixels per second at scale 1, and faces it the way it goes; the stride is the one thing to tune by eye, because a clip does not say how far its feet travel.
 - `clips` name the clips for the states that are not moods. Missing ones fall back as noted. A `once` clip plays through and stops instead of looping; for `landed` it also sets how long the landing lasts (otherwise 1.2 s).
 - Every clip gets blending between it and the next, which suits clips of one rig.
 
-The three built-in packs are specs of this shape in `src/packs/`; the Mini and Blocky characters are the proof that a file with none of the pets' clip names works (`fall`, `sprint`, `emote-yes` once for the landing, `jump`, `crouch`, `sit`, `pick-up`; Blocky has no falling clip and falls with its carried one).
+The three packs are specs of this shape in `src/packs/`, one module per model; the Mini and Blocky characters are the proof that a file with none of the pets' clip names works (`fall`, `sprint`, `emote-yes` once for the landing, `jump`, `sit`, `pick-up`; Blocky has no falling clip and falls with its carried one).
 
 ## What it does
 
@@ -128,15 +145,18 @@ Out-of-range values are clamped by `setSettings`, whose reply is the result.
 | `src/pet.ts` | `createPet`: the canvas, its placement over the page, the pointer (hover test, pick up, throw), joining the herd. |
 | `src/react.tsx` | `<Pet>`: `createPet` in an effect, props to the handle, the handle on `ref`. |
 | `src/model.ts` | `PetModel`: the spec, clip fallbacks, the weighted mood draw. |
-| `src/packs/cube-pets.ts`, `mini-characters.ts`, `blocky-characters.ts` | The three packs as specs, and the cube pets' names and files for the desktop pet. |
+| `src/packs/<pack>/<model>.ts` | One module per model, importing its own file and texture and making its spec. |
+| `src/packs/<pack>/index.ts` | The whole pack: every model, and the pack as a record or list. |
+| `src/packs/<pack>/spec.ts` | The pack as data with no files: clips, moods, the spec function; for the cube pets also the names, labels, file names and the desktop pet's `nextCommand`. |
+| `src/assets.d.ts` | The `.glb` and `.png` import types. |
 | `src/life.ts` | The pet's life with no screen in it: fall, land (on the ground or on another pet's head), ground moods, side edges, riding, carry and throw, and `separate`, which keeps pets at one level apart. Pure; tested. |
 | `src/herd.ts` | One frame loop per ground: steps every pet on it with the others in view, separates them, then lets each draw. |
 | `src/scene.ts` | The Babylon.js scene: the camera aimed so the feet sit on the canvas's bottom edge at every scale, lights, one model at a time fitted to the spec, clips by name, the triangle pick. |
 | `src/framing.ts` | The camera as numbers and a model's box through it: its width and head height on the canvas. Pure; tested. |
 | `src/settings.ts` | `PetSettings`, ranges, `sanitizePetSettings`. |
 | `src/index.ts` | The package's root export. |
-| `demo/main.tsx`, `demo/main.css` | The demo page: a click drops a pet at that point; a panel picks the model from the three packs and sets the scale and the bottom of every pet. |
-| `demo/serve.ts` | `Bun.serve` for the demo page and `assets/` under `/pets/`. |
+| `demo/main.tsx`, `demo/main.css` | The demo page: a click drops a pet at that point; a panel picks the model from the three packs (imported whole, so the demo ships every file) and sets the scale and the bottom of every pet. |
+| `demo/serve.ts` | `Bun.serve` for the demo page and the files the build put beside it. |
 | `assets/kenney-cube-pets/`, `assets/kenney-mini-characters/`, `assets/kenney-blocky-characters/` | The models, their textures and each pack's `License.txt`. |
 
 ## Recipes
@@ -146,7 +166,7 @@ Run `just <recipe>` in this folder or `just demos web-pets <recipe>` from the re
 | Recipe | Does |
 |---|---|
 | `test` | `bun test` for the life, the framing, the model spec, the cube pets' moods and the settings. |
-| `frontend` | Bundles and minifies the demo page into `build/demo/` (Babylon.js and the glTF loader included, about 4 MB). |
+| `frontend` | Bundles and minifies the demo page into `build/demo/` (Babylon.js and the glTF loader included, about 4 MB, plus every model file as a hashed asset). |
 | `demo` | `frontend`, then serves it on `http://127.0.0.1:4748` (`PORT` and `HOST` to change). |
 | `clean` | Removes `build/`. |
 

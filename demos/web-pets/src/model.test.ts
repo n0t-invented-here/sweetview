@@ -3,8 +3,7 @@ import { clipFor, clipNames, drawMood, type PetModel } from "./model";
 
 const model: PetModel = {
   name: "t",
-  pack: "p",
-  file: "f.glb",
+  url: "f.glb",
   clips: { idle: "idle", landed: { name: "cheer", once: true } },
   moods: [
     { name: "idle", clip: "idle", weight: 1, seconds: [2, 4] },

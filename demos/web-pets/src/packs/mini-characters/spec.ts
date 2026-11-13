@@ -1,14 +1,15 @@
 // Kenney's Mini Characters (CC0): skinned people with 32 clips, none of
-// which are the pets'. Six of them, in assets/kenney-mini-characters.
+// which are the pets'. The spec, without the files; each character's module
+// adds its file.
 
-import type { PetModel } from "../model";
+import type { PetModel } from "../../model";
 
-const MINI = ["female-a", "female-b", "female-c", "male-a", "male-b", "male-c"] as const;
+export const TEXTURE_FILE = "Textures/colormap.png";
 
-const spec = (id: (typeof MINI)[number]): PetModel => ({
-  name: `Mini ${id}`,
-  pack: "kenney-mini-characters",
-  file: `character-${id}.glb`,
+export const miniCharacterSpec = (name: string, url: string, textures: Record<string, string>): PetModel => ({
+  name,
+  url,
+  textures,
   height: 1.3, // modelled about 0.75 tall; the pets are 1 to 1.4
   clips: { idle: "idle", carried: "emote-no", falling: "fall", landed: { name: "emote-yes", once: true } },
   moods: [
@@ -19,5 +20,3 @@ const spec = (id: (typeof MINI)[number]): PetModel => ({
     { name: "sit", clip: "sit", weight: 0.5, seconds: [2, 4] }, // now and then, not a habit
   ],
 });
-
-export const MINI_CHARACTERS: readonly PetModel[] = MINI.map(spec);

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { BIRDS, PETS, moodsFor, nextCommand } from "./cube-pets";
+import { BIRDS, PETS, moodsFor, nextCommand } from "./spec";
 
 describe("moods per pet", () => {
   test("only the birds ever eat (it is a pecking animation)", () => {

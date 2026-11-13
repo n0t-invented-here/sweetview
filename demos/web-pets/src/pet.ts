@@ -7,7 +7,6 @@
 import { herdFor } from "./herd";
 import { BODY, FEET, HEAD, createLife, type Box } from "./life";
 import type { PetModel } from "./model";
-import { CUBE_PETS, randomPet, type Pet } from "./packs/cube-pets";
 import { createPetScene } from "./scene";
 import { DEFAULT_PET_SETTINGS, sanitizePetSettings, type PetSettings } from "./settings";
 
@@ -17,8 +16,8 @@ export const PET_SIZE = 192;
 export type Point = { x: number; y: number };
 
 export type PetOptions = {
-  /** Which animal: one of the cube pets by name, or any model spec (`PetModel`); a random cube pet when not given. */
-  pet?: Pet | PetModel;
+  /** Which model: a spec from one of the packs, or your own. */
+  pet: PetModel;
   /**
    * Where the pet's centre appears before it falls, in CSS pixels from the
    * top-left of its bounds (the viewport, or `host`). By default somewhere
@@ -34,8 +33,6 @@ export type PetOptions = {
    * on screen while the page scrolls.
    */
   host?: HTMLElement;
-  /** Where the package's assets folder is served, with a trailing slash; a model loads from `assetsUrl + pack + "/" + file`. `/pets/` by default. */
-  assetsUrl?: string;
   /** Stacking of the canvas over the page's content. */
   zIndex?: number;
   /** Something failed after the pet was created (a model that would not load). `console.error` by default. */
@@ -50,8 +47,8 @@ export type PetHandle = {
   /** The box's top-left in bounds coordinates, and its edge. */
   readonly position: Point;
   readonly size: number;
-  /** Switch animal; resolves when the new model is up (or failed and reported). */
-  setPet(pet: Pet | PetModel): Promise<void>;
+  /** Switch model; resolves when the new one is up (or failed and reported). */
+  setPet(pet: PetModel): Promise<void>;
   /** Change the scale or the bottom; the reply is the clamped result. */
   setSettings(patch: Partial<PetSettings>): PetSettings;
   /** Put the pet's centre here and let it fall. */
@@ -59,15 +56,11 @@ export type PetHandle = {
   dispose(): void;
 };
 
-/** A name is one of the cube pets; a spec is itself; nothing is a random cube pet. */
-export const resolveModel = (pet: Pet | PetModel | undefined): PetModel => (pet === undefined ? CUBE_PETS[randomPet()] : typeof pet === "string" ? CUBE_PETS[pet] : pet);
-
 /** Creates the canvas and starts the pet. Throws when WebGL is not available. */
-export function createPet(options: PetOptions = {}): PetHandle {
+export function createPet(options: PetOptions): PetHandle {
   const fault = options.onFault ?? ((message: string, error?: unknown) => console.error(message, error ?? ""));
   const host = options.host;
   if (host && getComputedStyle(host).position === "static") host.style.position = "relative";
-  const assetsUrl = options.assetsUrl ?? "/pets/";
 
   const canvas = document.createElement("canvas");
   canvas.className = "web-pet";
@@ -92,7 +85,7 @@ export function createPet(options: PetOptions = {}): PetHandle {
     throw err;
   }
 
-  let model = resolveModel(options.pet);
+  let model = options.pet;
   let settings = sanitizePetSettings({ scale: options.scale, bottom: options.bottom }, DEFAULT_PET_SETTINGS);
   let size = Math.round(PET_SIZE * settings.scale);
 
@@ -115,15 +108,14 @@ export function createPet(options: PetOptions = {}): PetHandle {
   const spawn = (at: Point) => life.spawn(at.x - size / 2, at.y - size / 2);
   spawn(options.spawn ?? { x: bounds().width * (0.2 + Math.random() * 0.6), y: -size / 2 });
 
-  const show = async (next: Pet | PetModel) => {
-    model = resolveModel(next);
-    const url = `${assetsUrl}${model.pack}/${model.file}`;
+  const show = async (next: PetModel) => {
+    model = next;
     try {
-      await scene.show(url, model);
+      await scene.show(model);
       const measured = scene.proportions();
       if (measured) Object.assign(canvas.dataset, { model: model.name, body: measured.body.toFixed(3), head: measured.head.toFixed(3), feet: measured.feet.toFixed(3) }); // what the page can read about the fit
     } catch (err) {
-      fault(`loading the ${model.name} model (${url}) failed`, err);
+      fault(`loading the ${model.name} model (${model.url}) failed`, err);
     }
   };
 

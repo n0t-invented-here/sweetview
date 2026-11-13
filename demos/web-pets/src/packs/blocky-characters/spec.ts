@@ -1,15 +1,13 @@
 // Kenney's Blocky Characters (CC0): node-animated people with 27 clips, no
-// fall and no gestures, modelled eight units tall. Four of them, in
-// assets/kenney-blocky-characters.
+// fall and no gestures, modelled eight units tall. The spec, without the
+// files; each character's module adds its file and texture.
 
-import type { PetModel } from "../model";
+import type { PetModel } from "../../model";
 
-const BLOCKY = ["a", "b", "c", "d"] as const;
-
-const spec = (id: (typeof BLOCKY)[number]): PetModel => ({
-  name: `Blocky ${id.toUpperCase()}`,
-  pack: "kenney-blocky-characters",
-  file: `character-${id}.glb`,
+export const blockyCharacterSpec = (name: string, url: string, textures: Record<string, string>): PetModel => ({
+  name,
+  url,
+  textures,
   height: 1.3,
   clips: { idle: "idle", carried: "emote-no", landed: { name: "emote-yes", once: true } }, // no falling clip: falls with the carried one
   moods: [
@@ -20,5 +18,3 @@ const spec = (id: (typeof BLOCKY)[number]): PetModel => ({
     { name: "pick-up", clip: "pick-up", weight: 1, seconds: [1, 2] },
   ],
 });
-
-export const BLOCKY_CHARACTERS: readonly PetModel[] = BLOCKY.map(spec);

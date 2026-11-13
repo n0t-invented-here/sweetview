@@ -1,12 +1,17 @@
 // The demo: a page with pets on it. A click anywhere drops another one at
 // that point; the panel picks the model from the three packs and sets the
-// scale and the bottom of every pet on the page.
+// scale and the bottom of every pet on the page. The demo imports every
+// pack whole, so its bundle ships every file; a page imports the models it
+// uses.
 
 import "./main.css";
 
 import { StrictMode, useRef, useState, type MouseEvent } from "react";
 import { createRoot } from "react-dom/client";
-import { BLOCKY_CHARACTERS, BOTTOM_MIN, CUBE_PETS, MINI_CHARACTERS, SCALE_MIN, type PetModel, type Point } from "@n1h/web-pets";
+import { BOTTOM_MIN, SCALE_MIN, type PetModel, type Point } from "@n1h/web-pets";
+import { BLOCKY_CHARACTERS } from "@n1h/web-pets/packs/blocky-characters";
+import { CUBE_PETS, cat } from "@n1h/web-pets/packs/cube-pets";
+import { MINI_CHARACTERS } from "@n1h/web-pets/packs/mini-characters";
 import { Pet } from "@n1h/web-pets/react";
 
 type Dropped = { id: number; model: PetModel; spawn: Point };
@@ -16,14 +21,14 @@ const PACKS: { title: string; models: readonly PetModel[] }[] = [
   { title: "Mini Characters", models: MINI_CHARACTERS },
   { title: "Blocky Characters", models: BLOCKY_CHARACTERS },
 ];
-const key = (m: PetModel) => `${m.pack}/${m.file}`;
-const byKey = new Map(PACKS.flatMap((p) => p.models).map((m) => [key(m), m]));
+const byUrl = new Map(PACKS.flatMap((p) => p.models).map((m) => [m.url, m]));
+const importName = (m: PetModel) => m.name.replace(/^(Mini|Blocky) /, "").replace(/-(\w)/g, (_, c: string) => c.toUpperCase()).replace(/^\w/, (c) => (m.name.startsWith("Blocky") ? `character${c}` : c.toLowerCase()));
 
 const SCALE_MAX_HERE = 4; // the package allows 8; a pet that size covers a phone
 
 function App() {
-  const [pets, setPets] = useState<Dropped[]>([{ id: 0, model: CUBE_PETS.cat, spawn: { x: window.innerWidth * 0.6, y: -100 } }]);
-  const [model, setModel] = useState<PetModel>(CUBE_PETS.cat);
+  const [pets, setPets] = useState<Dropped[]>([{ id: 0, model: cat, spawn: { x: window.innerWidth * 0.6, y: -100 } }]);
+  const [model, setModel] = useState<PetModel>(cat);
   const [scale, setScale] = useState(1);
   const [bottom, setBottom] = useState(0);
   const nextId = useRef(1);
@@ -40,18 +45,18 @@ function App() {
           Click anywhere to drop a {model.name.toLowerCase()} there. It falls to the bottom of the page, or onto whoever is below, and lives along it. Pick one up and throw it.
         </p>
         <p className="hint">
-          <code>{`<Pet pet=${model.pack === "kenney-cube-pets" ? `"${model.name.toLowerCase()}"` : `{${model.name.replace(/\W/g, "")}}`} scale={${scale}} spawn={{ x, y }} />`}</code>
+          <code>{`<Pet pet={${importName(model)}} scale={${scale}} spawn={{ x, y }} />`}</code>
         </p>
       </section>
 
       <aside className="panel" onClick={(e) => e.stopPropagation()}>
         <label>
           Model
-          <select value={key(model)} onChange={(e) => setModel(byKey.get(e.target.value) ?? CUBE_PETS.cat)}>
+          <select value={model.url} onChange={(e) => setModel(byUrl.get(e.target.value) ?? cat)}>
             {PACKS.map((p) => (
               <optgroup key={p.title} label={p.title}>
                 {p.models.map((m) => (
-                  <option key={key(m)} value={key(m)}>
+                  <option key={m.url} value={m.url}>
                     {m.name}
                   </option>
                 ))}
@@ -82,7 +87,7 @@ function App() {
       </aside>
 
       {pets.map((p) => (
-        <Pet key={p.id} pet={p.model} spawn={p.spawn} scale={scale} bottom={bottom} assetsUrl="/pets/" />
+        <Pet key={p.id} pet={p.model} spawn={p.spawn} scale={scale} bottom={bottom} />
       ))}
     </main>
   );

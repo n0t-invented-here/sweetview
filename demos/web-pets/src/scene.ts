@@ -22,8 +22,8 @@ import { clipFor, type ClipRef, type Direction, type PetModel } from "./model";
 export type PetScene = {
   /** Fit the canvas to a `size` CSS-pixel square showing the model at `scale`, feet on the bottom edge. */
   resize(size: number, scale: number): void;
-  /** Load the model at this URL and show it in place of the current one, fitted as the spec says. A later call wins over an earlier one still loading. */
-  show(url: string, model: PetModel): Promise<void>;
+  /** Load the model and show it in place of the current one, fitted as the spec says. A later call wins over an earlier one still loading. */
+  show(model: PetModel): Promise<void>;
   /** Is this clip in the loaded file? */
   has(clip: string): boolean;
   /** How long one pass of the clip takes at speed 1. */
@@ -139,9 +139,17 @@ export function createPetScene(canvas: HTMLCanvasElement): PetScene {
       engine.resize();
       aimAtGround();
     },
-    async show(url, model) {
+    async show(model) {
       const seq = ++loadSeq;
-      const loaded = await LoadAssetContainerAsync(url, scene);
+      // A texture the file references by relative path is fetched from the spec's URL for that path, when it has one.
+      const textures = Object.entries(model.textures ?? {});
+      const loaded = await LoadAssetContainerAsync(model.url, scene, {
+        pluginOptions: {
+          gltf: {
+            preprocessUrlAsync: async (url) => textures.find(([path]) => url.endsWith(path))?.[1] ?? url,
+          },
+        },
+      });
       if (seq !== loadSeq) {
         loaded.dispose(); // another model was asked for while this one loaded
         return;

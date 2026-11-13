@@ -1,12 +1,11 @@
-// The demo page from Bun.serve: the prebuilt React page and this package's
-// assets folder (every pack) under /pets/.
+// The demo page from Bun.serve: the prebuilt React page and the model files
+// the build put beside it.
 //
 //   just demos web-pets demo            (PORT=4748 by default)
 
 const PORT = Number(process.env.PORT ?? 4748);
 const HOST = process.env.HOST ?? "127.0.0.1";
 const build = new URL("../build/demo/", import.meta.url);
-const assets = new URL("../assets/", import.meta.url);
 
 const page = `<!doctype html>
 <html lang="en">
@@ -36,7 +35,7 @@ const server = Bun.serve({
   async fetch(req) {
     const { pathname } = new URL(req.url);
     if (pathname === "/") return new Response(page, { headers: { "content-type": "text/html; charset=utf-8" } });
-    const file = pathname.startsWith("/pets/") ? await fileUnder(assets, pathname.slice("/pets/".length)) : await fileUnder(build, pathname.slice(1));
+    const file = await fileUnder(build, pathname.slice(1));
     return file ? new Response(file) : new Response("not found", { status: 404 });
   },
 });

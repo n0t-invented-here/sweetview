@@ -4,7 +4,7 @@
 import { defineService } from "@n1h/sweetview/ipc";
 import type { HitProbe, Point, Rect } from "@n1h/sweetview/native";
 import type { WindowChromeMethods } from "@n1h/sweetview/window-chrome";
-import { type Command, type Mood, nextCommand, type Pet } from "@n1h/web-pets";
+import { type Command, type Mood, nextCommand, type Pet } from "@n1h/web-pets/packs/cube-pets/spec";
 import type { Settings } from "./settings";
 
 /**

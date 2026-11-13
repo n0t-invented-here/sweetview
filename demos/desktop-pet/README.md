@@ -51,9 +51,9 @@ The animal is not saved. Out-of-range values in `settings.json` are clamped on l
 |---|---|
 | `app.ts` | UI thread: the pet window, the settings window, their two webview apps, the tray, notifications, the settings file, `pet.log`, and every UI-thread method both pages call. |
 | `app-worker.ts` | Worker entry. Hosts the service from `service.ts`. |
-| `service.ts` | The contract between page, worker and UI thread: methods, events, types. The worker half picks the next mood, with `nextCommand` from `@n1h/web-pets`. |
+| `service.ts` | The contract between page, worker and UI thread: methods, events, types. The worker half picks the next mood, with `nextCommand` from `@n1h/web-pets/packs/cube-pets/spec`. |
 | `settings.ts` | The settings type, defaults, and `sanitize`, which clamps; the ranges are `@n1h/web-pets`'. |
-| `pets.ts` | The 24 animals from `@n1h/web-pets`, and the paths this app serves their models at. |
+| `pets.ts` | The 24 animals from `@n1h/web-pets/packs/cube-pets/spec` (the pack as data, no files), and the paths this app serves their models at. |
 | `pet-models.ts` | One file import per model and the shared texture, from `@n1h/web-pets/assets/`, so `bun build --compile` embeds them. |
 | `pet-previews.ts` | One file import per preview picture, for the icons. |
 | `icon.ts` | The icons, made from the previews: the current animal for the tray and menu, the cat for the executable and the bundle. |

@@ -7,8 +7,7 @@ const WALK: MoodSpec = { name: "walk", clip: "walk", speed: 55, seconds: [100, 1
 const DANCE: MoodSpec = { name: "dance", clip: "dance", seconds: [1, 1] };
 const MODEL: PetModel = {
   name: "test",
-  pack: "test",
-  file: "test.glb",
+  url: "test.glb",
   clips: { idle: "idle", carried: "gesture-negative", falling: "gesture-negative", landed: "gesture-positive" },
   moods: [IDLE, WALK, DANCE],
 };
