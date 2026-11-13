@@ -102,6 +102,14 @@ h1 {
   border-radius: 0.5rem;
   border: 1px solid var(--line);
   background: rgba(255, 255, 255, 0.06);
+  color-scheme: dark;
+}
+
+/* The dropdown list is drawn by the OS; on Windows it takes only these. */
+.panel option,
+.panel optgroup {
+  background: var(--bg-2);
+  color: var(--ink);
 }
 
 .panel button {
