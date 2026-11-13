@@ -1,0 +1,35 @@
+{
+  "name": "@n1h/web-pets",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A pet for any web page: one of Kenney's 24 Cube Pets, rendered with Babylon.js in a see-through canvas that drops in at a point, lands on the bottom edge and walks along it, and can be picked up and thrown with the mouse. A framework-free createPet() and a React <Pet> component.",
+  "license": "MIT OR 0BSD",
+  "files": [
+    "src",
+    "!src/**/*.test.ts",
+    "assets",
+    "README.md"
+  ],
+  "exports": {
+    ".": "./src/index.ts",
+    "./react": "./src/react.tsx",
+    "./assets/*": "./assets/*"
+  },
+  "dependencies": {
+    "@babylonjs/core": "^9.35.0",
+    "@babylonjs/loaders": "^9.35.0"
+  },
+  "peerDependencies": {
+    "react": ">=19"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  }
+}

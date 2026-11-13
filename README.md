@@ -249,6 +249,7 @@ codesign --sign - --force --deep "App.app"
 | `docs/` | the reference pages, indexed by the [reference index](docs/README.md) |
 | `demos/web-app/` | one backend and one React page run two ways: a desktop window with tray and notifications, or `Bun.serve` with WebSockets |
 | [`demos/desktop-pet/`](demos/desktop-pet/README.md) | a transparent always-on-top pet rendered with Babylon.js, with click-through hit regions and a page-drawn settings window |
+| [`demos/web-pets/`](demos/web-pets/README.md) | the same pets for any web page: a package with `createPet()` and a React `<Pet>` that drops an animal in at a point, lands it on the page's bottom edge and lets it walk there; the desktop pet takes its animals, moods and models from it |
 | [`demos/menubar-only/`](demos/menubar-only/README.md) | a menu-bar app with no window, no webview and no worker: a status item, its menu and a tooltip clock on a plain `setInterval`, on `runEventLoop` |
 | [`demos/menubar-notify/`](demos/menubar-notify/README.md) | a menu-bar app whose menu sends a system notification now or five seconds later, with a window listing what was sent and clicked; a notification click opens it |
 | [`webview/`](webview/README.md) | recipes that clone the webview-bun fork, with the webview fork as its submodule, and build the library from it, for working on the library itself; not needed to build the demos |

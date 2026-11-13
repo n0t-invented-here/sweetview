@@ -5,6 +5,7 @@ It walks along the bottom edge of the monitor, over the taskbar or Dock, and can
 
 It runs on Windows, with WebView2 in a popup window, and on macOS, with WKWebView in a borderless, non-opaque window.
 It uses the webview library from the npm package `@n1h/sweetview-webview-bun`.
+The animals, their moods and their models come from [`demos/web-pets`](../web-pets/README.md), the same pets for any web page.
 
 ## What it does
 
@@ -50,10 +51,10 @@ The animal is not saved. Out-of-range values in `settings.json` are clamped on l
 |---|---|
 | `app.ts` | UI thread: the pet window, the settings window, their two webview apps, the tray, notifications, the settings file, `pet.log`, and every UI-thread method both pages call. |
 | `app-worker.ts` | Worker entry. Hosts the service from `service.ts`. |
-| `service.ts` | The contract between page, worker and UI thread: methods, events, types. The worker half picks the next mood. |
-| `settings.ts` | The settings type, defaults, ranges, and `sanitize`, which clamps. |
-| `pets.ts` | The 24 animals, their menu labels, their asset paths, and which are birds. |
-| `pet-models.ts` | One file import per model and the shared texture, so `bun build --compile` embeds them. |
+| `service.ts` | The contract between page, worker and UI thread: methods, events, types. The worker half picks the next mood, with `nextCommand` from `@n1h/web-pets`. |
+| `settings.ts` | The settings type, defaults, and `sanitize`, which clamps; the ranges are `@n1h/web-pets`'. |
+| `pets.ts` | The 24 animals from `@n1h/web-pets`, and the paths this app serves their models at. |
+| `pet-models.ts` | One file import per model and the shared texture, from `@n1h/web-pets/assets/`, so `bun build --compile` embeds them. |
 | `pet-previews.ts` | One file import per preview picture, for the icons. |
 | `icon.ts` | The icons, made from the previews: the current animal for the tray and menu, the cat for the executable and the bundle. |
 | `file-imports.d.ts` | Types for `.glb` and `.png` file imports. |
@@ -64,14 +65,13 @@ The animal is not saved. Out-of-range values in `settings.json` are clamped on l
 | `settings/App.tsx` | The settings form: animal, bottom, scale, click-through. |
 | `settings/Chrome.tsx` | The page-drawn window frame. |
 | `settings/main.css` | The settings page's style. |
-| `service.test.ts`, `settings.test.ts` | Tests for mood picking and for `sanitize`. |
+| `settings.test.ts` | Tests for `sanitize`. Mood picking is tested in `web-pets`. |
 | `scripts/write-icons.ts` | Writes `build/app.ico` and `build/AppIcon.icns`. Run by `just icons`. |
 | `scripts/shot.ps1` | Windows. Screenshots the window and its surroundings: `-Title Pet -Out build/pet.png [-Margin 40]`. |
 | `scripts/probe.ps1` | Windows. Real input: reports which window the OS hands a click to at solid and transparent spots, then drags the pet and reports where it landed. |
 | `scripts/flicker.ps1` | Windows. Captures the window many times in a row and reports frame-to-frame change, so a blank or dropped frame shows as a spike. |
 | `scripts/settings-probe.ps1` | Windows. Clicks the settings window's click-through switch twice and reports the settings file and the pet window's corners after each click. Run the app with `PET_SETTINGS=1`. |
 | `scripts/menu-icon-probe.ts` | Windows. Opens the tray menu with every animal's icon at a screen point, for a screenshot. |
-| `assets/kenney-cube-pets/` | The models, the shared texture, the previews and the pack's `License.txt`. |
 
 ## Recipes
 
@@ -127,5 +127,4 @@ xattr -dr com.apple.quarantine "Pet.app" && chmod +x "Pet.app/Contents/MacOS/"* 
 
 ## Assets
 
-The animals are [Cube Pets by Kenney](https://kenney.nl/assets/cube-pets), CC0.
-The pack's licence file is `assets/kenney-cube-pets/License.txt`.
+The animals are [Cube Pets by Kenney](https://kenney.nl/assets/cube-pets), CC0, in `demos/web-pets/assets/kenney-cube-pets/` with the pack's `License.txt`.

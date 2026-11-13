@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { BIRDS, PETS } from "./pets";
-import { moodsFor, nextCommand } from "./service";
+import { moodsFor, nextCommand } from "./moods";
 
 describe("moods per pet", () => {
   test("only the birds ever eat (it is a pecking animation)", () => {

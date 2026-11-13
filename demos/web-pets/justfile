@@ -1,0 +1,29 @@
+# The web pets: a pet for any web page, and its demo page.
+
+set shell := ["pwsh", "-NoProfile", "-Command", "$ErrorActionPreference = 'Stop'; $PSNativeCommandUseErrorActionPreference = $true; trap { if ($_.Exception -is [System.Management.Automation.NativeCommandExitException]) { exit $_.Exception.ExitCode }; break };"]
+
+@_default:
+    just --justfile "{{module_file()}}" --list
+
+
+install:
+    bun install --cwd ../..
+
+test: install
+    bun test .
+
+# Bundles and minifies the demo page (Babylon.js and the glTF loader included)
+frontend: install
+    bun build demo/main.tsx --outdir build/demo --minify
+
+# The demo page from Bun.serve on http://127.0.0.1:4748 (PORT and HOST to change)
+demo: frontend
+    bun run demo/serve.ts
+
+# macOS, with `demo` running: drives the first pet and writes build/probe.png
+probe:
+    swift scripts/probe.swift http://127.0.0.1:4748/ build/probe.png
+
+# A missing path makes ri fail the recipe
+clean:
+    if (Test-Path build) { ri build -r -fo }
