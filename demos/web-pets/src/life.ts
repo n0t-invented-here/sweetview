@@ -5,6 +5,7 @@
 // ones at its level. Units are whatever the world's are (CSS pixels on a
 // page); the page draws the model in the box.
 
+import { FEET } from "./framing";
 import { clipFor, drawMood, type ClipRef, type Direction, type MoodCommand, type MoodSpec, type PetModel } from "./model";
 
 export type Box = { x: number; y: number; width: number; height: number };
@@ -31,9 +32,10 @@ export type World = {
   has?: (clip: string) => boolean;
   /** How long a clip takes; a `landed` clip played once sets how long the landing lasts. */
   clipSeconds?: (clip: string) => number | undefined;
-  /** How much of the box the model fills side to side, and how far down its head is; the defaults when not given. */
+  /** How much of the box the model fills side to side, how far down its head is, and how far down its feet are; the defaults when not given. */
   body?: () => number;
   head?: () => number;
+  feet?: () => number;
   /** What to do next on the ground; a weighted draw from the model's moods by default. */
   nextCommand?: (model: PetModel) => MoodCommand;
 };
@@ -46,9 +48,10 @@ export type Life = {
   readonly state: LifeState;
   /** The box's edge, as the world says. */
   readonly size: number;
-  /** How much of the box the body fills side to side, and how far down the head is, as fractions. */
+  /** How much of the box the body fills side to side, how far down the head is, and how far down the feet are, as fractions of the box. */
   readonly body: number;
   readonly head: number;
+  readonly feet: number;
   /** How far the last step moved it sideways (walking, riding); what a pet on its head follows. */
   readonly dx: number;
   /** The pet it stands on, when not on the ground. */
@@ -83,6 +86,7 @@ const OVERHANG = 0.2;
 export const BODY = 0.6;
 /** How far down its box the top of a pet's head is, until the model is measured: where another pet's feet rest. */
 export const HEAD = 0.25;
+export { FEET };
 const isStanding = (l: Life) => l.state.kind === "ground" || l.state.kind === "landed";
 
 export function createLife(world: World): Life {
@@ -129,13 +133,14 @@ export function createLife(world: World): Life {
   const floorAmong = (others: readonly Life[], feetBefore: number): { y: number; on: Life | undefined } => {
     const size = world.size();
     const cx = x + size / 2;
+    const feetOffset = size * self.feet; // the feet are drawn this far down the box
     let best: { y: number; on: Life | undefined } = { y: groundY(), on: undefined };
     for (const o of others) {
       if (o === self || !isStanding(o)) continue;
       if (cx < o.x + o.size * (0.5 - o.body / 2) || cx > o.x + o.size * (0.5 + o.body / 2)) continue;
       const head = o.y + o.size * o.head;
       if (head < feetBefore - 1) continue;
-      if (head - size < best.y) best = { y: head - size, on: o };
+      if (head - feetOffset < best.y) best = { y: head - feetOffset, on: o };
     }
     return best;
   };
@@ -178,6 +183,9 @@ export function createLife(world: World): Life {
     get head() {
       return world.head?.() ?? HEAD;
     },
+    get feet() {
+      return world.feet?.() ?? FEET;
+    },
     get standingOn() {
       return on;
     },
@@ -218,7 +226,7 @@ export function createLife(world: World): Life {
     },
     step(now, dt, others = []) {
       const xBefore = x;
-      const feetBefore = y + world.size();
+      const feetBefore = y + world.size() * self.feet;
       switch (state.kind) {
         case "ground": {
           if (!stand(others, feetBefore)) break;
@@ -288,7 +296,7 @@ export function createLife(world: World): Life {
 export function separate(lives: readonly Life[]): void {
   const standing = lives.filter(isStanding);
   if (standing.length < 2) return;
-  const sameLevel = (a: Life, b: Life) => Math.abs(a.y + a.size - (b.y + b.size)) < 0.5 * Math.min(a.size, b.size);
+  const sameLevel = (a: Life, b: Life) => Math.abs(a.y + a.size * a.feet - (b.y + b.size * b.feet)) < 0.5 * Math.min(a.size, b.size);
   for (let pass = 0; pass < 32; pass++) {
     standing.sort((a, b) => a.x + a.size / 2 - (b.x + b.size / 2));
     let moved = 0;

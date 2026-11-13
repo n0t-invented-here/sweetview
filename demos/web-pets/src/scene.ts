@@ -41,7 +41,7 @@ export type PetScene = {
 };
 
 const GROUND_MARGIN_PX = 2;
-/** The turn that makes a model face +z, where the pets face as modelled: rotation about y by θ takes +x to (cos θ, -sin θ). */
+/** The turn that makes a model face +z: rotation about y by θ takes +x to (cos θ, -sin θ), so +x needs -π/2 and -x needs π/2. */
 const forwardYaw = (forward: PetModel["forward"]): number => (forward === "-z" ? Math.PI : forward === "+x" ? -Math.PI / 2 : forward === "-x" ? Math.PI / 2 : 0);
 
 /** Throws when WebGL is not available: there is no pet without it. */
@@ -90,12 +90,12 @@ export function createPetScene(canvas: HTMLCanvasElement): PetScene {
   let loadSeq = 0;
 
   /**
-   * The box around every mesh, in the space the nodes hang in now, posed on
+   * Every vertex of every mesh, in the space the nodes hang in now, posed on
    * the first frame of `pose`: a model's bind pose is a T-pose with the arms
-   * out, twice as wide as the figure standing, and a skinned mesh's own box
-   * is that bind pose until it is refreshed through its skeleton.
+   * out, twice as wide as the figure standing, and a skinned mesh's own
+   * vertices are that bind pose until they are run through its skeleton.
    */
-  const measure = (loaded: AssetContainer, pose: AssetContainer["animationGroups"][number] | undefined): Bounds => {
+  const measure = (loaded: AssetContainer, pose: AssetContainer["animationGroups"][number] | undefined): { bounds: Bounds; points: number[]; triangles: number[] } => {
     if (pose) {
       pose.start(true, 1);
       pose.goToFrame(pose.from);
@@ -103,20 +103,32 @@ export function createPetScene(canvas: HTMLCanvasElement): PetScene {
     for (const node of loaded.transformNodes) node.computeWorldMatrix(true);
     const min = { x: Infinity, y: Infinity, z: Infinity };
     const max = { x: -Infinity, y: -Infinity, z: -Infinity };
+    const points: number[] = [];
+    const triangles: number[] = [];
+    const p = new Vector3();
     for (const mesh of loaded.meshes) {
       if (mesh.getTotalVertices() === 0) continue;
       mesh.computeWorldMatrix(true);
-      if (mesh.skeleton) {
-        mesh.skeleton.prepare();
-        mesh.refreshBoundingInfo({ applySkeleton: true, applyMorph: true });
-      }
-      const box = mesh.getBoundingInfo().boundingBox;
-      for (const axis of ["x", "y", "z"] as const) {
-        min[axis] = Math.min(min[axis], box.minimumWorld[axis]);
-        max[axis] = Math.max(max[axis], box.maximumWorld[axis]);
+      if (mesh.skeleton) mesh.skeleton.prepare();
+      const data = mesh.getPositionData(!!mesh.skeleton, true);
+      if (!data) continue;
+      const world = mesh.getWorldMatrix();
+      const base = points.length / 3;
+      const indices = mesh.getIndices();
+      if (indices) for (const i of indices) triangles.push(base + i);
+      else for (let i = 0; i < data.length / 3; i++) triangles.push(base + i);
+      for (let i = 0; i + 2 < data.length; i += 3) {
+        Vector3.TransformCoordinatesFromFloatsToRef(data[i]!, data[i + 1]!, data[i + 2]!, world, p);
+        points.push(p.x, p.y, p.z);
+        min.x = Math.min(min.x, p.x);
+        min.y = Math.min(min.y, p.y);
+        min.z = Math.min(min.z, p.z);
+        max.x = Math.max(max.x, p.x);
+        max.y = Math.max(max.y, p.y);
+        max.z = Math.max(max.z, p.z);
       }
     }
-    return { min, max };
+    return { bounds: { min, max }, points, triangles };
   };
 
   return {
@@ -150,7 +162,7 @@ export function createPetScene(canvas: HTMLCanvasElement): PetScene {
       const fit = new TransformNode("fit", scene);
       for (const node of loaded.rootNodes) node.parent = fit;
       const pose = animations.get(clipFor(model, "idle").name);
-      const as = measure(loaded, pose);
+      const { bounds: as, points, triangles } = measure(loaded, pose);
       pose?.stop();
       const k = model.height ? model.height / (as.max.y - as.min.y) : 1;
       const cx = (as.min.x + as.max.x) / 2;
@@ -162,11 +174,12 @@ export function createPetScene(canvas: HTMLCanvasElement): PetScene {
       fit.parent = turn;
       turn.parent = root;
       mount = turn;
-      const fitted: Bounds = {
-        min: { x: (as.min.x - cx) * k, y: 0, z: (as.min.z - cz) * k },
-        max: { x: (as.max.x - cx) * k, y: (as.max.y - as.min.y) * k, z: (as.max.z - cz) * k },
-      };
-      measured = proportionsOf(fitted, yawFor(1) + turn.rotation.y);
+      for (let i = 0; i + 2 < points.length; i += 3) {
+        points[i] = (points[i]! - cx) * k;
+        points[i + 1] = (points[i + 1]! - as.min.y) * k;
+        points[i + 2] = (points[i + 2]! - cz) * k;
+      }
+      measured = proportionsOf(points, triangles, yawFor(1) + turn.rotation.y);
       playing = undefined;
     },
     has: (clip) => animations.has(clip),

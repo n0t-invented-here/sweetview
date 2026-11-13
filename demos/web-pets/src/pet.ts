@@ -5,7 +5,7 @@
 // shows and a press picks the pet up.
 
 import { herdFor } from "./herd";
-import { BODY, HEAD, createLife, type Box } from "./life";
+import { BODY, FEET, HEAD, createLife, type Box } from "./life";
 import type { PetModel } from "./model";
 import { CUBE_PETS, randomPet, type Pet } from "./packs/cube-pets";
 import { createPetScene } from "./scene";
@@ -107,6 +107,7 @@ export function createPet(options: PetOptions = {}): PetHandle {
     clipSeconds: (clip) => scene.clipSeconds(clip),
     body: () => scene.proportions()?.body ?? BODY,
     head: () => scene.proportions()?.head ?? HEAD,
+    feet: () => scene.proportions()?.feet ?? FEET,
   });
 
   scene.resize(size, settings.scale);
@@ -119,6 +120,8 @@ export function createPet(options: PetOptions = {}): PetHandle {
     const url = `${assetsUrl}${model.pack}/${model.file}`;
     try {
       await scene.show(url, model);
+      const measured = scene.proportions();
+      if (measured) Object.assign(canvas.dataset, { model: model.name, body: measured.body.toFixed(3), head: measured.head.toFixed(3), feet: measured.feet.toFixed(3) }); // what the page can read about the fit
     } catch (err) {
       fault(`loading the ${model.name} model (${url}) failed`, err);
     }

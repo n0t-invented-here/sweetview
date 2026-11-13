@@ -19,6 +19,8 @@ const world = (over: Partial<World> = {}): World => ({
   scale: () => 1,
   bottom: () => 0,
   model: () => MODEL,
+  head: () => 0.25,
+  feet: () => 1, // the tests reckon in boxes: feet on the box's bottom edge
   ...over,
 });
 const idle: MoodCommand = { mood: IDLE, dir: 1, seconds: 100 };

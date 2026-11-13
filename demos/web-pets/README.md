@@ -94,8 +94,8 @@ createPet({ pet: robot, assetsUrl: "/pets/" });
 
 What happens with it:
 
-- The file is loaded, measured, centred, its feet put at y = 0, scaled to `height` when given, and turned by `forward` so it faces +z. The camera never changes; the model is fitted to it.
-- Its box through the camera gives its width and head height, which is what other pets bump into and stand on. No numbers to supply.
+- The file is loaded, posed on the first frame of its idle clip (a bind pose is a T-pose), measured, centred, its feet put at y = 0, scaled to `height` when given, and turned by `forward` so it faces +z. Kenney's packs all face +z as glTF says they should; the camera never changes, the model is fitted to it.
+- Its posed geometry through the camera gives its width (the lower three quarters, so a raised tail or a hat does not count), its head (the surface straight above its middle) and where its feet are drawn, which is what other pets bump into and stand on. No numbers to supply. The canvas carries them as `data-body`, `data-head` and `data-feet`, fractions of its edge, for a look.
 - `moods` is a weighted draw; a mood whose clip the file lacks is never drawn. A mood with `speed` moves the pet along the ground at that many CSS pixels per second at scale 1, and faces it the way it goes; the stride is the one thing to tune by eye, because a clip does not say how far its feet travel.
 - `clips` name the clips for the states that are not moods. Missing ones fall back as noted. A `once` clip plays through and stops instead of looping; for `landed` it also sets how long the landing lasts (otherwise 1.2 s).
 - Every clip gets blending between it and the next, which suits clips of one rig.
@@ -157,7 +157,7 @@ It reads the bounds, the box size, the scale, the bottom and the model through f
 On the ground it draws the next mood from the model when the current one ends.
 
 `createPetScene` draws the model: a level camera whose height is computed so that the model's ground plane projects onto the canvas's last pixel rows, at any scale (the model, the camera distance and the canvas scale together, so the framing never changes); the model fitted under it as the spec says; its clips by name, with blending; and a triangle pick for `solidAt`.
-`framing.ts` has the same camera as numbers, so the fitted box's width and head height on the canvas come out without a render.
+`framing.ts` has the same camera as numbers, so the fitted model's width, head height and foot line on the canvas come out from its vertices and triangles without a render.
 
 `createPet` joins the two on a canvas it appends to the page, moved with `translate3d` every frame the position changes.
 The canvas takes no pointer events, so the page under it works as if the canvas were not there.
@@ -166,6 +166,7 @@ That is one move of lag before a press on the model counts, and never a stolen c
 
 Pets on the same ground share a herd (`herd.ts`), one `requestAnimationFrame` loop that steps every life with the others in view, runs `separate` over the standing ones (pairs at one level, half the overlap each, until nothing moves) and then lets each pet draw.
 A life's floor is the ground or the highest head of a standing pet whose body is under the life's centre and whose head was not above the feet when the step began, so a fall never passes through a head and a pet beside another never climbs it; a standing pet whose floor is gone falls, and one on a head moves with it.
+Head and feet are both taken at a model's centre depth, so a rider's drawn feet meet its mount's drawn head.
 
 ## Assets
 

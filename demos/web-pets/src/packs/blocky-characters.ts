@@ -1,5 +1,5 @@
 // Kenney's Blocky Characters (CC0): node-animated people with 27 clips, no
-// fall and no gestures, modelled eight units tall and facing -x. Four of them, in
+// fall and no gestures, modelled eight units tall. Four of them, in
 // assets/kenney-blocky-characters.
 
 import type { PetModel } from "../model";
@@ -11,7 +11,6 @@ const spec = (id: (typeof BLOCKY)[number]): PetModel => ({
   pack: "kenney-blocky-characters",
   file: `character-${id}.glb`,
   height: 1.3,
-  forward: "-x", // modelled facing along -x; the pets face +z
   clips: { idle: "idle", carried: "emote-no", landed: { name: "emote-yes", once: true } }, // no falling clip: falls with the carried one
   moods: [
     { name: "idle", clip: "idle", weight: 3, seconds: [2, 6] },
