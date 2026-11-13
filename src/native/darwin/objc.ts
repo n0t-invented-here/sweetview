@@ -241,3 +241,29 @@ export const release = (obj: Id): void => {
 };
 /** [obj sel:NSUInteger :id :id :BOOL] -> id  (nextEventMatchingMask:untilDate:inMode:dequeue:) */
 export const sendUIntPtrPtrBool = fn([ID, ID, FFIType.u64, ID, ID, FFIType.bool], ID);
+
+/** [obj sel] -> void  (requestWhenInUseAuthorization) */
+export const sendVoid = fn([ID, ID], FFIType.void);
+/** [obj sel:id] -> void  (requestAuthorization:, requestFullAccessToEventsWithCompletion:) */
+export const sendPtrVoid = fn([ID, ID, ID], FFIType.void);
+/** [obj sel:id :id] -> void  (requestAccessForMediaType:completionHandler:) */
+export const sendPtrPtrVoid = fn([ID, ID, ID, ID], FFIType.void);
+/** [obj sel:id] -> NSInteger  (authorizationStatusForMediaType:) */
+export const sendPtrRetInt = fn([ID, ID, ID], FFIType.i64);
+/** [obj sel:id] -> BOOL  (respondsToSelector:, which takes a SEL) */
+export const sendPtrRetBool = fn([ID, ID, ID], FFIType.bool);
+/** [obj sel:BOOL] -> id  (numberWithBool:) */
+export const sendBoolRetPtr = fn([ID, ID, FFIType.bool], ID);
+
+/** Loads a system framework by name, so its classes exist for `cls` and `findClass`. Loading one twice is free. */
+export function loadFramework(name: string): void {
+  const path = `/System/Library/Frameworks/${name}.framework/${name}`;
+  if (dl.dlopen(cstr(path), RTLD_NOW) === null) throw new Error(`dlopen(${path}) failed`);
+}
+
+/** The class, or NIL when this macOS has none by that name (`cls` throws instead). */
+export const findClass = (name: string): Id => asId(objc.symbols.objc_getClass(cstr(name)));
+
+/** The object a framework's exported constant points at: `objectConstant("AVFoundation", "AVMediaTypeVideo")` is that NSString. */
+export const objectConstant = (framework: string, name: string): Id =>
+  asId(read.u64(Number(dataSymbolAddress(`/System/Library/Frameworks/${framework}.framework/${framework}`, name)) as Pointer, 0));

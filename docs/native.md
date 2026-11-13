@@ -1,12 +1,12 @@
 # @n1h/sweetview/native
 
-Native desktop pieces for a Bun app, called over `bun:ffi`: a tray icon, notifications, control of the webview's window, overlay windows with click-through hit regions, a folder dialog, the macOS app menu and Dock icon, the OS event loop for an app with no webview window, menus as data, and icon encoders. Every function that touches the OS is implemented for Windows and macOS and runs on the UI thread, the thread that owns the window and spins the webview's run loop. The menu, icon and hit-region helpers are plain TypeScript; all but `createHitRelay` run on any thread. Install and the overview are in [../README.md](../README.md).
+Native desktop pieces for a Bun app, called over `bun:ffi`: a tray icon, notifications, control of the webview's window, overlay windows with click-through hit regions, a folder dialog, the macOS privacy permissions, the macOS app menu and Dock icon, the OS event loop for an app with no webview window, menus as data, and icon encoders. Every function that touches the OS is implemented for Windows and macOS and runs on the UI thread, the thread that owns the window and spins the webview's run loop. The menu, icon and hit-region helpers are plain TypeScript; all but `createHitRelay` run on any thread. Install and the overview are in [../README.md](../README.md).
 
 ```ts
-import { createTray, createNotifier, nativeWindow, createOverlayWindow, makeOverlay, convexHull, createHitRelay, flattenRegions, hitRegions, packRegions, unpackRegions, pickFolder, installAppMenu, setAppIcon, setActivationPolicy, pumpEvents, runEventLoop, quitEventLoop, resolveMenu, decodePng, dotIcns, dotIcon, dotPng, encodeIcns, encodeIco, encodePng, icnsFromPng, icnsFromRgba, icoFromPng, icoFromRgba, renderDot, trimTransparent, type Tray, type TrayIcon, type TrayOptions, type NotificationClick, type NotificationOptions, type Notifier, type NotifierOptions, type NativeWindow, type WindowHandle, type Overlay, type OverlayOptions, type OverlayWindowOptions, type HitRefiner, type Point, type Rect, type ResizeEdge, type HitPolygon, type HitProbe, type HitRelay, type AppMenuOptions, type ActivationPolicy, type EventLoopOptions, type MenuItem, type MenuSource, type MenuTemplate, type DecodedPng, type DotIconOptions, type Icon } from "@n1h/sweetview/native";
+import { createTray, createNotifier, nativeWindow, createOverlayWindow, makeOverlay, convexHull, createHitRelay, flattenRegions, hitRegions, packRegions, unpackRegions, pickFolder, automationStatus, openPermissionSettings, permissionNames, permissionStatus, requestAutomation, requestFolderAccess, requestPermission, usageDescriptionKeys, waitForPermission, installAppMenu, setAppIcon, setActivationPolicy, pumpEvents, runEventLoop, quitEventLoop, resolveMenu, decodePng, dotIcns, dotIcon, dotPng, encodeIcns, encodeIco, encodePng, icnsFromPng, icnsFromRgba, icoFromPng, icoFromRgba, renderDot, trimTransparent, type Tray, type TrayIcon, type TrayOptions, type NotificationClick, type NotificationOptions, type Notifier, type NotifierOptions, type NativeWindow, type WindowHandle, type Overlay, type OverlayOptions, type OverlayWindowOptions, type HitRefiner, type Point, type Rect, type ResizeEdge, type HitPolygon, type HitProbe, type HitRelay, type Permission, type PermissionStatus, type ProtectedFolder, type SettingsPane, type WaitForPermissionOptions, type AppMenuOptions, type ActivationPolicy, type EventLoopOptions, type MenuItem, type MenuSource, type MenuTemplate, type DecodedPng, type DotIconOptions, type Icon } from "@n1h/sweetview/native";
 ```
 
-Every function that touches the OS picks its Windows or macOS implementation on its first call. On any other OS that call throws `sweetnative: <platform> is not supported (win32 and darwin are)`. Importing the module does not throw on any OS.
+Every function that touches the OS picks its Windows or macOS implementation on its first call. On any other OS that call throws `sweetnative: <platform> is not supported (win32 and darwin are)`. The [permission](#permissions) functions are the exception: off macOS they answer `not-applicable` and throw nothing. Importing the module does not throw on any OS.
 
 - [Tray](#tray)
   - [createTray](#createtray)
@@ -44,6 +44,21 @@ Every function that touches the OS picks its Windows or macOS implementation on 
   - [HitRelay](#hitrelay)
 - [Folder picker](#folder-picker)
   - [pickFolder](#pickfolder)
+- [Permissions](#permissions)
+  - [permissionStatus](#permissionstatus)
+  - [requestPermission](#requestpermission)
+  - [waitForPermission](#waitforpermission)
+  - [openPermissionSettings](#openpermissionsettings)
+  - [usageDescriptionKeys](#usagedescriptionkeys)
+  - [automationStatus](#automationstatus)
+  - [requestAutomation](#requestautomation)
+  - [requestFolderAccess](#requestfolderaccess)
+  - [permissionNames](#permissionnames)
+  - [Permission](#permission)
+  - [PermissionStatus](#permissionstatus-1)
+  - [SettingsPane](#settingspane)
+  - [ProtectedFolder](#protectedfolder)
+  - [WaitForPermissionOptions](#waitforpermissionoptions)
 - [App menu](#app-menu)
   - [installAppMenu](#installappmenu)
   - [AppMenuOptions](#appmenuoptions)
@@ -722,6 +737,291 @@ Throws:
 Platforms: Windows: implemented; only existing file-system folders can be chosen. macOS: implemented; the user can create folders in the panel; the app is activated before the panel opens. Linux: throws.
 
 Thread: UI thread. Windows: the call needs a single-threaded COM apartment and initialises one on a thread that has none. The UI thread, and so the webview, waits until the dialog closes.
+
+## Permissions
+
+The rows of System Settings > Privacy & Security on macOS: read what macOS says about one, show the system's prompt for it, wait for the user's answer, open its Settings pane. The map of permission to system call follows [node-mac-permissions](https://github.com/codebytere/node-mac-permissions), ported to `bun:ffi`, so there is nothing to compile.
+
+A grant belongs to the app that asks, by code identity. A bare binary under `bun run` gets the grants of the app that launched it, such as the terminal, and its prompts carry that app's name. An `.app` bundle gets its own, under its bundle id. macOS knows an ad-hoc signed bundle by its exact contents, so a rebuilt one is a new app to it: the old switch stays in Settings and no longer applies; `tccutil reset All <bundle id>` clears it.
+
+Windows and Linux gate none of this through these calls. There every status is `not-applicable`, nothing is loaded and nothing throws, so an app calls these without a platform check.
+
+```ts
+// UI thread, a uiMethods handler: ask, and after a "no" send the user to the switch.
+"camera.ask": () => {
+  const status = requestPermission("camera");
+  if (status === "denied") openPermissionSettings("camera");
+  return status;
+},
+
+// The worker, whose event loop runs: wait for the answer.
+const status = await waitForPermission("camera");
+```
+
+| Permission | Row in Settings | Statuses besides `granted` | `Info.plist` key before asking | Notes |
+|---|---|---|---|---|
+| `ax-trust` | Device Control and Data Access | `missing` | none | Reading and driving other apps' windows: `AXIsProcessTrusted`. Asking shows the system dialog that leads to Settings, where the user switches the app on. |
+| `device-control` | Device Control and Data Access | `denied`, `not-determined` | none | Posting keyboard and mouse events. The same permission as `Permission.DeviceControl` in the webview library's input hooks. |
+| `input-monitoring` | Input Monitoring | `denied`, `not-determined` | none | Seeing keyboard and mouse input meant for other apps. The same permission as `Permission.InputMonitoring` in the input hooks. |
+| `screen-recording` | Screen & System Audio Recording | `missing` | none | Capturing the screen and other apps' windows. macOS applies a new grant when the app is next launched. |
+| `camera` | Camera | `denied`, `restricted`, `not-determined` | `NSCameraUsageDescription` | |
+| `microphone` | Microphone | `denied`, `restricted`, `not-determined` | `NSMicrophoneUsageDescription` | |
+| `contacts` | Contacts | `denied`, `restricted`, `not-determined` | `NSContactsUsageDescription` | |
+| `calendars` | Calendars | `limited`, `denied`, `restricted`, `not-determined` | `NSCalendarsFullAccessUsageDescription`; before macOS 14 `NSCalendarsUsageDescription` | Reading and changing events. `limited`: the user allowed adding events only. |
+| `calendars-write-only` | Calendars | `denied`, `restricted`, `not-determined` | `NSCalendarsWriteOnlyAccessUsageDescription`; before macOS 14 `NSCalendarsUsageDescription` | Adding events without reading any; `granted` under full access too. Before macOS 14 the request is the one for full access. |
+| `reminders` | Reminders | `denied`, `restricted`, `not-determined` | `NSRemindersFullAccessUsageDescription`; before macOS 14 `NSRemindersUsageDescription` | |
+| `photos` | Photos | `limited`, `denied`, `restricted`, `not-determined` | `NSPhotoLibraryUsageDescription` | Reading and changing the library. `limited`: the user picked some photos. |
+| `photos-add-only` | Photos | `limited`, `denied`, `restricted`, `not-determined` | `NSPhotoLibraryAddUsageDescription` | Adding photos without reading any. |
+| `speech-recognition` | Speech Recognition | `denied`, `restricted`, `not-determined` | `NSSpeechRecognitionUsageDescription` | |
+| `music-library` | Media & Apple Music | `denied`, `restricted`, `not-determined` | `NSAppleMusicUsageDescription` | |
+| `location` | Location Services | `denied`, `restricted`, `not-determined` | `NSLocationWhenInUseUsageDescription` or `NSLocationUsageDescription` | Location while the app is in use; `granted` under always too. |
+| `location-always` | Location Services | `limited`, `denied`, `restricted`, `not-determined` | `NSLocationAlwaysAndWhenInUseUsageDescription` or `NSLocationUsageDescription` | Location at any time. `limited`: allowed while in use only. |
+| `bluetooth` | Bluetooth | `denied`, `restricted`, `not-determined` | `NSBluetoothAlwaysUsageDescription` | Core Bluetooth has no request call; asking creates a `CBCentralManager`, which is kept for the life of the process. |
+| `focus-status` | Focus | `denied`, `restricted`, `not-determined` | `NSFocusStatusUsageDescription` | Whether a Focus is silencing notifications. `not-applicable` before macOS 12. |
+| `external-storage` | Files & Folders, Removable Volumes | `denied`, `restricted`, `not-determined` | none | Cameras' and card readers' storage. `not-applicable` before macOS 14. |
+| `full-disk-access` | Full Disk Access | `missing` | none | macOS has no call and no prompt for it. The status comes from trying to open files only Full Disk Access unlocks; the user switches it on in Settings. |
+
+Automation and the Desktop, Documents and Downloads folders have their own calls, [`automationStatus`](#automationstatus), [`requestAutomation`](#requestautomation) and [`requestFolderAccess`](#requestfolderaccess), because they are answered per target app and per folder. Automation needs `NSAppleEventsUsageDescription`. The folders need no key; `NSDesktopFolderUsageDescription`, `NSDocumentsFolderUsageDescription` and `NSDownloadsFolderUsageDescription` put the app's reason in the prompt.
+
+Not here: the notification permission. macOS reports it only through an asynchronous call; [`createNotifier`](#createnotifier) asks on the first notification.
+
+An app signed with the hardened runtime, which notarization requires, also needs an entitlement per protected resource (`com.apple.security.device.camera`, `com.apple.security.personal-information.addressbook` and the like) or macOS refuses without asking. `makeMacApp` signs without the hardened runtime and takes no entitlements.
+
+The webview library's input hooks keep their own check of `device-control` and `input-monitoring`, `permissions` in `@n1h/sweetview-webview-bun`, which also knows which hook needs which. Both read the same system state, so the two agree.
+
+### permissionStatus
+
+```ts
+function permissionStatus(permission: Permission): PermissionStatus
+```
+
+What macOS says about the permission now. Shows nothing.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `permission` | [`Permission`](#permission) | required | The permission to read. |
+
+Returns: the [`PermissionStatus`](#permissionstatus-1).
+
+Throws: `TypeError` `sweetnative: permissionStatus: no permission is named "<name>"; the names are …` for a name that is not a permission, on every OS.
+
+Platforms: Windows: `not-applicable`. macOS: implemented; one round trip to the system's privacy service, about 10 ms, so read the ones the app uses rather than all of them on a short timer. Linux: `not-applicable`.
+
+Thread: any.
+
+### requestPermission
+
+```ts
+function requestPermission(permission: Permission): PermissionStatus
+```
+
+Asks macOS for the permission and returns the status right after asking, without waiting for the user. When the user has not answered before, macOS shows its prompt; the answer arrives later, so read the status again or use [`waitForPermission`](#waitforpermission). macOS shows a prompt once per app: after a "no" the request changes nothing and the way forward is [`openPermissionSettings`](#openpermissionsettings). This function never opens Settings itself.
+
+Nothing is asked when the status is already `granted` or `not-applicable`, or for `full-disk-access`, which has no request.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `permission` | [`Permission`](#permission) | required | The permission to ask for. |
+
+Returns: the status after asking: `not-determined` while the prompt is up, the answer when macOS already had one.
+
+Throws:
+
+- `TypeError` for a name that is not a permission, as [`permissionStatus`](#permissionstatus) does.
+- In an `.app` bundle whose `Info.plist` lacks the key the permission needs: `sweetnative: requestPermission("<name>"): the app's Info.plist has no <key>, and macOS refuses the request, or ends the process, without it (makeMacApp's plist option adds one)`. Nothing has been asked. A bare binary is not checked: its request is made in the name of the app that launched it, and that app's `Info.plist` decides.
+
+Platforms: Windows: `not-applicable`, nothing asked. macOS: implemented. Linux: `not-applicable`, nothing asked.
+
+Thread: UI thread. Location and Bluetooth answer through the main thread's run loop.
+
+### waitForPermission
+
+```ts
+function waitForPermission(permission: Permission, options: WaitForPermissionOptions = {}): Promise<PermissionStatus>
+```
+
+Reads the status on a timer until the user has answered, and resolves with it. The first read is immediate, so a permission that is already answered resolves at once.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `permission` | [`Permission`](#permission) | required | The permission to wait for. |
+| `options` | [`WaitForPermissionOptions`](#waitforpermissionoptions) | `{}` | What ends the wait, the time limit and the interval. |
+
+Returns: a promise of the status that ended the wait, or of the status as it is when `timeoutMs` has passed.
+
+Throws: `TypeError` for a name that is not a permission or an `until` that is neither `answered` nor `granted`; `RangeError` `intervalMs must be a number of at least 1, got <value>` and `timeoutMs must be a number of at least 0, got <value>`. All synchronously.
+
+Platforms: Windows: resolves `not-applicable` at once. macOS: implemented. Linux: resolves `not-applicable` at once.
+
+Thread: one whose Bun event loop runs, because the timer is a Bun timer: a worker, or the UI thread under [`runEventLoop`](#runeventloop). On the UI thread inside a webview's `run()` the promise never resolves.
+
+### openPermissionSettings
+
+```ts
+function openPermissionSettings(pane: SettingsPane): boolean
+```
+
+Opens System Settings at the pane of Privacy & Security where the user switches the app on.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `pane` | [`SettingsPane`](#settingspane) | required | A permission, `automation` or `files-and-folders`. `ax-trust` and `device-control` open the same pane, Device Control and Data Access. |
+
+Returns: `true` when macOS accepted the request to open the pane; `false` when it did not, and on Windows and Linux.
+
+Throws: `TypeError` for a name that is not a pane.
+
+Platforms: Windows: returns false. macOS: implemented, through `/usr/bin/open` and the `x-apple.systempreferences:` URL of the pane. Linux: returns false.
+
+Thread: any.
+
+### usageDescriptionKeys
+
+```ts
+function usageDescriptionKeys(permission: Permission): string[]
+```
+
+The `Info.plist` keys a bundled app needs before it asks for the permission, for a build script that fills `makeMacApp`'s `plist`. Any one of the keys returned is enough; an empty list means the permission needs none. The answer for calendars and reminders depends on the macOS version the call runs on.
+
+Returns: the keys, as in the table above.
+
+Throws: `TypeError` for a name that is not a permission.
+
+Platforms: Windows: an empty list. macOS: implemented. Linux: an empty list.
+
+Thread: any.
+
+### automationStatus
+
+```ts
+function automationStatus(targetBundleId: string): PermissionStatus
+```
+
+Whether this app may send Apple Events to another app, the Automation row of Privacy & Security, which has one switch per app controlled. Shows nothing.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `targetBundleId` | `string` | required | The bundle id of the app to control, `com.apple.finder`. |
+
+Returns: `granted`, `denied`, `not-determined`, or `missing` when the target is not running, because macOS answers only for a running app.
+
+Throws: `TypeError` `sweetnative: automationStatus: the target's bundle id is empty`; `Error` naming the call and the system's code when macOS answers with an error other than those.
+
+Platforms: Windows: `not-applicable`. macOS: implemented, `AEDeterminePermissionToAutomateTarget`. Linux: `not-applicable`.
+
+Thread: any.
+
+### requestAutomation
+
+```ts
+function requestAutomation(targetBundleId: string): PermissionStatus
+```
+
+Asks to control the app with that bundle id. Unlike [`requestPermission`](#requestpermission) this blocks the calling thread until the user answers the prompt, and returns the answer.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `targetBundleId` | `string` | required | The bundle id of the app to control. |
+
+Returns: `granted`, `denied`, `not-determined` when the prompt was dismissed without an answer, or `missing` when the target is not running.
+
+Throws: as [`automationStatus`](#automationstatus); and in an `.app` bundle without `NSAppleEventsUsageDescription`, the same error as `requestPermission`, before anything is asked.
+
+Platforms: Windows: `not-applicable`. macOS: implemented. Linux: `not-applicable`.
+
+Thread: any; the thread waits while the prompt is up, so on the UI thread the window does not respond until the user answers.
+
+### requestFolderAccess
+
+```ts
+function requestFolderAccess(folder: ProtectedFolder): PermissionStatus
+```
+
+Lists the user's Desktop, Documents or Downloads folder, which is what makes macOS ask for it. macOS has no call that reads this permission without asking, so there is no status function: the first call shows the prompt and blocks until it is answered, later calls return the answer at once.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `folder` | [`ProtectedFolder`](#protectedfolder) | required | The folder to ask for. |
+
+Returns: `granted` when the folder could be listed, `denied` when macOS refused.
+
+Throws: `TypeError` for a name that is not one of the three folders; the file system's error when listing fails for a reason other than permission.
+
+Platforms: Windows: `not-applicable`. macOS: implemented. Linux: `not-applicable`.
+
+Thread: any; the thread waits while the prompt is up.
+
+### permissionNames
+
+```ts
+const permissionNames: readonly Permission[]
+```
+
+Every permission name, in the order of the table above, for a settings screen that lists them.
+
+### Permission
+
+```ts
+type Permission =
+  | "ax-trust" | "device-control" | "input-monitoring" | "screen-recording"
+  | "camera" | "microphone"
+  | "contacts" | "calendars" | "calendars-write-only" | "reminders" | "photos" | "photos-add-only"
+  | "speech-recognition" | "music-library"
+  | "location" | "location-always" | "bluetooth" | "focus-status" | "external-storage"
+  | "full-disk-access";
+```
+
+One permission; the table at the top of this section says what each is.
+
+### PermissionStatus
+
+```ts
+type PermissionStatus = "granted" | "limited" | "not-determined" | "denied" | "restricted" | "missing" | "not-applicable";
+```
+
+| Value | Meaning |
+|---|---|
+| `granted` | Allowed. |
+| `limited` | Allowed in part: some photos; adding events where full calendar access was asked; location while in use where always was asked. |
+| `not-determined` | The user has not been asked. A request shows the prompt. |
+| `denied` | The user said no, or switched it off in Settings. A request shows nothing; the switch is in Settings. |
+| `restricted` | A policy forbids it, such as parental controls or device management. The user cannot change it. |
+| `missing` | Not granted, and macOS does not say whether the user was ever asked: the permissions it answers only yes or no for, and an automation target that is not running. |
+| `not-applicable` | Nothing to ask: not macOS, or a permission this macOS version does not have. |
+
+`granted`, `missing` and `not-applicable` mean what they mean in the webview library's input-hook permissions.
+
+### SettingsPane
+
+```ts
+type SettingsPane = Permission | "automation" | "files-and-folders";
+```
+
+A pane of Privacy & Security: one per permission, plus Automation and Files & Folders, which have no single status.
+
+### ProtectedFolder
+
+```ts
+type ProtectedFolder = "desktop" | "documents" | "downloads";
+```
+
+The folders macOS asks about on first access.
+
+### WaitForPermissionOptions
+
+```ts
+type WaitForPermissionOptions = {
+  until?: "answered" | "granted";
+  timeoutMs?: number;
+  intervalMs?: number;
+};
+```
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `until` | `"answered" \| "granted"` | `"answered"` | `answered`: until the status is neither `not-determined` nor `missing`, so a "no" ends the wait as well as a "yes"; for a permission macOS answers only yes or no for, that is until it is granted. `granted`: until the status is `granted`, for a user sent to Settings to switch on what was denied. |
+| `timeoutMs` | `number` | no limit | Give up after this long and resolve with the status as it then is. |
+| `intervalMs` | `number` | `500` | How often the status is read, in milliseconds. |
 
 ## App menu
 

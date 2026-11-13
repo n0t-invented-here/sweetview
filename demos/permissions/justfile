@@ -1,0 +1,45 @@
+# The permissions demo.
+
+set shell := ["pwsh", "-NoProfile", "-Command", "$ErrorActionPreference = 'Stop'; $PSNativeCommandUseErrorActionPreference = $true; trap { if ($_.Exception -is [System.Management.Automation.NativeCommandExitException]) { exit $_.Exception.ExitCode }; break };"]
+
+exe := "permissions"
+name := "Permissions"
+# Bun embeds the exe file icon only when the build host is Windows; a Mac-built Windows exe gets Bun's stock icon (README, "Platforms").
+win_icon := if os() == "windows" { "--windows-icon=build/app.ico" } else { "" }
+
+@_default:
+    just --justfile "{{module_file()}}" --list
+
+
+install:
+    bun install --cwd ../..
+
+frontend: install
+    bun build frontend/main.ts --outdir build/frontend --minify
+
+# macOS: a bare binary asks in the name of the terminal that ran it; `open` asks as the app itself.
+app: frontend
+    bun run app.ts
+
+compile: frontend compile-win compile-mac mac-app
+
+icons: install
+    bun scripts/write-icons.ts
+
+compile-win: frontend icons
+    bun build --compile --target=bun-windows-x64 --windows-hide-console {{win_icon}} --minify --sourcemap app.ts --outfile dist/{{exe}}-windows-x64.exe
+
+compile-mac: frontend
+    bun build --compile --target=bun-darwin-arm64 --minify --sourcemap app.ts --outfile dist/{{exe}}-macos-arm64
+
+# The bundle carries a usage description for every permission the window asks for; signed ad-hoc by makeMacApp
+mac-app: icons compile-mac
+    bun scripts/make-app.ts
+
+open: mac-app
+    open "dist/{{name}}.app"
+
+# A missing path makes ri fail the recipe
+clean:
+    if (Test-Path build) { ri build -r -fo }
+    if (Test-Path dist) { ri dist -r -fo }

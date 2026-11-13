@@ -7,4 +7,5 @@ mod web-app
 mod desktop-pet
 mod menubar-only
 mod menubar-notify
+mod permissions
 

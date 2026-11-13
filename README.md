@@ -44,7 +44,7 @@ platform differences and thread rules.
 | [`@n1h/sweetview/page`](docs/page.md) | `isWebview`, `webviewTransport` |
 | [`@n1h/sweetview/ipc`](docs/ipc.md) | the contract: `defineService`, `createBridge`, `memoryTransport`, the wire frames |
 | [`@n1h/sweetview/ipc-ws`](docs/ipc-ws.md) | the contract over WebSockets: `wsHost` for `Bun.serve`, `wsTransport` and `wsUrl` for the browser; each side alone as `/ipc-ws/server` and `/ipc-ws/client` |
-| [`@n1h/sweetview/native`](docs/native.md) | tray, notifications, windows and overlays, click-through hit regions, folder picker, app menu, the OS event loop for an app with no window, icons; the hit-region helpers alone, without FFI, as `/native/hit-regions` |
+| [`@n1h/sweetview/native`](docs/native.md) | tray, notifications, windows and overlays, click-through hit regions, folder picker, macOS privacy permissions, app menu, the OS event loop for an app with no window, icons; the hit-region helpers alone, without FFI, as `/native/hit-regions` |
 | [`@n1h/sweetview/settings-store`](docs/settings-store.md) | a JSON settings file in the user's application data folder |
 | [`@n1h/sweetview/window-chrome`](docs/window-chrome.md) | a page-drawn title bar and resize handles backed by OS moves and resizes |
 | [`@n1h/sweetview/build`](docs/build.md) | `writeIconFiles` and `makeMacApp`; the page also covers the `make-app.ts` script and the `/file-imports` types |
@@ -224,6 +224,7 @@ explains both ways and when to use which.
 |---|---|---|---|
 | Window, asset serving, transparency | yes | yes | no: `createWebviewApp` throws |
 | `native` (tray, notifications, overlays, folder picker, app menu, event loop) | yes | yes | throws on first call; icons and hit regions work |
+| `native` permissions | every status is `not-applicable` | yes | every status is `not-applicable` |
 | Build host that can embed the Windows exe file icon | yes | no, Bun's stock icon | no, Bun's stock icon |
 
 - Bun accepts `--windows-icon` only on a Windows host; the demos pass it
@@ -251,6 +252,7 @@ codesign --sign - --force --deep "App.app"
 | [`demos/desktop-pet/`](demos/desktop-pet/README.md) | a transparent always-on-top pet rendered with Babylon.js, with click-through hit regions and a page-drawn settings window |
 | [`demos/menubar-only/`](demos/menubar-only/README.md) | a menu-bar app with no window, no webview and no worker: a status item, its menu and a tooltip clock on a plain `setInterval`, on `runEventLoop` |
 | [`demos/menubar-notify/`](demos/menubar-notify/README.md) | a menu-bar app whose menu sends a system notification now or five seconds later, with a window listing what was sent and clicked; a notification click opens it |
+| [`demos/permissions/`](demos/permissions/README.md) | a window listing the macOS privacy permissions with what macOS says about each, a button that asks for it and one that opens its Settings pane |
 | [`webview/`](webview/README.md) | recipes that clone the webview-bun fork, with the webview fork as its submodule, and build the library from it, for working on the library itself; not needed to build the demos |
 
 Inside this repository `@n1h/sweetview` resolves to `src/` through the
@@ -264,9 +266,9 @@ from the repository root:
 |---|---|
 | `just check` | `tsc --noEmit` over `src/` and `demos/`, then `bun test` |
 | `just demos web-app serve` | the web build on `http://127.0.0.1:4747` (`PORT`, `HOST`) |
-| `just demos web-app app`, `just demos desktop-pet app`, `just demos menubar-only app`, `just demos menubar-notify app` | the desktop application from source, with `bun run` (`WEBVIEW_DEBUG=1` opens devtools) |
-| `just demos web-app compile`, `just demos desktop-pet compile`, `just demos menubar-only compile`, `just demos menubar-notify compile` | Windows exe, macOS arm64 binary and `.app` into each demo's `dist/` |
-| `just compile`, `just clean` | both demos |
+| `just demos web-app app`, `just demos desktop-pet app`, `just demos menubar-only app`, `just demos menubar-notify app`, `just demos permissions app` | the desktop application from source, with `bun run` (`WEBVIEW_DEBUG=1` opens devtools) |
+| `just demos web-app compile`, `just demos desktop-pet compile`, `just demos menubar-only compile`, `just demos menubar-notify compile`, `just demos permissions compile` | Windows exe, macOS arm64 binary and `.app` into each demo's `dist/` |
+| `just compile`, `just clean` | every demo |
 | `just pack` | what `bun publish` would upload |
 | `just publish` | publishes `@n1h/sweetview`; needs a registry login |
 

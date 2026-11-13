@@ -1,0 +1,10 @@
+{
+  "name": "sweetview-permissions",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A window that lists the macOS privacy permissions with what macOS says about each, a button that asks for it and one that opens its Settings pane.",
+  "dependencies": {
+    "@n1h/sweetview-webview-bun": "^2.7.0"
+  }
+}

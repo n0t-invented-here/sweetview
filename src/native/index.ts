@@ -15,6 +15,22 @@ export {
 } from "./overlay";
 export { convexHull, createHitRelay, flattenRegions, hitRegions, packRegions, unpackRegions, type HitPolygon, type HitProbe, type HitRelay } from "./hit-regions";
 export { pickFolder } from "./folder-picker";
+export {
+  automationStatus,
+  openPermissionSettings,
+  permissionNames,
+  permissionStatus,
+  requestAutomation,
+  requestFolderAccess,
+  requestPermission,
+  usageDescriptionKeys,
+  waitForPermission,
+  type Permission,
+  type PermissionStatus,
+  type ProtectedFolder,
+  type SettingsPane,
+  type WaitForPermissionOptions,
+} from "./permissions";
 export { installAppMenu, type AppMenuOptions } from "./app-menu";
 export { setAppIcon } from "./app-icon";
 export { resolveMenu, type MenuItem, type MenuSource, type MenuTemplate } from "./menu";

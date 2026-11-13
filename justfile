@@ -21,9 +21,9 @@ test: install
 
 check: typecheck test
 
-compile: demos::web-app::compile demos::desktop-pet::compile demos::menubar-only::compile demos::menubar-notify::compile
+compile: demos::web-app::compile demos::desktop-pet::compile demos::menubar-only::compile demos::menubar-notify::compile demos::permissions::compile
 
-clean: demos::web-app::clean demos::desktop-pet::clean demos::menubar-only::clean demos::menubar-notify::clean
+clean: demos::web-app::clean demos::desktop-pet::clean demos::menubar-only::clean demos::menubar-notify::clean demos::permissions::clean
 
 pack:
     bun pm pack --dry-run
