@@ -16,8 +16,7 @@ const spec = (id: (typeof MINI)[number]): PetModel => ({
     { name: "walk", clip: "walk", weight: 3, speed: 70, seconds: [3, 8] }, // a 0.67 s cycle; the stride is a guess from the leg length
     { name: "sprint", clip: "sprint", weight: 1, speed: 150, seconds: [1.5, 3.5] },
     { name: "jump", clip: "jump", weight: 1, seconds: [1, 2] },
-    { name: "crouch", clip: "crouch", weight: 1, seconds: [2, 4] },
-    { name: "sit", clip: "sit", weight: 1, seconds: [3, 6] },
+    { name: "sit", clip: "sit", weight: 0.5, seconds: [2, 4] }, // now and then, not a habit
   ],
 });
 

@@ -17,7 +17,7 @@ import { Vector3 } from "@babylonjs/core/Maths/math.vector";
 import { TransformNode } from "@babylonjs/core/Meshes/transformNode";
 import { Scene } from "@babylonjs/core/scene";
 import { CAMERA_DISTANCE, CAMERA_FOV, FOOTPRINT_Z, proportionsOf, yawFor, type Bounds, type Proportions } from "./framing";
-import type { ClipRef, Direction, PetModel } from "./model";
+import { clipFor, type ClipRef, type Direction, type PetModel } from "./model";
 
 export type PetScene = {
   /** Fit the canvas to a `size` CSS-pixel square showing the model at `scale`, feet on the bottom edge. */
@@ -41,8 +41,8 @@ export type PetScene = {
 };
 
 const GROUND_MARGIN_PX = 2;
-/** The turn that makes a model face +z, where the pets face as modelled. */
-const forwardYaw = (forward: PetModel["forward"]): number => (forward === "-z" ? Math.PI : forward === "+x" ? Math.PI / 2 : forward === "-x" ? -Math.PI / 2 : 0);
+/** The turn that makes a model face +z, where the pets face as modelled: rotation about y by θ takes +x to (cos θ, -sin θ). */
+const forwardYaw = (forward: PetModel["forward"]): number => (forward === "-z" ? Math.PI : forward === "+x" ? -Math.PI / 2 : forward === "-x" ? Math.PI / 2 : 0);
 
 /** Throws when WebGL is not available: there is no pet without it. */
 export function createPetScene(canvas: HTMLCanvasElement): PetScene {
@@ -89,13 +89,27 @@ export function createPetScene(canvas: HTMLCanvasElement): PetScene {
   let measured: Proportions | undefined;
   let loadSeq = 0;
 
-  /** The box around every mesh, in the space the nodes hang in now. */
-  const measure = (loaded: AssetContainer): Bounds => {
+  /**
+   * The box around every mesh, in the space the nodes hang in now, posed on
+   * the first frame of `pose`: a model's bind pose is a T-pose with the arms
+   * out, twice as wide as the figure standing, and a skinned mesh's own box
+   * is that bind pose until it is refreshed through its skeleton.
+   */
+  const measure = (loaded: AssetContainer, pose: AssetContainer["animationGroups"][number] | undefined): Bounds => {
+    if (pose) {
+      pose.start(true, 1);
+      pose.goToFrame(pose.from);
+    }
+    for (const node of loaded.transformNodes) node.computeWorldMatrix(true);
     const min = { x: Infinity, y: Infinity, z: Infinity };
     const max = { x: -Infinity, y: -Infinity, z: -Infinity };
     for (const mesh of loaded.meshes) {
       if (mesh.getTotalVertices() === 0) continue;
       mesh.computeWorldMatrix(true);
+      if (mesh.skeleton) {
+        mesh.skeleton.prepare();
+        mesh.refreshBoundingInfo({ applySkeleton: true, applyMorph: true });
+      }
       const box = mesh.getBoundingInfo().boundingBox;
       for (const axis of ["x", "y", "z"] as const) {
         min[axis] = Math.min(min[axis], box.minimumWorld[axis]);
@@ -135,7 +149,9 @@ export function createPetScene(canvas: HTMLCanvasElement): PetScene {
       // under the root, which carries the pet's own turn and scale.
       const fit = new TransformNode("fit", scene);
       for (const node of loaded.rootNodes) node.parent = fit;
-      const as = measure(loaded);
+      const pose = animations.get(clipFor(model, "idle").name);
+      const as = measure(loaded, pose);
+      pose?.stop();
       const k = model.height ? model.height / (as.max.y - as.min.y) : 1;
       const cx = (as.min.x + as.max.x) / 2;
       const cz = (as.min.z + as.max.z) / 2;
