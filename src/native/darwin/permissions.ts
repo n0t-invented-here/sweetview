@@ -195,12 +195,20 @@ function classAuthorization(frameworkName: string, className: string, usageKey: 
 
 const CL_ALWAYS = 3n;
 const CL_WHEN_IN_USE = 4n;
-/** One manager for the process: its prompt goes away when the manager is released. */
-const locationManager = lazy(() => (loadFramework("CoreLocation"), alloc("CLLocationManager")));
+const newLocationManager = () => (loadFramework("CoreLocation"), alloc("CLLocationManager"));
+/** Reads the status, on whichever thread reads first. */
+const locationReader = lazy(newLocationManager);
+/**
+ * Asks. Kept for the process, because its prompt goes away when the manager is
+ * released, and apart from the reader, because Core Location answers on the run
+ * loop of the thread that made the manager: this one is made by the first
+ * request, on the UI thread, where a reader made by a worker would have none.
+ */
+const locationAsker = lazy(newLocationManager);
 function location(request: string, usageKeys: string[], status: (value: bigint) => PermissionStatus): Entry {
   return {
-    status: () => status(asId(sendInt(locationManager(), sel("authorizationStatus")) as bigint)),
-    request: () => void sendVoid(locationManager(), sel(request)),
+    status: () => status(asId(sendInt(locationReader(), sel("authorizationStatus")) as bigint)),
+    request: () => void sendVoid(locationAsker(), sel(request)),
     usage: () => usageKeys,
     pane: "Privacy_LocationServices",
   };
@@ -381,7 +389,7 @@ export function openPermissionSettings(pane: SettingsPane): boolean {
 
 const fourCharCode = (code: string) => ((code.charCodeAt(0) << 24) | (code.charCodeAt(1) << 16) | (code.charCodeAt(2) << 8) | code.charCodeAt(3)) >>> 0;
 const TYPE_APPLICATION_BUNDLE_ID = fourCharCode("bund");
-const TYPE_WILDCARD = fourCharCode("****"); // any event class, any event id
+const TYPE_WILDCARD = fourCharCode("****"); // any event class, any event id; macOS files the answer per target app, not per event
 const AE_GRANTED = 0;
 const AE_USER_CANCELED = -128;
 const AE_TARGET_NOT_RUNNING = -600; // procNotFound

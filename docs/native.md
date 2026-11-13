@@ -771,9 +771,9 @@ const status = await waitForPermission("camera");
 | `calendars-write-only` | Calendars | `denied`, `restricted`, `not-determined` | `NSCalendarsWriteOnlyAccessUsageDescription`; before macOS 14 `NSCalendarsUsageDescription` | Adding events without reading any; `granted` under full access too. Before macOS 14 the request is the one for full access. |
 | `reminders` | Reminders | `denied`, `restricted`, `not-determined` | `NSRemindersFullAccessUsageDescription`; before macOS 14 `NSRemindersUsageDescription` | |
 | `photos` | Photos | `limited`, `denied`, `restricted`, `not-determined` | `NSPhotoLibraryUsageDescription` | Reading and changing the library. `limited`: the user picked some photos. |
-| `photos-add-only` | Photos | `limited`, `denied`, `restricted`, `not-determined` | `NSPhotoLibraryAddUsageDescription` | Adding photos without reading any. |
+| `photos-add-only` | Photos | `denied`, `restricted`, `not-determined` | `NSPhotoLibraryAddUsageDescription` | Adding photos without reading any. |
 | `speech-recognition` | Speech Recognition | `denied`, `restricted`, `not-determined` | `NSSpeechRecognitionUsageDescription` | |
-| `music-library` | Media & Apple Music | `denied`, `restricted`, `not-determined` | `NSAppleMusicUsageDescription` | |
+| `music-library` | Media & Apple Music | `denied`, `restricted`, `not-determined` | `NSAppleMusicUsageDescription` | On macOS 27 an app that has never asked can already read `denied`. |
 | `location` | Location Services | `denied`, `restricted`, `not-determined` | `NSLocationWhenInUseUsageDescription` or `NSLocationUsageDescription` | Location while the app is in use; `granted` under always too. |
 | `location-always` | Location Services | `limited`, `denied`, `restricted`, `not-determined` | `NSLocationAlwaysAndWhenInUseUsageDescription` or `NSLocationUsageDescription` | Location at any time. `limited`: allowed while in use only. |
 | `bluetooth` | Bluetooth | `denied`, `restricted`, `not-determined` | `NSBluetoothAlwaysUsageDescription` | Core Bluetooth has no request call; asking creates a `CBCentralManager`, which is kept for the life of the process. |
@@ -823,7 +823,7 @@ Nothing is asked when the status is already `granted` or `not-applicable`, or fo
 |---|---|---|---|
 | `permission` | [`Permission`](#permission) | required | The permission to ask for. |
 
-Returns: the status after asking: `not-determined` while the prompt is up, the answer when macOS already had one.
+Returns: the status after asking: `not-determined` while the prompt is up (`missing` for the permissions macOS answers only yes or no for), the answer when macOS already had one.
 
 Throws:
 
