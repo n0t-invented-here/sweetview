@@ -1,7 +1,8 @@
 // The picture: a Babylon.js scene on one canvas, with a level camera aimed so
 // the model's feet sit on the canvas's bottom edge at every scale, one model
-// at a time, its animations by name, and a triangle pick for "is the pet
-// under this point".
+// at a time, fitted (centred, feet at zero, to the spec's height, turned to
+// face +z), its clips by name, and a triangle pick for "is the pet under
+// this point".
 
 import "@babylonjs/loaders/glTF/2.0";
 import "@babylonjs/core/Culling/ray"; // scene.pick
@@ -15,15 +16,21 @@ import { Color3, Color4 } from "@babylonjs/core/Maths/math.color";
 import { Vector3 } from "@babylonjs/core/Maths/math.vector";
 import { TransformNode } from "@babylonjs/core/Meshes/transformNode";
 import { Scene } from "@babylonjs/core/scene";
-import type { Direction } from "./moods";
-import type { PetAnimation } from "./pets";
+import { CAMERA_DISTANCE, CAMERA_FOV, FOOTPRINT_Z, proportionsOf, yawFor, type Bounds, type Proportions } from "./framing";
+import type { ClipRef, Direction, PetModel } from "./model";
 
 export type PetScene = {
   /** Fit the canvas to a `size` CSS-pixel square showing the model at `scale`, feet on the bottom edge. */
   resize(size: number, scale: number): void;
-  /** Load the model at this URL and show it in place of the current one. A later call wins over an earlier one still loading. */
-  show(url: string): Promise<void>;
-  play(name: PetAnimation, speed: number): void;
+  /** Load the model at this URL and show it in place of the current one, fitted as the spec says. A later call wins over an earlier one still loading. */
+  show(url: string, model: PetModel): Promise<void>;
+  /** Is this clip in the loaded file? */
+  has(clip: string): boolean;
+  /** How long one pass of the clip takes at speed 1. */
+  clipSeconds(clip: string): number | undefined;
+  /** The loaded model's box through the camera: how wide it is and how far down its head is, as fractions of the canvas. */
+  proportions(): Proportions | undefined;
+  play(clip: ClipRef, speed: number): void;
   /** Turn toward this side; the turn is eased over the next frames. */
   face(dir: Direction): void;
   /** Draw a frame; `dt` in seconds, for the turn. */
@@ -33,19 +40,9 @@ export type PetScene = {
   dispose(): void;
 };
 
-// A level look from the pet's own height; the pet faces left or right and a
-// touch toward the viewer, so its side and face both show.
-const CAMERA_DISTANCE = 4.4;
-const CAMERA_FOV = 0.5;
-// The models face +z as loaded, away from the camera at -z, and their faces
-// are on the cubes' front, so a pure side view hides them. Facing right is a
-// quarter turn plus a bit toward the viewer; facing left is the mirror on the
-// far side of pi (facing the camera), so a turn swings the face past the
-// viewer, never the back.
-const TOWARD = 0.5;
-const yawFor = (dir: Direction) => (dir === 1 ? Math.PI / 2 + TOWARD : (3 * Math.PI) / 2 - TOWARD);
 const GROUND_MARGIN_PX = 2;
-const FOOTPRINT_Z = 0.8; // how far the models reach toward the camera
+/** The turn that makes a model face +z, where the pets face as modelled. */
+const forwardYaw = (forward: PetModel["forward"]): number => (forward === "-z" ? Math.PI : forward === "+x" ? Math.PI / 2 : forward === "-x" ? -Math.PI / 2 : 0);
 
 /** Throws when WebGL is not available: there is no pet without it. */
 export function createPetScene(canvas: HTMLCanvasElement): PetScene {
@@ -66,7 +63,7 @@ export function createPetScene(canvas: HTMLCanvasElement): PetScene {
   fill.intensity = 0.9;
   fill.groundColor = new Color3(0.45, 0.42, 0.5);
 
-  const root = new TransformNode("pet", scene); // the model hangs here; its feet are at y = 0
+  const root = new TransformNode("pet", scene); // the fitted model hangs here; its feet are at y = 0
   let yaw = yawFor(1);
   let yawTarget = yaw;
   let scale = 1;
@@ -86,15 +83,26 @@ export function createPetScene(canvas: HTMLCanvasElement): PetScene {
   };
 
   let container: AssetContainer | undefined;
-  let animations = new Map<PetAnimation, AssetContainer["animationGroups"][number]>();
-  let playing: PetAnimation | undefined;
+  let mount: TransformNode | undefined;
+  let animations = new Map<string, AssetContainer["animationGroups"][number]>();
+  let playing: string | undefined;
+  let measured: Proportions | undefined;
   let loadSeq = 0;
 
-  const play = (name: PetAnimation, speed: number) => {
-    if (name === playing) return;
-    animations.get(playing ?? name)?.stop();
-    animations.get(name)?.start(true, speed);
-    playing = name;
+  /** The box around every mesh, in the space the nodes hang in now. */
+  const measure = (loaded: AssetContainer): Bounds => {
+    const min = { x: Infinity, y: Infinity, z: Infinity };
+    const max = { x: -Infinity, y: -Infinity, z: -Infinity };
+    for (const mesh of loaded.meshes) {
+      if (mesh.getTotalVertices() === 0) continue;
+      mesh.computeWorldMatrix(true);
+      const box = mesh.getBoundingInfo().boundingBox;
+      for (const axis of ["x", "y", "z"] as const) {
+        min[axis] = Math.min(min[axis], box.minimumWorld[axis]);
+        max[axis] = Math.max(max[axis], box.maximumWorld[axis]);
+      }
+    }
+    return { min, max };
   };
 
   return {
@@ -105,7 +113,7 @@ export function createPetScene(canvas: HTMLCanvasElement): PetScene {
       engine.resize();
       aimAtGround();
     },
-    async show(url) {
+    async show(url, model) {
       const seq = ++loadSeq;
       const loaded = await LoadAssetContainerAsync(url, scene);
       if (seq !== loadSeq) {
@@ -113,20 +121,53 @@ export function createPetScene(canvas: HTMLCanvasElement): PetScene {
         return;
       }
       container?.dispose();
+      mount?.dispose();
       container = loaded;
-      for (const node of loaded.rootNodes) node.parent = root;
-      animations = new Map(loaded.animationGroups.map((g) => [g.name as PetAnimation, g]));
+      animations = new Map(loaded.animationGroups.map((g) => [g.name, g]));
       for (const g of loaded.animationGroups) {
         g.stop();
         g.enableBlending = true;
         g.blendingSpeed = 0.08;
       }
-      loaded.addAllToScene();
-      const wanted = playing ?? "idle";
+      loaded.addAllToScene(); // before any re-parenting: the container checks its hierarchy here
+      // Fit: as modelled, measure; then centre it, put its feet at y = 0 and
+      // scale it to the spec's height; then turn it to face +z; then hang it
+      // under the root, which carries the pet's own turn and scale.
+      const fit = new TransformNode("fit", scene);
+      for (const node of loaded.rootNodes) node.parent = fit;
+      const as = measure(loaded);
+      const k = model.height ? model.height / (as.max.y - as.min.y) : 1;
+      const cx = (as.min.x + as.max.x) / 2;
+      const cz = (as.min.z + as.max.z) / 2;
+      fit.scaling.setAll(k);
+      fit.position.set(-cx * k, -as.min.y * k, -cz * k);
+      const turn = new TransformNode("turn", scene);
+      turn.rotation.y = forwardYaw(model.forward);
+      fit.parent = turn;
+      turn.parent = root;
+      mount = turn;
+      const fitted: Bounds = {
+        min: { x: (as.min.x - cx) * k, y: 0, z: (as.min.z - cz) * k },
+        max: { x: (as.max.x - cx) * k, y: (as.max.y - as.min.y) * k, z: (as.max.z - cz) * k },
+      };
+      measured = proportionsOf(fitted, yawFor(1) + turn.rotation.y);
       playing = undefined;
-      play(wanted, 1);
     },
-    play,
+    has: (clip) => animations.has(clip),
+    clipSeconds(clip) {
+      const g = animations.get(clip);
+      if (!g) return undefined;
+      const fps = g.targetedAnimations[0]?.animation.framePerSecond ?? 60;
+      return (g.to - g.from) / fps;
+    },
+    proportions: () => measured,
+    play(clip, speed) {
+      if (clip.name === playing) return;
+      animations.get(playing ?? "")?.stop();
+      const g = animations.get(clip.name) ?? animations.values().next().value; // a clip the file lacks: the file's first
+      g?.start(!clip.once, speed);
+      playing = clip.name;
+    },
     face(dir) {
       yawTarget = yawFor(dir);
     },

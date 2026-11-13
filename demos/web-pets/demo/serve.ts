@@ -1,12 +1,12 @@
 // The demo page from Bun.serve: the prebuilt React page and this package's
-// assets folder under /pets/.
+// assets folder (every pack) under /pets/.
 //
 //   just demos web-pets demo            (PORT=4748 by default)
 
 const PORT = Number(process.env.PORT ?? 4748);
 const HOST = process.env.HOST ?? "127.0.0.1";
 const build = new URL("../build/demo/", import.meta.url);
-const assets = new URL("../assets/kenney-cube-pets/", import.meta.url);
+const assets = new URL("../assets/", import.meta.url);
 
 const page = `<!doctype html>
 <html lang="en">

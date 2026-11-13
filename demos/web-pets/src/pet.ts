@@ -5,9 +5,9 @@
 // shows and a press picks the pet up.
 
 import { herdFor } from "./herd";
-import { createLife, type Box } from "./life";
-import type { Direction } from "./moods";
-import { petModelFile, randomPet, type Pet } from "./pets";
+import { BODY, HEAD, createLife, type Box } from "./life";
+import type { PetModel } from "./model";
+import { CUBE_PETS, randomPet, type Pet } from "./packs/cube-pets";
 import { createPetScene } from "./scene";
 import { DEFAULT_PET_SETTINGS, sanitizePetSettings, type PetSettings } from "./settings";
 
@@ -17,8 +17,8 @@ export const PET_SIZE = 192;
 export type Point = { x: number; y: number };
 
 export type PetOptions = {
-  /** Which animal; random when not given. */
-  pet?: Pet;
+  /** Which animal: one of the cube pets by name, or any model spec (`PetModel`); a random cube pet when not given. */
+  pet?: Pet | PetModel;
   /**
    * Where the pet's centre appears before it falls, in CSS pixels from the
    * top-left of its bounds (the viewport, or `host`). By default somewhere
@@ -34,7 +34,7 @@ export type PetOptions = {
    * on screen while the page scrolls.
    */
   host?: HTMLElement;
-  /** Where the package's assets folder is served, with a trailing slash. `/pets/` by default. */
+  /** Where the package's assets folder is served, with a trailing slash; a model loads from `assetsUrl + pack + "/" + file`. `/pets/` by default. */
   assetsUrl?: string;
   /** Stacking of the canvas over the page's content. */
   zIndex?: number;
@@ -43,19 +43,24 @@ export type PetOptions = {
 };
 
 export type PetHandle = {
-  readonly pet: Pet;
+  /** The model on show, and its name. */
+  readonly model: PetModel;
+  readonly pet: string;
   readonly settings: PetSettings;
   /** The box's top-left in bounds coordinates, and its edge. */
   readonly position: Point;
   readonly size: number;
   /** Switch animal; resolves when the new model is up (or failed and reported). */
-  setPet(pet: Pet): Promise<void>;
+  setPet(pet: Pet | PetModel): Promise<void>;
   /** Change the scale or the bottom; the reply is the clamped result. */
   setSettings(patch: Partial<PetSettings>): PetSettings;
   /** Put the pet's centre here and let it fall. */
   spawn(at: Point): void;
   dispose(): void;
 };
+
+/** A name is one of the cube pets; a spec is itself; nothing is a random cube pet. */
+export const resolveModel = (pet: Pet | PetModel | undefined): PetModel => (pet === undefined ? CUBE_PETS[randomPet()] : typeof pet === "string" ? CUBE_PETS[pet] : pet);
 
 /** Creates the canvas and starts the pet. Throws when WebGL is not available. */
 export function createPet(options: PetOptions = {}): PetHandle {
@@ -87,24 +92,35 @@ export function createPet(options: PetOptions = {}): PetHandle {
     throw err;
   }
 
-  let pet: Pet = options.pet ?? randomPet();
+  let model = resolveModel(options.pet);
   let settings = sanitizePetSettings({ scale: options.scale, bottom: options.bottom }, DEFAULT_PET_SETTINGS);
   let size = Math.round(PET_SIZE * settings.scale);
 
   const bounds = (): Box => (host ? { x: 0, y: 0, width: host.clientWidth, height: host.clientHeight } : { x: 0, y: 0, width: window.innerWidth, height: window.innerHeight });
-  const life = createLife({ bounds, size: () => size, scale: () => settings.scale, bottom: () => settings.bottom, pet: () => pet });
+  const life = createLife({
+    bounds,
+    size: () => size,
+    scale: () => settings.scale,
+    bottom: () => settings.bottom,
+    model: () => model,
+    has: (clip) => scene.has(clip),
+    clipSeconds: (clip) => scene.clipSeconds(clip),
+    body: () => scene.proportions()?.body ?? BODY,
+    head: () => scene.proportions()?.head ?? HEAD,
+  });
 
   scene.resize(size, settings.scale);
 
   const spawn = (at: Point) => life.spawn(at.x - size / 2, at.y - size / 2);
   spawn(options.spawn ?? { x: bounds().width * (0.2 + Math.random() * 0.6), y: -size / 2 });
 
-  const show = async (next: Pet) => {
-    pet = next;
+  const show = async (next: Pet | PetModel) => {
+    model = resolveModel(next);
+    const url = `${assetsUrl}${model.pack}/${model.file}`;
     try {
-      await scene.show(assetsUrl + petModelFile(next));
+      await scene.show(url, model);
     } catch (err) {
-      fault(`loading the ${next} model (${assetsUrl + petModelFile(next)}) failed`, err);
+      fault(`loading the ${model.name} model (${url}) failed`, err);
     }
   };
 
@@ -185,11 +201,14 @@ export function createPet(options: PetOptions = {}): PetHandle {
     },
   });
 
-  void show(pet);
+  void show(model);
 
   return {
+    get model() {
+      return model;
+    },
     get pet() {
-      return pet;
+      return model.name;
     },
     get settings() {
       return settings;

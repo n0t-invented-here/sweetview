@@ -1,17 +1,28 @@
 import { describe, expect, test } from "bun:test";
 import { createLife, separate, type Life, type World } from "./life";
-import type { Command } from "./moods";
+import type { MoodCommand, MoodSpec, PetModel } from "./model";
+
+const IDLE: MoodSpec = { name: "idle", clip: "idle", seconds: [100, 100] };
+const WALK: MoodSpec = { name: "walk", clip: "walk", speed: 55, seconds: [100, 100] };
+const DANCE: MoodSpec = { name: "dance", clip: "dance", seconds: [1, 1] };
+const MODEL: PetModel = {
+  name: "test",
+  pack: "test",
+  file: "test.glb",
+  clips: { idle: "idle", carried: "gesture-negative", falling: "gesture-negative", landed: "gesture-positive" },
+  moods: [IDLE, WALK, DANCE],
+};
 
 const world = (over: Partial<World> = {}): World => ({
   bounds: () => ({ x: 0, y: 0, width: 1000, height: 600 }),
   size: () => 192,
   scale: () => 1,
   bottom: () => 0,
-  pet: () => "cat",
+  model: () => MODEL,
   ...over,
 });
-const idle: Command = { mood: "idle", dir: 1, seconds: 100 };
-const walk = (dir: -1 | 1): Command => ({ mood: "walk", dir, seconds: 100 });
+const idle: MoodCommand = { mood: IDLE, dir: 1, seconds: 100 };
+const walk = (dir: -1 | 1): MoodCommand => ({ mood: WALK, dir, seconds: 100 });
 
 /** A life with a clock: `run` advances it `seconds` in 60 Hz steps. */
 const start = (over: Partial<World> = {}) => {
@@ -31,7 +42,7 @@ describe("a spawned pet", () => {
     const { life, run } = start({ nextCommand: () => idle });
     life.spawn(400, 50);
     expect(life.state.kind).toBe("fall");
-    expect(life.animation()).toBe("gesture-negative");
+    expect(life.animation().name).toBe("gesture-negative");
     expect(life.y).toBe(50);
     run(0.1);
     expect(life.y).toBeGreaterThan(50);
@@ -40,10 +51,10 @@ describe("a spawned pet", () => {
     expect(life.y).toBe(life.groundY());
     expect(life.groundY()).toBe(600 - 192);
     expect(life.state.kind).toBe("landed");
-    expect(life.animation()).toBe("gesture-positive");
+    expect(life.animation().name).toBe("gesture-positive");
     run(2);
     expect(life.state.kind).toBe("ground");
-    expect(life.animation()).toBe("idle");
+    expect(life.animation().name).toBe("idle");
     expect(life.x).toBe(400);
   });
   test("stands `bottom` above the bounds' bottom edge", () => {
@@ -64,12 +75,12 @@ describe("on the ground", () => {
     const { life, run } = start({ nextCommand: () => walk(1) });
     life.spawn(700, 600 - 192);
     run(3); // lands, gestures, rests, then the first command
-    expect(life.state).toMatchObject({ kind: "ground", mood: "walk", dir: 1 });
+    expect(life.state).toMatchObject({ kind: "ground", mood: { name: "walk" }, dir: 1 });
     expect(life.facing).toBe(1);
-    expect(life.animation()).toBe("walk");
+    expect(life.animation().name).toBe("walk");
     expect(life.x).toBeGreaterThan(700);
     run(4); // 55 px/s reaches the right limit, 846.4, turns, and walks back
-    expect(life.state).toMatchObject({ kind: "ground", mood: "walk", dir: -1 });
+    expect(life.state).toMatchObject({ kind: "ground", mood: { name: "walk" }, dir: -1 });
     expect(life.facing).toBe(-1);
     expect(life.x).toBeLessThan(1000 - 192 * 0.8);
     expect(life.x).toBeGreaterThan(700);
@@ -81,7 +92,7 @@ describe("on the ground", () => {
     for (const { life, run, step } of [fast, slow]) {
       life.spawn(600, 600 - 384);
       run(3); // on the ground and walking
-      expect(life.state).toMatchObject({ mood: "walk", dir: -1 });
+      expect(life.state).toMatchObject({ mood: { name: "walk" }, dir: -1 });
       const before = life.x;
       step(1); // one second of it
       walked.push(before - life.x);
@@ -90,11 +101,11 @@ describe("on the ground", () => {
   });
   test("asks for the next command when the current one ends", () => {
     const asked: number[] = [];
-    const { life, run } = start({ nextCommand: () => (asked.push(1), { mood: "dance", dir: 1, seconds: 1 }) });
+    const { life, run } = start({ nextCommand: () => (asked.push(1), { mood: DANCE, dir: 1, seconds: 1 }) });
     life.spawn(100, 600 - 192);
     run(7);
     expect(asked.length).toBeGreaterThanOrEqual(4);
-    expect(life.animation()).toBe("dance");
+    expect(life.animation().name).toBe("dance");
   });
 });
 
@@ -104,7 +115,7 @@ describe("picked up", () => {
     life.spawn(100, 600 - 192);
     run(3);
     life.pickUp();
-    expect(life.animation()).toBe("gesture-negative");
+    expect(life.animation().name).toBe("gesture-negative");
     expect(life.animationSpeed()).toBe(1.5);
     life.carryTo(500, 100);
     step(1 / 60);
@@ -168,9 +179,9 @@ describe("pets on the same ground", () => {
   test("a walker bumped against its way turns around; a falling or carried pet passes freely", () => {
     const walker = standing(300, { nextCommand: () => walk(1) });
     const wall = standing(380);
-    expect(walker.life.state).toMatchObject({ mood: "walk", dir: 1 });
+    expect(walker.life.state).toMatchObject({ mood: { name: "walk" }, dir: 1 });
     separate([walker.life, wall.life]);
-    expect(walker.life.state).toMatchObject({ mood: "walk", dir: -1 });
+    expect(walker.life.state).toMatchObject({ mood: { name: "walk" }, dir: -1 });
     expect(walker.life.facing).toBe(-1);
     const flying = start();
     flying.life.spawn(wall.life.x, 0);

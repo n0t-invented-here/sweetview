@@ -5,13 +5,12 @@
 // ones at its level. Units are whatever the world's are (CSS pixels on a
 // page); the page draws the model in the box.
 
-import { type Command, type Direction, type Mood, nextCommand } from "./moods";
-import type { Pet, PetAnimation } from "./pets";
+import { clipFor, drawMood, type ClipRef, type Direction, type MoodCommand, type MoodSpec, type PetModel } from "./model";
 
 export type Box = { x: number; y: number; width: number; height: number };
 
 export type LifeState =
-  | { kind: "ground"; mood: Mood; dir: Direction; until: number }
+  | { kind: "ground"; mood: MoodSpec; dir: Direction; until: number }
   | { kind: "fall"; vy: number }
   | { kind: "carried" }
   | { kind: "landed"; until: number };
@@ -26,10 +25,17 @@ export type World = {
   scale: () => number;
   /** Lift above the bounds' bottom edge. */
   bottom: () => number;
-  /** Which pet this is, for the moods it may draw. */
-  pet: () => Pet;
-  /** What to do next on the ground; random by default. */
-  nextCommand?: (pet: Pet) => Command;
+  /** Which model this is: its moods, its clips. */
+  model: () => PetModel;
+  /** Which clips the loaded file has; a mood whose clip it lacks is never drawn. All, when not given. */
+  has?: (clip: string) => boolean;
+  /** How long a clip takes; a `landed` clip played once sets how long the landing lasts. */
+  clipSeconds?: (clip: string) => number | undefined;
+  /** How much of the box the model fills side to side, and how far down its head is; the defaults when not given. */
+  body?: () => number;
+  head?: () => number;
+  /** What to do next on the ground; a weighted draw from the model's moods by default. */
+  nextCommand?: (model: PetModel) => MoodCommand;
 };
 
 export type Life = {
@@ -40,6 +46,9 @@ export type Life = {
   readonly state: LifeState;
   /** The box's edge, as the world says. */
   readonly size: number;
+  /** How much of the box the body fills side to side, and how far down the head is, as fractions. */
+  readonly body: number;
+  readonly head: number;
   /** How far the last step moved it sideways (walking, riding); what a pet on its head follows. */
   readonly dx: number;
   /** The pet it stands on, when not on the ground. */
@@ -59,29 +68,34 @@ export type Life = {
   bump(dx: number): number;
   /** Advance by `dt` seconds at time `now` (milliseconds, as `performance.now()`), among the other lives on this ground (heads to land on, backs to ride). */
   step(now: number, dt: number, others?: readonly Life[]): void;
-  /** The model animation for the current state, and its speed. */
-  animation(): PetAnimation;
+  /** The clip for the current state, and its speed. */
+  animation(): ClipRef;
   animationSpeed(): number;
 };
 
-export const WALK_SPEED = 55; // units per second at scale 1, matched to the walk cycle
-export const RUN_SPEED = 150;
 export const GRAVITY = 2400;
 export const MAX_THROW = 800;
-const LANDED_MS = 1200; // the positive gesture after a landing
+const LANDED_MS = 1200; // the landing clip, when it loops
 const REST_AFTER_LANDING_MS = 800;
 /** How much of its box the pet may hang past a side edge: the model does not fill the square. */
 const OVERHANG = 0.2;
-/** How much of its box the pet's body fills, side to side, for bumping into other pets and standing on them. */
+/** How much of its box a pet's body fills side to side, until the model is measured: for bumping into other pets and standing on them. */
 export const BODY = 0.6;
-/** How far down its box the top of the pet's head is: where another pet's feet rest. */
+/** How far down its box the top of a pet's head is, until the model is measured: where another pet's feet rest. */
 export const HEAD = 0.25;
 const isStanding = (l: Life) => l.state.kind === "ground" || l.state.kind === "landed";
 
-const MOOD_ANIMATION: Record<Mood, PetAnimation> = { idle: "idle", walk: "walk", run: "run", eat: "eat", dance: "dance" };
-
 export function createLife(world: World): Life {
-  const pickNext = world.nextCommand ?? nextCommand;
+  const pickNext = world.nextCommand ?? ((model: PetModel) => drawMood(model, world.has));
+  const moving = (mood: MoodSpec) => (mood.speed ?? 0) > 0;
+  /** Standing still after a landing, before the first mood: the idle clip. */
+  const rest = (): MoodSpec => ({ name: "idle", clip: clipFor(world.model(), "idle").name, seconds: [0, 0] });
+  /** How long a landing lasts: the landed clip's length when it plays once, else a fixed moment. */
+  const landedMs = () => {
+    const clip = clipFor(world.model(), "landed");
+    const seconds = clip.once ? world.clipSeconds?.(clip.name) : undefined;
+    return seconds ? seconds * 1000 : LANDED_MS;
+  };
   let x = 0;
   let y = 0;
   let dx = 0;
@@ -102,9 +116,9 @@ export function createLife(world: World): Life {
     const { minX, maxX } = sideLimits();
     x = Math.max(minX, Math.min(maxX, x));
   };
-  const apply = (cmd: Command, now: number) => {
+  const apply = (cmd: MoodCommand, now: number) => {
     state = { kind: "ground", mood: cmd.mood, dir: cmd.dir, until: now + cmd.seconds * 1000 };
-    if (cmd.mood === "walk" || cmd.mood === "run") facing = cmd.dir;
+    if (moving(cmd.mood)) facing = cmd.dir;
   };
   /**
    * Where this pet's box top rests: the ground, or the head of the highest
@@ -118,8 +132,8 @@ export function createLife(world: World): Life {
     let best: { y: number; on: Life | undefined } = { y: groundY(), on: undefined };
     for (const o of others) {
       if (o === self || !isStanding(o)) continue;
-      if (cx < o.x + o.size * (0.5 - BODY / 2) || cx > o.x + o.size * (0.5 + BODY / 2)) continue;
-      const head = o.y + o.size * HEAD;
+      if (cx < o.x + o.size * (0.5 - o.body / 2) || cx > o.x + o.size * (0.5 + o.body / 2)) continue;
+      const head = o.y + o.size * o.head;
       if (head < feetBefore - 1) continue;
       if (head - size < best.y) best = { y: head - size, on: o };
     }
@@ -158,6 +172,12 @@ export function createLife(world: World): Life {
     get size() {
       return world.size();
     },
+    get body() {
+      return world.body?.() ?? BODY;
+    },
+    get head() {
+      return world.head?.() ?? HEAD;
+    },
     get standingOn() {
       return on;
     },
@@ -190,7 +210,7 @@ export function createLife(world: World): Life {
       const from = x;
       x += dx;
       clampX();
-      if (state.kind === "ground" && (state.mood === "walk" || state.mood === "run") && Math.sign(dx) === -state.dir) {
+      if (state.kind === "ground" && moving(state.mood) && Math.sign(dx) === -state.dir) {
         state = { ...state, dir: (-state.dir) as Direction };
         facing = state.dir;
       }
@@ -202,9 +222,9 @@ export function createLife(world: World): Life {
       switch (state.kind) {
         case "ground": {
           if (!stand(others, feetBefore)) break;
-          if (now >= state.until) apply(pickNext(world.pet()), now);
-          if (state.kind === "ground" && (state.mood === "walk" || state.mood === "run")) {
-            x += state.dir * (state.mood === "walk" ? WALK_SPEED : RUN_SPEED) * world.scale() * dt;
+          if (now >= state.until) apply(pickNext(world.model()), now);
+          if (state.kind === "ground" && moving(state.mood)) {
+            x += state.dir * state.mood.speed! * world.scale() * dt;
             const { minX, maxX } = sideLimits();
             if (x < minX || x > maxX) {
               clampX();
@@ -224,13 +244,13 @@ export function createLife(world: World): Life {
             y = floor.y;
             on = floor.on;
             clampX(); // dropped past a side edge: back inside
-            state = { kind: "landed", until: now + LANDED_MS };
+            state = { kind: "landed", until: now + landedMs() };
           }
           break;
         }
         case "landed":
           if (!stand(others, feetBefore)) break;
-          if (now >= state.until) state = { kind: "ground", mood: "idle", dir: facing, until: now + REST_AFTER_LANDING_MS };
+          if (now >= state.until) state = { kind: "ground", mood: rest(), dir: facing, until: now + REST_AFTER_LANDING_MS };
           break;
         case "carried":
           break;
@@ -240,12 +260,13 @@ export function createLife(world: World): Life {
     animation() {
       switch (state.kind) {
         case "ground":
-          return MOOD_ANIMATION[state.mood];
+          return { name: state.mood.clip, once: false };
         case "carried":
+          return clipFor(world.model(), "carried");
         case "fall":
-          return "gesture-negative";
+          return clipFor(world.model(), "falling");
         case "landed":
-          return "gesture-positive";
+          return clipFor(world.model(), "landed");
       }
     },
     animationSpeed() {
@@ -276,7 +297,7 @@ export function separate(lives: readonly Life[]): void {
         const a = standing[i]!;
         const b = standing[j]!;
         if (!sameLevel(a, b)) continue;
-        const overlap = a.x + a.size * (0.5 + BODY / 2) - (b.x + b.size * (0.5 - BODY / 2));
+        const overlap = a.x + a.size * (0.5 + a.body / 2) - (b.x + b.size * (0.5 - b.body / 2));
         if (overlap <= 0) continue;
         const wentA = a.bump(-overlap / 2);
         const wentB = b.bump(overlap + wentA);
