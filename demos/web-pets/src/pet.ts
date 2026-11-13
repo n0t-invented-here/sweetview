@@ -1,8 +1,10 @@
 // A pet on a page: a see-through canvas the model is drawn on, placed over the
-// page and moved every frame as the life says. Clicks reach the page through
+// page and moved every frame as the life says. Pets on the same ground step
+// together (herd.ts) and bump into each other. Clicks reach the page through
 // the canvas everywhere the model is not; over the model, the hand cursor
 // shows and a press picks the pet up.
 
+import { herdFor } from "./herd";
 import { createLife, type Box } from "./life";
 import type { Direction } from "./moods";
 import { petModelFile, randomPet, type Pet } from "./pets";
@@ -166,27 +168,21 @@ export function createPet(options: PetOptions = {}): PetHandle {
   canvas.addEventListener("pointercancel", onUp);
   canvas.addEventListener("contextmenu", (e) => e.preventDefault());
 
-  // ---- loop ----
-  let last = performance.now();
+  // ---- loop: the herd steps every pet on this ground, then each draws itself ----
   let lastPlaced = { x: NaN, y: NaN };
-  const step = () => {
-    const now = performance.now();
-    const dt = Math.min(0.05, (now - last) / 1000);
-    last = now;
-    life.step(now, dt);
-    scene.play(life.animation(), life.animationSpeed());
-    scene.face(life.facing);
-    scene.render(dt);
-    const rx = Math.round(life.x);
-    const ry = Math.round(life.y);
-    if (rx !== lastPlaced.x || ry !== lastPlaced.y) {
-      lastPlaced = { x: rx, y: ry };
-      canvas.style.transform = `translate3d(${rx}px, ${ry}px, 0)`;
-    }
-  };
-  let frame = requestAnimationFrame(function loop() {
-    step();
-    frame = requestAnimationFrame(loop);
+  const leave = herdFor(host ?? document).add({
+    life,
+    frame(dt) {
+      scene.play(life.animation(), life.animationSpeed());
+      scene.face(life.facing);
+      scene.render(dt);
+      const rx = Math.round(life.x);
+      const ry = Math.round(life.y);
+      if (rx !== lastPlaced.x || ry !== lastPlaced.y) {
+        lastPlaced = { x: rx, y: ry };
+        canvas.style.transform = `translate3d(${rx}px, ${ry}px, 0)`;
+      }
+    },
   });
 
   void show(pet);
@@ -220,7 +216,7 @@ export function createPet(options: PetOptions = {}): PetHandle {
     },
     spawn,
     dispose() {
-      cancelAnimationFrame(frame);
+      leave();
       document.removeEventListener("pointermove", hover);
       scene.dispose();
       canvas.remove();

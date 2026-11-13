@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { createLife, type World } from "./life";
+import { createLife, separate, type World } from "./life";
 import type { Command } from "./moods";
 
 const world = (over: Partial<World> = {}): World => ({
@@ -139,5 +139,55 @@ describe("the world changes under a standing pet", () => {
     step(1 / 60);
     expect(life.x).toBe(500 - 192 * 0.8);
     expect(life.y).toBe(400 - 192);
+  });
+});
+
+describe("pets on the same ground", () => {
+  const standing = (x: number, over: Partial<World> = {}) => {
+    const s = start({ nextCommand: () => idle, ...over });
+    s.life.spawn(x, 600 - 192);
+    s.run(3);
+    return s;
+  };
+  test("two that overlap are pushed apart by half the overlap each; apart ones stay put", () => {
+    const a = standing(300);
+    const b = standing(340); // bodies (60% of 192 = 115.2 wide, centred) overlap by 75.2
+    separate([a.life, b.life]);
+    expect(a.life.x).toBeCloseTo(300 - 37.6, 5);
+    expect(b.life.x).toBeCloseTo(340 + 37.6, 5);
+    separate([a.life, b.life]);
+    expect(a.life.x).toBeCloseTo(300 - 37.6, 5);
+  });
+  test("one against the side edge cannot give way, so the other takes the whole push", () => {
+    const a = standing(-500); // clamped to the left limit
+    const b = standing(a.life.x + 10);
+    separate([a.life, b.life]);
+    expect(a.life.x).toBe(-192 * 0.2);
+    expect(b.life.x + 192 * 0.2).toBeGreaterThanOrEqual(a.life.x + 192 * 0.8 - 1e-6);
+  });
+  test("a walker bumped against its way turns around; a falling or carried pet passes freely", () => {
+    const walker = standing(300, { nextCommand: () => walk(1) });
+    const wall = standing(380);
+    expect(walker.life.state).toMatchObject({ mood: "walk", dir: 1 });
+    separate([walker.life, wall.life]);
+    expect(walker.life.state).toMatchObject({ mood: "walk", dir: -1 });
+    expect(walker.life.facing).toBe(-1);
+    const flying = start();
+    flying.life.spawn(wall.life.x, 0);
+    const before = wall.life.x;
+    separate([wall.life, flying.life]);
+    expect(wall.life.x).toBe(before);
+    expect(flying.life.x).toBe(before);
+    wall.life.pickUp();
+    const other = standing(wall.life.x);
+    separate([wall.life, other.life]);
+    expect(other.life.x).toBe(wall.life.x);
+  });
+  test("three in a pile spread out without overlap", () => {
+    const lives = [standing(400), standing(400), standing(400)].map((s) => s.life);
+    separate(lives);
+    const xs = lives.map((l) => l.x).sort((p, q) => p - q);
+    expect(xs[1]! - xs[0]!).toBeCloseTo(192 * 0.6, 5);
+    expect(xs[2]! - xs[1]!).toBeCloseTo(192 * 0.6, 5);
   });
 });

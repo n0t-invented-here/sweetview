@@ -36,6 +36,8 @@ export type Life = {
   readonly y: number;
   readonly facing: Direction;
   readonly state: LifeState;
+  /** The box's edge, as the world says. */
+  readonly size: number;
   /** Where the box's top is when the pet stands on the ground. */
   groundY(): number;
   /** Put the box's top-left here and let the pet fall. */
@@ -47,6 +49,8 @@ export type Life = {
   face(dir: Direction): void;
   /** Let go, moving at this vertical speed (units per second, positive is down); clamped to a throw. */
   drop(vy: number): void;
+  /** Pushed sideways by another pet, on the ground only; a walker pushed against its way turns around. The reply is how far it went (less than asked at a side edge). */
+  bump(dx: number): number;
   /** Advance by `dt` seconds at time `now` (milliseconds, as `performance.now()`). */
   step(now: number, dt: number): void;
   /** The model animation for the current state, and its speed. */
@@ -62,6 +66,8 @@ const LANDED_MS = 1200; // the positive gesture after a landing
 const REST_AFTER_LANDING_MS = 800;
 /** How much of its box the pet may hang past a side edge: the model does not fill the square. */
 const OVERHANG = 0.2;
+/** How much of its box the pet's body fills, side to side, for bumping into other pets. */
+export const BODY = 0.6;
 
 const MOOD_ANIMATION: Record<Mood, PetAnimation> = { idle: "idle", walk: "walk", run: "run", eat: "eat", dance: "dance" };
 
@@ -103,6 +109,9 @@ export function createLife(world: World): Life {
     get state() {
       return state;
     },
+    get size() {
+      return world.size();
+    },
     groundY,
     spawn(nx, ny) {
       x = nx;
@@ -124,6 +133,17 @@ export function createLife(world: World): Life {
     drop(vy) {
       if (state.kind !== "carried") return;
       state = { kind: "fall", vy: Math.max(-MAX_THROW, Math.min(MAX_THROW, vy)) };
+    },
+    bump(dx) {
+      if (state.kind !== "ground" && state.kind !== "landed") return 0;
+      const from = x;
+      x += dx;
+      clampX();
+      if (state.kind === "ground" && (state.mood === "walk" || state.mood === "run") && Math.sign(dx) === -state.dir) {
+        state = { ...state, dir: (-state.dir) as Direction };
+        facing = state.dir;
+      }
+      return x - from;
     },
     step(now, dt) {
       switch (state.kind) {
@@ -176,4 +196,32 @@ export function createLife(world: World): Life {
       return state.kind === "carried" ? 1.5 : 1;
     },
   };
+}
+
+/**
+ * Keeps pets that stand on the same ground from overlapping: any two whose
+ * bodies overlap are pushed apart by half the overlap each (one that cannot
+ * give way, at a side edge, leaves its half to the other), and a walker
+ * pushed against its way turns around. Pets in the air or in hand pass
+ * freely. Passes until nothing moves, because a push can make a new overlap
+ * further along; a pile spreads out over a few of them.
+ */
+export function separate(lives: readonly Life[]): void {
+  const standing = lives.filter((l) => l.state.kind === "ground" || l.state.kind === "landed");
+  if (standing.length < 2) return;
+  for (let pass = 0; pass < 32; pass++) {
+    standing.sort((a, b) => a.x + a.size / 2 - (b.x + b.size / 2));
+    let moved = 0;
+    for (let i = 0; i + 1 < standing.length; i++) {
+      const a = standing[i]!;
+      const b = standing[i + 1]!;
+      const overlap = a.x + a.size * (0.5 + BODY / 2) - (b.x + b.size * (0.5 - BODY / 2));
+      if (overlap <= 0) continue;
+      const wentA = a.bump(-overlap / 2);
+      const wentB = b.bump(overlap + wentA);
+      if (wentB < overlap + wentA) a.bump(-(overlap + wentA - wentB)); // b was at its edge too: a takes what b could not
+      moved += Math.abs(wentA) + Math.abs(wentB);
+    }
+    if (moved < 1e-6) return;
+  }
 }
