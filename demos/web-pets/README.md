@@ -3,7 +3,7 @@
 A pet for any web page: one of the 24 animals from Kenney's Cube Pets pack, rendered with [Babylon.js](https://www.babylonjs.com/) on a see-through canvas over the page.
 It drops in at a point, falls to the bottom edge of the page, lands, and lives there: idles, walks, runs, dances, turns around at the sides.
 Pick it up with the mouse and throw it. Clicks beside it reach the page as if it were not there.
-Add as many as you like: pets on the same ground bump into each other and cannot overlap.
+Add as many as you like: they land on each other's heads, ride along, walk off, and bump into the ones at their level.
 
 The same animals, moods and models as the [desktop pet](../desktop-pet/README.md), which takes them from this package; this one needs no sweetview and no Bun at runtime, only a browser with WebGL.
 
@@ -60,7 +60,7 @@ The package ships TypeScript sources, like `@n1h/sweetview`; the consuming app's
 | Bounds | The viewport by default: the canvas is `position: fixed`, so the pet stays on screen while the page scrolls. With `host`, the element's box: the canvas is absolute inside it (the element becomes `position: relative` when it was static). A walking pet turns around at the sides; a pet thrown past one is pulled back inside. |
 | Moods | `idle`, `walk`, `run`, `dance` for every animal, picked at random with weights; `eat` is a pecking animation, so only the chick, the parrot and the penguin play it. |
 | Pick up and throw | A press on the model picks it up (the hand cursor shows only over the model); the pet plays its negative gesture while carried, falls when released with the hand's speed, clamped to a throw, and lands with its positive gesture. A press on a transparent spot reaches the page. |
-| Several pets | Each `createPet` is its own canvas and WebGL context (browsers allow about 16 per page). Pets on the same ground (the viewport, or one `host`) step in one loop and collide: two whose bodies overlap are pushed apart, a walker that bumps into another turns around, a pile dropped on one spot spreads out. Pets in the air or in hand pass freely. |
+| Several pets | Each `createPet` is its own canvas and WebGL context (browsers allow about 16 per page). Pets on the same ground (the viewport, or one `host`) step in one loop and meet: a pet that falls onto another lands on its head and stands there, rides along when the one below walks, drops off when it walks past the edge of the head or the one below is picked up, and towers stack as deep as you drop them. At one level, two whose bodies overlap are pushed apart, a walker that bumps into another turns around, a pile dropped on one spot spreads out. Pets in the air or in hand pass freely. |
 
 ### Settings
 
@@ -77,7 +77,7 @@ Out-of-range values are clamped by `setSettings`, whose reply is the result.
 |---|---|
 | `src/pet.ts` | `createPet`: the canvas, its placement over the page, the pointer (hover test, pick up, throw), the frame loop. |
 | `src/react.tsx` | `<Pet>`: `createPet` in an effect, props to the handle, the handle on `ref`. |
-| `src/life.ts` | The pet's life with no screen in it: fall, land, ground moods, side edges, carry and throw, and `separate`, which keeps standing pets apart. Pure; tested. |
+| `src/life.ts` | The pet's life with no screen in it: fall, land (on the ground or on another pet's head), ground moods, side edges, riding, carry and throw, and `separate`, which keeps pets at one level apart. Pure; tested. |
 | `src/herd.ts` | One frame loop per ground: steps every pet on it, separates them, then lets each draw. |
 | `src/scene.ts` | The Babylon.js scene: camera aimed so the feet sit on the canvas's bottom edge at every scale, lights, one model at a time, animations by name, the triangle pick. |
 | `src/pets.ts` | The 24 animals, their labels, their file names, which are birds. |
@@ -108,7 +108,8 @@ On the ground it asks `nextCommand` for the next mood when the current one ends.
 `createPetScene` draws the model: a level camera whose height is computed so that the model's ground plane projects onto the canvas's last pixel rows, at any scale (the model, the camera distance and the canvas scale together, so the framing never changes); the eight animations of the models, by name, with blending; and a triangle pick for `solidAt`.
 
 `createPet` joins the two on a canvas it appends to the page, moved with `translate3d` every frame the position changes.
-Pets on the same ground share a herd (`herd.ts`), one `requestAnimationFrame` loop that steps every life, runs `separate` over the standing ones (adjacent pairs by centre, half the overlap each, until nothing moves) and then lets each pet draw.
+Pets on the same ground share a herd (`herd.ts`), one `requestAnimationFrame` loop that steps every life with the others in view, runs `separate` over the standing ones (pairs at one level, half the overlap each, until nothing moves) and then lets each pet draw.
+A life's floor is the ground or the highest head (a quarter of the way down the box) of a standing pet whose body is under the life's centre and whose head was not above the feet when the step began, so a fall never passes through a head and a pet beside another never climbs it; a standing pet whose floor is gone falls, and one on a head moves with it.
 The canvas takes no pointer events, so the page under it works as if the canvas were not there.
 On every pointer move the point is tested against the model with a triangle pick; over the model the canvas takes events and shows the hand, so the press lands on it.
 That is one move of lag before a press on the model counts, and never a stolen click beside it.

@@ -1,5 +1,5 @@
-// Every pet on the same ground steps in one loop, so they can bump into each
-// other. One herd per host element (or per document, for pets fixed to the
+// Every pet on the same ground steps in one loop, so they can land on each
+// other and bump into each other. One herd per host element (or per document, for pets fixed to the
 // viewport); it runs while it has members.
 
 import { separate, type Life } from "./life";
@@ -35,8 +35,9 @@ function createHerd(): Herd {
     const now = performance.now();
     const dt = Math.min(0.05, (now - last) / 1000);
     last = now;
-    for (const m of members) m.life.step(now, dt);
-    separate([...members].map((m) => m.life));
+    const lives = [...members].map((m) => m.life);
+    for (const life of lives) life.step(now, dt, lives);
+    separate(lives);
     for (const m of members) m.frame(dt);
     frame = members.size ? requestAnimationFrame(loop) : undefined;
   };

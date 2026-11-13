@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { createLife, separate, type World } from "./life";
+import { createLife, separate, type Life, type World } from "./life";
 import type { Command } from "./moods";
 
 const world = (over: Partial<World> = {}): World => ({
@@ -23,7 +23,7 @@ const start = (over: Partial<World> = {}) => {
       life.step(now, 1 / 60);
     }
   };
-  return { life, run, now: () => now, step: (dt: number) => life.step((now += dt * 1000), dt) };
+  return { life, run, now: () => now, step: (dt: number, others?: readonly Life[]) => life.step((now += dt * 1000), dt, others) };
 };
 
 describe("a spawned pet", () => {
@@ -189,5 +189,79 @@ describe("pets on the same ground", () => {
     const xs = lives.map((l) => l.x).sort((p, q) => p - q);
     expect(xs[1]! - xs[0]!).toBeCloseTo(192 * 0.6, 5);
     expect(xs[2]! - xs[1]!).toBeCloseTo(192 * 0.6, 5);
+  });
+});
+
+describe("standing on each other", () => {
+  const onGround = (x: number, over: Partial<World> = {}) => {
+    const s = start({ nextCommand: () => idle, ...over });
+    s.life.spawn(x, 600 - 192);
+    s.run(3);
+    return s;
+  };
+  /** Step both lives `seconds` on one clock, like the herd does. */
+  const together = (all: ReturnType<typeof start>[], seconds: number) => {
+    const lives = all.map((s) => s.life);
+    for (let i = 0; i < seconds * 60; i++) for (const s of all) s.step(1 / 60, lives);
+    separate(lives);
+  };
+  test("a pet dropped over another lands on its head and stands there", () => {
+    const base = onGround(400);
+    const top = start({ nextCommand: () => idle });
+    top.life.spawn(400, 100);
+    together([base, top], 3);
+    expect(top.life.standingOn).toBe(base.life);
+    expect(top.life.y).toBeCloseTo(base.life.y + 192 * 0.25 - 192, 5);
+    expect(top.life.state.kind).toBe("ground");
+    expect(base.life.x).toBe(400); // not pushed: different levels
+    expect(top.life.x).toBe(400);
+  });
+  test("a pet beside another at the same level never climbs it", () => {
+    const a = onGround(400);
+    const b = onGround(420);
+    together([a, b], 1);
+    expect(a.life.standingOn).toBeUndefined();
+    expect(b.life.standingOn).toBeUndefined();
+    expect(b.life.x - a.life.x).toBeCloseTo(192 * 0.6, 5);
+  });
+  test("rides along when the one below walks, and falls when it is picked up", () => {
+    const base = onGround(400, { nextCommand: () => walk(1) });
+    const top = start({ nextCommand: () => idle });
+    top.life.spawn(base.life.x + 40, 100); // the base is already walking right; land just ahead of its centre
+    together([base, top], 3);
+    expect(top.life.standingOn).toBe(base.life);
+    const before = { base: base.life.x, top: top.life.x };
+    together([base, top], 1);
+    expect(base.life.x).toBeGreaterThan(before.base);
+    expect(top.life.x - before.top).toBeCloseTo(base.life.x - before.base, 0);
+    base.life.pickUp();
+    together([base, top], 0.1);
+    expect(top.life.state.kind).toBe("fall");
+    together([base, top], 2);
+    expect(top.life.y).toBe(top.life.groundY());
+    expect(top.life.standingOn).toBeUndefined();
+  });
+  test("walks off the edge of a head and drops to the ground", () => {
+    const base = onGround(400);
+    const top = start({ nextCommand: () => walk(1) });
+    top.life.spawn(400, 100);
+    together([base, top], 3);
+    expect(top.life.standingOn).toBe(base.life);
+    together([base, top], 4);
+    expect(top.life.standingOn).toBeUndefined();
+    expect(top.life.y).toBe(top.life.groundY());
+    expect(top.life.x).toBeGreaterThan(400 + 192 * 0.3);
+  });
+  test("a tower of three", () => {
+    const a = onGround(500);
+    const b = start({ nextCommand: () => idle });
+    b.life.spawn(500, 100);
+    together([a, b], 3);
+    const c = start({ nextCommand: () => idle });
+    c.life.spawn(500, -100);
+    together([a, b, c], 3);
+    expect(b.life.standingOn).toBe(a.life);
+    expect(c.life.standingOn).toBe(b.life);
+    expect(c.life.y).toBeCloseTo(a.life.y - 2 * 192 * 0.75, 5);
   });
 });
