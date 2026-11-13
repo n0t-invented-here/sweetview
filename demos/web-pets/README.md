@@ -77,7 +77,6 @@ Out-of-range values are clamped by `setSettings`, whose reply is the result.
 | `src/index.ts` | The package's root export. |
 | `demo/main.tsx`, `demo/main.css` | The demo page: a click drops a pet at that point; a panel picks the animal and sets the scale and the bottom of every pet. |
 | `demo/serve.ts` | `Bun.serve` for the demo page and the assets under `/pets/`. |
-| `scripts/probe.swift` | macOS. Loads the demo in a WKWebView, lets the first pet drop in, drives it with synthetic pointer events (hover beside it, hover on it, pick up, carry, release) and a page click for a second pet, prints the canvas's place and pointer state after each, and writes a PNG of the window. WebKit's own snapshot, so no screen-recording permission. |
 | `assets/kenney-cube-pets/` | The models, the shared texture, the previews and the pack's `License.txt`. |
 
 ## Recipes
@@ -89,7 +88,6 @@ Run `just <recipe>` in this folder or `just demos web-pets <recipe>` from the re
 | `test` | `bun test` for the life, the moods and the settings. |
 | `frontend` | Bundles and minifies the demo page into `build/demo/` (Babylon.js and the glTF loader included, about 4 MB). |
 | `demo` | `frontend`, then serves it on `http://127.0.0.1:4748` (`PORT` and `HOST` to change). |
-| `probe` | macOS, with `demo` running. `swift scripts/probe.swift` against it; the picture lands in `build/probe.png`. |
 | `clean` | Removes `build/`. |
 
 ## How it works

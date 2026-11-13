@@ -20,10 +20,6 @@ frontend: install
 demo: frontend
     bun run demo/serve.ts
 
-# macOS, with `demo` running: drives the first pet and writes build/probe.png
-probe:
-    swift scripts/probe.swift http://127.0.0.1:4748/ build/probe.png
-
 # A missing path makes ri fail the recipe
 clean:
     if (Test-Path build) { ri build -r -fo }
