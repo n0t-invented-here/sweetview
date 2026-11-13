@@ -105,6 +105,18 @@ h1 {
   color-scheme: dark;
 }
 
+/* Our own chevron, with room for it: the native one sits on the edge once the field has its own padding and background. */
+.panel select {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 2.2rem;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 4.5 6 8l3.5-3.5' fill='none' stroke='%23a89fbd' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.7rem center;
+  background-size: 0.8rem;
+  cursor: pointer;
+}
+
 /* The dropdown list is drawn by the OS; on Windows it takes only these. */
 .panel option,
 .panel optgroup {
