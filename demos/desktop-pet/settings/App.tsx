@@ -10,14 +10,14 @@ const bridge = createBridge<Methods, Events>(webviewTransport());
 
 export function App() {
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
-  const [pet, setPet] = useState<Pet>(PETS[0]);
+  const [pet, setModel] = useState<Pet>(PETS[0]);
 
   useEffect(() => {
     void bridge.rpc("settings.get").then(setSettings);
-    void bridge.rpc("pet.current").then(setPet);
+    void bridge.rpc("pet.current").then(setModel);
     // The tray can change both too; follow it.
     const offSettings = bridge.on("settings.changed", setSettings);
-    const offPet = bridge.on("pet.select", setPet);
+    const offPet = bridge.on("pet.select", setModel);
     return () => {
       offSettings();
       offPet();
@@ -41,7 +41,7 @@ export function App() {
         allowDeselect={false}
         onChange={(v) => {
           if (v) {
-            setPet(v as Pet);
+            setModel(v as Pet);
             bridge.notify("pet.choose", v as Pet);
           }
         }}

@@ -1,10 +1,10 @@
 // Kenney's Cube Pets, with their files. Each animal is its own module
-// (`@n1h/web-pets/packs/cube-pets/cat`), importing its own glTF, so a build
+// (`@n1h/web-characters/packs/cube-pets/cat`), importing its own glTF, so a build
 // that imports the cat ships the cat's file and nothing else of the pack.
 // This module imports all 24, for a page that wants the whole pack and
 // ships it.
 
-import type { PetModel } from "../../model";
+import type { ModelSpec } from "../../model";
 import type { Pet } from "./spec";
 export { PETS, BIRDS, isBird, isPet, petLabel, randomPet, type Pet, type PetAnimation } from "./spec";
 import { beaver } from "./beaver";
@@ -34,4 +34,4 @@ import { tiger } from "./tiger";
 
 export { beaver, bee, bunny, cat, caterpillar, chick, cow, crab, deer, dog, elephant, fish, fox, giraffe, hog, koala, lion, monkey, panda, parrot, penguin, pig, polar, tiger };
 
-export const CUBE_PETS: Readonly<Record<Pet, PetModel>> = { beaver, bee, bunny, cat, caterpillar, chick, cow, crab, deer, dog, elephant, fish, fox, giraffe, hog, koala, lion, monkey, panda, parrot, penguin, pig, polar, tiger };
+export const CUBE_PETS: Readonly<Record<Pet, ModelSpec>> = { beaver, bee, bunny, cat, caterpillar, chick, cow, crab, deer, dog, elephant, fish, fox, giraffe, hog, koala, lion, monkey, panda, parrot, penguin, pig, polar, tiger };

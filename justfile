@@ -23,7 +23,7 @@ check: typecheck test
 
 compile: demos::web-app::compile demos::desktop-pet::compile demos::menubar-only::compile demos::menubar-notify::compile
 
-clean: demos::web-app::clean demos::desktop-pet::clean demos::web-pets::clean demos::menubar-only::clean demos::menubar-notify::clean
+clean: demos::web-app::clean demos::desktop-pet::clean demos::web-characters::clean demos::menubar-only::clean demos::menubar-notify::clean
 
 pack:
     bun pm pack --dry-run

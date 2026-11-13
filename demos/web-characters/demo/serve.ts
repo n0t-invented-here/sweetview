@@ -1,7 +1,7 @@
 // The demo page from Bun.serve: the prebuilt React page and the model files
 // the build put beside it.
 //
-//   just demos web-pets demo            (PORT=4748 by default)
+//   just demos web-characters demo            (PORT=4748 by default)
 
 const PORT = Number(process.env.PORT ?? 4748);
 const HOST = process.env.HOST ?? "127.0.0.1";
@@ -12,7 +12,7 @@ const page = `<!doctype html>
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Web Pets</title>
+<title>Web Characters</title>
 <link rel="stylesheet" href="/main.css" />
 </head>
 <body>
@@ -40,4 +40,4 @@ const server = Bun.serve({
   },
 });
 
-console.log(`Web Pets on http://${HOST}:${server.port}  (Ctrl+C to stop)`);
+console.log(`Web Characters on http://${HOST}:${server.port}  (Ctrl+C to stop)`);

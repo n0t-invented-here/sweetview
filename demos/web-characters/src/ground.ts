@@ -1,33 +1,34 @@
-// Every pet on the same ground steps in one loop, so they can land on each
-// other and bump into each other. One herd per host element (or per document, for pets fixed to the
-// viewport); it runs while it has members.
+// Every character on the same ground steps in one loop, so they can land on
+// each other and bump into each other. One ground per host element (or per
+// document, for characters fixed to the viewport); it runs while it has
+// members.
 
 import { separate, type Life } from "./life";
 
 export type Member = {
   life: Life;
-  /** Draw this pet after the step; `dt` in seconds. */
+  /** Draw this character after the step; `dt` in seconds. */
   frame(dt: number): void;
 };
 
-export type Herd = {
+export type Ground = {
   /** Join; the reply leaves. */
   add(member: Member): () => void;
 };
 
-const herds = new WeakMap<object, Herd>();
+const grounds = new WeakMap<object, Ground>();
 
-/** The herd for pets that share this ground: a host element, or the document for the viewport. */
-export function herdFor(ground: object): Herd {
-  let herd = herds.get(ground);
-  if (!herd) {
-    herd = createHerd();
-    herds.set(ground, herd);
+/** The ground for characters that share one: a host element, or the document for the viewport. */
+export function groundFor(on: object): Ground {
+  let ground = grounds.get(on);
+  if (!ground) {
+    ground = createGround();
+    grounds.set(on, ground);
   }
-  return herd;
+  return ground;
 }
 
-function createHerd(): Herd {
+function createGround(): Ground {
   const members = new Set<Member>();
   let frame: number | undefined;
   let last = 0;

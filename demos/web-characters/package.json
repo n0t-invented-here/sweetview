@@ -1,9 +1,9 @@
 {
-  "name": "@n1h/web-pets",
+  "name": "@n1h/web-characters",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "A pet for any web page: one of Kenney's Cube Pets, Mini Characters or Blocky Characters, or any animated glTF given as a spec, rendered with Babylon.js in a see-through canvas that drops in at a point, lands on the bottom edge (or on another pet's head) and lives along it, and can be picked up and thrown with the mouse. A framework-free createPet() and a React <Pet> component.",
+  "description": "A character for any web page: one of Kenney's Cube Pets, Mini Characters or Blocky Characters, or any animated glTF given as a spec, rendered with Babylon.js in a see-through canvas that drops in at a point, lands on the bottom edge (or on another character's head) and lives along it, and can be picked up and thrown with the mouse. A framework-free createCharacter() and a React <Pet> component.",
   "license": "MIT OR 0BSD",
   "files": [
     "src",

@@ -1,7 +1,7 @@
 // The picture: a Babylon.js scene on one canvas, with a level camera aimed so
 // the model's feet sit on the canvas's bottom edge at every scale, one model
 // at a time, fitted (centred, feet at zero, to the spec's height, turned to
-// face +z), its clips by name, and a triangle pick for "is the pet under
+// face +z), its clips by name, and a triangle pick for "is the character under
 // this point".
 
 import "@babylonjs/loaders/glTF/2.0";
@@ -17,13 +17,13 @@ import { Vector3 } from "@babylonjs/core/Maths/math.vector";
 import { TransformNode } from "@babylonjs/core/Meshes/transformNode";
 import { Scene } from "@babylonjs/core/scene";
 import { CAMERA_DISTANCE, CAMERA_FOV, FOOTPRINT_Z, proportionsOf, yawFor, type Bounds, type Proportions } from "./framing";
-import { clipFor, type ClipRef, type Direction, type PetModel } from "./model";
+import { clipFor, type ClipRef, type Direction, type ModelSpec } from "./model";
 
-export type PetScene = {
+export type ModelScene = {
   /** Fit the canvas to a `size` CSS-pixel square showing the model at `scale`, feet on the bottom edge. */
   resize(size: number, scale: number): void;
   /** Load the model and show it in place of the current one, fitted as the spec says. A later call wins over an earlier one still loading. */
-  show(model: PetModel): Promise<void>;
+  show(model: ModelSpec): Promise<void>;
   /** Is this clip in the loaded file? */
   has(clip: string): boolean;
   /** How long one pass of the clip takes at speed 1. */
@@ -42,14 +42,14 @@ export type PetScene = {
 
 const GROUND_MARGIN_PX = 2;
 /** The turn that makes a model face +z: rotation about y by θ takes +x to (cos θ, -sin θ), so +x needs -π/2 and -x needs π/2. */
-const forwardYaw = (forward: PetModel["forward"]): number => (forward === "-z" ? Math.PI : forward === "+x" ? -Math.PI / 2 : forward === "-x" ? Math.PI / 2 : 0);
+const forwardYaw = (forward: ModelSpec["forward"]): number => (forward === "-z" ? Math.PI : forward === "+x" ? -Math.PI / 2 : forward === "-x" ? Math.PI / 2 : 0);
 
-/** Throws when WebGL is not available: there is no pet without it. */
-export function createPetScene(canvas: HTMLCanvasElement): PetScene {
+/** Throws when WebGL is not available: there is no character without it. */
+export function createModelScene(canvas: HTMLCanvasElement): ModelScene {
   const engine = new Engine(canvas, true, { premultipliedAlpha: false, alpha: true }, true);
   const scene = new Scene(engine);
   // A scene attaches its own pointer handling to the canvas (a pick on every
-  // move, and the cursor reset to its default each time). The pet does its own
+  // move, and the cursor reset to its default each time). The character does its own
   // picking and sets its own cursor, so that goes.
   scene.detachControl();
   scene.clearColor = new Color4(0, 0, 0, 0);
@@ -63,7 +63,7 @@ export function createPetScene(canvas: HTMLCanvasElement): PetScene {
   fill.intensity = 0.9;
   fill.groundColor = new Color3(0.45, 0.42, 0.5);
 
-  const root = new TransformNode("pet", scene); // the fitted model hangs here; its feet are at y = 0
+  const root = new TransformNode("character", scene); // the fitted model hangs here; its feet are at y = 0
   let yaw = yawFor(1);
   let yawTarget = yaw;
   let scale = 1;
@@ -166,7 +166,7 @@ export function createPetScene(canvas: HTMLCanvasElement): PetScene {
       loaded.addAllToScene(); // before any re-parenting: the container checks its hierarchy here
       // Fit: as modelled, measure; then centre it, put its feet at y = 0 and
       // scale it to the spec's height; then turn it to face +z; then hang it
-      // under the root, which carries the pet's own turn and scale.
+      // under the root, which carries the character's own turn and scale.
       const fit = new TransformNode("fit", scene);
       for (const node of loaded.rootNodes) node.parent = fit;
       const pose = animations.get(clipFor(model, "idle").name);

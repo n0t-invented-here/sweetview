@@ -2,9 +2,9 @@
 // fall and no gestures, modelled eight units tall. The spec, without the
 // files; each character's module adds its file and texture.
 
-import type { PetModel } from "../../model";
+import type { ModelSpec } from "../../model";
 
-export const blockyCharacterSpec = (name: string, url: string, textures: Record<string, string>): PetModel => ({
+export const blockyCharacterSpec = (name: string, url: string, textures: Record<string, string>): ModelSpec => ({
   name,
   url,
   textures,

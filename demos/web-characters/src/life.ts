@@ -1,4 +1,4 @@
-// The pet's little life, with no screen in it: a square box that falls,
+// The character's little life, with no screen in it: a square box that falls,
 // lands, walks and runs along the bottom edge of its bounds, turns at the
 // sides, and can be picked up and thrown. With other lives on the same
 // ground it lands on their heads, rides along, walks off, and bumps into the
@@ -6,7 +6,7 @@
 // page); the page draws the model in the box.
 
 import { FEET } from "./framing";
-import { clipFor, drawMood, type ClipRef, type Direction, type MoodCommand, type MoodSpec, type PetModel } from "./model";
+import { clipFor, drawMood, type ClipRef, type Direction, type MoodCommand, type MoodSpec, type ModelSpec } from "./model";
 
 export type Box = { x: number; y: number; width: number; height: number };
 
@@ -18,16 +18,16 @@ export type LifeState =
 
 /** What the life reads each step; every value may change between steps (a resize, a settings change). */
 export type World = {
-  /** Where the pet may be. The ground is the bottom edge. */
+  /** Where the character may be. The ground is the bottom edge. */
   bounds: () => Box;
-  /** Edge of the pet's square box. */
+  /** Edge of the character's square box. */
   size: () => number;
   /** The model's scale: speeds follow it, so the stride matches the walk cycle at every size. */
   scale: () => number;
   /** Lift above the bounds' bottom edge. */
   bottom: () => number;
   /** Which model this is: its moods, its clips. */
-  model: () => PetModel;
+  model: () => ModelSpec;
   /** Which clips the loaded file has; a mood whose clip it lacks is never drawn. All, when not given. */
   has?: (clip: string) => boolean;
   /** How long a clip takes; a `landed` clip played once sets how long the landing lasts. */
@@ -37,7 +37,7 @@ export type World = {
   head?: () => number;
   feet?: () => number;
   /** What to do next on the ground; a weighted draw from the model's moods by default. */
-  nextCommand?: (model: PetModel) => MoodCommand;
+  nextCommand?: (model: ModelSpec) => MoodCommand;
 };
 
 export type Life = {
@@ -52,13 +52,13 @@ export type Life = {
   readonly body: number;
   readonly head: number;
   readonly feet: number;
-  /** How far the last step moved it sideways (walking, riding); what a pet on its head follows. */
+  /** How far the last step moved it sideways (walking, riding); what a character on its head follows. */
   readonly dx: number;
-  /** The pet it stands on, when not on the ground. */
+  /** The character it stands on, when not on the ground. */
   readonly standingOn: Life | undefined;
-  /** Where the box's top is when the pet stands on the ground. */
+  /** Where the box's top is when the character stands on the ground. */
   groundY(): number;
-  /** Put the box's top-left here and let the pet fall. */
+  /** Put the box's top-left here and let the character fall. */
   spawn(x: number, y: number): void;
   pickUp(): void;
   /** While carried: the box's new top-left. */
@@ -67,7 +67,7 @@ export type Life = {
   face(dir: Direction): void;
   /** Let go, moving at this vertical speed (units per second, positive is down); clamped to a throw. */
   drop(vy: number): void;
-  /** Pushed sideways by another pet, on the ground only; a walker pushed against its way turns around. The reply is how far it went (less than asked at a side edge). */
+  /** Pushed sideways by another character, on the ground only; a walker pushed against its way turns around. The reply is how far it went (less than asked at a side edge). */
   bump(dx: number): number;
   /** Advance by `dt` seconds at time `now` (milliseconds, as `performance.now()`), among the other lives on this ground (heads to land on, backs to ride). */
   step(now: number, dt: number, others?: readonly Life[]): void;
@@ -80,17 +80,17 @@ export const GRAVITY = 2400;
 export const MAX_THROW = 800;
 const LANDED_MS = 1200; // the landing clip, when it loops
 const REST_AFTER_LANDING_MS = 800;
-/** How much of its box the pet may hang past a side edge: the model does not fill the square. */
+/** How much of its box the character may hang past a side edge: the model does not fill the square. */
 const OVERHANG = 0.2;
-/** How much of its box a pet's body fills side to side, until the model is measured: for bumping into other pets and standing on them. */
+/** How much of its box a character's body fills side to side, until the model is measured: for bumping into other characters and standing on them. */
 export const BODY = 0.6;
-/** How far down its box the top of a pet's head is, until the model is measured: where another pet's feet rest. */
+/** How far down its box the top of a character's head is, until the model is measured: where another character's feet rest. */
 export const HEAD = 0.25;
 export { FEET };
 const isStanding = (l: Life) => l.state.kind === "ground" || l.state.kind === "landed";
 
 export function createLife(world: World): Life {
-  const pickNext = world.nextCommand ?? ((model: PetModel) => drawMood(model, world.has));
+  const pickNext = world.nextCommand ?? ((model: ModelSpec) => drawMood(model, world.has));
   const moving = (mood: MoodSpec) => (mood.speed ?? 0) > 0;
   /** Standing still after a landing, before the first mood: the idle clip. */
   const rest = (): MoodSpec => ({ name: "idle", clip: clipFor(world.model(), "idle").name, seconds: [0, 0] });
@@ -125,10 +125,10 @@ export function createLife(world: World): Life {
     if (moving(cmd.mood)) facing = cmd.dir;
   };
   /**
-   * Where this pet's box top rests: the ground, or the head of the highest
-   * standing pet whose body is under this pet's centre and whose head was
+   * Where this character's box top rests: the ground, or the head of the highest
+   * standing character whose body is under this character's centre and whose head was
    * not above the feet (at `feetBefore`) when the step began, so a fall
-   * never passes through a head and a pet beside another never climbs it.
+   * never passes through a head and a character beside another never climbs it.
    */
   const floorAmong = (others: readonly Life[], feetBefore: number): { y: number; on: Life | undefined } => {
     const size = world.size();
@@ -144,7 +144,7 @@ export function createLife(world: World): Life {
     }
     return best;
   };
-  /** Standing: follow the floor; when it is gone (the support walked away or was picked up), fall. The reply is whether the pet still stands. */
+  /** Standing: follow the floor; when it is gone (the support walked away or was picked up), fall. The reply is whether the character still stands. */
   const stand = (others: readonly Life[], feetBefore: number): boolean => {
     const floor = floorAmong(others, feetBefore);
     if (floor.y > y + 1) {
@@ -240,7 +240,7 @@ export function createLife(world: World): Life {
               facing = state.dir;
             }
           } else {
-            clampX(); // the bounds or the size may have changed under a standing pet
+            clampX(); // the bounds or the size may have changed under a standing character
           }
           break;
         }
@@ -285,11 +285,11 @@ export function createLife(world: World): Life {
 }
 
 /**
- * Keeps pets standing at the same level (on the ground, or on the same head)
+ * Keeps characters standing at the same level (on the ground, or on the same head)
  * from overlapping: any two whose bodies overlap are pushed apart by half
  * the overlap each (one that cannot give way, at a side edge, leaves its
  * half to the other), and a walker pushed against its way turns around. A
- * pet on another's head is not pushed off it; pets in the air or in hand
+ * character on another's head is not pushed off it; characters in the air or in hand
  * pass freely. Passes until nothing moves, because a push can make a new
  * overlap further along; a pile spreads out over a few of them.
  */

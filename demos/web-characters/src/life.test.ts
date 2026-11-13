@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { createLife, separate, type Life, type World } from "./life";
-import type { MoodCommand, MoodSpec, PetModel } from "./model";
+import type { MoodCommand, MoodSpec, ModelSpec } from "./model";
 
 const IDLE: MoodSpec = { name: "idle", clip: "idle", seconds: [100, 100] };
 const WALK: MoodSpec = { name: "walk", clip: "walk", speed: 55, seconds: [100, 100] };
 const DANCE: MoodSpec = { name: "dance", clip: "dance", seconds: [1, 1] };
-const MODEL: PetModel = {
+const MODEL: ModelSpec = {
   name: "test",
   url: "test.glb",
   clips: { idle: "idle", carried: "gesture-negative", falling: "gesture-negative", landed: "gesture-positive" },
@@ -38,7 +38,7 @@ const start = (over: Partial<World> = {}) => {
   return { life, run, now: () => now, step: (dt: number, others?: readonly Life[]) => life.step((now += dt * 1000), dt, others) };
 };
 
-describe("a spawned pet", () => {
+describe("a spawned character", () => {
   test("falls from where it was put and lands on the ground, with the positive gesture, then idles", () => {
     const { life, run } = start({ nextCommand: () => idle });
     life.spawn(400, 50);
@@ -139,7 +139,7 @@ describe("picked up", () => {
   });
 });
 
-describe("the world changes under a standing pet", () => {
+describe("the world changes under a standing character", () => {
   test("a narrower bounds pulls it back inside; a lower ground keeps its feet on it", () => {
     let width = 1000;
     let height = 600;
@@ -154,7 +154,7 @@ describe("the world changes under a standing pet", () => {
   });
 });
 
-describe("pets on the same ground", () => {
+describe("characters on the same ground", () => {
   const standing = (x: number, over: Partial<World> = {}) => {
     const s = start({ nextCommand: () => idle, ...over });
     s.life.spawn(x, 600 - 192);
@@ -177,7 +177,7 @@ describe("pets on the same ground", () => {
     expect(a.life.x).toBe(-192 * 0.2);
     expect(b.life.x + 192 * 0.2).toBeGreaterThanOrEqual(a.life.x + 192 * 0.8 - 1e-6);
   });
-  test("a walker bumped against its way turns around; a falling or carried pet passes freely", () => {
+  test("a walker bumped against its way turns around; a falling or carried character passes freely", () => {
     const walker = standing(300, { nextCommand: () => walk(1) });
     const wall = standing(380);
     expect(walker.life.state).toMatchObject({ mood: { name: "walk" }, dir: 1 });
@@ -211,13 +211,13 @@ describe("standing on each other", () => {
     s.run(3);
     return s;
   };
-  /** Step both lives `seconds` on one clock, like the herd does. */
+  /** Step both lives `seconds` on one clock, like the ground does. */
   const together = (all: ReturnType<typeof start>[], seconds: number) => {
     const lives = all.map((s) => s.life);
     for (let i = 0; i < seconds * 60; i++) for (const s of all) s.step(1 / 60, lives);
     separate(lives);
   };
-  test("a pet dropped over another lands on its head and stands there", () => {
+  test("a character dropped over another lands on its head and stands there", () => {
     const base = onGround(400);
     const top = start({ nextCommand: () => idle });
     top.life.spawn(400, 100);
@@ -228,7 +228,7 @@ describe("standing on each other", () => {
     expect(base.life.x).toBe(400); // not pushed: different levels
     expect(top.life.x).toBe(400);
   });
-  test("a pet beside another at the same level never climbs it", () => {
+  test("a character beside another at the same level never climbs it", () => {
     const a = onGround(400);
     const b = onGround(420);
     together([a, b], 1);

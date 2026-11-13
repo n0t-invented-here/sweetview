@@ -3,4 +3,4 @@
 // The page files (*.css, *.js) are declared by sweetview; the models and
 // textures by the web pets package.
 /// <reference path="../../file-imports.d.ts" />
-// *.glb and *.png are declared by @n1h/web-pets (src/assets.d.ts).
+// *.glb and *.png are declared by @n1h/web-characters (src/assets.d.ts).

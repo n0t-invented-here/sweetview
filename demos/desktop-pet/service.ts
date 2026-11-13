@@ -4,7 +4,7 @@
 import { defineService } from "@n1h/sweetview/ipc";
 import type { HitProbe, Point, Rect } from "@n1h/sweetview/native";
 import type { WindowChromeMethods } from "@n1h/sweetview/window-chrome";
-import { type Command, type Mood, nextCommand, type Pet } from "@n1h/web-pets/packs/cube-pets/spec";
+import { type Command, type Mood, nextCommand, type Pet } from "@n1h/web-characters/packs/cube-pets/spec";
 import type { Settings } from "./settings";
 
 /**
@@ -15,7 +15,7 @@ import type { Settings } from "./settings";
  */
 export type ScreenArea = Rect & { scale: number; debug: boolean; still: boolean };
 
-/** The moods and commands are @n1h/web-pets'; they are part of this contract. */
+/** The moods and commands are @n1h/web-characters'; they are part of this contract. */
 export type { Command, Mood };
 
 export type WorkerMethods = {

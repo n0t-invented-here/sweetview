@@ -3,7 +3,7 @@
 // files in it: the names, the labels, the file names, which are birds, and
 // the moods; index.ts adds the files. The desktop pet imports this one.
 
-import { drawMood, type Direction, type MoodSpec, type PetModel } from "../../model";
+import { drawMood, type Direction, type MoodSpec, type ModelSpec } from "../../model";
 
 export const PETS = [
   "beaver",
@@ -68,7 +68,7 @@ export const cubePetMoods = (pet: Pet): MoodSpec[] => [
 ];
 
 /** The spec for a pet whose file (and the shared texture) is at these URLs. */
-export const cubePetSpec = (pet: Pet, url: string, textures: Record<string, string>): PetModel => ({
+export const cubePetSpec = (pet: Pet, url: string, textures: Record<string, string>): ModelSpec => ({
   name: petLabel(pet),
   url,
   textures,

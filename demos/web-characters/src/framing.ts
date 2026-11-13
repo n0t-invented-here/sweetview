@@ -1,11 +1,11 @@
 // The camera, as numbers, and what a model's box looks like through it:
 // where its feet, its head and its sides land on the square canvas. The
 // scene aims its camera from these; the life uses the fractions for bumping
-// into other pets and standing on their heads.
+// into other characters and standing on their heads.
 
 import type { Direction } from "./model";
 
-/** A level look from the pet's own height. */
+/** A level look from the character's own height. */
 export const CAMERA_DISTANCE = 4.4;
 export const CAMERA_FOV = 0.5;
 /** How far the models reach toward the camera; the front of that footprint sits on the canvas's bottom edge. */
@@ -34,7 +34,7 @@ export function projectToCanvas(p: { x: number; y: number; z: number }): { x: nu
 export type Proportions = {
   /** How much of the canvas's width the model spans, as seen facing along the ground: its lower three quarters, so a raised tail or a hat does not count. */
   body: number;
-  /** How far down the canvas the top of the model's head is: the surface straight above the model's middle, so a pet standing on it stands on the head, not on a tail tip. */
+  /** How far down the canvas the top of the model's head is: the surface straight above the model's middle, so a character standing on it stands on the head, not on a tail tip. */
   head: number;
   /** How far down the canvas the model's feet are, at its centre: above the bottom edge, which the front of the footprint touches. */
   feet: number;

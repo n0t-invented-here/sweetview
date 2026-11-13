@@ -1,25 +1,25 @@
-// A pet on a page: a see-through canvas the model is drawn on, placed over the
-// page and moved every frame as the life says. Pets on the same ground step
-// together (herd.ts) and bump into each other. Clicks reach the page through
+// A character on a page: a see-through canvas the model is drawn on, placed over the
+// page and moved every frame as the life says. Characters on the same ground step
+// together (ground.ts) and bump into each other. Clicks reach the page through
 // the canvas everywhere the model is not; over the model, the hand cursor
-// shows and a press picks the pet up.
+// shows and a press picks the character up.
 
-import { herdFor } from "./herd";
+import { groundFor } from "./ground";
 import { BODY, FEET, HEAD, createLife, type Box } from "./life";
-import type { PetModel } from "./model";
-import { createPetScene } from "./scene";
-import { DEFAULT_PET_SETTINGS, sanitizePetSettings, type PetSettings } from "./settings";
+import type { ModelSpec } from "./model";
+import { createModelScene } from "./scene";
+import { DEFAULT_CHARACTER_SETTINGS, sanitizeCharacterSettings, type CharacterSettings } from "./settings";
 
-/** The pet's box edge at scale 1, in CSS pixels. */
-export const PET_SIZE = 192;
+/** The character's box edge at scale 1, in CSS pixels. */
+export const CHARACTER_SIZE = 192;
 
 export type Point = { x: number; y: number };
 
-export type PetOptions = {
-  /** Which model: a spec from one of the packs, or your own. */
-  pet: PetModel;
+export type CharacterOptions = {
+  /** A spec from one of the packs, or your own. */
+  model: ModelSpec;
   /**
-   * Where the pet's centre appears before it falls, in CSS pixels from the
+   * Where the character's centre appears before it falls, in CSS pixels from the
    * top-left of its bounds (the viewport, or `host`). By default somewhere
    * along the top edge, so it drops in from above.
    */
@@ -27,43 +27,42 @@ export type PetOptions = {
   scale?: number;
   bottom?: number;
   /**
-   * The element the pet lives in: its bounds are the element's box, the pet
+   * The element the character lives in: its bounds are the element's box, the character
    * is positioned inside it (the element becomes `position: relative` when
-   * it was static). Without one the pet is fixed to the viewport and stays
+   * it was static). Without one the character is fixed to the viewport and stays
    * on screen while the page scrolls.
    */
   host?: HTMLElement;
   /** Stacking of the canvas over the page's content. */
   zIndex?: number;
-  /** Something failed after the pet was created (a model that would not load). `console.error` by default. */
+  /** Something failed after the character was created (a model that would not load). `console.error` by default. */
   onFault?: (message: string, error?: unknown) => void;
 };
 
-export type PetHandle = {
-  /** The model on show, and its name. */
-  readonly model: PetModel;
-  readonly pet: string;
-  readonly settings: PetSettings;
+export type CharacterHandle = {
+  /** The model on show. */
+  readonly model: ModelSpec;
+  readonly settings: CharacterSettings;
   /** The box's top-left in bounds coordinates, and its edge. */
   readonly position: Point;
   readonly size: number;
   /** Switch model; resolves when the new one is up (or failed and reported). */
-  setPet(pet: PetModel): Promise<void>;
+  setModel(model: ModelSpec): Promise<void>;
   /** Change the scale or the bottom; the reply is the clamped result. */
-  setSettings(patch: Partial<PetSettings>): PetSettings;
-  /** Put the pet's centre here and let it fall. */
+  setSettings(patch: Partial<CharacterSettings>): CharacterSettings;
+  /** Put the character's centre here and let it fall. */
   spawn(at: Point): void;
   dispose(): void;
 };
 
-/** Creates the canvas and starts the pet. Throws when WebGL is not available. */
-export function createPet(options: PetOptions): PetHandle {
+/** Creates the canvas and starts the character. Throws when WebGL is not available. */
+export function createCharacter(options: CharacterOptions): CharacterHandle {
   const fault = options.onFault ?? ((message: string, error?: unknown) => console.error(message, error ?? ""));
   const host = options.host;
   if (host && getComputedStyle(host).position === "static") host.style.position = "relative";
 
   const canvas = document.createElement("canvas");
-  canvas.className = "web-pet";
+  canvas.className = "web-character";
   Object.assign(canvas.style, {
     position: host ? "absolute" : "fixed",
     left: "0",
@@ -77,17 +76,17 @@ export function createPet(options: PetOptions): PetHandle {
   } satisfies Partial<CSSStyleDeclaration>);
   (host ?? document.body).append(canvas);
 
-  let scene: ReturnType<typeof createPetScene>;
+  let scene: ReturnType<typeof createModelScene>;
   try {
-    scene = createPetScene(canvas);
+    scene = createModelScene(canvas);
   } catch (err) {
     canvas.remove();
     throw err;
   }
 
-  let model = options.pet;
-  let settings = sanitizePetSettings({ scale: options.scale, bottom: options.bottom }, DEFAULT_PET_SETTINGS);
-  let size = Math.round(PET_SIZE * settings.scale);
+  let model = options.model;
+  let settings = sanitizeCharacterSettings({ scale: options.scale, bottom: options.bottom }, DEFAULT_CHARACTER_SETTINGS);
+  let size = Math.round(CHARACTER_SIZE * settings.scale);
 
   const bounds = (): Box => (host ? { x: 0, y: 0, width: host.clientWidth, height: host.clientHeight } : { x: 0, y: 0, width: window.innerWidth, height: window.innerHeight });
   const life = createLife({
@@ -108,7 +107,7 @@ export function createPet(options: PetOptions): PetHandle {
   const spawn = (at: Point) => life.spawn(at.x - size / 2, at.y - size / 2);
   spawn(options.spawn ?? { x: bounds().width * (0.2 + Math.random() * 0.6), y: -size / 2 });
 
-  const show = async (next: PetModel) => {
+  const show = async (next: ModelSpec) => {
     model = next;
     try {
       await scene.show(model);
@@ -179,9 +178,9 @@ export function createPet(options: PetOptions): PetHandle {
   canvas.addEventListener("pointercancel", onUp);
   canvas.addEventListener("contextmenu", (e) => e.preventDefault());
 
-  // ---- loop: the herd steps every pet on this ground, then each draws itself ----
+  // ---- loop: the ground steps every character on this ground, then each draws itself ----
   let lastPlaced = { x: NaN, y: NaN };
-  const leave = herdFor(host ?? document).add({
+  const leave = groundFor(host ?? document).add({
     life,
     frame(dt) {
       scene.play(life.animation(), life.animationSpeed());
@@ -202,9 +201,6 @@ export function createPet(options: PetOptions): PetHandle {
     get model() {
       return model;
     },
-    get pet() {
-      return model.name;
-    },
     get settings() {
       return settings;
     },
@@ -214,12 +210,12 @@ export function createPet(options: PetOptions): PetHandle {
     get size() {
       return size;
     },
-    setPet: show,
+    setModel: show,
     setSettings(patch) {
-      settings = sanitizePetSettings(patch, settings);
-      const nextSize = Math.round(PET_SIZE * settings.scale);
+      settings = sanitizeCharacterSettings(patch, settings);
+      const nextSize = Math.round(CHARACTER_SIZE * settings.scale);
       if (nextSize !== size) {
-        // Grow and shrink about the feet, so a standing pet stays where it stood.
+        // Grow and shrink about the feet, so a standing character stays where it stood.
         const feetX = life.x + size / 2;
         size = nextSize;
         if (life.state.kind === "carried") life.carryTo(feetX - size / 2, life.y);

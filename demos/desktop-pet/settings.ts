@@ -2,7 +2,7 @@
 // thread (owns the current values, saves them), the pet page (applies them)
 // and the settings page (edits them). The ranges are the web pets'.
 
-import { BOTTOM_MAX, BOTTOM_MIN, clampNumber, SCALE_MAX, SCALE_MIN } from "@n1h/web-pets";
+import { BOTTOM_MAX, BOTTOM_MIN, clampNumber, SCALE_MAX, SCALE_MIN } from "@n1h/web-characters";
 
 export type Settings = {
   /** How far above the very bottom of the display the pet stands, in CSS pixels (the same visual distance on every monitor, whatever its scale factor); negative sinks it below the edge. */

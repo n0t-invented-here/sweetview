@@ -1,4 +1,4 @@
-// What a pet is made of, as data: which file, how to fit it, which clips
+// What a character is made of, as data: which file, how to fit it, which clips
 // play for which states, and which moods it draws from on the ground. The
 // packs in src/packs are specs of this shape, one named export per model;
 // a page passes its own for any glTF with animations.
@@ -26,7 +26,7 @@ export type MoodSpec = {
   speed?: number;
 };
 
-export type PetModel = {
+export type ModelSpec = {
   /** For labels. */
   name: string;
   /** Where the glTF is fetched from: an imported file (`import url from "./robot.glb"`), so the build ships it, or any URL. */
@@ -61,7 +61,7 @@ export type ClipRef = { name: string; once: boolean };
 const asRef = (spec: ClipSpec): ClipRef => (typeof spec === "string" ? { name: spec, once: false } : { name: spec.name, once: spec.once ?? false });
 
 /** The clip for a state, with the fallbacks (falling → carried → idle, landed → idle). */
-export function clipFor(model: PetModel, role: Role): ClipRef {
+export function clipFor(model: ModelSpec, role: Role): ClipRef {
   const c = model.clips;
   switch (role) {
     case "idle":
@@ -76,14 +76,14 @@ export function clipFor(model: PetModel, role: Role): ClipRef {
 }
 
 /** Every clip name the model uses. */
-export const clipNames = (model: PetModel): string[] => [
+export const clipNames = (model: ModelSpec): string[] => [
   ...new Set([...(["idle", "carried", "falling", "landed"] as const).map((r) => clipFor(model, r).name), ...model.moods.map((m) => m.clip)]),
 ];
 
 export type MoodCommand = { mood: MoodSpec; dir: Direction; seconds: number };
 
 /** A weighted draw from the model's moods, with a direction and a length. `has` leaves out moods whose clip is not in the file. */
-export function drawMood(model: PetModel, has: (clip: string) => boolean = () => true): MoodCommand {
+export function drawMood(model: ModelSpec, has: (clip: string) => boolean = () => true): MoodCommand {
   const moods = model.moods.filter((m) => has(m.clip));
   const pool = moods.length ? moods : model.moods;
   const total = pool.reduce((sum, m) => sum + (m.weight ?? 1), 0);
@@ -101,4 +101,4 @@ export function drawMood(model: PetModel, has: (clip: string) => boolean = () =>
 }
 
 /** The same model, by what it loads from. */
-export const sameModel = (a: PetModel, b: PetModel): boolean => a.url === b.url;
+export const sameModel = (a: ModelSpec, b: ModelSpec): boolean => a.url === b.url;

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { clipFor, clipNames, drawMood, type PetModel } from "./model";
+import { clipFor, clipNames, drawMood, type ModelSpec } from "./model";
 
-const model: PetModel = {
+const model: ModelSpec = {
   name: "t",
   url: "f.glb",
   clips: { idle: "idle", landed: { name: "cheer", once: true } },

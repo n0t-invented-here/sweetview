@@ -1,4 +1,4 @@
-# The web pets: a pet for any web page, and its demo page.
+# The web characters: a character for any web page, and its demo page.
 
 set shell := ["pwsh", "-NoProfile", "-Command", "$ErrorActionPreference = 'Stop'; $PSNativeCommandUseErrorActionPreference = $true; trap { if ($_.Exception -is [System.Management.Automation.NativeCommandExitException]) { exit $_.Exception.ExitCode }; break };"]
 
