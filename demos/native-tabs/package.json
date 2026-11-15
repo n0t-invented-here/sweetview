@@ -1,0 +1,10 @@
+{
+  "name": "sweetview-native-tabs",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Native tabs on macOS with one webview per tab: every tab is its own NSWindow hosting its own WKWebView, joined by AppKit window tabbing, so the tab bar, the + button, drag to reorder and tear-off are the system's.",
+  "dependencies": {
+    "@n1h/sweetview-webview-bun": "^2.7.0"
+  }
+}

@@ -251,6 +251,7 @@ codesign --sign - --force --deep "App.app"
 | [`demos/desktop-pet/`](demos/desktop-pet/README.md) | a transparent always-on-top pet rendered with Babylon.js, with click-through hit regions and a page-drawn settings window |
 | [`demos/menubar-only/`](demos/menubar-only/README.md) | a menu-bar app with no window, no webview and no worker: a status item, its menu and a tooltip clock on a plain `setInterval`, on `runEventLoop` |
 | [`demos/menubar-notify/`](demos/menubar-notify/README.md) | a menu-bar app whose menu sends a system notification now or five seconds later, with a window listing what was sent and clicked; a notification click opens it |
+| [`demos/native-tabs/`](demos/native-tabs/README.md) | macOS: native tabs with one webview per tab; every tab is its own `NSWindow` hosting its own `WKWebView`, behind the tab bar AppKit draws |
 | [`webview/`](webview/README.md) | recipes that clone the webview-bun fork, with the webview fork as its submodule, and build the library from it, for working on the library itself; not needed to build the demos |
 
 Inside this repository `@n1h/sweetview` resolves to `src/` through the
@@ -264,7 +265,7 @@ from the repository root:
 |---|---|
 | `just check` | `tsc --noEmit` over `src/` and `demos/`, then `bun test` |
 | `just demos web-app serve` | the web build on `http://127.0.0.1:4747` (`PORT`, `HOST`) |
-| `just demos web-app app`, `just demos desktop-pet app`, `just demos menubar-only app`, `just demos menubar-notify app` | the desktop application from source, with `bun run` (`WEBVIEW_DEBUG=1` opens devtools) |
+| `just demos web-app app`, `just demos desktop-pet app`, `just demos menubar-only app`, `just demos menubar-notify app`, `just demos native-tabs app` (macOS) | the desktop application from source, with `bun run` (`WEBVIEW_DEBUG=1` opens devtools) |
 | `just demos web-app compile`, `just demos desktop-pet compile`, `just demos menubar-only compile`, `just demos menubar-notify compile` | Windows exe, macOS arm64 binary and `.app` into each demo's `dist/` |
 | `just compile`, `just clean` | both demos |
 | `just pack` | what `bun publish` would upload |

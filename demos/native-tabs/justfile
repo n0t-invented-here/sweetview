@@ -1,0 +1,24 @@
+# The native tabs demo (macOS).
+
+set shell := ["pwsh", "-NoProfile", "-Command", "$ErrorActionPreference = 'Stop'; $PSNativeCommandUseErrorActionPreference = $true; trap { if ($_.Exception -is [System.Management.Automation.NativeCommandExitException]) { exit $_.Exception.ExitCode }; break };"]
+
+@_default:
+    just --justfile "{{module_file()}}" --list
+
+
+install:
+    bun install --cwd ../..
+
+frontend: install
+    bun build frontend/main.ts --outdir build/frontend --minify
+
+app: frontend
+    bun run app.ts
+
+# Plays the user against the real app (every way a tab opens and closes) and writes captures of the window into `out`
+drive out="build/drive": frontend
+    bun run scripts/drive.ts "{{out}}"
+
+# A missing path makes ri fail the recipe
+clean:
+    if (Test-Path build) { ri build -r -fo }

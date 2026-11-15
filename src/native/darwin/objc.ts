@@ -86,10 +86,14 @@ export type TargetMethod = ((sender: Id) => void) | { args: number; impl: (...ar
  */
 let targetClasses = 0;
 
-/** Registers a fresh NSObject subclass whose selectors call into JavaScript; the name is made unique, so the same base name can be used again. */
-export function makeTarget(baseName: string, methods: Record<string, TargetMethod>): Id {
+/**
+ * Registers a fresh subclass whose selectors call into JavaScript; the name is made unique, so the same base name can be used again.
+ * `superclass` is NSObject unless the instance has to be something more: an NSResponder can be a window's
+ * `nextResponder`, which puts its methods in that window's responder chain.
+ */
+export function makeTarget(baseName: string, methods: Record<string, TargetMethod>, superclass = "NSObject"): Id {
   const className = `${baseName}_${++targetClasses}`;
-  const klass = asId(objc.symbols.objc_allocateClassPair(cls("NSObject"), cstr(className), 0n));
+  const klass = asId(objc.symbols.objc_allocateClassPair(cls(superclass), cstr(className), 0n));
   if (klass === NIL) throw new Error(`objc_allocateClassPair(${className}) failed (already registered?)`);
   for (const [selector, method] of Object.entries(methods)) {
     const argc = typeof method === "function" ? 1 : method.args;
@@ -239,5 +243,9 @@ export const retain = (obj: Id): Id => asId(send(obj, sel("retain")));
 export const release = (obj: Id): void => {
   if (obj !== NIL) send(obj, sel("release"));
 };
+/** [obj sel:id :NSInteger] -> void  (addTabbedWindow:ordered:, insertItem:atIndex:) */
+export const sendPtrIntVoid = fn([ID, ID, ID, FFIType.i64], FFIType.void);
+/** [obj sel:id :SEL :id :id] -> void  (addObserver:selector:name:object:) */
+export const sendPtrSelPtrPtrVoid = fn([ID, ID, ID, ID, ID, ID], FFIType.void);
 /** [obj sel:NSUInteger :id :id :BOOL] -> id  (nextEventMatchingMask:untilDate:inMode:dequeue:) */
 export const sendUIntPtrPtrBool = fn([ID, ID, FFIType.u64, ID, ID, FFIType.bool], ID);
