@@ -89,6 +89,13 @@ What the code does that is not obvious:
   `WS_OVERLAPPEDWINDOW`, so the shadow, the rounded corners, the side and bottom resize borders,
   snapping, maximise and the taskbar are Windows' own. The top edge lost its resize border with the
   caption, so the strip offers it back (a 4 pixel band, and the two top corners).
+- **A click in the strip never keeps the keyboard.** The strip is a webview, so a press on it
+  takes the focus as any page would. After every call from the strip (and when its menu closes, or
+  a drag is let go) the keyboard is given back to the page on show, as a click on a title bar
+  leaves it with the document.
+- **A right-click has two menus**, both the system's own popup. On a tab: New tab, Move tab to
+  new window, Merge all windows, Close tab, Close other tabs. On the strip's empty part: the
+  window's menu (Restore, Move, Size, Minimize, Maximize, Close), as on any title bar.
 - **A drag is the window manager's.** A press on the strip's empty part moves the window, and a
   press on its top edge resizes it, by handing the press over (`WM_NCLBUTTONDOWN`). The cursor has
   travelled by the time the UI thread hears of the press, so the page says where in the strip the
@@ -113,7 +120,15 @@ What the code does that is not obvious:
   window manager, so the new window follows the cursor at once. Let go over another window's
   strip, it joins that window where it was dropped. A window's only tab takes the window with it.
 - **A tab that is not shown is told so** (`put_IsVisible`): it stops painting, and its page sees
-  `document.hidden`.
+  `document.hidden`. WebView2 starts every page off as visible, so one that was opened behind
+  another is told once it has drawn.
+- **More tabs than fit scroll.** A tab is never narrower than 72 pixels; past that the row scrolls
+  to keep the selected tab in view, fades out at an end that has more, and turns with the mouse
+  wheel. The page tells the UI thread how far it is scrolled, which is how a tab dropped on a
+  scrolled strip lands where it was dropped.
+- **The selected tab is the colour of its page.** The demo's page tints itself by tab, and the
+  strip gives the tab the same tint (`tabHue`), so tab and page read as one sheet; a site's tab is
+  neutral.
 - **Closing a tab never happens inside its own call.** Everything that destroys, shows or moves a
   webview runs on a turn of Bun's loop of its own: a webview cannot be destroyed from inside the
   page call that asked for it, and the menu and a drag run a loop of their own.
@@ -152,5 +167,12 @@ loading. It writes PNG captures of the window into `build/drive/`. `DRIVE_APPEAR
 - A compiled app; `just demos native-tabs app` runs from source.
 - Windows: a tab dragged over another window's strip joins it when dropped, with no preview of
   where it will land while it is still held.
+- Windows: hovering the maximise button does not show Windows 11's Snap Layouts flyout. The system
+  shows it only where the window itself answers `HTMAXBUTTON` to a hit test, and here that button
+  is drawn by the strip's webview, which is another process's window. It takes a maximise button
+  drawn natively in a gap in the strip. Snapping by dragging to a screen edge, `Win`+arrows and
+  `Win+Z` work as for any window.
+- Windows: tabs have no icons (a site's favicon, a loading mark), and a strip with more tabs than
+  fit has no arrows, only the wheel.
 - `mac-window-tabs.ts` and the `win-*.ts` files live in this demo, not in `@n1h/sweetview/native`,
   because what the cross-platform API should look like is still open.

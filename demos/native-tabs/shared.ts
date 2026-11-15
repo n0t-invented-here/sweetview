@@ -10,6 +10,9 @@ export type TabInfo = {
   tabs: number;
 };
 
+/** The hue, in degrees, a tab's page tints itself with: its own per tab. The Windows strip gives the tab the same tint. */
+export const tabHue = (number: number): number => (number * 67 + 200) % 360;
+
 export type Methods = {
   /** The page is up and asks who it is. A new tab joins the tab bar when its page first asks. */
   "tab.info": [void, TabInfo];

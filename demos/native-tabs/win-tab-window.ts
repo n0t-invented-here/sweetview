@@ -61,6 +61,12 @@ const extra = dlopen("user32.dll", {
   GetSystemMetricsForDpi: { args: [FFIType.i32, FFIType.u32], returns: FFIType.i32 },
   GetDpiForSystem: { args: [], returns: FFIType.u32 },
   LoadCursorW: { args: [FFIType.u64, FFIType.u64], returns: FFIType.u64 },
+  // (HWND, BOOL revert) -> HMENU: the window's own menu, Restore to Close
+  GetSystemMenu: { args: [FFIType.u64, FFIType.i32], returns: FFIType.u64 },
+  // (HMENU, UINT item, UINT flags) -> BOOL
+  EnableMenuItem: { args: [FFIType.u64, FFIType.u32, FFIType.u32], returns: FFIType.i32 },
+  // (HMENU, UINT item, UINT byPosition) -> BOOL
+  SetMenuDefaultItem: { args: [FFIType.u64, FFIType.u32, FFIType.u32], returns: FFIType.i32 },
 }).symbols;
 const { CreateSolidBrush } = dlopen("gdi32.dll", { CreateSolidBrush: { args: [FFIType.u32], returns: FFIType.u64 } }).symbols;
 
@@ -500,4 +506,39 @@ export function popupMenu(owner: bigint, entries: MenuEntry[]): void {
   user32.DestroyMenu(menu);
   const entry = entries[chosen - 1];
   if (entry !== undefined && entry !== "separator") entry.click();
+}
+
+const WM_SYSCOMMAND = 0x0112;
+const SC_SIZE = 0xf000;
+const SC_MOVE = 0xf010;
+const SC_MINIMIZE = 0xf020;
+const SC_MAXIMIZE = 0xf030;
+const SC_CLOSE = 0xf060;
+const SC_RESTORE = 0xf120;
+
+/**
+ * The window's own menu (Restore, Move, Size, Minimize, Maximize, Close) at
+ * the cursor: what a right-click on a title bar shows. The caption that
+ * showed it is gone, so the strip's empty part asks for it. Blocks until the
+ * menu closes; what was chosen is the window manager's to carry out.
+ */
+export function windowMenu(hwnd: bigint): void {
+  const menu = extra.GetSystemMenu(hwnd, 0);
+  if (menu === 0n) return;
+  const maximized = user32.IsZoomed(hwnd) !== 0;
+  for (const [command, enabled] of [
+    [SC_RESTORE, maximized],
+    [SC_MOVE, !maximized],
+    [SC_SIZE, !maximized],
+    [SC_MINIMIZE, true],
+    [SC_MAXIMIZE, !maximized],
+  ] as const) {
+    extra.EnableMenuItem(menu, command, enabled ? MF_STRING : MF_GRAYED); // by command; MF_STRING is also "enabled"
+  }
+  extra.SetMenuDefaultItem(menu, SC_CLOSE, 0);
+  const at = cursorPosition();
+  user32.SetForegroundWindow(hwnd);
+  const chosen = user32.TrackPopupMenu(menu, TPM_RIGHTBUTTON | TPM_RETURNCMD, at.x, at.y, 0, hwnd, null);
+  user32.PostMessageW(hwnd, WM_NULL, 0n, 0n);
+  if (chosen !== 0) user32.PostMessageW(hwnd, WM_SYSCOMMAND, BigInt(chosen), 0n);
 }

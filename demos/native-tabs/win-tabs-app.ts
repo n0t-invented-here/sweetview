@@ -20,11 +20,11 @@ import pageCss from "./build/frontend/main.css" with { type: "file" };
 import pageJs from "./build/frontend/main.js" with { type: "file" };
 import stripCss from "./build/frontend/strip.css" with { type: "file" };
 import stripJs from "./build/frontend/strip.js" with { type: "file" };
-import type { Events, Methods, TabInfo } from "./shared";
+import { tabHue, type Events, type Methods, type TabInfo } from "./shared";
 import { STRIP_HEIGHT, dropIndex, type StripEvents, type StripMethods, type StripPoint, type StripState } from "./strip-shared";
 import { FOLLOW_TITLE, tabPageBody } from "./tab-page";
 import { displayHost, webAddress } from "./web-address";
-import { asWindowHandle, createFrameWindow, cursorPosition, leftButtonDown, popupMenu, setDarkWindows, type FrameWindow, type MenuEntry, type Point } from "./win-tab-window";
+import { asWindowHandle, createFrameWindow, cursorPosition, leftButtonDown, popupMenu, setDarkWindows, windowMenu, type FrameWindow, type MenuEntry, type Point } from "./win-tab-window";
 import { LAST_TAB, shortcutFor, type Shortcut } from "./win-shortcuts";
 import { controllerOf, moveFocus, notifyMoved, onAcceleratorKey, onNewWindowRequested, setVisible, type Controller } from "./win-webview2";
 
@@ -72,6 +72,8 @@ export type TabsApp = {
    * after the selected tab of `from.window` (default: the window used last),
    * or after `from.opener` and the tabs that tab opened before, and becomes
    * the selected tab. Tabs asked for in a row keep the order they were asked in.
+   * Rejects once the last window has closed: the app has ended, and nothing
+   * brings it back.
    */
   openTab(address?: string, from?: { opener?: Tab; window?: TabWindow }): Promise<Tab>;
   select(tab: Tab): void;
@@ -130,6 +132,7 @@ export async function startTabsApp(): Promise<TabsApp> {
   const windows: TabWindow[] = [];
   const open = new Map<number, Tab>();
   let opened = 0;
+  let ended = false; // the last window closed
 
   // What only this module needs to know about a tab or a window.
   const controllers = new Map<Tab | TabWindow, Controller>();
@@ -137,12 +140,13 @@ export async function startTabsApp(): Promise<TabsApp> {
   const shown = new Map<TabWindow, Tab>(); // the tab whose pane is on show: the selected one, or the one before it until the selected one has drawn
   const stripUp = new Set<TabWindow>(); // its strip's page has asked what to show
   const active = new Set<TabWindow>();
+  const scrolledBy = new Map<TabWindow, number>(); // how far its strip's row of tabs is scrolled, as its page last said
   const making = new Map<TabWindow, number>(); // webviews still being made in a window's panes
   const revealed = new Map<TabWindow, PromiseWithResolvers<void>>();
   const settled = new Map<Tab, () => void>(); // resolves openTab
 
   const stripState = (win: TabWindow): StripState => ({
-    tabs: win.tabs.map((tab) => ({ id: tab.number, title: tab.title })),
+    tabs: win.tabs.map((tab) => ({ id: tab.number, title: tab.title, ...(tab.address === undefined ? { hue: tabHue(tab.number) } : {}) })),
     selected: win.selected?.number ?? null,
     maximized: win.frame.maximized(),
     active: active.has(win),
@@ -178,6 +182,12 @@ export async function startTabsApp(): Promise<TabsApp> {
     focusPage(win);
   };
 
+  /** A page that has drawn and is not the one on show is told it is hidden: WebView2 starts every page off as visible. */
+  const hideUnlessShown = (tab: Tab) => {
+    const controller = controllers.get(tab);
+    if (controller !== undefined && tab.ready && !tab.closed && shown.get(tab.window) !== tab) setVisible(controller, false);
+  };
+
   /** Shows a window for the first time, when its strip and its selected tab have both drawn: it appears whole. */
   const reveal = (win: TabWindow, anyway = false) => {
     if (win.visible || win.closed || win.tabs.length === 0) return;
@@ -191,6 +201,7 @@ export async function startTabsApp(): Promise<TabsApp> {
     if (tab.ready || tab.closed) return;
     tab.ready = true;
     present(tab.window);
+    hideUnlessShown(tab);
     reveal(tab.window);
     settled.get(tab)?.();
   };
@@ -217,7 +228,10 @@ export async function startTabsApp(): Promise<TabsApp> {
     controllers.delete(win);
     win.strip?.dispose();
     win.frame.destroy();
-    if (windows.length === 0) quitEventLoop(); // the last window was the app
+    if (windows.length === 0) {
+      ended = true; // the last window was the app
+      quitEventLoop();
+    }
   };
 
   /** After a tab left a window: the next one is shown, or the window goes. */
@@ -334,7 +348,7 @@ export async function startTabsApp(): Promise<TabsApp> {
     if (target === undefined) return;
     const strip = target.frame.stripRect();
     const scale = target.frame.scale();
-    moveTab(tab, target, dropIndex(strip.width / scale, target.tabs.length, (at.x - strip.x) / scale));
+    moveTab(tab, target, dropIndex(strip.width / scale, target.tabs.length, (at.x - strip.x) / scale, scrolledBy.get(target) ?? 0));
     target.frame.show();
   };
 
@@ -374,27 +388,24 @@ export async function startTabsApp(): Promise<TabsApp> {
     }
   };
 
+  /** A right-click in the strip: on a tab, the tab's menu; on the empty part, the window's own menu, as on any title bar. */
   const showMenu = (win: TabWindow, tab: Tab | undefined) => {
-    const entries: MenuEntry[] = [{ label: "New tab\tCtrl+T", click: () => shortcut(win, "new") }];
-    if (tab !== undefined) {
-      entries.push(
-        "separator",
-        { label: "Move tab to new window", enabled: win.tabs.length > 1, click: () => void moveToNewWindow(tab).catch(failed) },
-        { label: "Merge all windows", enabled: windows.length > 1, click: mergeAll },
-        "separator",
-        { label: "Close tab\tCtrl+W", click: () => close(tab) },
-        {
-          label: "Close other tabs",
-          enabled: win.tabs.length > 1,
-          click() {
-            for (const other of [...win.tabs]) if (other !== tab) close(other);
-          },
+    if (tab === undefined) return windowMenu(win.frame.hwnd);
+    popupMenu(win.frame.hwnd, [
+      { label: "New tab\tCtrl+T", click: () => shortcut(win, "new") },
+      "separator",
+      { label: "Move tab to new window", enabled: win.tabs.length > 1, click: () => void moveToNewWindow(tab).catch(failed) },
+      { label: "Merge all windows", enabled: windows.length > 1, click: mergeAll },
+      "separator",
+      { label: "Close tab\tCtrl+W", click: () => close(tab) },
+      {
+        label: "Close other tabs",
+        enabled: win.tabs.length > 1,
+        click() {
+          for (const other of [...win.tabs]) if (other !== tab) close(other);
         },
-      );
-    } else {
-      entries.push({ label: "Merge all windows", enabled: windows.length > 1, click: mergeAll });
-    }
-    popupMenu(win.frame.hwnd, entries);
+      },
+    ]);
   };
 
   async function createWindow(at?: Point): Promise<TabWindow> {
@@ -435,6 +446,17 @@ export async function startTabsApp(): Promise<TabsApp> {
     revealed.set(win, Promise.withResolvers());
 
     const tabOf = (id: number) => win.tabs.find((tab) => tab.number === id);
+    // What a call from the strip does, on a turn of its own. The press that led to it gave the strip
+    // the keyboard; when the work is over (a menu closed, a drag let go) the page has it back, as
+    // a click on a title bar never takes the keyboard from the document.
+    const fromStrip = (work: () => void) =>
+      later(() => {
+        try {
+          work();
+        } finally {
+          focusPage(win);
+        }
+      });
     try {
       win.strip = await createWebviewApp<StripMethods, StripEvents>({
         title: APP_NAME,
@@ -449,19 +471,20 @@ export async function startTabsApp(): Promise<TabsApp> {
             later(() => reveal(win));
             return stripState(win);
           },
-          "strip.select": (id) => later(() => tabOf(id) && select(tabOf(id)!)),
-          "strip.close": (id) => later(() => tabOf(id) && close(tabOf(id)!)),
-          "strip.new": () => later(() => shortcut(win, "new")),
-          "strip.move": ({ id, index }) => later(() => tabOf(id) && move(tabOf(id)!, index)),
-          "strip.detach": ({ id, held }) => later(() => tabOf(id) && void detach(tabOf(id)!, held).catch(failed)),
-          "strip.menu": (id) => later(() => showMenu(win, id === null ? undefined : tabOf(id))),
-          "strip.focus": () => later(() => focusPage(win)),
+          "strip.select": (id) => fromStrip(() => tabOf(id) && select(tabOf(id)!)),
+          "strip.close": (id) => fromStrip(() => tabOf(id) && close(tabOf(id)!)),
+          "strip.new": () => fromStrip(() => shortcut(win, "new")),
+          "strip.move": ({ id, index }) => fromStrip(() => tabOf(id) && move(tabOf(id)!, index)),
+          "strip.detach": ({ id, held }) => fromStrip(() => tabOf(id) && void detach(tabOf(id)!, held).catch(failed)),
+          "strip.menu": (id) => fromStrip(() => showMenu(win, id === null ? undefined : tabOf(id))),
+          "strip.focus": () => fromStrip(() => {}),
+          "strip.scrolled": (by) => void scrolledBy.set(win, by),
           "strip.dark": (dark) => later(() => setDarkWindows(dark)),
-          "strip.drag": (held) => later(() => frame.startDrag(held)),
-          "strip.resize": ({ edge, held }) => later(() => frame.startResize(edge, held)),
-          "strip.minimize": () => later(() => frame.minimize()),
-          "strip.maximize": () => later(() => frame.toggleMaximize()),
-          "strip.closeWindow": () => later(() => closeWindow(win)),
+          "strip.drag": (held) => fromStrip(() => frame.startDrag(held)),
+          "strip.resize": ({ edge, held }) => fromStrip(() => frame.startResize(edge, held)),
+          "strip.minimize": () => fromStrip(() => frame.minimize()),
+          "strip.maximize": () => fromStrip(() => frame.toggleMaximize()),
+          "strip.closeWindow": () => fromStrip(() => closeWindow(win)),
         },
       });
     } catch (err) {
@@ -484,6 +507,7 @@ export async function startTabsApp(): Promise<TabsApp> {
   let firstWindow: Promise<TabWindow> | undefined;
 
   async function openTab(address?: string, from: { opener?: Tab; window?: TabWindow } = {}): Promise<Tab> {
+    if (ended) throw new Error("native-tabs: the app has ended; its last window was closed");
     const opener = from.opener && !from.opener.closed ? from.opener : undefined;
     const asked = from.window && !from.window.closed ? from.window : undefined;
     // Tabs asked for before there is a window (the launch) share the one being made.
@@ -545,6 +569,7 @@ export async function startTabsApp(): Promise<TabsApp> {
     tab.window.frame.placePane(tab.pane); // the library sized the pane its own way, and its child in it not at all
     const controller = controllerOf(app.webview, libPath);
     controllers.set(tab, controller);
+    hideUnlessShown(tab);
     cleanups.set(tab, [
       onAcceleratorKey(controller, (key) => {
         const found = shortcutFor(key);

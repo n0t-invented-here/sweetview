@@ -98,6 +98,30 @@ button:focus-visible {
   color: var(--text);
 }
 
+/* the demo's own page tints itself by tab (main.css, --bg): its tab takes the same tint */
+.tab.selected.tinted {
+  background: oklch(98.5% 0.006 var(--hue));
+}
+
+@media (prefers-color-scheme: dark) {
+  .tab.selected.tinted {
+    background: oklch(19% 0.012 var(--hue));
+  }
+}
+
+/* more tabs than fit: the row fades out at an end that has tabs out of sight */
+#tabs.more-left {
+  mask-image: linear-gradient(to right, transparent, #000 28px);
+}
+
+#tabs.more-right {
+  mask-image: linear-gradient(to left, transparent, #000 28px);
+}
+
+#tabs.more-left.more-right {
+  mask-image: linear-gradient(to right, transparent, #000 28px, #000 calc(100% - 28px), transparent);
+}
+
 .tab.separated::before {
   content: "";
   position: absolute;

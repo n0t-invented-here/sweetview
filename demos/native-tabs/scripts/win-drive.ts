@@ -288,6 +288,8 @@ check("six tabs asked for at once sit after the selected tab in the order asked"
 check("the last one asked for is the selected one, and on show", win.selected === burst.at(-1) && onShow(burst.at(-1)!));
 const counts = await Promise.all([first, second, ...burst].map((tab) => text(tab, "count")));
 check("every page shows the same, right number of tabs", new Set(counts).size === 1 && counts[0] === `${open.size} tabs are open.`, [...new Set(counts)].join(" / "));
+const neverShown = await Promise.all(burst.slice(0, -1).map((tab) => ask(tab.app, `document.hidden`)));
+check("pages that have never been on show know they are hidden", neverShown.every((hidden) => hidden === "true") && (await ask(burst.at(-1)!.app, `document.hidden`)) === "false", neverShown.join());
 await capture(win, "04-nine-tabs.png");
 for (const tab of burst) app.close(tab);
 check("six tabs closed at once are gone, panes and all", open.size === 3 && burst.every((tab) => !windowExists(tab.pane) && tab.app?.webview.unsafeHandle === null), `${open.size} tabs`);
@@ -353,6 +355,11 @@ check("the strip shows restore and gives up its top resize edge", (await ask(mai
 await capture(main, "08-maximised.png");
 await inPage(main.strip, `document.getElementById("maximize").click()`);
 check("and restores it", await until(() => !main.frame.maximized()));
+await inPage(main.strip, `document.getElementById("minimize").click()`);
+check("the strip's minimise button minimises the window", await until(() => user32.IsIconic(main.frame.hwnd) !== 0));
+main.frame.show();
+check("and it comes back as it was", (await until(() => user32.IsIconic(main.frame.hwnd) === 0)) && onShow(main.selected!));
+await Bun.sleep(300);
 const before = windowRect(main.frame.hwnd);
 user32.SetWindowPos(main.frame.hwnd, 0n, 0, 0, 200, 150, 0x0002 | 0x0004 | 0x0010); // SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE
 const least = windowRect(main.frame.hwnd);
@@ -383,6 +390,43 @@ const order = () => numbers(main);
     if (await real(main, "Ctrl+W pressed in a page", [["key", VK.control, VK.w]])) check("Ctrl+W pressed in a page closes the tab", (await until(() => open.size === count - 1)) && !open.has(made.number), `${open.size} tabs`);
     else app.close(made);
   }
+
+  // a click in the strip never takes the keyboard from the page
+  const withPage = async (after: string) => {
+    await Bun.sleep(200);
+    const page = await ask(main.selected!.app, `document.hasFocus()`);
+    const strip = await ask(main.strip, `document.hasFocus()`);
+    check(`the keyboard is with the page after ${after}`, page === "true" && strip === "false", `page ${page}, strip ${strip}`);
+  };
+  const maximiseButton = (): At => stripPoint(main, main.frame.stripRect().width / main.frame.scale() - 69, STRIP_HEIGHT / 2);
+  if (await real(main, "a real click on maximise", [["move", ...maximiseButton()], ["down"], ["up"]])) {
+    check("a real click on the maximise button maximises the window", await until(() => main.frame.maximized(), 1500));
+    await withPage("a click on maximise");
+    if (await real(main, "a real click on restore", [["move", ...maximiseButton()], ["down"], ["up"]])) {
+      check("and one on restore restores it", await until(() => !main.frame.maximized(), 1500));
+      await withPage("a click on restore");
+    }
+    if (main.frame.maximized()) main.frame.toggleMaximize();
+    await Bun.sleep(400);
+  }
+  if (await real(main, "a real click on the strip's empty part", [["move", ...emptyPoint(main)], ["down"], ["up"]])) await withPage("a click on the strip's empty part");
+  if (await real(main, "a real right-click on the strip's empty part", [["move", ...emptyPoint(main)], ["right"], ["wait", 500], ["key", 0x58]])) {
+    check("a right-click on the strip's empty part opens the window's own menu: X in it maximises", await until(() => main.frame.maximized(), 1500));
+    await withPage("the window's menu");
+    if (main.frame.maximized()) main.frame.toggleMaximize();
+    await until(() => !main.frame.maximized());
+    await Bun.sleep(400);
+  }
+  if (await real(main, "a real right-click on a tab, and Escape", [["move", ...(await tabPoint(main, main.selected!.number))], ["right"], ["wait", 500], ["key", 0x1b]])) await withPage("a tab's menu is dismissed");
+  const background = await app.openTab(undefined, { window: main });
+  await until(() => background.ready);
+  app.select(main.tabs[0] === background ? main.tabs[1]! : main.tabs[0]!);
+  await Bun.sleep(400);
+  const cross = JSON.parse(await inPage(main.strip, `${POINTER} return JSON.stringify(middle(tab(${background.number}).querySelector(".close")));`)) as At;
+  if (await real(main, "a real click on a background tab's x", [["move", ...stripPoint(main, cross[0], cross[1])], ["wait", 150], ["down"], ["up"]])) {
+    check("a real click on a background tab's x closes that tab", (await until(() => !open.has(background.number))) && !main.selected!.closed);
+    await withPage("closing a background tab");
+  } else app.close(background);
 
   const dragged = main.tabs[0]!;
   const from = await tabPoint(main, dragged.number);
@@ -435,6 +479,29 @@ const order = () => numbers(main);
   main = windows[0]!; // whichever window the tabs were merged into
   await Bun.sleep(300);
 
+  // the same drop on a strip with more tabs than fit, scrolled to its end
+  const extras: Tab[] = [];
+  for (let i = 0; i < 14; i++) extras.push(await app.openTab(undefined, { window: main }));
+  const lifted = await app.moveToNewWindow(main.tabs[0]!);
+  const liftedTab = lifted.tabs[0]!;
+  await Bun.sleep(500);
+  const crowded = await stripTabs(main);
+  const fitted = tabWidth(main.frame.stripRect().width / main.frame.scale(), main.tabs.length);
+  check("a strip with more tabs than fit is scrolled to its selected tab", crowded[0]!.x < 0 && crowded.find((t) => t.selected)!.x >= 0, `first tab at ${crowded[0]!.x}, selected at ${crowded.find((t) => t.selected)!.x}`);
+  await capture(main, "10b-more-tabs-than-fit.png");
+  const under = crowded.find((t) => t.x > 150 && t.x < 500)!;
+  const underIndex = main.tabs.findIndex((t) => t.number === under.id);
+  const lonePoint = await tabPoint(lifted, liftedTab.number);
+  const onto = stripPoint(main, 8 + under.x + fitted * 0.25, STRIP_HEIGHT / 2); // the left half of that tab
+  if (await real(lifted, "a real drop on a scrolled strip", [["move", ...lonePoint], ["down"], ...glide(lonePoint, [lonePoint[0] + 20, lonePoint[1] + 10], 4), ...glide([lonePoint[0] + 20, lonePoint[1] + 10], onto, 24), ["wait", 200], ["up"]])) {
+    check("a tab dropped on a scrolled strip goes where it was dropped", (await until(() => windows.length === 1)) && main.tabs.indexOf(liftedTab) === underIndex, `dropped before the tab at ${underIndex}, landed at ${main.tabs.indexOf(liftedTab)}`);
+  }
+  if (windows.length > 1) app.mergeAll();
+  await until(() => windows.length === 1);
+  main = windows[0]!;
+  for (const tab of extras) app.close(tab);
+  await Bun.sleep(400);
+
   const menuTab = main.tabs[1]!;
   if (await real(main, "a real right-click on a tab", [["move", ...(await tabPoint(main, menuTab.number))], ["right"], ["wait", 500], ["key", VK.down], ["key", VK.down], ["key", VK.enter]])) {
     check("a right-click on a tab opens the system's menu; its second entry moves the tab to a new window", (await until(() => windows.length === 2)) && menuTab.window !== main, `${windows.length} windows`);
@@ -447,6 +514,7 @@ const order = () => numbers(main);
   const closing = main.tabs.at(-1)!;
   if (closing !== first && (await real(main, "a real middle click on a tab", [["move", ...(await tabPoint(main, closing.number))], ["middle"]]))) {
     check("a real middle click on a tab closes it", await until(() => !open.has(closing.number)));
+    await withPage("a middle click on a tab");
   }
 }
 
@@ -492,6 +560,11 @@ await capture(left, "11-last-tab.png");
 app.close(last);
 const ended = await Promise.race([loop.then(() => true), Bun.sleep(4000).then(() => false)]);
 check("closing the last tab closes the window and ends the app", ended && open.size === 0 && windows.length === 0);
+const reopened = await app.openTab().then(
+  () => "a tab opened",
+  (err: Error) => err.message,
+);
+check("nothing opens once the app has ended (the window closed while its first tabs were opening)", /has ended/.test(reopened) && windows.length === 0, reopened);
 
 console.log(failures === 0 ? `\nall checks passed${skipped ? `, ${skipped} skipped` : ""}; captures in ${out}` : `\n${failures} check(s) failed${skipped ? `, ${skipped} skipped` : ""}`);
 process.exit(failures === 0 ? 0 : 1);

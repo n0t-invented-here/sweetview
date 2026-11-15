@@ -7,7 +7,7 @@ import "./main.css";
 
 import { createBridge } from "@n1h/sweetview/ipc";
 import { webviewTransport } from "@n1h/sweetview/page";
-import type { Events, Methods } from "../shared";
+import { tabHue, type Events, type Methods } from "../shared";
 
 const bridge = createBridge<Methods, Events>(webviewTransport());
 const element = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -25,7 +25,7 @@ const showCount = (tabs: number) => {
 bridge.on("tabs", ({ count: tabs }) => showCount(tabs));
 
 const me = await bridge.rpc("tab.info");
-document.documentElement.style.setProperty("--hue", String((me.number * 67 + 200) % 360)); // a colour of its own per tab
+document.documentElement.style.setProperty("--hue", String(tabHue(me.number))); // a colour of its own per tab
 title.value = me.title;
 if (!counted) showCount(me.tabs); // an event that overtook this answer is the newer number
 

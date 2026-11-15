@@ -32,10 +32,16 @@ if (process.platform === "darwin") {
 } else {
   const { startTabsApp } = await import("./win-tabs-app");
   const app = await startTabsApp();
-  const first = await app.openTab();
-  await app.openTab();
-  await app.openTab("https://bun.sh");
-  app.select(first);
+  let over = false;
+  void loop.then(() => (over = true));
+  try {
+    const first = await app.openTab();
+    await app.openTab();
+    await app.openTab("https://bun.sh");
+    app.select(first);
+  } catch (err) {
+    if (!over) throw err; // else the window was closed while its first tabs were still opening: the app has ended, and stays ended
+  }
 }
 
 await loop; // until the last tab closes, or Quit

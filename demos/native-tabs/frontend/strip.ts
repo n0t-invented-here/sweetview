@@ -35,6 +35,8 @@ let state: StripState = { tabs: [], selected: null, maximized: false, active: tr
 /** While a tab is dragged, and until the UI thread has heard where it was dropped: the order on show. */
 let order: number[] | undefined;
 let scrolled = 0;
+/** What the UI thread was last told `scrolled` is. */
+let told = 0;
 /** A tab dragged out, until the UI thread has taken it away. */
 let leaving: number | undefined;
 let drag: { id: number; pointer: number; startX: number; startY: number; grab: number; moved: boolean; x: number } | undefined;
@@ -60,6 +62,14 @@ function makeTab(id: number): HTMLElement {
   return tab;
 }
 
+/** After `scrolled` changed: the row fades out at an end that has tabs out of sight, and the UI thread hears how far it is scrolled. */
+function scrolledTo(count: number, width: number): void {
+  const most = Math.max(0, count * width - tabsViewport(innerWidth));
+  tabsElement.classList.toggle("more-left", scrolled > 0);
+  tabsElement.classList.toggle("more-right", scrolled < most);
+  if (scrolled !== told) bridge.notify("strip.scrolled", (told = scrolled));
+}
+
 let drawn = false;
 function render(): void {
   const tabs = shownTabs();
@@ -70,6 +80,7 @@ function render(): void {
   tabsElement.style.width = `${room}px`;
   tabsElement.classList.toggle("narrow", width < NARROW);
   newButton.style.transform = `translateX(${TABS_LEFT + room}px)`;
+  scrolledTo(tabs.length, width);
 
   tabs.forEach((tab, index) => {
     let el = tabElements.get(tab.id);
@@ -90,6 +101,8 @@ function render(): void {
     el.classList.toggle("dragging", dragged);
     el.classList.toggle("leaving", leaving === tab.id);
     el.classList.toggle("selected", tab.id === state.selected);
+    el.classList.toggle("tinted", tab.hue !== undefined);
+    if (tab.hue !== undefined) el.style.setProperty("--hue", String(tab.hue));
     // the hairline between two tabs, where neither is the selected one
     el.classList.toggle("separated", index > 0 && index !== selected && index - 1 !== selected);
     el.setAttribute("aria-selected", String(tab.id === state.selected));
@@ -236,6 +249,7 @@ window.addEventListener(
     // render() brings the selected tab back into view; a wheel may leave it out of sight
     const width = tabWidth(innerWidth, tabs.length);
     tabs.forEach((tab, index) => tabElements.get(tab.id)?.style.setProperty("transform", `translateX(${index * width - scrolled}px)`));
+    scrolledTo(tabs.length, width);
   },
   { passive: false },
 );

@@ -8,6 +8,8 @@ export type StripTab = {
   /** The tab's number: counts up from 1, never reused. */
   id: number;
   title: string;
+  /** Set for a tab showing the demo's page: the hue that page tints itself with, so the selected tab and its page are one colour. */
+  hue?: number;
 };
 
 /** Everything a strip shows, sent whole whenever any of it changes. */
@@ -48,10 +50,12 @@ export type StripMethods = {
   "strip.maximize": [void, void];
   /** The window's close button. */
   "strip.closeWindow": [void, void];
-  /** A right-click: on a tab, or null for the strip's empty part. */
+  /** A right-click: on a tab, for the tab's menu; or null for the strip's empty part, where a title bar has the window's menu. */
   "strip.menu": [number | null, void];
   /** The user is done with the strip for now: the keyboard goes back to the page. */
   "strip.focus": [void, void];
+  /** How far the row of tabs is scrolled, whenever that changes: the UI thread needs it to know which tab a place in the strip is. */
+  "strip.scrolled": [number, void];
   /** Whether the system is in dark mode, as the page sees it. */
   "strip.dark": [boolean, void];
 };
@@ -68,8 +72,8 @@ export const CAPTION_WIDTH = 138;
 /** Space before the first tab. */
 export const TABS_LEFT = 8;
 export const TAB_MAX_WIDTH = 240;
-/** Below this a tab shows nothing useful; more tabs than fit at this width scroll. */
-export const TAB_MIN_WIDTH = 56;
+/** Below this a tab has no room for a word of its title; more tabs than fit at this width scroll. */
+export const TAB_MIN_WIDTH = 72;
 /** The + after the last tab, with its margin. */
 export const NEW_TAB_WIDTH = 40;
 /** Kept free at the end of the strip whatever the number of tabs, so there is always somewhere to take the window by. */
