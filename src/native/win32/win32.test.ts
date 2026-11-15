@@ -107,6 +107,25 @@ describe.if(onWindows)("win32 FFI", () => {
     expect(nearest.height).toBeGreaterThan(0);
   });
 
+  test("discardQuit takes a PostQuitMessage back, after dispatching what was waiting ahead of it", async () => {
+    const { createMessageWindow } = await import("./message-window");
+    const { discardQuit, pumpEvents } = await import("./event-loop");
+    const { user32, WM_APP } = await import("./api");
+    const seen: number[] = [];
+    const win = createMessageWindow((message) => seen.push(message));
+    try {
+      user32.PostMessageW(win.hwnd, WM_APP + 21, 0n, 0n);
+      user32.PostQuitMessage(0);
+      discardQuit();
+      expect(seen).toContain(WM_APP + 21); // WM_QUIT only comes out once nothing posted is left
+      expect(pumpEvents()).toBe(true); // false would be the loop ending
+      discardQuit(); // nothing asked for, nothing waiting: returns at once
+      expect(pumpEvents()).toBe(true);
+    } finally {
+      win.destroy();
+    }
+  });
+
   test("escapeLabel doubles ampersands", async () => {
     const { escapeLabel } = await import("./menu");
     expect(escapeLabel("Fish & Chips")).toBe("Fish && Chips");

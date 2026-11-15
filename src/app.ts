@@ -24,6 +24,7 @@ import { ASSET_ORIGIN, backgroundColorCall, setAssetCall, webviewLibPath } from 
 import { FFIType, JSCallback, dlopen, type Pointer } from "bun:ffi";
 import type { AnyEvent, EventMap, Frame, MethodMap } from "./ipc";
 import { nativeWindow, type NativeWindow, type WindowHandle } from "./native";
+import { discardQuit } from "./native/event-loop";
 import { SizeHint, Webview } from "@n1h/sweetview-webview-bun";
 import { assetMime, indexHtml } from "./html";
 import type { HTMLBundle } from "bun";
@@ -127,7 +128,14 @@ export type WebviewApp<M extends MethodMap, E extends EventMap> = {
    */
   run(): void;
   quit(): void;
-  /** run()'s teardown without the loop, for an app hosted under runEventLoop: worker terminated, drain callback released, webview destroyed. Safe to call twice. */
+  /**
+   * run()'s teardown without the loop, for an app hosted under runEventLoop:
+   * worker terminated, drain callback released, webview destroyed. The loop
+   * goes on: on Windows, where destroying a webview asks it to end, that
+   * request is taken back, by dispatching the messages already waiting. Call
+   * it from a turn of Bun's loop (a timer, after an await), not from inside
+   * a page call or a window procedure. Safe to call twice.
+   */
   dispose(): void;
 };
 
@@ -352,7 +360,11 @@ export async function createWebviewApp<M extends MethodMap, E extends EventMap>(
       shutdown();
     },
     quit,
-    dispose: shutdown,
+    dispose() {
+      if (down) return;
+      shutdown();
+      discardQuit(); // destroy() posted one; the loop this app is hosted under has other windows
+    },
   };
   }
 }
