@@ -1,0 +1,271 @@
+/* Windows: the tab strip. Sizes are Windows 11's for a title bar with tabs in
+   it (40 high, tabs of 32 sitting on its bottom edge, caption buttons of 46);
+   the ones the UI thread also needs are in ../strip-shared.ts. --strip and
+   --tab are also what win-tab-window.ts paints before a page has: keep them
+   in step with BACKDROP there. */
+
+:root {
+  color-scheme: light dark;
+  --strip: #e9eaee;
+  --tab: #f9f9fb; /* the selected tab is the colour of the demo's page, so tab and page read as one sheet */
+  --text: #1b1b1f;
+  --muted: #5c5d66;
+  --hover: rgb(0 0 0 / 0.06);
+  --press: rgb(0 0 0 / 0.1);
+  --line: rgb(0 0 0 / 0.16);
+  --focus: #0067c0;
+  font: 12px/1 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --strip: #292a30;
+    --tab: #15161a;
+    --text: #f2f2f5;
+    --muted: #a6a7b0;
+    --hover: rgb(255 255 255 / 0.08);
+    --press: rgb(255 255 255 / 0.05);
+    --line: rgb(255 255 255 / 0.18);
+    --focus: #4cc2ff;
+  }
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--strip);
+  color: var(--text);
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+#strip {
+  position: fixed;
+  inset: 0;
+}
+
+button {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  cursor: default;
+}
+
+button:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
+/* --- tabs */
+
+#tabs {
+  position: absolute;
+  left: 8px;
+  top: 8px;
+  bottom: 0;
+  overflow: hidden;
+}
+
+.tab {
+  position: absolute;
+  left: 0;
+  top: 0;
+  box-sizing: border-box;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 4px 0 12px;
+  border-radius: 8px 8px 0 0;
+  color: var(--muted);
+  transition:
+    transform 180ms cubic-bezier(0.2, 0, 0, 1),
+    width 180ms cubic-bezier(0.2, 0, 0, 1),
+    opacity 140ms linear;
+}
+
+.tab:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.tab.selected {
+  background: var(--tab);
+  color: var(--text);
+}
+
+.tab.separated::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 9px;
+  width: 1px;
+  height: 14px;
+  background: var(--line);
+}
+
+.tab.separated:hover::before,
+.tab.dragging::before {
+  display: none;
+}
+
+.tab.entering {
+  opacity: 0;
+}
+
+.tab.leaving {
+  opacity: 0.35;
+}
+
+.tab.dragging {
+  z-index: 2;
+  transition: none;
+}
+
+.tab.dragging:not(.selected) {
+  background: var(--hover);
+}
+
+.title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  line-height: 32px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.close {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  font: 8px/24px "Segoe Fluent Icons", "Segoe MDL2 Assets";
+  opacity: 0;
+}
+
+.tab:hover .close,
+.tab.selected .close {
+  opacity: 1;
+}
+
+.narrow .tab:not(.selected) {
+  padding-right: 8px;
+}
+
+.narrow .tab:not(.selected) .close {
+  display: none;
+}
+
+.close:hover {
+  background: var(--hover);
+}
+
+.close:active {
+  background: var(--press);
+}
+
+#new {
+  position: absolute;
+  left: 4px;
+  top: 10px;
+  width: 32px;
+  height: 28px;
+  border-radius: 6px;
+  font: 11px/28px "Segoe Fluent Icons", "Segoe MDL2 Assets";
+  transition: transform 180ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+#new:hover {
+  background: var(--hover);
+}
+
+#new:active {
+  background: var(--press);
+}
+
+/* --- minimise, maximise, close */
+
+#caption {
+  position: absolute;
+  top: 0;
+  right: 0;
+  height: 100%;
+  display: flex;
+}
+
+#caption button {
+  width: 46px;
+  height: 100%;
+  font: 10px/1 "Segoe Fluent Icons", "Segoe MDL2 Assets";
+}
+
+#caption button:hover {
+  background: var(--hover);
+}
+
+#caption button:active {
+  background: var(--press);
+}
+
+#caption #close:hover {
+  background: #c42b1c;
+  color: #fff;
+}
+
+#caption #close:active {
+  background: #c84031;
+  color: rgb(255 255 255 / 0.8);
+}
+
+/* a window in the background dims its title bar, as the system's does */
+.inactive .tab,
+.inactive .tab.selected,
+.inactive #new,
+.inactive #caption button:not(:hover) {
+  color: var(--muted);
+}
+
+/* --- the top edge resizes the window: the caption that did it is gone */
+
+.edge {
+  position: absolute;
+  top: 0;
+  z-index: 5;
+}
+
+.edge[data-edge="top"] {
+  left: 8px;
+  right: 8px;
+  height: 4px;
+  cursor: ns-resize;
+}
+
+.edge[data-edge="top-left"] {
+  left: 0;
+  width: 8px;
+  height: 8px;
+  cursor: nwse-resize;
+}
+
+.edge[data-edge="top-right"] {
+  right: 0;
+  width: 8px;
+  height: 8px;
+  cursor: nesw-resize;
+}
+
+.maximized .edge {
+  display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tab,
+  #new {
+    transition: none;
+  }
+}

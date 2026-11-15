@@ -1,6 +1,6 @@
-// The tabbed app, minus the event loop: the menus, the tab group, and what
-// opening and closing a tab means. app.ts runs it; scripts/drive.ts runs it
-// and then plays the user.
+// The tabbed app on macOS, minus the event loop: the menus, the tab group, and
+// what opening and closing a tab means. app.ts runs it; scripts/mac-drive.ts
+// runs it and then plays the user. win-tabs-app.ts is its Windows counterpart.
 //
 // A tab is three things made together and torn down together: an NSWindow
 // (mac-window-tabs.ts), a webview hosted in it (createWebviewApp), and this
@@ -12,6 +12,7 @@ import pageCss from "./build/frontend/main.css" with { type: "file" };
 import pageJs from "./build/frontend/main.js" with { type: "file" };
 import { asWindowHandle, createWindowTabs, detachPage, installTabMenus, onLoadFailed, type WindowTabs } from "./mac-window-tabs";
 import type { Events, Methods, TabInfo } from "./shared";
+import { FOLLOW_TITLE, tabPageBody } from "./tab-page";
 import { displayHost, webAddress } from "./web-address";
 
 export const APP_NAME = "Native Tabs";
@@ -39,39 +40,10 @@ export type TabsApp = {
   openTab(address?: string, base?: bigint): Promise<bigint>;
 };
 
-const PAGE_BODY = `<main>
-<p class="eyebrow">One webview per tab</p>
-<h1><input id="title" aria-label="Tab title" spellcheck="false" autocomplete="off" /></h1>
-<p class="lede">This tab is its own <code>WKWebView</code> inside its own <code>NSWindow</code>. macOS draws the tab bar. <span id="count"></span></p>
-<dl class="proof">
-<div><dt>Page instance</dt><dd id="instance"></dd></div>
-<div><dt>Alive for</dt><dd id="alive"></dd></div>
-<div><dt>Clicks in this tab</dt><dd id="clicks">0</dd></div>
-</dl>
-<div class="actions">
-<button id="click" type="button">Click Me</button>
-<button id="new" type="button" class="secondary">New Tab</button>
-<button id="close" type="button" class="quiet">Close Tab</button>
-</div>
-<form id="open">
-<label for="address">Open a site in a new tab</label>
-<div class="row"><input id="address" value="bun.sh" spellcheck="false" autocomplete="off" autocapitalize="off" /><button type="submit" class="secondary">Open</button></div>
-<p id="error" role="alert" hidden></p>
-</form>
-<p class="hint">Also try the <kbd>+</kbd> in the tab bar, <kbd>⌘T</kbd> and <kbd>⌘W</kbd>, dragging a tab out of the window, and Window › Merge All Windows.</p>
-</main>`;
-
-// Runs in a site's page at document start: the tab's title follows the site's.
-const FOLLOW_TITLE = `(() => {
-  let last;
-  const report = () => {
-    const title = document.title;
-    if (title && title !== last && typeof window.__nativeTabsTitle === "function") window.__nativeTabsTitle((last = title));
-  };
-  new MutationObserver(report).observe(document, { subtree: true, childList: true, characterData: true });
-  addEventListener("DOMContentLoaded", report);
-  addEventListener("load", report);
-})();`;
+const PAGE_BODY = tabPageBody({
+  lede: "This tab is its own <code>WKWebView</code> inside its own <code>NSWindow</code>. macOS draws the tab bar.",
+  hint: "Also try the <kbd>+</kbd> in the tab bar, <kbd>⌘T</kbd> and <kbd>⌘W</kbd>, dragging a tab out of the window, and Window › Merge All Windows.",
+});
 
 const escapeHtml = (s: string) => s.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
 

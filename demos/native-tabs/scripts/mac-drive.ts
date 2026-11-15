@@ -15,8 +15,8 @@ import { join, resolve } from "node:path";
 import { runEventLoop } from "@n1h/sweetview/native";
 import { NIL, asId, cls, jsString, nsString, sel, send, sendIntArg, sendPtr, sendPtrPtrPtr, sendRetBool, sendUIntRetPtr, sharedApp } from "../../../src/native/darwin/objc";
 import { pooled } from "../mac-window-tabs";
-import { startTabsApp, type Tab } from "../tabs-app";
-import { captureWindow } from "./capture";
+import { startTabsApp, type Tab } from "../mac-tabs-app";
+import { captureWindow } from "./mac-capture";
 
 const out = resolve(process.argv[2] ?? "build/drive");
 mkdirSync(out, { recursive: true });

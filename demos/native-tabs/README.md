@@ -1,18 +1,37 @@
-# Native tabs, one webview per tab (macOS)
+# Native tabs, one webview per tab
 
-A window with the system's own tab bar, where every tab is a separate webview. Open tabs with the
-`+` in the tab bar, `⌘T`, File › New Tab, or the page's own buttons; a tab shows this demo's page
-or any site. Drag a tab to reorder it, drag it out to give it its own window, Window › Merge All
-Windows to bring it back.
+A window with a tab bar where every tab is a separate webview. A tab shows this demo's page or any
+site; open tabs with the `+` in the tab bar, the keyboard, or the page's own buttons. Drag a tab to
+reorder it, drag it out to give it its own window, and bring it back.
 
 ```
 just demos native-tabs app
 ```
 
-macOS only. Windows has no window tabbing for this to map onto; a Windows version is a tab strip
-of our own over child webviews in one window, which is a different shape and not built here.
+macOS and Windows. The two are different shapes, because the platforms are:
 
-## How it works
+| | macOS | Windows |
+| --- | --- | --- |
+| The tab bar | the system's: AppKit window tabbing | ours: a webview where the title bar was |
+| A tab | an `NSWindow` hosting a `WKWebView` | a child window hosting a `WebView2` |
+| New tab, close tab | `⌘T`, `⌘W`, File menu | `Ctrl+T`, `Ctrl+W` or `Ctrl+F4`, the tab's menu |
+| Next, previous tab | `⌃Tab`, `⌃⇧Tab` | `Ctrl+Tab`, `Ctrl+Shift+Tab`, `Ctrl+Page Down / Up`, `Ctrl+1` to `Ctrl+9` |
+| A tab to its own window | drag it out, or Window › Move Tab to New Window | drag it out, or right-click › Move tab to new window |
+| And back | drag it onto a tab bar, or Window › Merge All Windows | drag it onto a tab strip, or right-click › Merge all windows |
+
+What the two share is the page ([`frontend/main.ts`](frontend/main.ts), [`tab-page.ts`](tab-page.ts),
+[`shared.ts`](shared.ts)), which shows state that lives in its webview only (instance tag, clock,
+click count) and calls `tab.open`, `tab.rename` and `tab.close` on the UI thread, and the loop
+([`app.ts`](app.ts)): `runEventLoop`, not the webview's blocking `run()`, so opening a tab (which
+awaits) works at any moment, and one tab's webview can be disposed while the rest run.
+
+A site tab gets none of the page methods: only this demo's own page may open, rename and close
+tabs. Its title follows the site's `document.title`. What is typed in "open a site" becomes an
+address in [`web-address.ts`](web-address.ts): `bun.sh` is https, `localhost:3000` and a bare IPv4
+address are http, anything that is not http or https (`mailto:`, `tel:`, `javascript:`) is refused
+in words.
+
+## macOS
 
 On macOS a tab **is** a window. AppKit's window tabbing puts `NSWindow`s that share a tabbing
 identifier behind one tab bar, and draws the bar, the `+`, reordering and tear-off itself. So "one
@@ -21,9 +40,7 @@ webview per tab" is the platform's own model:
 | Piece | File | What it does |
 | --- | --- | --- |
 | A tab's window | [`mac-window-tabs.ts`](mac-window-tabs.ts) | makes a framed `NSWindow` set up for tabbing, joins it to the tab bar (`addTabbedWindow:ordered:`), reports "the user asked for a tab" and "this tab closed" |
-| A tab's webview | [`tabs-app.ts`](tabs-app.ts) | `createWebviewApp({ window })` hosts a webview in that window; a tab's window, webview and record are made together and torn down together |
-| The page | [`frontend/`](frontend/main.ts), [`shared.ts`](shared.ts) | shows state that lives in this webview only (instance tag, clock, click count) and calls `tab.open`, `tab.rename`, `tab.close` on the UI thread |
-| The loop | [`app.ts`](app.ts) | `runEventLoop`, not the webview's blocking `run()`, so opening a tab (which awaits) works at any moment, and one tab's webview can be disposed while the rest run |
+| A tab's webview | [`mac-tabs-app.ts`](mac-tabs-app.ts) | `createWebviewApp({ window })` hosts a webview in that window; a tab's window, webview and record are made together and torn down together |
 
 What the code does that is not obvious:
 
@@ -45,13 +62,65 @@ What the code does that is not obvious:
   every reply there with a pointer to its engine, and does not flush that queue for a window it did
   not create; without the drain, the reply to the page's own "close this tab" call ran on freed
   memory and ended the process.
+- **A site that cannot be loaded** shows the address, the system's reason and a Try Again button
+  (`onLoadFailed`), not a blank page.
 
-A site tab gets none of the page methods: only this demo's own page may open, rename and close
-tabs. Its title follows the site's `document.title`. A site that cannot be loaded shows the
-address, the system's reason and a Try Again button (`onLoadFailed`), not a blank page. What is
-typed in "open a site" becomes an address in [`web-address.ts`](web-address.ts): `bun.sh` is
-https, `localhost:3000` and a bare IPv4 address are http, anything that is not http or https
-(`mailto:`, `tel:`, `javascript:`) is refused in words.
+## Windows
+
+Windows has no window tabbing to borrow, and a tab is not a window there. So the window is ours,
+built the way Windows 11's own tabbed apps are: one window whose title bar is the tab strip.
+
+```
+the frame        a normal resizable window, minus its caption
+├─ the strip     a child window along the top, hosting the webview that draws the tabs
+└─ a pane a tab  child windows below it, one shown at a time, each hosting one tab's webview
+```
+
+| Piece | File | What it does |
+| --- | --- | --- |
+| The window | [`win-tab-window.ts`](win-tab-window.ts) | the frame and its panes: takes the caption off (`WM_NCCALCSIZE`), lays the panes out, hands drags to the window manager, shows the system's popup menu |
+| The strip | [`frontend/strip.ts`](frontend/strip.ts), [`strip-shared.ts`](strip-shared.ts) | a page that draws the tabs, the `+` and the minimise, maximise and close buttons, and tells the UI thread what was done with them |
+| The tabs | [`win-tabs-app.ts`](win-tabs-app.ts) | which tabs are in which window, in what order, and which is shown; `createWebviewApp({ window: pane })` for each |
+| WebView2 | [`win-webview2.ts`](win-webview2.ts), [`win-shortcuts.ts`](win-shortcuts.ts) | the few WebView2 calls the webview library does not make, through the controller's COM vtable: hide a tab's page, give one the keyboard, hear accelerator keys, take over "open a new window" |
+
+What the code does that is not obvious:
+
+- **The window is still the system's.** Only the caption is taken away: the frame keeps
+  `WS_OVERLAPPEDWINDOW`, so the shadow, the rounded corners, the side and bottom resize borders,
+  snapping, maximise and the taskbar are Windows' own. The top edge lost its resize border with the
+  caption, so the strip offers it back (a 4 pixel band, and the two top corners).
+- **A drag is the window manager's.** A press on the strip's empty part moves the window, and a
+  press on its top edge resizes it, by handing the press over (`WM_NCLBUTTONDOWN`). The cursor has
+  travelled by the time the UI thread hears of the press, so the page says where in the strip the
+  press was and the window is put back under the cursor first; without that the window trails the
+  hand by a third of a quick drag.
+- **The keys work from any page, a site's too.** While a page has the focus no key reaches a
+  window procedure of ours. WebView2 reports accelerator keys to its host
+  (`add_AcceleratorKeyPressed`), which needs a COM object to call: `win-webview2.ts` makes one out
+  of four `JSCallback`s. A site is given no function to call for this, so it cannot open or close
+  tabs by script.
+- **A link that asks for a new window gets a tab** (`add_NewWindowRequested`), after the tab it
+  was clicked in. Left alone, WebView2 opens a bare popup window.
+- **A tab appears already drawn.** A new tab is selected in the strip at once, and its page takes
+  the place of the one on show once it has asked who it is (`tab.info`); a site tab shows as it
+  loads.
+- **Tabs asked for in a row keep their order.** A new tab goes after the selected one and is
+  selected itself, so the next goes after it; one asked for by a page goes after that page's tab
+  and the tabs it asked for before.
+- **Moving a tab to another window moves its webview.** The pane is given a new parent
+  (`SetParent`); the page is not reloaded and keeps its state. A tab dragged out of the strip gets
+  a new window with the tab under the cursor where it was held, and the press is handed to the
+  window manager, so the new window follows the cursor at once. Let go over another window's
+  strip, it joins that window where it was dropped. A window's only tab takes the window with it.
+- **A tab that is not shown is told so** (`put_IsVisible`): it stops painting, and its page sees
+  `document.hidden`.
+- **Closing a tab never happens inside its own call.** Everything that destroys, shows or moves a
+  webview runs on a turn of Bun's loop of its own: a webview cannot be destroyed from inside the
+  page call that asked for it, and the menu and a drag run a loop of their own.
+- **Destroying a webview asks the OS loop to end** (the webview library posts `WM_QUIT`), which is
+  right for an app's only window and wrong for one tab of several. `app.dispose()` takes the
+  request back.
+- **A site that cannot be loaded** shows the browser's own page saying why, with a Refresh button.
 
 ## Checking it
 
@@ -59,20 +128,29 @@ https, `localhost:3000` and a bare IPv4 address are http, anything that is not h
 just demos native-tabs drive
 ```
 
-[`scripts/drive.ts`](scripts/drive.ts) plays the user against the real app and prints a line per
-check: every way a tab opens and closes, that two tabs' pages hold separate state, six tabs asked
-for at once (their order, every page's count, their windows freed after closing), a site that
-cannot be reached, tear-off and merge through the Window menu, and closing site tabs while they
-are still loading. It writes PNG
-captures of the window into `build/drive/` ([`scripts/capture.ts`](scripts/capture.ts) asks the
-window server for the process's own window, which needs no Screen Recording grant).
-`DRIVE_APPEARANCE=light` or `dark` picks the appearance. It does not click the screen, which would
-need the Accessibility grant: menu items are performed by AppKit, the `+` button's message is sent
-down the responder chain it uses, and page buttons are clicked in the page.
+plays the user against the real app and prints a line per check: every way a tab opens and closes,
+that two tabs' pages hold separate state, six tabs asked for at once, a site that cannot be
+reached, a tab moved to its own window and merged back, and closing site tabs while they are still
+loading. It writes PNG captures of the window into `build/drive/`. `DRIVE_APPEARANCE=light` or
+`dark` picks the appearance.
+
+- **macOS** ([`scripts/mac-drive.ts`](scripts/mac-drive.ts), [`scripts/mac-capture.ts`](scripts/mac-capture.ts)).
+  It does not click the screen, which would need the Accessibility grant: menu items are performed
+  by AppKit, the `+` button's message is sent down the responder chain it uses, and page buttons
+  are clicked in the page. The capture asks the window server for the process's own window, which
+  needs no Screen Recording grant.
+- **Windows** ([`scripts/win-drive.ts`](scripts/win-drive.ts), [`scripts/win-capture.ts`](scripts/win-capture.ts)).
+  It also uses the real mouse and keyboard ([`scripts/win-input.ts`](scripts/win-input.ts)), for
+  what nothing else shows: that the window manager takes over a drag, that keys pressed in a page
+  reach the tabs, that a tab dragged out becomes a window and dropped on a strip comes back, that
+  the system's menu opens. Each of those runs only while the app's window is the foreground
+  window, and prints `SKIP` when it is not; nothing is sent to another program. `DRIVE_INPUT=off`
+  leaves the mouse and keyboard alone.
 
 ## Not here yet
 
-- A compiled `.app`; `just demos native-tabs app` runs from source.
-- Windows.
-- `mac-window-tabs.ts` lives in this demo, not in `@n1h/sweetview/native`, because what the
-  cross-platform API should look like is still open.
+- A compiled app; `just demos native-tabs app` runs from source.
+- Windows: a tab dragged over another window's strip joins it when dropped, with no preview of
+  where it will land while it is still held.
+- `mac-window-tabs.ts` and the `win-*.ts` files live in this demo, not in `@n1h/sweetview/native`,
+  because what the cross-platform API should look like is still open.
