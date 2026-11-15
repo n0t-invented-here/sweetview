@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { webAddress } from "./web-address";
+import { displayHost, webAddress } from "./web-address";
 
 test("a bare host is taken as https", () => {
   expect(webAddress("bun.sh")).toBe("https://bun.sh/");
@@ -13,8 +13,14 @@ test("a host on this machine is taken as http, with or without a port", () => {
   expect(webAddress("app.localhost:5173")).toBe("http://app.localhost:5173/");
 });
 
+test("a bare IPv4 address is taken as http", () => {
+  expect(webAddress("0.0.0.0:3000")).toBe("http://0.0.0.0:3000/");
+  expect(webAddress("192.168.1.20:5173/app")).toBe("http://192.168.1.20:5173/app");
+});
+
 test("a host with a port elsewhere is still https", () => {
   expect(webAddress("example.com:8443")).toBe("https://example.com:8443/");
+  expect(webAddress("myhost:911")).toBe("https://myhost:911/");
 });
 
 test("an address with its own scheme is taken as written", () => {
@@ -28,6 +34,8 @@ test("anything that is not http or https is refused, naming what it was", () => 
   expect(() => webAddress("javascript:alert(1)")).toThrow("not javascript.");
   expect(() => webAddress("file:///etc/passwd")).toThrow("not file.");
   expect(() => webAddress("about:blank")).toThrow("not about.");
+  expect(() => webAddress("mailto:123")).toThrow("not mailto.");
+  expect(() => webAddress("tel:911")).toThrow("not tel.");
 });
 
 test("what is not an address at all is refused", () => {
@@ -35,4 +43,10 @@ test("what is not an address at all is refused", () => {
   expect(() => webAddress("   ")).toThrow("Type a web address first.");
   expect(() => webAddress("a b")).toThrow('"a b" is not a web address.');
   expect(() => webAddress("http://")).toThrow("is not a web address.");
+});
+
+test("a host is shown as a person reads it", () => {
+  expect(displayHost("https://bun.sh/docs")).toBe("bun.sh");
+  expect(displayHost("http://localhost:3000/")).toBe("localhost:3000");
+  expect(displayHost("https://xn--mnchen-3ya.de/")).toBe("münchen.de");
 });

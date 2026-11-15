@@ -50,7 +50,8 @@ A site tab gets none of the page methods: only this demo's own page may open, re
 tabs. Its title follows the site's `document.title`. A site that cannot be loaded shows the
 address, the system's reason and a Try Again button (`onLoadFailed`), not a blank page. What is
 typed in "open a site" becomes an address in [`web-address.ts`](web-address.ts): `bun.sh` is
-https, `localhost:3000` is http, anything that is not http or https is refused in words.
+https, `localhost:3000` and a bare IPv4 address are http, anything that is not http or https
+(`mailto:`, `tel:`, `javascript:`) is refused in words.
 
 ## Checking it
 

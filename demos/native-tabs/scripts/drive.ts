@@ -63,12 +63,12 @@ const capture = (window: bigint, name: string) => {
 
 // Run an expression in a tab's page and get its value back as a string.
 const answers = new Map<number, (value: string) => void>();
-const listening = new Set<bigint>();
+const listening = new WeakSet<object>(); // by webview, not by window: AppKit gives a freed window's address to a later one
 let asked = 0;
 const ask = (window: bigint, expression: string): Promise<string> => {
   const { webview } = tabOf(window).app!;
-  if (!listening.has(window)) {
-    listening.add(window);
+  if (!listening.has(webview)) {
+    listening.add(webview);
     webview.bind("__driveAnswer", (id: number, value: string) => answers.get(id)?.(value));
   }
   const id = ++asked;

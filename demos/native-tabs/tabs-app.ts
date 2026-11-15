@@ -12,7 +12,7 @@ import pageCss from "./build/frontend/main.css" with { type: "file" };
 import pageJs from "./build/frontend/main.js" with { type: "file" };
 import { asWindowHandle, createWindowTabs, detachPage, installTabMenus, onLoadFailed, type WindowTabs } from "./mac-window-tabs";
 import type { Events, Methods, TabInfo } from "./shared";
-import { webAddress } from "./web-address";
+import { displayHost, webAddress } from "./web-address";
 
 export const APP_NAME = "Native Tabs";
 
@@ -80,7 +80,7 @@ const loadFailedPage = (address: string, reason: string) => `<!doctype html>
 <html lang="en">
 <meta charset="utf-8" />
 <meta name="color-scheme" content="light dark" />
-<title>${escapeHtml(new URL(address).host)}</title>
+<title>${escapeHtml(displayHost(address))}</title>
 <style>
   body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 32px 24px; box-sizing: border-box;
     font: 15px/1.55 -apple-system, system-ui, sans-serif; background: Canvas; color: CanvasText; -webkit-font-smoothing: antialiased; }
@@ -88,7 +88,7 @@ const loadFailedPage = (address: string, reason: string) => `<!doctype html>
   h1 { margin: 0 0 8px; font-size: 28px; letter-spacing: -0.01em; }
   p { margin: 0 0 10px; opacity: 0.72; }
   .address { opacity: 1; font: 14px ui-monospace, "SF Mono", Menlo, monospace; overflow-wrap: anywhere; }
-  a { display: inline-block; margin-top: 10px; padding: 8px 16px; border-radius: 9px; background: AccentColor; color: AccentColorText; font-weight: 600; text-decoration: none; }
+  a { display: inline-block; margin-top: 10px; padding: 8px 16px; border-radius: 9px; background: AccentColor; color: white; font-weight: 600; text-decoration: none; }
 </style>
 <main>
 <h1>This site did not open</h1>
@@ -141,7 +141,7 @@ export function startTabsApp(): TabsApp {
 
   async function openTab(address?: string, base = tabs.current()): Promise<bigint> {
     const number = ++opened;
-    const tab: Tab = { number, title: address === undefined ? `Tab ${number}` : new URL(address).host, address, listening: false };
+    const tab: Tab = { number, title: address === undefined ? `Tab ${number}` : displayHost(address), address, listening: false };
     // Where it goes is settled now, not when the page has loaded: the user may have moved on by
     // then. Cmd+T three times in a row gives three tabs in that order, each after the one
     // before it, although none of them is in the tab bar yet when the next is asked for.
