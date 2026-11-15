@@ -10,8 +10,9 @@ import { createWebviewApp, indexHtml, type WebviewApp } from "@n1h/sweetview";
 import { installAppMenu, quitEventLoop } from "@n1h/sweetview/native";
 import pageCss from "./build/frontend/main.css" with { type: "file" };
 import pageJs from "./build/frontend/main.js" with { type: "file" };
-import { asWindowHandle, createWindowTabs, detachPage, installTabMenus, type WindowTabs } from "./mac-window-tabs";
+import { asWindowHandle, createWindowTabs, detachPage, installTabMenus, onLoadFailed, type WindowTabs } from "./mac-window-tabs";
 import type { Events, Methods, TabInfo } from "./shared";
+import { webAddress } from "./web-address";
 
 export const APP_NAME = "Native Tabs";
 
@@ -22,14 +23,20 @@ export type Tab = {
   address?: string;
   /** Undefined until the webview exists, a few milliseconds after the window does. */
   app?: WebviewApp<Methods, Events>;
+  /** The demo's page is up and listening for events; never true for a site. */
+  listening: boolean;
 };
 
 export type TabsApp = {
   readonly tabs: WindowTabs;
   /** Open tabs by window, the ones still loading included. */
   readonly open: ReadonlyMap<bigint, Tab>;
-  /** Opens a tab after `after` (default: the tab the user is on) and resolves, with its window, once it is in the tab bar. */
-  openTab(address?: string, after?: bigint): Promise<bigint>;
+  /**
+   * Opens a tab after `base` (default: the tab the user is on) and resolves,
+   * with its window, once it is in the tab bar. Tabs asked for in a row, before
+   * the earlier ones have loaded, keep the order they were asked in.
+   */
+  openTab(address?: string, base?: bigint): Promise<bigint>;
 };
 
 const PAGE_BODY = `<main>
@@ -66,19 +73,30 @@ const FOLLOW_TITLE = `(() => {
   addEventListener("load", report);
 })();`;
 
-/** "bun.sh" -> "https://bun.sh/". Throws on anything that is not an http or https address. */
-export function webAddress(text: string): string {
-  const trimmed = text.trim();
-  if (trimmed === "") throw new Error("Type a web address first.");
-  let url: URL;
-  try {
-    url = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`);
-  } catch {
-    throw new Error(`"${trimmed}" is not a web address.`);
-  }
-  if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error(`Only http and https addresses open in a tab, not ${url.protocol}//`);
-  return url.href;
-}
+const escapeHtml = (s: string) => s.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
+
+/** What a site tab shows when its site cannot be loaded: the address, the system's reason, and a way to try again. Titled with the host, so the tab keeps its name. */
+const loadFailedPage = (address: string, reason: string) => `<!doctype html>
+<html lang="en">
+<meta charset="utf-8" />
+<meta name="color-scheme" content="light dark" />
+<title>${escapeHtml(new URL(address).host)}</title>
+<style>
+  body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 32px 24px; box-sizing: border-box;
+    font: 15px/1.55 -apple-system, system-ui, sans-serif; background: Canvas; color: CanvasText; -webkit-font-smoothing: antialiased; }
+  main { width: min(100%, 520px); }
+  h1 { margin: 0 0 8px; font-size: 28px; letter-spacing: -0.01em; }
+  p { margin: 0 0 10px; opacity: 0.72; }
+  .address { opacity: 1; font: 14px ui-monospace, "SF Mono", Menlo, monospace; overflow-wrap: anywhere; }
+  a { display: inline-block; margin-top: 10px; padding: 8px 16px; border-radius: 9px; background: AccentColor; color: AccentColorText; font-weight: 600; text-decoration: none; }
+</style>
+<main>
+<h1>This site did not open</h1>
+<p class="address">${escapeHtml(address)}</p>
+<p>${escapeHtml(reason)}</p>
+<a href="${escapeHtml(address)}">Try Again</a>
+</main>
+</html>`;
 
 export function startTabsApp(): TabsApp {
   installAppMenu({ appName: APP_NAME, aboutText: "Every tab is its own NSWindow with its own WKWebView. AppKit's window tabbing puts them behind one tab bar." });
@@ -86,10 +104,14 @@ export function startTabsApp(): TabsApp {
 
   const open = new Map<bigint, Tab>();
   let opened = 0;
+  // Tabs not yet in the tab bar: each settles when its tab is there, or has failed.
+  const loading = new Map<bigint, Promise<void>>();
+  // By the tab a new one was asked to follow: the newest tab asked to follow it.
+  const newest = new Map<bigint | undefined, bigint>();
 
   const announce = () => {
     const count = tabs.count();
-    for (const tab of open.values()) tab.app?.emit("tabs", { count });
+    for (const tab of open.values()) if (tab.listening) tab.app?.emit("tabs", { count });
   };
 
   const tabs = createWindowTabs({
@@ -102,10 +124,11 @@ export function startTabsApp(): TabsApp {
     onClosed(window) {
       const tab = open.get(window);
       open.delete(window);
+      newest.delete(window);
       detachPage(window); // first: a call or reply still on its way must not reach a disposed webview
       tab?.app?.dispose();
       announce();
-      if (tabs.count() === 0) quitEventLoop(); // the last tab was the app
+      if (open.size === 0) quitEventLoop(); // the last tab was the app; one still loading keeps it alive
     },
   });
 
@@ -116,21 +139,36 @@ export function startTabsApp(): TabsApp {
     tabs.setTitle(window, tab.title);
   };
 
-  // `after` is settled now, not when the page has loaded: the user may have moved on by then.
-  async function openTab(address?: string, after = tabs.current()): Promise<bigint> {
+  async function openTab(address?: string, base = tabs.current()): Promise<bigint> {
     const number = ++opened;
-    const tab: Tab = { number, title: address === undefined ? `Tab ${number}` : new URL(address).host, address };
+    const tab: Tab = { number, title: address === undefined ? `Tab ${number}` : new URL(address).host, address, listening: false };
+    // Where it goes is settled now, not when the page has loaded: the user may have moved on by
+    // then. Cmd+T three times in a row gives three tabs in that order, each after the one
+    // before it, although none of them is in the tab bar yet when the next is asked for.
+    const previous = newest.get(base);
+    const after = previous !== undefined && loading.has(previous) ? previous : base;
     const window = tabs.createWindow(tab.title);
+    newest.set(base, window);
     open.set(window, tab);
 
     const inTabBar = Promise.withResolvers<void>();
-    let shown = false;
-    const show = () => {
-      if (shown) return;
-      shown = true;
-      tabs.show(window, after);
-      announce();
+    loading.set(window, inTabBar.promise);
+    const settled = () => {
+      loading.delete(window);
+      if (newest.get(base) === window) newest.delete(base);
       inTabBar.resolve();
+    };
+    let showing = false;
+    const show = () => {
+      if (showing) return;
+      showing = true;
+      void (async () => {
+        if (after !== undefined) await loading.get(after); // the tab it follows goes in first
+        if (!open.has(window)) return; // gave up meanwhile
+        tabs.show(window, after);
+        settled();
+        announce();
+      })();
     };
 
     try {
@@ -146,6 +184,7 @@ export function startTabsApp(): TabsApp {
             ? {}
             : {
                 "tab.info": (): TabInfo => {
+                  tab.listening = true;
                   show(); // the page has drawn itself: the tab appears already filled in
                   return { number: tab.number, title: tab.title, tabs: tabs.count() };
                 },
@@ -157,15 +196,21 @@ export function startTabsApp(): TabsApp {
     } catch (err) {
       open.delete(window);
       tabs.discard(window);
+      settled(); // whatever was to follow this tab goes where the user is instead
       throw err;
     }
+    // The page can ask who it is before the line above has its answer, and events cannot reach
+    // it until `tab.app` is set: tell it now what it missed.
+    if (tab.listening) tab.app.emit("tabs", { count: tabs.count() });
 
     if (address !== undefined) {
-      tab.app.webview.bind("__nativeTabsTitle", (title: unknown) => {
+      const { webview } = tab.app;
+      webview.bind("__nativeTabsTitle", (title: unknown) => {
         if (typeof title === "string") rename(window, tab, title);
       });
-      tab.app.webview.init(FOLLOW_TITLE);
-      tab.app.webview.navigate(address);
+      webview.init(FOLLOW_TITLE);
+      onLoadFailed(window, (reason) => webview.setHTML(loadFailedPage(address, reason)));
+      webview.navigate(address);
       show();
     } else {
       setTimeout(show, 1000); // a page that never asks still gets its tab

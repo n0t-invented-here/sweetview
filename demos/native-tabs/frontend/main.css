@@ -75,6 +75,7 @@ h1 {
   font-weight: 700;
   line-height: 1.15;
   letter-spacing: -0.02em;
+  text-overflow: ellipsis; /* a title longer than the page is wide ends in an ellipsis, as it does in the tab bar */
 }
 
 #title:hover {

@@ -26,6 +26,7 @@ import {
   makeTarget,
   nsString,
   release,
+  retain,
   sel,
   send,
   sendBool,
@@ -36,6 +37,7 @@ import {
   sendPtrSelPtr,
   sendPtrSelPtrPtrVoid,
   sendRectUIntUIntBool,
+  sendRetBool,
   sendSize,
   sendUIntArg,
   sendUIntRetPtr,
@@ -49,7 +51,6 @@ const NSWindowStyleMaskResizable = 8n;
 const NSBackingStoreBuffered = 2n;
 const NSWindowTabbingModePreferred = 1n;
 const NSWindowAbove = 1n;
-const WILL_CLOSE = "NSWindowWillCloseNotification";
 
 export type WindowTabsOptions = {
   /** Windows with the same identifier may share a tab bar; one per kind of window. */
@@ -76,7 +77,8 @@ export type WindowTabs = {
   /**
    * Shows a window made by `createWindow`. The group's first window appears as
    * a plain window; any later one joins the tab bar right after `after`
-   * (default: the tab the user is on) and becomes the selected tab.
+   * (default: the tab the user is on) and becomes the selected tab. The tab
+   * bar is kept visible even with one tab, so the + is always there.
    */
   show(window: Id, after?: Id): void;
   /** Gives up a window from `createWindow` that was never shown (its page failed to load). */
@@ -92,12 +94,28 @@ export type WindowTabs = {
   count(): number;
 };
 
+/**
+ * Runs `body` inside an autorelease pool of its own. The OS loop is pumped
+ * from a Bun timer here, and only the pump has a pool: a native call made
+ * from any other turn of Bun's loop (a timer, the code after an `await`)
+ * autoreleases into nothing, and what it autoreleased is never freed. That
+ * kept every closed tab's NSWindow alive.
+ */
+export function pooled<T>(body: () => T): T {
+  const pool = alloc("NSAutoreleasePool");
+  try {
+    return body();
+  } finally {
+    send(pool, sel("drain"));
+  }
+}
+
 /** The handle to give `createWebviewApp({ window })`. */
 export const asWindowHandle = (window: Id): WindowHandle => window;
 
 export function createWindowTabs(options: WindowTabsOptions): WindowTabs {
   const app = sharedApp();
-  const identifier = nsString(options.identifier);
+  const identifier = retain(nsString(options.identifier)); // kept for every window this group makes
   const shown = new Set<Id>(); // open tabs, in the order they were shown
   const hidden = new Set<Id>(); // created, not yet shown
 
@@ -105,13 +123,26 @@ export function createWindowTabs(options: WindowTabsOptions): WindowTabs {
     if (!shown.delete(window)) return;
     stopObserving(window);
     // AppKit is still inside the close; let it finish before the owner tears the page down.
-    setTimeout(() => {
-      try {
-        options.onClosed(window);
-      } finally {
-        release(window);
-      }
-    }, 0);
+    setTimeout(
+      () =>
+        pooled(() => {
+          try {
+            options.onClosed(window);
+          } finally {
+            release(window);
+          }
+        }),
+      0,
+    );
+  };
+
+  // AppKit hides the tab bar of a window with one tab, and the + with it. Here the bar is the
+  // point, so a window of ours that has none gets it back: when shown, and when a tab becomes
+  // a window of its own (torn off, or the last one left).
+  const keepTabBar = (window: Id) => {
+    if (!shown.has(window)) return;
+    const group = asId(send(window, sel("tabGroup")));
+    if (group !== NIL && !sendRetBool(group, sel("isTabBarVisible"))) sendPtr(window, sel("toggleTabBar:"), NIL);
   };
 
   // An NSResponder, so it can be each window's nextResponder. That is the slot
@@ -122,11 +153,24 @@ export function createWindowTabs(options: WindowTabsOptions): WindowTabs {
     {
       "newWindowForTab:": () => options.onNewTabRequest(),
       "tabWindowWillClose:": (notification) => closed(asId(send(notification, sel("object")))),
+      "tabWindowDidBecomeMain:": (notification) => {
+        const window = asId(send(notification, sel("object")));
+        setTimeout(() => pooled(() => keepTabBar(window)), 0); // once AppKit has finished moving the tab
+      },
     },
     "NSResponder",
   );
 
-  const stopObserving = (window: Id) => void sendPtrPtrPtr(notifications(), sel("removeObserver:name:object:"), target, nsString(WILL_CLOSE), window);
+  const observed: [name: string, selector: string][] = [
+    ["NSWindowWillCloseNotification", "tabWindowWillClose:"],
+    ["NSWindowDidBecomeMainNotification", "tabWindowDidBecomeMain:"],
+  ];
+  const observe = (window: Id) => {
+    for (const [name, selector] of observed) sendPtrSelPtrPtrVoid(notifications(), sel("addObserver:selector:name:object:"), target, sel(selector), nsString(name), window);
+  };
+  const stopObserving = (window: Id) => {
+    for (const [name] of observed) sendPtrPtrPtr(notifications(), sel("removeObserver:name:object:"), target, nsString(name), window);
+  };
 
   const current = (): Id | undefined => {
     const key = asId(send(app, sel("keyWindow")));
@@ -134,51 +178,59 @@ export function createWindowTabs(options: WindowTabsOptions): WindowTabs {
     return [...shown].at(-1);
   };
 
+  // Every method may be called from outside the pump, so each brings its own pool.
   return {
-    createWindow(title) {
-      const style = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable;
-      const window = asId(
-        sendRectUIntUIntBool(allocRaw("NSWindow"), sel("initWithContentRect:styleMask:backing:defer:"), 0, 0, options.width, options.height, style, NSBackingStoreBuffered, false),
-      );
-      if (window === NIL) throw new Error("native-tabs: NSWindow init failed");
-      sendBool(window, sel("setReleasedWhenClosed:"), false); // ours to release, after onClosed
-      sendPtr(window, sel("setTitle:"), nsString(title));
-      sendSize(window, sel("setContentMinSize:"), options.minWidth ?? 480, options.minHeight ?? 320);
-      sendPtr(window, sel("setTabbingIdentifier:"), identifier);
-      sendIntArg(window, sel("setTabbingMode:"), NSWindowTabbingModePreferred);
-      sendPtr(window, sel("setNextResponder:"), target);
-      sendPtrSelPtrPtrVoid(notifications(), sel("addObserver:selector:name:object:"), target, sel("tabWindowWillClose:"), nsString(WILL_CLOSE), window);
-      hidden.add(window);
-      return window;
-    },
-    show(window, after) {
-      if (!hidden.delete(window)) throw new Error("native-tabs: show() takes a window from createWindow(), once");
-      const anchor = after !== undefined && shown.has(after) ? after : current();
-      shown.add(window);
-      // Keyboard focus goes to the page as a whole. Left to pick for itself, AppKit reaches the web view
-      // through the key-view loop, which WebKit takes as arriving by Tab and answers by focusing the page's first field.
-      const webView = hostedWebView(window);
-      if (webView !== undefined) sendPtr(window, sel("makeFirstResponder:"), webView);
-      if (anchor === undefined) send(window, sel("center"));
-      else sendPtrIntVoid(anchor, sel("addTabbedWindow:ordered:"), window, NSWindowAbove);
-      sendPtr(window, sel("makeKeyAndOrderFront:"), NIL);
-      sendBool(app, sel("activateIgnoringOtherApps:"), true);
-    },
-    discard(window) {
-      if (!hidden.delete(window)) return;
-      stopObserving(window);
-      release(window);
-    },
-    setTitle(window, title) {
-      if (shown.has(window) || hidden.has(window)) sendPtr(window, sel("setTitle:"), nsString(title));
-    },
-    select(window) {
-      if (shown.has(window)) sendPtr(window, sel("makeKeyAndOrderFront:"), NIL);
-    },
-    close(window) {
-      if (shown.has(window)) sendPtr(window, sel("performClose:"), NIL);
-    },
-    current,
+    createWindow: (title) =>
+      pooled(() => {
+        const style = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable;
+        const window = asId(
+          sendRectUIntUIntBool(allocRaw("NSWindow"), sel("initWithContentRect:styleMask:backing:defer:"), 0, 0, options.width, options.height, style, NSBackingStoreBuffered, false),
+        );
+        if (window === NIL) throw new Error("native-tabs: NSWindow init failed");
+        sendBool(window, sel("setReleasedWhenClosed:"), false); // ours to release, after onClosed
+        sendPtr(window, sel("setTitle:"), nsString(title));
+        sendSize(window, sel("setContentMinSize:"), options.minWidth ?? 480, options.minHeight ?? 320);
+        sendPtr(window, sel("setTabbingIdentifier:"), identifier);
+        sendIntArg(window, sel("setTabbingMode:"), NSWindowTabbingModePreferred);
+        sendPtr(window, sel("setNextResponder:"), target);
+        observe(window);
+        hidden.add(window);
+        return window;
+      }),
+    show: (window, after) =>
+      pooled(() => {
+        if (!hidden.delete(window)) throw new Error("native-tabs: show() takes a window from createWindow(), once");
+        const anchor = after !== undefined && shown.has(after) ? after : current();
+        shown.add(window);
+        // Keyboard focus goes to the page as a whole. Left to pick for itself, AppKit reaches the web view
+        // through the key-view loop, which WebKit takes as arriving by Tab and answers by focusing the page's first field.
+        const webView = hostedWebView(window);
+        if (webView !== undefined) sendPtr(window, sel("makeFirstResponder:"), webView);
+        if (anchor === undefined) send(window, sel("center"));
+        else sendPtrIntVoid(anchor, sel("addTabbedWindow:ordered:"), window, NSWindowAbove);
+        sendPtr(window, sel("makeKeyAndOrderFront:"), NIL);
+        sendBool(app, sel("activateIgnoringOtherApps:"), true);
+        keepTabBar(window);
+      }),
+    discard: (window) =>
+      pooled(() => {
+        if (!hidden.delete(window)) return;
+        stopObserving(window);
+        release(window);
+      }),
+    setTitle: (window, title) =>
+      pooled(() => {
+        if (shown.has(window) || hidden.has(window)) sendPtr(window, sel("setTitle:"), nsString(title));
+      }),
+    select: (window) =>
+      pooled(() => {
+        if (shown.has(window)) sendPtr(window, sel("makeKeyAndOrderFront:"), NIL);
+      }),
+    close: (window) =>
+      pooled(() => {
+        if (shown.has(window)) sendPtr(window, sel("performClose:"), NIL);
+      }),
+    current: () => pooled(current),
     count: () => shown.size,
   };
 }
@@ -195,6 +247,33 @@ function hostedWebView(window: Id): Id | undefined {
     if (jsString(asId(send(view, sel("className")))) === "WKWebView") return view;
   }
   return undefined;
+}
+
+const NSURLErrorCancelled = -999n; // a load we stopped ourselves, or one a newer load replaced
+const loadFailureHandlers = new Map<Id, (reason: string) => void>(); // by WKWebView
+let navigationDelegate: Id | undefined;
+
+/**
+ * Calls `handler` with the system's own sentence ("A server with the
+ * specified hostname could not be found.") when the page hosted in a window
+ * fails to load. Without it a site that cannot be reached is a blank page.
+ * The webview library sets no navigation delegate, so the slot is free.
+ */
+export function onLoadFailed(window: Id, handler: (reason: string) => void): void {
+  pooled(() => {
+    const webView = hostedWebView(window);
+    if (webView === undefined) throw new Error("native-tabs: onLoadFailed() needs a window that hosts a webview");
+    const failed = (view: Id, _navigation: Id, error: Id) => {
+      if (BigInt.asIntN(64, asId(send(error, sel("code")))) === NSURLErrorCancelled) return;
+      loadFailureHandlers.get(view)?.(jsString(asId(send(error, sel("localizedDescription")))));
+    };
+    navigationDelegate ??= makeTarget("SweetviewTabNavigation", {
+      "webView:didFailProvisionalNavigation:withError:": { args: 3, impl: failed }, // never reached the server
+      "webView:didFailNavigation:withError:": { args: 3, impl: failed }, // broke off part-way
+    });
+    loadFailureHandlers.set(webView, handler);
+    sendPtr(webView, sel("setNavigationDelegate:"), navigationDelegate);
+  });
 }
 
 const { dispatch_async_f } = dlopen("/usr/lib/libSystem.B.dylib", {
@@ -227,12 +306,16 @@ function drainMainQueue(): void {
  * the replies those calls queue.
  */
 export function detachPage(window: Id): void {
-  const webView = hostedWebView(window);
-  if (webView === undefined) return;
-  send(asId(send(asId(send(webView, sel("configuration"))), sel("userContentController"))), sel("removeAllScriptMessageHandlers"));
-  sendPtr(webView, sel("stopLoading:"), NIL);
-  drainMainQueue();
-  drainMainQueue();
+  pooled(() => {
+    const webView = hostedWebView(window);
+    if (webView === undefined) return;
+    loadFailureHandlers.delete(webView);
+    sendPtr(webView, sel("setNavigationDelegate:"), NIL);
+    send(asId(send(asId(send(webView, sel("configuration"))), sel("userContentController"))), sel("removeAllScriptMessageHandlers"));
+    sendPtr(webView, sel("stopLoading:"), NIL);
+    drainMainQueue();
+    drainMainQueue();
+  });
 }
 
 const SHIFT = 1n << 17n; // NSEventModifierFlagShift
@@ -266,8 +349,8 @@ function addMenu(menubar: Id, title: string, items: MenuItem[], index?: number):
 
 /**
  * The menus a tabbed app has, added to the menu bar `installAppMenu` made
- * (call that first): File with New Tab and Close Tab, View with the tab bar
- * and the tab overview, and Window with the tab commands and, below them, the
+ * (call that first): File with New Tab and Close Tab, View with the tab
+ * overview, and Window with the tab commands and, below them, the
  * list of windows AppKit keeps once the menu is its windows menu. Every item
  * has no target, so it goes down the responder chain to the window the user
  * is in; all but New Tab are NSWindow's own actions, and AppKit greys out the
@@ -286,10 +369,7 @@ export function installTabMenus(): void {
     ],
     1, // right after the app menu
   );
-  addMenu(menubar, "View", [
-    ["Show Tab Bar", "toggleTabBar:", "T"],
-    ["Show All Tabs", "toggleTabOverview:", "\\", COMMAND | SHIFT],
-  ]);
+  addMenu(menubar, "View", [["Show All Tabs", "toggleTabOverview:", "\\", COMMAND | SHIFT]]); // no Show Tab Bar: it is always shown
   const windowMenu = addMenu(menubar, "Window", [
     ["Minimize", "performMiniaturize:", "m"],
     ["Zoom", "performZoom:", ""],

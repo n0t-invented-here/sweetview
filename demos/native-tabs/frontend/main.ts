@@ -17,13 +17,17 @@ const count = element("count");
 const error = element("error");
 const address = element<HTMLInputElement>("address");
 
-const showCount = (tabs: number) => (count.textContent = tabs === 1 ? "It is the only one open." : `${tabs} are open.`);
+let counted = false;
+const showCount = (tabs: number) => {
+  counted = true;
+  count.textContent = tabs === 1 ? "It is the only tab open." : `${tabs} tabs are open.`;
+};
 bridge.on("tabs", ({ count: tabs }) => showCount(tabs));
 
 const me = await bridge.rpc("tab.info");
 document.documentElement.style.setProperty("--hue", String((me.number * 67 + 200) % 360)); // a colour of its own per tab
 title.value = me.title;
-showCount(me.tabs);
+if (!counted) showCount(me.tabs); // an event that overtook this answer is the newer number
 
 element("instance").textContent = crypto.randomUUID().slice(0, 4);
 const startedAt = Date.now();
