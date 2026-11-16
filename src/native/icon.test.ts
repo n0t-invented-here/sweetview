@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { crc32, deflateSync, inflateSync } from "node:zlib";
-import { APP_ICO_SIZES, centreRgba, decodePng, trimTransparent, dotIcns, dotIcon, dotPng, encodeIcns, encodeIco, encodePng, icnsFromPng, icoFromPng, icoFromRgba, icoRgba, parseIco, pickIcoEntry, renderDot, resampleRgba } from "./icon";
+import { APP_ICO_SIZES, decodePng, trimTransparent, dotIcns, dotIcon, dotPng, encodeIcns, encodeIco, encodePng, icnsFromPng, icoFromPng, icoFromRgba, icoRgba, parseIco, pickIcoEntry, renderDot, resampleRgba } from "./icon";
 
 describe("renderDot", () => {
   test("centre is opaque fill, corners are transparent", () => {
@@ -301,25 +301,5 @@ describe("an .ico from one picture, and its sizes", () => {
     const ico = icoFromRgba(32, renderDot(32, { color: "#ff8800" }));
     expect(parseIco(ico).map((e) => e.width)).toEqual([256, 128, 64, 48, 40, 32, 24, 20, 16]);
     expect(APP_ICO_SIZES).toContain(256);
-  });
-
-  test("a size above the picture's own is the picture as it is, in the middle of a clear square: never enlarged", () => {
-    // A 64 px picture with every pixel different, so any scaling or shifting would show.
-    const src = new Uint8Array(64 * 64 * 4);
-    for (let y = 0; y < 64; y++) for (let x = 0; x < 64; x++) src.set([x * 4, y * 4, (x * 7 + y * 3) % 256, 255], (y * 64 + x) * 4);
-    const ico = icoFromRgba(64, src);
-    const big = icoRgba(ico, 256);
-    const pad = (256 - 64) / 2;
-    for (let y = 0; y < 256; y++)
-      for (let x = 0; x < 256; x++) {
-        const got = [...big.subarray((y * 256 + x) * 4, (y * 256 + x) * 4 + 4)];
-        const inside = x >= pad && x < pad + 64 && y >= pad && y < pad + 64;
-        const want = inside ? [...src.subarray(((y - pad) * 64 + (x - pad)) * 4, ((y - pad) * 64 + (x - pad)) * 4 + 4)] : [0, 0, 0, 0];
-        if (got.join() !== want.join()) throw new Error(`pixel ${x},${y} is ${got}, not ${want}`);
-      }
-    // The same at 128 px; the 64 px image is the picture itself.
-    expect([...icoRgba(ico, 64)]).toEqual([...src]);
-    expect([...centreRgba(src, 64, 64)]).toEqual([...src]);
-    expect(centreRgba(src, 64, 128).length).toBe(128 * 128 * 4);
   });
 });

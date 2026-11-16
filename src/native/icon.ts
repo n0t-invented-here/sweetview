@@ -529,26 +529,9 @@ export function trimTransparent(image: DecodedPng, margin = 1, threshold = 8): D
  */
 export const APP_ICO_SIZES: number[] = [16, 20, 24, 32, 40, 48, 64, 128, 256];
 
-/**
- * A square picture on a larger transparent square, in the middle, its pixels exactly as they are.
- * A picture is never made larger than it was drawn: enlarging invents nothing and only smears or
- * blocks what is there.
- */
-export function centreRgba(rgba: Uint8Array, from: number, to: number): Uint8Array {
-  if (to <= from) return rgba;
-  const out = new Uint8Array(to * to * 4);
-  const pad = Math.floor((to - from) / 2);
-  for (let y = 0; y < from; y++) out.set(rgba.subarray(y * from * 4, (y + 1) * from * 4), ((y + pad) * to + pad) * 4);
-  return out;
-}
-
-/**
- * Square RGBA as a multi-size .ico, for `Icon.windows.ico` and a program's file icon. A size below
- * the picture's own is the picture scaled down. A size above it is the picture as it is, in the
- * middle of a transparent square of that size: it is not enlarged.
- */
+/** Square RGBA as a multi-size .ico (resampled to each size, the 256 px one a PNG), for `Icon.windows.ico` and a program's file icon. */
 export function icoFromRgba(size: number, rgba: Uint8Array, sizes: number[] = APP_ICO_SIZES): Uint8Array {
-  return encodeIco(new Map(sizes.map((s) => [s, s > size ? centreRgba(rgba, size, s) : resampleRgba(rgba, size, s)])));
+  return encodeIco(new Map(sizes.map((s) => [s, resampleRgba(rgba, size, s)])));
 }
 
 /** Square RGBA as an .icns (resampled to each size), for CFBundleIconFile. Sizes above the source are upscaled. */

@@ -32,7 +32,6 @@ export {
   icoFromPng,
   icoFromRgba,
   APP_ICO_SIZES,
-  centreRgba,
   renderDot,
   trimTransparent,
   type DecodedPng,
