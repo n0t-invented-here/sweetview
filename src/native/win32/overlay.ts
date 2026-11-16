@@ -48,6 +48,7 @@ import {
   WM_CLOSE,
   WM_NCLBUTTONDOWN,
   WM_DESTROY,
+  WM_SETTINGCHANGE,
   WM_SIZE,
   WS_EX_APPWINDOW,
   WS_EX_LAYERED,
@@ -57,6 +58,7 @@ import {
   WS_CLIPCHILDREN,
   WS_OVERLAPPEDWINDOW,
   WS_POPUP,
+  advapi32,
   dwmapi,
   gdi32,
   hInstance,
@@ -203,6 +205,26 @@ function layoutChild(hwnd: bigint) {
   }
 }
 
+const HKEY_CURRENT_USER = 0xffffffff80000001n;
+const RRF_RT_REG_DWORD = 0x10;
+const DWMWA_USE_IMMERSIVE_DARK_MODE = 20; // Windows 11 and 10 2004+; ignored where unsupported
+const PERSONALIZE_KEY = wstr("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize");
+const APPS_USE_LIGHT_THEME = wstr("AppsUseLightTheme");
+
+/** Whether the system's app mode is dark (Settings > Personalization > Colors). Light where the setting does not exist. */
+export function systemIsDark(): boolean {
+  const value = new Uint32Array([1]);
+  const bytes = new Uint32Array([4]);
+  const status = advapi32.RegGetValueW(HKEY_CURRENT_USER, ptr(PERSONALIZE_KEY), ptr(APPS_USE_LIGHT_THEME), RRF_RT_REG_DWORD, null, ptr(value), ptr(bytes));
+  return status === 0 && value[0] === 0;
+}
+
+const followsSystem = new Set<bigint>(); // framed windows whose title bar tracks the system's light or dark
+
+function applyDark(hwnd: bigint, dark: boolean) {
+  dwmapi.DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, new Int32Array([dark ? 1 : 0]), 4);
+}
+
 function registerClass() {
   if (classRegistered) return;
   wndProc = new JSCallback(
@@ -211,11 +233,21 @@ function registerClass() {
         layoutChild(hwnd);
         return 0n;
       }
+      if (message === WM_SETTINGCHANGE) {
+        // Broadcast to top-level windows when the user changes light or dark (among other settings; reading it again is cheap).
+        try {
+          if (followsSystem.has(hwnd)) applyDark(hwnd, systemIsDark());
+        } catch (err) {
+          console.error("sweetnative: following the system's appearance threw:", err); // never unwind into user32
+        }
+        return user32.DefWindowProcW(hwnd, message, wParam, lParam);
+      }
       if (message === WM_CLOSE) {
         user32.ShowWindow(hwnd, SW_HIDE); // a framed window's close button hides it; the app ends on quit
         return 0n;
       }
       if (message === WM_DESTROY) {
+        followsSystem.delete(hwnd);
         user32.PostQuitMessage(0); // ends webview_run
         return 0n;
       }
@@ -257,7 +289,8 @@ export function createOverlayWindow(options: OverlayWindowOptions): Overlay {
   user32.SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2); // fails harmlessly if already set
   ensureFirstWindowIsHidden();
   registerClass();
-  const { title = "", bounds, frame = false, dark = false } = options;
+  const { title = "", bounds, frame = false } = options;
+  const appearance = options.appearance ?? (options.dark ? "dark" : "system");
   const b = bounds ?? defaultBounds();
   const className = wstr(CLASS_NAME);
   const titleW = wstr(title);
@@ -266,9 +299,10 @@ export function createOverlayWindow(options: OverlayWindowOptions): Overlay {
   const style = (frame ? WS_OVERLAPPEDWINDOW : WS_POPUP) | WS_CLIPCHILDREN;
   const hwnd = user32.CreateWindowExW(0, className, titleW, style, b.x, b.y, b.width, b.height, 0n, 0n, hInstance(), null);
   if (hwnd === 0n) throw new Error(`sweetnative: CreateWindowExW failed (${lastError()})`);
-  if (frame && dark) {
-    // DWMWA_USE_IMMERSIVE_DARK_MODE (20, Windows 11 and 10 2004+); ignored where unsupported.
-    dwmapi.DwmSetWindowAttribute(hwnd, 20, new Int32Array([1]), 4);
+  if (frame) {
+    // The title bar and frame. Windows never moves this by itself, so "system" is ours to keep in step (WM_SETTINGCHANGE).
+    if (appearance === "system") followsSystem.add(hwnd);
+    applyDark(hwnd, appearance === "system" ? systemIsDark() : appearance === "dark");
   }
   if (options.icon?.windows) setWindowIcon(hwnd, options.icon.windows.ico);
   return restyle(hwnd, options, frame);

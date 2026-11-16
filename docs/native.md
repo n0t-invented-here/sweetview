@@ -486,7 +486,7 @@ type OverlayWindowOptions = OverlayOptions & {
   title?: string;
   bounds?: Rect;
   frame?: boolean;
-  dark?: boolean;
+  appearance?: "system" | "light" | "dark";
   icon?: Icon;
 };
 ```
@@ -498,7 +498,7 @@ Options of [`createOverlayWindow`](#createoverlaywindow): every [`OverlayOptions
 | `title` | `string` | `""` | The window's title, shown in the title bar of a framed window. |
 | `bounds` | [`Rect`](#rect) | 320x240, centred on the primary work area | Initial bounds, window units. Windows: the outer bounds, frame included. macOS: the content area; with `frame` the title bar is added above it. |
 | `frame` | `boolean` | `false` | A normal window instead of an overlay: title bar and close button, a taskbar or Dock presence, activates when clicked, not above other windows, opaque. Still created hidden, so `show()` is the first time it appears, and its close button hides it rather than ending the app. For a settings window next to an overlay, hosted by the same process and run loop. |
-| `dark` | `boolean` | `false` | Framed windows: a dark title bar and frame for a dark page. Windows: immersive dark mode, ignored where the OS does not support it. macOS: the dark appearance. |
+| `appearance` | `"system" \| "light" \| "dark"` | `"system"` | Framed windows: the title bar and frame in light, in dark, or following the system's setting, live. Windows: immersive dark mode, ignored where the OS does not support it; the page's own `prefers-color-scheme` is the webview's and keeps following the system. macOS: the window's appearance, which the page sees as `prefers-color-scheme` too. The older `dark: true` still means `"dark"`. |
 | `icon` | [`Icon`](#icon) | stock icon | Windows: the title bar, taskbar and Alt+Tab icon, as `Overlay.setIcon`. macOS: ignored. |
 
 With `frame: true` the overlay options behave differently per platform:

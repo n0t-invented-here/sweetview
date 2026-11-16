@@ -133,6 +133,9 @@ export interface Overlay {
   scale(): number;
 }
 
+/** A framed window's title bar and frame: light, dark, or whatever the system is set to. */
+export type Appearance = "system" | "light" | "dark";
+
 export type OverlayWindowOptions = OverlayOptions & {
   title?: string;
   /** Initial bounds, window units. Default: 320x240 at the work area's centre. */
@@ -148,7 +151,14 @@ export type OverlayWindowOptions = OverlayOptions & {
    * and an option given explicitly still applies.
    */
   frame?: boolean;
-  /** Framed windows: dark title bar and frame (Windows 11's immersive dark mode; the dark appearance on macOS), for a dark page. */
+  /**
+   * Framed windows: the title bar and frame in light, in dark, or following
+   * the system's setting, live. Default `"system"`. Windows: immersive dark
+   * mode, ignored where the OS does not support it. macOS: the window's
+   * appearance, which its page sees as `prefers-color-scheme` too.
+   */
+  appearance?: Appearance;
+  /** @deprecated Use `appearance`. `true` is `appearance: "dark"`; ignored when `appearance` is given. */
   dark?: boolean;
   /** Windows: the title bar, taskbar and Alt+Tab icon (see `Overlay.setIcon`). macOS: ignored. */
   icon?: Icon;

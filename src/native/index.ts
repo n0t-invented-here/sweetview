@@ -7,6 +7,7 @@ export {
   makeOverlay,
   type Overlay,
   type OverlayOptions,
+  type Appearance,
   type OverlayWindowOptions,
   type HitRefiner,
   type Point,
