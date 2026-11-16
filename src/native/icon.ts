@@ -531,7 +531,26 @@ export const APP_ICO_SIZES: number[] = [16, 20, 24, 32, 40, 48, 64, 128, 256];
 
 /** Square RGBA as a multi-size .ico (resampled to each size, the 256 px one a PNG), for `Icon.windows.ico` and a program's file icon. */
 export function icoFromRgba(size: number, rgba: Uint8Array, sizes: number[] = APP_ICO_SIZES): Uint8Array {
-  return encodeIco(new Map(sizes.map((s) => [s, resampleRgba(rgba, size, s)])));
+  return encodeIco(new Map(sizes.map((s) => [s, s > size ? enlargeRgba(rgba, size, s) : resampleRgba(rgba, size, s)])));
+}
+
+/**
+ * A square picture made larger by repeating its pixels, so that it fills the larger square and every
+ * edge in it stays hard. Blending between pixels, which is what a resample does, turns a small
+ * picture into a blur at four or five times its size.
+ */
+export function enlargeRgba(src: Uint8Array, from: number, to: number): Uint8Array {
+  if (to <= from) return src;
+  const out = new Uint8Array(to * to * 4);
+  for (let y = 0; y < to; y++) {
+    const sy = Math.min(from - 1, Math.floor(((y + 0.5) * from) / to));
+    for (let x = 0; x < to; x++) {
+      const sx = Math.min(from - 1, Math.floor(((x + 0.5) * from) / to));
+      const i = (sy * from + sx) * 4;
+      out.set(src.subarray(i, i + 4), (y * to + x) * 4);
+    }
+  }
+  return out;
 }
 
 /** Square RGBA as an .icns (resampled to each size), for CFBundleIconFile. Sizes above the source are upscaled. */
