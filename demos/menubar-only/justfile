@@ -24,6 +24,7 @@ icons: install
 
 compile-win: icons
     bun build --compile --target=bun-windows-x64 --windows-hide-console {{win_icon}} --minify --sourcemap app.ts --outfile dist/{{exe}}-windows-x64.exe
+    bun ../../src/refresh-icons.ts
 
 compile-mac: install
     bun build --compile --target=bun-darwin-arm64 --minify --sourcemap app.ts --outfile dist/{{exe}}-macos-arm64

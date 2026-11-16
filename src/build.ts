@@ -138,3 +138,23 @@ export function writeIconFiles(dir: string, files: { ico?: Uint8Array; icns?: Ui
   }
   return written;
 }
+
+/**
+ * Windows: tells the shell that icons changed, so Explorer, the taskbar and the Start menu draw a
+ * rebuilt program's icon. Without it they go on drawing the icon they kept from the file that was at
+ * that path before the build, however the new file's icon differs. It is the call an installer makes
+ * (SHChangeNotify with SHCNE_ASSOCCHANGED) and changes nothing on the computer. Elsewhere: does nothing.
+ */
+export function refreshWindowsIcons(): void {
+  if (process.platform !== "win32") return;
+  try {
+    const { dlopen, FFIType } = require("bun:ffi") as typeof import("bun:ffi");
+    const shell32 = dlopen("shell32.dll", { SHChangeNotify: { args: [FFIType.i32, FFIType.u32, FFIType.ptr, FFIType.ptr], returns: FFIType.void } });
+    const SHCNE_ASSOCCHANGED = 0x08000000;
+    const SHCNF_FLUSH = 0x1000;
+    shell32.symbols.SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_FLUSH, null, null);
+    shell32.close();
+  } catch {
+    // The icon is in the file either way.
+  }
+}
