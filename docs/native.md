@@ -1121,7 +1121,7 @@ A square PNG as a multi-size .ico file of 32-bit entries, resampled to each size
 | Field | Type | Default | Meaning |
 |---|---|---|---|
 | `png` | `Uint8Array` | required | A square PNG that [`decodePng`](#decodepng) reads. |
-| `sizes` | `number[]` | `[16, 24, 32, 48, 64]` | Sizes to write, up to 256. |
+| `sizes` | `number[]` | `[16, 20, 24, 32, 40, 48, 64, 128, 256]` (`APP_ICO_SIZES`) | Sizes to write, up to 256. The default holds every size Windows draws an icon at; without the large ones Windows stretches a small image and the icon is blurred. A size above the picture's own repeats its pixels (crisp), a size below averages them. |
 
 Returns: the .ico bytes.
 
@@ -1133,7 +1133,7 @@ Throws:
 ### icoFromRgba
 
 ```ts
-function icoFromRgba(size: number, rgba: Uint8Array, sizes: number[] = [16, 24, 32, 48, 64]): Uint8Array
+function icoFromRgba(size: number, rgba: Uint8Array, sizes: number[] = APP_ICO_SIZES): Uint8Array
 ```
 
 Square RGBA as a multi-size .ico file of 32-bit entries, resampled to each size, for `Icon.windows.ico`.
@@ -1142,7 +1142,7 @@ Square RGBA as a multi-size .ico file of 32-bit entries, resampled to each size,
 |---|---|---|---|
 | `size` | `number` | required | Width and height of `rgba` in px. |
 | `rgba` | `Uint8Array` | required | Top-down RGBA, `size * size * 4` bytes. |
-| `sizes` | `number[]` | `[16, 24, 32, 48, 64]` | Sizes to write, up to 256. |
+| `sizes` | `number[]` | `[16, 20, 24, 32, 40, 48, 64, 128, 256]` (`APP_ICO_SIZES`) | Sizes to write, up to 256. The default holds every size Windows draws an icon at; without the large ones Windows stretches a small image and the icon is blurred. A size above the picture's own repeats its pixels (crisp), a size below averages them. |
 
 Returns: the .ico bytes.
 

@@ -31,6 +31,7 @@ export {
   icnsFromRgba,
   icoFromPng,
   icoFromRgba,
+  APP_ICO_SIZES,
   renderDot,
   trimTransparent,
   type DecodedPng,

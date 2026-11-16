@@ -199,31 +199,56 @@ export function decodeIcoEntry(bytes: Uint8Array, entry: IcoEntry): Uint8Array {
   return rgba;
 }
 
-/** Bilinear resample of a square top-down RGBA image. Returns the input when the size already matches. */
+/**
+ * A square top-down RGBA image at another size. Returns the input when the size already matches.
+ *
+ * Made larger, each pixel is repeated (nearest neighbour), so small art stays crisp instead of being
+ * smeared: an icon drawn at 32 px is 32 sharp blocks at 256 px. Made smaller, each new pixel is the
+ * average of all the pixels it covers, weighted by their opacity, so nothing between samples is
+ * dropped and a transparent edge does not darken the colours beside it.
+ */
 export function resampleRgba(src: Uint8Array, from: number, to: number): Uint8Array {
   if (from === to) return src;
   const out = new Uint8Array(to * to * 4);
   const scale = from / to;
-  for (let y = 0; y < to; y++) {
-    const sy = Math.min(from - 1, Math.max(0, (y + 0.5) * scale - 0.5));
-    const y0 = Math.floor(sy);
-    const y1 = Math.min(from - 1, y0 + 1);
-    const fy = sy - y0;
-    for (let x = 0; x < to; x++) {
-      const sx = Math.min(from - 1, Math.max(0, (x + 0.5) * scale - 0.5));
-      const x0 = Math.floor(sx);
-      const x1 = Math.min(from - 1, x0 + 1);
-      const fx = sx - x0;
-      const o = (y * to + x) * 4;
-      for (let c = 0; c < 4; c++) {
-        const p00 = src[(y0 * from + x0) * 4 + c]!;
-        const p10 = src[(y0 * from + x1) * 4 + c]!;
-        const p01 = src[(y1 * from + x0) * 4 + c]!;
-        const p11 = src[(y1 * from + x1) * 4 + c]!;
-        const top = p00 + (p10 - p00) * fx;
-        const bottom = p01 + (p11 - p01) * fx;
-        out[o + c] = Math.round(top + (bottom - top) * fy);
+  if (to > from) {
+    for (let y = 0; y < to; y++) {
+      const sy = Math.min(from - 1, Math.floor((y + 0.5) * scale));
+      for (let x = 0; x < to; x++) {
+        const sx = Math.min(from - 1, Math.floor((x + 0.5) * scale));
+        const i = (sy * from + sx) * 4;
+        out.set(src.subarray(i, i + 4), (y * to + x) * 4);
       }
+    }
+    return out;
+  }
+  for (let y = 0; y < to; y++) {
+    const y0 = Math.floor(y * scale);
+    const y1 = Math.max(y0 + 1, Math.min(from, Math.ceil((y + 1) * scale)));
+    for (let x = 0; x < to; x++) {
+      const x0 = Math.floor(x * scale);
+      const x1 = Math.max(x0 + 1, Math.min(from, Math.ceil((x + 1) * scale)));
+      let r = 0;
+      let g = 0;
+      let b = 0;
+      let a = 0;
+      for (let sy = y0; sy < y1; sy++) {
+        for (let sx = x0; sx < x1; sx++) {
+          const i = (sy * from + sx) * 4;
+          const alpha = src[i + 3]!;
+          r += src[i]! * alpha;
+          g += src[i + 1]! * alpha;
+          b += src[i + 2]! * alpha;
+          a += alpha;
+        }
+      }
+      const o = (y * to + x) * 4;
+      if (a > 0) {
+        out[o] = Math.round(r / a);
+        out[o + 1] = Math.round(g / a);
+        out[o + 2] = Math.round(b / a);
+      }
+      out[o + 3] = Math.round(a / ((y1 - y0) * (x1 - x0)));
     }
   }
   return out;
@@ -522,8 +547,15 @@ export function trimTransparent(image: DecodedPng, margin = 1, threshold = 8): D
   return { width: side, height: side, rgba: out };
 }
 
-/** Square RGBA as a multi-size .ico (32bpp entries, resampled), for `Icon.windows.ico`. */
-export function icoFromRgba(size: number, rgba: Uint8Array, sizes: number[] = [16, 24, 32, 48, 64]): Uint8Array {
+/**
+ * The sizes an .ico made from one picture holds unless told otherwise: every size Windows draws an
+ * icon at, up to the 256 px one Explorer's large icons, the taskbar on a dense screen and Alt+Tab use.
+ * Without the large sizes Windows stretches a small image, and the icon is blurred.
+ */
+export const APP_ICO_SIZES: number[] = [16, 20, 24, 32, 40, 48, 64, 128, 256];
+
+/** Square RGBA as a multi-size .ico (resampled to each size, the 256 px one a PNG), for `Icon.windows.ico` and a program's file icon. */
+export function icoFromRgba(size: number, rgba: Uint8Array, sizes: number[] = APP_ICO_SIZES): Uint8Array {
   return encodeIco(new Map(sizes.map((s) => [s, resampleRgba(rgba, size, s)])));
 }
 

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { crc32, deflateSync, inflateSync } from "node:zlib";
-import { decodePng, trimTransparent, dotIcns, dotIcon, dotPng, encodeIcns, encodeIco, encodePng, icnsFromPng, icoFromPng, icoRgba, parseIco, pickIcoEntry, renderDot, resampleRgba } from "./icon";
+import { APP_ICO_SIZES, decodePng, trimTransparent, dotIcns, dotIcon, dotPng, encodeIcns, encodeIco, encodePng, icnsFromPng, icoFromPng, icoFromRgba, icoRgba, parseIco, pickIcoEntry, renderDot, resampleRgba } from "./icon";
 
 describe("renderDot", () => {
   test("centre is opaque fill, corners are transparent", () => {
@@ -293,5 +293,38 @@ describe("trimTransparent", () => {
   test("leaves a fully transparent image alone", () => {
     const img = { width: 4, height: 4, rgba: new Uint8Array(64) };
     expect(trimTransparent(img)).toBe(img);
+  });
+});
+
+describe("an .ico from one picture, and its sizes", () => {
+  test("by default it holds every size Windows draws, the 256 px one first", () => {
+    const ico = icoFromRgba(32, renderDot(32, { color: "#ff8800" }));
+    expect(parseIco(ico).map((e) => e.width)).toEqual([256, 128, 64, 48, 40, 32, 24, 20, 16]);
+    expect(APP_ICO_SIZES).toContain(256);
+  });
+
+  test("made larger, pixels are repeated, not smeared: a two-colour picture has only its two colours", () => {
+    // 2x2: left column red, right column blue.
+    const src = new Uint8Array([255, 0, 0, 255, 0, 0, 255, 255, 255, 0, 0, 255, 0, 0, 255, 255]);
+    const big = resampleRgba(src, 2, 8);
+    const colours = new Set<string>();
+    for (let i = 0; i < big.length; i += 4) colours.add([...big.subarray(i, i + 4)].join(","));
+    expect([...colours].sort()).toEqual(["0,0,255,255", "255,0,0,255"]);
+    // The left half is red, the right half blue.
+    expect([...big.subarray(0, 4)]).toEqual([255, 0, 0, 255]);
+    expect([...big.subarray(7 * 4, 8 * 4)]).toEqual([0, 0, 255, 255]);
+  });
+
+  test("made smaller, every pixel counts, and a transparent neighbour does not darken a colour", () => {
+    // 4x4, all opaque white except one black pixel: a quarter-size picture must show the black, a little.
+    const src = new Uint8Array(4 * 4 * 4).fill(255);
+    src.set([0, 0, 0, 255], (3 * 4 + 3) * 4);
+    const small = resampleRgba(src, 4, 1);
+    expect(small[0]).toBe(Math.round((15 * 255) / 16));
+    // Half red, half fully transparent: red at half opacity, not dark red.
+    const half = new Uint8Array(2 * 2 * 4);
+    half.set([255, 0, 0, 255], 0);
+    half.set([255, 0, 0, 255], 8);
+    expect([...resampleRgba(half, 2, 1)]).toEqual([255, 0, 0, 128]);
   });
 });
