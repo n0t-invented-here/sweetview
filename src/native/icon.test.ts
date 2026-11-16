@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { crc32, deflateSync, inflateSync } from "node:zlib";
-import { APP_ICO_SIZES, decodePng, trimTransparent, dotIcns, dotIcon, dotPng, encodeIcns, encodeIco, encodePng, icnsFromPng, icoFromPng, icoFromRgba, icoRgba, parseIco, pickIcoEntry, renderDot, resampleRgba } from "./icon";
+import { APP_ICO_SIZES, centreRgba, decodePng, trimTransparent, dotIcns, dotIcon, dotPng, encodeIcns, encodeIco, encodePng, icnsFromPng, icoFromPng, icoFromRgba, icoRgba, parseIco, pickIcoEntry, renderDot, resampleRgba } from "./icon";
 
 describe("renderDot", () => {
   test("centre is opaque fill, corners are transparent", () => {
@@ -303,28 +303,23 @@ describe("an .ico from one picture, and its sizes", () => {
     expect(APP_ICO_SIZES).toContain(256);
   });
 
-  test("made larger, pixels are repeated, not smeared: a two-colour picture has only its two colours", () => {
-    // 2x2: left column red, right column blue.
-    const src = new Uint8Array([255, 0, 0, 255, 0, 0, 255, 255, 255, 0, 0, 255, 0, 0, 255, 255]);
-    const big = resampleRgba(src, 2, 8);
-    const colours = new Set<string>();
-    for (let i = 0; i < big.length; i += 4) colours.add([...big.subarray(i, i + 4)].join(","));
-    expect([...colours].sort()).toEqual(["0,0,255,255", "255,0,0,255"]);
-    // The left half is red, the right half blue.
-    expect([...big.subarray(0, 4)]).toEqual([255, 0, 0, 255]);
-    expect([...big.subarray(7 * 4, 8 * 4)]).toEqual([0, 0, 255, 255]);
-  });
-
-  test("made smaller, every pixel counts, and a transparent neighbour does not darken a colour", () => {
-    // 4x4, all opaque white except one black pixel: a quarter-size picture must show the black, a little.
-    const src = new Uint8Array(4 * 4 * 4).fill(255);
-    src.set([0, 0, 0, 255], (3 * 4 + 3) * 4);
-    const small = resampleRgba(src, 4, 1);
-    expect(small[0]).toBe(Math.round((15 * 255) / 16));
-    // Half red, half fully transparent: red at half opacity, not dark red.
-    const half = new Uint8Array(2 * 2 * 4);
-    half.set([255, 0, 0, 255], 0);
-    half.set([255, 0, 0, 255], 8);
-    expect([...resampleRgba(half, 2, 1)]).toEqual([255, 0, 0, 128]);
+  test("a size above the picture's own is the picture as it is, in the middle of a clear square: never enlarged", () => {
+    // A 64 px picture with every pixel different, so any scaling or shifting would show.
+    const src = new Uint8Array(64 * 64 * 4);
+    for (let y = 0; y < 64; y++) for (let x = 0; x < 64; x++) src.set([x * 4, y * 4, (x * 7 + y * 3) % 256, 255], (y * 64 + x) * 4);
+    const ico = icoFromRgba(64, src);
+    const big = icoRgba(ico, 256);
+    const pad = (256 - 64) / 2;
+    for (let y = 0; y < 256; y++)
+      for (let x = 0; x < 256; x++) {
+        const got = [...big.subarray((y * 256 + x) * 4, (y * 256 + x) * 4 + 4)];
+        const inside = x >= pad && x < pad + 64 && y >= pad && y < pad + 64;
+        const want = inside ? [...src.subarray(((y - pad) * 64 + (x - pad)) * 4, ((y - pad) * 64 + (x - pad)) * 4 + 4)] : [0, 0, 0, 0];
+        if (got.join() !== want.join()) throw new Error(`pixel ${x},${y} is ${got}, not ${want}`);
+      }
+    // The same at 128 px; the 64 px image is the picture itself.
+    expect([...icoRgba(ico, 64)]).toEqual([...src]);
+    expect([...centreRgba(src, 64, 64)]).toEqual([...src]);
+    expect(centreRgba(src, 64, 128).length).toBe(128 * 128 * 4);
   });
 });

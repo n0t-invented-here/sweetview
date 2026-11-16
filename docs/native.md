@@ -1121,7 +1121,7 @@ A square PNG as a multi-size .ico file of 32-bit entries, resampled to each size
 | Field | Type | Default | Meaning |
 |---|---|---|---|
 | `png` | `Uint8Array` | required | A square PNG that [`decodePng`](#decodepng) reads. |
-| `sizes` | `number[]` | `[16, 20, 24, 32, 40, 48, 64, 128, 256]` (`APP_ICO_SIZES`) | Sizes to write, up to 256. The default holds every size Windows draws an icon at; without the large ones Windows stretches a small image and the icon is blurred. A size above the picture's own repeats its pixels (crisp), a size below averages them. |
+| `sizes` | `number[]` | `[16, 20, 24, 32, 40, 48, 64, 128, 256]` (`APP_ICO_SIZES`) | Sizes to write, up to 256. The default holds every size Windows draws an icon at; without the large ones Windows stretches a small image and the icon is blurred. A size above the picture's own is the picture as it is, in the middle of a transparent square of that size: it is not enlarged. A size below it is the picture scaled down. |
 
 Returns: the .ico bytes.
 
@@ -1142,7 +1142,7 @@ Square RGBA as a multi-size .ico file of 32-bit entries, resampled to each size,
 |---|---|---|---|
 | `size` | `number` | required | Width and height of `rgba` in px. |
 | `rgba` | `Uint8Array` | required | Top-down RGBA, `size * size * 4` bytes. |
-| `sizes` | `number[]` | `[16, 20, 24, 32, 40, 48, 64, 128, 256]` (`APP_ICO_SIZES`) | Sizes to write, up to 256. The default holds every size Windows draws an icon at; without the large ones Windows stretches a small image and the icon is blurred. A size above the picture's own repeats its pixels (crisp), a size below averages them. |
+| `sizes` | `number[]` | `[16, 20, 24, 32, 40, 48, 64, 128, 256]` (`APP_ICO_SIZES`) | Sizes to write, up to 256. The default holds every size Windows draws an icon at; without the large ones Windows stretches a small image and the icon is blurred. A size above the picture's own is the picture as it is, in the middle of a transparent square of that size: it is not enlarged. A size below it is the picture scaled down. |
 
 Returns: the .ico bytes.
 
