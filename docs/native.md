@@ -1044,7 +1044,7 @@ Throws: when a size has no .icns element type; the message lists the sizes that 
 function encodeIco(images: Map<number, Uint8Array>): Uint8Array
 ```
 
-Wraps square RGBA images as an .ico file of 32-bit entries, smallest first. A 256 px entry is written with the zero size the format uses for it. The pixel arrays' lengths are not checked.
+Wraps square RGBA images as an .ico file, largest first. A 256 px image is stored as a PNG (the form Windows takes for that size) and written with the zero size the format uses for it; the others are 32-bit bitmaps. Largest first because `bun build --compile --windows-icon` numbers the images in file order, and Windows draws a program's large icons from image number 1: smallest first, Explorer drew them from the 16 px image, blurred. The pixel arrays' lengths are not checked.
 
 Throws: when a size is below 1 or above 256.
 

@@ -95,9 +95,18 @@ function dibImage(size: number, rgba: Uint8Array): Uint8Array {
   return out;
 }
 
-/** Wraps rendered images (size -> top-down RGBA) as a .ico file. */
+/**
+ * Wraps rendered images (size -> top-down RGBA) as a .ico file, largest first. A 256 px image is
+ * stored as a PNG, the form Windows takes for that size; the others as 32-bit bitmaps.
+ *
+ * Largest first because of what `bun build --compile --windows-icon` does with the file. A program
+ * bun makes keeps an icon group of bun's own (`IDI_MYICON`) that names one image, resource number 1,
+ * as its 256 px picture, and Windows takes the program's icon from that group, being the first. The
+ * flag numbers this file's images in the order they are in it. Smallest first, number 1 was the
+ * 16 px image, and Explorer drew its large icons from 16 pixels, blurred.
+ */
 export function encodeIco(images: Map<number, Uint8Array>): Uint8Array {
-  const entries = [...images.entries()].sort((a, b) => a[0] - b[0]);
+  const entries = [...images.entries()].sort((a, b) => b[0] - a[0]);
   const dir = new Uint8Array(6 + 16 * entries.length);
   const dv = new DataView(dir.buffer);
   dv.setUint16(2, 1, true); // type: icon
@@ -106,7 +115,7 @@ export function encodeIco(images: Map<number, Uint8Array>): Uint8Array {
   let offset = dir.length;
   entries.forEach(([size, rgba], i) => {
     if (size < 1 || size > 256) throw new Error(`an .ico image is 1 to 256 pixels a side, not ${size}`);
-    const img = dibImage(size, rgba);
+    const img = size === 256 ? encodePng(size, rgba) : dibImage(size, rgba);
     const e = 6 + i * 16;
     dir[e] = size === 256 ? 0 : size;
     dir[e + 1] = size === 256 ? 0 : size;

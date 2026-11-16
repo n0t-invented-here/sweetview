@@ -22,7 +22,9 @@ describe("ico container", () => {
   test("round-trips sizes and offsets", () => {
     const ico = dotIcon({ sizes: [16, 32] });
     const entries = parseIco(ico);
-    expect(entries.map((e) => e.width)).toEqual([16, 32]);
+    // Largest first: `bun build --compile --windows-icon` numbers the images in file order, and Windows
+    // draws a program's large icons from image number 1.
+    expect(entries.map((e) => e.width)).toEqual([32, 16]);
     for (const e of entries) {
       // Each image is a BITMAPINFOHEADER (40) + BGRA + mask rows (4 bytes per 32 px).
       expect(e.size).toBe(40 + e.width * e.height * 4 + Math.ceil(e.width / 32) * 4 * e.height);
@@ -42,6 +44,17 @@ describe("ico container", () => {
     const ico = encodeIco(new Map([[256, new Uint8Array(256 * 256 * 4)]]));
     expect(ico[6]).toBe(0);
     expect(parseIco(ico)[0]!.width).toBe(256);
+  });
+
+  test("the 256 px image is first and is a PNG, whatever order the sizes were given in; its pixels come back", () => {
+    const big = renderDot(256, { color: "#3366cc" });
+    const ico = encodeIco(new Map([[16, renderDot(16)], [256, big], [48, renderDot(48)]]));
+    const entries = parseIco(ico);
+    expect(entries.map((e) => e.width)).toEqual([256, 48, 16]);
+    expect([...ico.subarray(entries[0]!.offset, entries[0]!.offset + 4)]).toEqual([0x89, 0x50, 0x4e, 0x47]);
+    // The smaller ones stay bitmaps.
+    expect(new DataView(ico.buffer, ico.byteOffset + entries[1]!.offset).getUint32(0, true)).toBe(40);
+    expect([...icoRgba(ico, 256)]).toEqual([...big]);
   });
 });
 
@@ -219,7 +232,7 @@ describe("icoFromPng / icnsFromPng", () => {
   const png = encodePng(32, renderDot(32, { color: "#ff8800" }));
   test("icoFromPng resamples to every requested size", () => {
     const ico = icoFromPng(png, [16, 32, 48]);
-    expect(parseIco(ico).map((e) => e.width)).toEqual([16, 32, 48]);
+    expect(parseIco(ico).map((e) => e.width)).toEqual([48, 32, 16]);
     const centre = (8 * 16 + 8) * 4;
     expect([...icoRgba(ico, 16).subarray(centre, centre + 3)]).toEqual([255, 136, 0]);
   });
