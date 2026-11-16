@@ -40,6 +40,9 @@ export function pumpEvents(): boolean {
   return true; // AppKit has no WM_QUIT; terminate: ends the process itself
 }
 
+/** Windows only: AppKit has no quit request to take back. */
+export function discardQuit(): void {}
+
 export function setActivationPolicy(policy: ActivationPolicy): void {
   sendIntRetBool(sharedApp(), sel("setActivationPolicy:"), NSApplicationActivationPolicy[policy]);
 }

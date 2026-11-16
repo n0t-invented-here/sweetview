@@ -118,6 +118,11 @@ export const dwmapi = dlopen("dwmapi.dll", {
   DwmSetWindowAttribute: { args: [FFIType.u64, FFIType.u32, FFIType.ptr, FFIType.u32], returns: FFIType.i32 },
 }).symbols;
 
+export const advapi32 = dlopen("advapi32.dll", {
+  // (HKEY, LPCWSTR subKey, LPCWSTR value, DWORD flags, DWORD* type, void* data, DWORD* bytes) -> LSTATUS (0 on success)
+  RegGetValueW: { args: [FFIType.u64, FFIType.ptr, FFIType.ptr, FFIType.u32, FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.i32 },
+}).symbols;
+
 export const gdi32 = dlopen("gdi32.dll", {
   CreateRectRgn: { args: [FFIType.i32, FFIType.i32, FFIType.i32, FFIType.i32], returns: FFIType.u64 },
   // (const XFORM*, DWORD bytes, const RGNDATA*) -> HRGN
@@ -177,6 +182,7 @@ export const HTCAPTION = 2;
 
 export const WM_DESTROY = 0x0002;
 export const WM_SIZE = 0x0005;
+export const WM_SETTINGCHANGE = 0x001a;
 
 export const GW_CHILD = 5;
 

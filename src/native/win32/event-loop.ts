@@ -21,5 +21,23 @@ export function pumpEvents(): boolean {
   return true;
 }
 
+// A buffer of its own: this can run inside a handler pumpEvents dispatched, while that MSG is still in use.
+const quitMsg = new Uint8Array(MSG_SIZE);
+const quitMsgView = new DataView(quitMsg.buffer);
+
+/**
+ * Takes back a `PostQuitMessage`. Windows keeps a quit request as a flag and
+ * hands out WM_QUIT only once the queue has nothing posted left, so the one
+ * way to remove it is to dispatch what is waiting until it comes out, and
+ * drop it. Returns at once when no quit was asked for and nothing waits.
+ */
+export function discardQuit(): void {
+  for (let i = 0; i < 10_000 && user32.PeekMessageW(quitMsg, 0n, 0, 0, PM_REMOVE) !== 0; i++) {
+    if (quitMsgView.getUint32(MSG_MESSAGE_OFFSET, true) === WM_QUIT) return;
+    user32.TranslateMessage(quitMsg);
+    user32.DispatchMessageW(quitMsg);
+  }
+}
+
 // Windows has no Dock: a process with no visible window has no taskbar presence already.
 export function setActivationPolicy(): void {}

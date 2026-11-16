@@ -17,6 +17,7 @@ export type EventLoopOptions = {
 
 type Backend = {
   pumpEvents(): boolean;
+  discardQuit(): void;
   setActivationPolicy(policy: ActivationPolicy): void;
 };
 const impl = backend<Backend>(
@@ -31,6 +32,16 @@ const impl = backend<Backend>(
  */
 export function pumpEvents(): boolean {
   return impl().pumpEvents();
+}
+
+/**
+ * Internal, for `createWebviewApp(...).dispose()`. Destroying a webview asks
+ * the OS loop to end, which is right after `run()` and wrong for one window
+ * of several under `runEventLoop`. Windows: dispatches what is waiting until
+ * that request comes out, and drops it. macOS: nothing to take back.
+ */
+export function discardQuit(): void {
+  impl().discardQuit();
 }
 
 let stopRunning: (() => void) | undefined;

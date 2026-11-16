@@ -193,8 +193,11 @@ export function createOverlayWindow(options: OverlayWindowOptions): Overlay {
   if (win === NIL) throw new Error("sweetnative: NSWindow init failed");
   sendBool(win, sel("setReleasedWhenClosed:"), false); // the close button only orders the window out
   if (options.title) sendPtr(win, sel("setTitle:"), nsString(options.title));
-  if (framed && options.dark) {
-    sendPtr(win, sel("setAppearance:"), asId(sendPtr(cls("NSAppearance"), sel("appearanceNamed:"), nsString("NSAppearanceNameDarkAqua"))));
+  // "system" leaves the appearance unset: the window then takes the system's, and follows it when it changes.
+  const appearance = options.appearance ?? (options.dark ? "dark" : "system");
+  if (framed && appearance !== "system") {
+    const name = appearance === "dark" ? "NSAppearanceNameDarkAqua" : "NSAppearanceNameAqua";
+    sendPtr(win, sel("setAppearance:"), asId(sendPtr(cls("NSAppearance"), sel("appearanceNamed:"), nsString(name))));
   }
   return restyle(win, options, framed);
 }
