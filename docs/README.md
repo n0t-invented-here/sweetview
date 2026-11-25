@@ -24,3 +24,10 @@ Dependencies between the modules point one way. `ipc` imports nothing.
 
 `page`, `window-chrome` and `native/hit-regions` import types only, so a
 page bundle contains no Bun code.
+
+## Planning & Audit
+
+| Document | Contents |
+|---|---|
+| [v1 API design](v1-api.md) | Target `1.0.0` two-layer API (`Window`, `WebView`, `Screen`, `Menu`, `Tray`, `Notifier`, `HitRelay`, native tabs, `createApp`), examples, and breaking changes |
+| [Audit & v1 plan](audit-and-v1-plan.md) | Package layout discrepancy, 12 verified bugs/leaks in `src/`, zero-TCP porting analysis (`TracLite`, `gitweb`, `UntidyDiary`), URL schemes & single-instance, `delightful-qt-web-shell` lessons, and dual-mode web/Sweetview workflow |
