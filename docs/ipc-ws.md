@@ -28,7 +28,7 @@ Bun only. Its types come from `bun`. It works with `Bun.serve`, on the main thre
 export function wsHost<M extends MethodMap, E extends EventMap>(service: Service<M, E>, options: WsHostOptions = {}): WsHost;
 ```
 
-Hosts a `Service` behind a `Bun.serve` WebSocket handler. Each socket is one session. The host subscribes to the service's events when `wsHost` is called and forwards them until `close()`.
+Hosts a `Service` behind a `Bun.serve` WebSocket handler. Each socket is one session. The host subscribes to the service's events when `wsHost` is called and forwards them until `dispose()`.
 
 | Parameter | Type | Default | Meaning |
 |---|---|---|---|
@@ -37,7 +37,7 @@ Hosts a `Service` behind a `Bun.serve` WebSocket handler. Each socket is one ses
 
 Returns: a `WsHost`. Pass its `websocket` to `Bun.serve` and call its `upgrade` from `fetch`.
 
-The host never calls `service.dispose()`. The application disposes the service after `close()`.
+The host never calls `service.dispose()`. The application disposes the service after `dispose()`.
 
 ### WsData
 
@@ -58,7 +58,7 @@ export type WsHost = {
   upgrade(req: Request, server: Server<WsData>): boolean;
   websocket: WebSocketHandler<WsData>;
   readonly sessions: number;
-  close(): void;
+  dispose(): void;
 };
 ```
 
@@ -69,11 +69,11 @@ What `wsHost` returns.
 | `upgrade` | `(req: Request, server: Server<WsData>) => boolean` | Checks the request's `Origin`, assigns a new session, and upgrades the request. Returns `false` when the `Origin` is refused or Bun did not upgrade the request. On `false`, `fetch` must return its own error response. |
 | `websocket` | `WebSocketHandler<WsData>` | The `websocket` option for `Bun.serve`. |
 | `sessions` | `number` | Number of open sockets. |
-| `close` | `() => void` | Stops forwarding events and closes every socket. Each closed socket still ends its session on the service. It does not dispose the service. |
+| `dispose` | `() => void` | Stops forwarding events and closes every socket. Each closed socket still ends its session on the service. It does not dispose the service. |
 
 Throws: `upgrade` throws whatever an `allowOrigin` predicate throws.
 
-`close()` does not stop the host from accepting new sockets. Sockets opened after `close()` can call the service but receive no events. Stop the `Bun.serve` server, or stop calling `upgrade`, to refuse them.
+`dispose()` does not stop the host from accepting new sockets. Sockets opened after `dispose()` can call the service but receive no events. Stop the `Bun.serve` server, or stop calling `upgrade`, to refuse them.
 
 ### WsHostOptions
 
@@ -142,7 +142,7 @@ Throws: a `ReferenceError` where no global `location` exists, as in Bun.
 export type WsTransport = Transport & {
   readonly ready: Promise<void>;
   onClose(fn: () => void): () => void;
-  close(): void;
+  dispose(): void;
 };
 ```
 
@@ -152,7 +152,7 @@ The `Transport` from `wsTransport`, plus the socket's lifecycle.
 |---|---|---|
 | `ready` | `Promise<void>` | Resolves when the socket opens. Rejects with `Error("websocket closed")` when it closes first. Leaving the rejection unhandled is safe. |
 | `onClose` | `(fn: () => void) => () => void` | Runs `fn` once, when the socket closes for any reason. If the socket is already closed, runs `fn` synchronously and returns a no-op unsubscribe function. Otherwise returns an unsubscribe function. |
-| `close` | `() => void` | Closes the socket. The transport cannot be reopened; a new `wsTransport` is a new session. |
+| `dispose` | `() => void` | Closes the socket. The transport cannot be reopened; a new `wsTransport` is a new session. |
 
 ## Wire protocol
 
@@ -189,8 +189,8 @@ Messages a side does not expect:
 Close behaviour:
 
 - When a socket closes from either side, the host stops tracking it and calls `service.endSession` with its session id.
-- A reply is dropped when its socket closed, or `WsHost.close()` ran, before the call finished. The handler still runs to completion.
-- `WsHost.close()` closes every socket with no close code or reason given.
+- A reply is dropped when its socket closed, or `WsHost.dispose()` ran, before the call finished. The handler still runs to completion.
+- `WsHost.dispose()` closes every socket with no close code or reason given.
 - On the client, a close rejects every pending call with `Error("websocket closed")` and runs the `onClose` listeners.
 - Neither side reconnects.
 - The protocol defines no heartbeat of its own. The `websocket` handler sets no idle timeout or ping options, so Bun's defaults apply.

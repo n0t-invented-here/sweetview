@@ -307,7 +307,7 @@ The same values as `SessionKind`, seen from the page.
 export function memoryTransport<M extends MethodMap, E extends EventMap>(
   service: Service<M, E>,
   session: Session = { id: `memory-${nextId++}`, kind: "web" },
-): Transport & { close(): void };
+): Transport & { dispose(): void };
 ```
 
 A `Transport` straight onto a `Service` in the same process, with no frames and no host. It is meant for tests and for rendering a frontend in plain Bun.
@@ -317,13 +317,13 @@ A `Transport` straight onto a `Service` in the same process, with no frames and 
 | `service` | `Service<M, E>` | required | The service to call. |
 | `session` | `Session` | `{ id: "memory-<n>", kind: "web" }` | The session every call runs as. `<n>` counts from 1 across the memory transports created without a `session`. |
 
-Returns: a `Transport` with `kind` set to `session.kind`, plus `close()`.
+Returns: a `Transport` with `kind` set to `session.kind`, plus `dispose()`.
 
 - `call` passes params and results by reference. Nothing is JSON-encoded, so values that would not survive a real transport still arrive intact.
 - `call` rejects with whatever `Service.call` rejects with.
 - `notify` discards both the result and any rejection.
 - Events reach this transport when they are broadcast or targeted at `session.id`. They are delivered synchronously inside `emit`, so a listener on this transport that throws makes the backend's `emit` throw.
-- `close()` stops event delivery and calls `service.endSession(session.id)`. Each further `close()` calls `service.endSession(session.id)` again. Calls made after `close()` still reach the service.
+- `dispose()` stops event delivery and calls `service.endSession(session.id)`. Each further `dispose()` calls `service.endSession(session.id)` again. Calls made after `dispose()` still reach the service.
 
 ## Example
 

@@ -1,6 +1,6 @@
 # @n1h/sweetview/worker
 
-The worker module hosts the app's Service behind a sweetview window. It runs inside the Bun Worker that `createWebviewApp` starts from its `worker` option, described in [app.md](app.md). The worker owns the Bun event loop while the UI thread is blocked in the OS loop.
+The worker module hosts the app's Service behind a sweetview window. It runs inside the Bun Worker that `WebView.attach` / `createApp` starts from its `worker` option, described in [app.md](app.md). The worker owns the Bun event loop while the UI thread is blocked in the OS loop.
 
 ```ts
 import { hostService } from "@n1h/sweetview/worker";
@@ -24,7 +24,7 @@ Connects `service` to the window that started this worker. It subscribes to the 
 |---|---|---|---|
 | `service` | `Service<M, E>` | required | The Service to host. `Service`, `MethodMap` and `EventMap` are documented in [ipc.md](ipc.md). |
 
-Thread: the Bun Worker started by `createWebviewApp`. Call once, at the top level of the worker entry. Writing a frame blocks the worker while the ring is full.
+Thread: the Bun Worker started by `WebView.attach` / `createApp`. Call once, at the top level of the worker entry. Writing a frame blocks the worker while the ring is full.
 
 #### Messages from the UI thread
 
@@ -51,9 +51,9 @@ Replies and events go back to the UI thread as JSON frames in the shared ring. A
 | the Service emits with no `to`, or `to` equal to `"webview"` | `{ kind: "event", name, payload }` |
 | the Service emits with any other `to` | None. The event is dropped. |
 
-`hostService` never calls the Service's `endSession` or `dispose`. The UI thread terminates the worker when `run()` returns, or when `createWebviewApp` throws after starting it.
+`hostService` never calls the Service's `endSession` or `dispose`. The UI thread terminates the worker when `run()` returns, when `dispose()` runs, or when `WebView.attach` throws after starting it.
 
-Writing a frame blocks the worker while the ring is full, until the UI thread drains it. A frame whose UTF-8 JSON is longer than the ring's capacity minus 4 bytes throws `RangeError`. A result or payload that `JSON.stringify` rejects, such as a `BigInt`, throws `TypeError`. For a call with a `seq`, either error becomes an error reply. For an event emitted after the init message, it is thrown out of the Service's emit call. The capacity is `ringBytes` in [app.md](app.md).
+Writing a frame blocks the worker while the ring is full, until the UI thread drains it. If a reply's UTF-8 JSON exceeds `ringBytes - 4` bytes or fails `JSON.stringify` (such as a `BigInt` or circular reference), `hostService` catches the error and sends a clamped `{ kind: "reply", seq, ok: false, error }` frame instead so the page's RPC promise rejects cleanly rather than hanging. For an event emitted after the init message, an unserializable or oversized payload is logged and dropped rather than crashing the worker. The capacity is `ringBytes` in [app.md](app.md).
 
 ## Example
 

@@ -6,8 +6,8 @@
 //
 // Windows: nothing to set at run time. Explorer, the taskbar and Alt+Tab take
 // the icon from the executable's resources (`bun build --compile
-// --windows-icon=app.ico`) and from each window (`NativeWindow.setIcon`,
-// `OverlayWindowOptions.icon`).
+// --windows-icon=app.ico`) and from each window (`Window.setIcon`,
+// `WindowOptions.icon`).
 
 import type { Icon } from "./icon";
 import { backend } from "./platform";

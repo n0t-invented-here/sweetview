@@ -6,12 +6,12 @@ overview, install and quickstart are in the [package README](../README.md).
 
 | Module | Contents |
 |---|---|
-| [`@n1h/sweetview`](app.md) | `createWebviewApp`: the window, the page, assets, the transport between page, UI thread and worker; `indexHtml`, `assetMime`, `Ring`, and `Webview` from the webview library |
+| [`@n1h/sweetview`](app.md) | `createApp`, `WebView` (`WebView.attach`, `WebView.openTab`), native tabs (`Tab`, `TabOptions`), `windowChromeMethods`, `runEventLoop`, `indexHtml`, `assetMime`, `Ring`, and `RawWebview` |
 | [`@n1h/sweetview/worker`](worker.md) | `hostService` |
 | [`@n1h/sweetview/page`](page.md) | `isWebview`, `webviewTransport` |
 | [`@n1h/sweetview/ipc`](ipc.md) | the contract: `defineService`, `createBridge`, `memoryTransport`, the wire frames |
 | [`@n1h/sweetview/ipc-ws`](ipc-ws.md) | the contract over WebSockets: `wsHost` for `Bun.serve`, `wsTransport` and `wsUrl` for the browser; each side alone as `/ipc-ws/server` and `/ipc-ws/client` |
-| [`@n1h/sweetview/native`](native.md) | tray, notifications, windows and overlays, click-through hit regions, folder picker, app menu, the OS event loop for an app with no window, icons; the hit-region helpers alone, without FFI, as `/native/hit-regions` |
+| [`@n1h/sweetview/native`](native.md) | unified `Window` / `createWindow`, `Screen`, `Menu.popup`, `Tray`, `Notifier`, `HitRelay` and hit regions, `pickFolder`, `setAppMenu`, `setAppIcon`, `runEventLoop` / `quitEventLoop`, icons; the hit-region helpers alone, without FFI, as `/native/hit-regions` |
 | [`@n1h/sweetview/settings-store`](settings-store.md) | a JSON settings file in the user's application data folder |
 | [`@n1h/sweetview/window-chrome`](window-chrome.md) | a page-drawn title bar and resize handles backed by OS moves and resizes |
 | [`@n1h/sweetview/build`](build.md) | `writeIconFiles` and `makeMacApp`; the page also covers the `make-app.ts` script and the `/file-imports` types |
@@ -31,3 +31,5 @@ page bundle contains no Bun code.
 |---|---|
 | [v1 API design](v1-api.md) | Target `1.0.0` two-layer API (`Window`, `WebView`, `Screen`, `Menu`, `Tray`, `Notifier`, `HitRelay`, native tabs, `createApp`), examples, and breaking changes |
 | [Audit & v1 plan](audit-and-v1-plan.md) | Package layout discrepancy, 12 verified bugs/leaks in `src/`, zero-TCP porting analysis (`TracLite`, `gitweb`, `UntidyDiary`), URL schemes & single-instance, `delightful-qt-web-shell` lessons, and dual-mode web/Sweetview workflow |
+| [v1 checklist](v1-checklist.md) | Implementation and verification tracker for the `1.0.0` release |
+| [v1 macOS verification](v1-macos-verification.md) | Step-by-step macOS verification guide for Apple Silicon hosts |

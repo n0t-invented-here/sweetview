@@ -19,10 +19,9 @@ of the Dock when it runs uncompiled; the `.app` bundle gets the same from
 | `just demos menubar-notify open` | macOS: builds the page, compiles the binary, wraps it in `dist/Menubar Notify.app` and launches it. The first notification asks for permission. |
 | `just demos menubar-notify compile` | The page, the Windows exe, the macOS binary and the `.app`, into `dist/`. |
 
-Everything the app does, and every `sweetnative:` error from the library, is
+Everything the app does, and every `sweetview:` error from the library, is
 appended to `~/Library/Logs/menubar-notify.log` on macOS and
 `%LOCALAPPDATA%\menubar-notify.log` on Windows, because a launched app has
 no console.
 
-Windows: the menu opens on right click, and the notification is the tray
-icon's toast. macOS: any click opens the menu.
+Windows: the menu opens on right click, and notifications use standalone hidden notification channels so each clicked toast delivers its exact `id` and `data`. macOS: any click opens the menu.

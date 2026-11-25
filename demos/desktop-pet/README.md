@@ -107,9 +107,9 @@ Outside every hull the window passes clicks through at once.
 Inside one, the native side sends `hit.probe`, the page answers with a triangle pick in `hit.answer`, and the window follows.
 [`createHitRelay`](../../docs/native.md#createhitrelay) keeps the regions, the pending probe and the on/off switch.
 
-The pet window is [`createOverlayWindow`](../../docs/native.md#createoverlaywindow) with `transparent: true`, created before the webview and passed to [`createWebviewApp`](../../docs/app.md#createwebviewapp) with the page and the models as assets.
-The settings window is a second overlay and a second `createWebviewApp` with no worker; its frame uses [`windowChromeMethods`, `windowChromeControls` and `resizeHandles`](../../docs/window-chrome.md).
-The settings file is a [`createSettingsStore`](../../docs/settings-store.md) store.
+The pet window is a frameless [`Window`](../../docs/native.md#window) with `frame: false, transparent: true, topmost: true, hideFromTaskbar: true, noActivate: true`, paired with [`WebView.attach`](../../docs/app.md#webviewattach) carrying the page and the models as assets.
+The settings window is a second `Window` and a second `WebView.attach` with no worker; its frame uses [`windowChromeMethods`, `windowChromeControls` and `resizeHandles`](../../docs/window-chrome.md).
+The settings file is a [`SettingsStore`](../../docs/settings-store.md) store.
 Serving the pages and the see-through background need `webview_set_asset` and `webview_set_background_color` ([`webview-library.md`](../../docs/webview-library.md)).
 
 ## macOS

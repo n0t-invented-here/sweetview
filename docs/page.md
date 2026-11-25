@@ -55,7 +55,7 @@ The module declares both globals as optional properties of `Window`.
 
 | Global | Type | Installed by | Meaning |
 |---|---|---|---|
-| `__sweetview_rpc` | `(method: string, params: unknown) => Promise<unknown>` | The UI thread, with `webview_bind`, in `createWebviewApp` | Sends a call to the host. A method in `uiMethods` is answered on the UI thread. Any other method goes to the worker. In a window without a worker, any other method rejects. A result of `undefined` resolves as `null`. Rejects with `{ message }` on failure. |
+| `__sweetview_rpc` | `(method: string, params: unknown) => Promise<unknown>` | The UI thread, with `webview_bind`, in `WebView.attach` / `createApp` | Sends a call to the host. A method in `uiMethods` is answered on the UI thread. Any other method goes to the worker. In a window without a worker, any other method rejects. A result of `undefined` resolves as `null`. Rejects with `{ message }` on failure. |
 | `__sweetview_emit` | `(name: string, payload: unknown) => void` | `webviewTransport()`, on its first call | The UI thread evaluates `__sweetview_emit(name, payload)` once per event. A payload of `undefined` arrives as `null`. It passes the event to every listener registered with `onEvent`. |
 
 The host side of both is in [app.md](app.md).

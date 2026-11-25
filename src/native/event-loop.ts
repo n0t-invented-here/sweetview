@@ -1,5 +1,5 @@
 // The OS event loop for an app with no webview window: a menu-bar or tray app,
-// an overlay with no page. `createWebviewApp(...).run()` blocks the UI thread
+// an overlay with no page. `app.run()` / `webview.run()` blocks the UI thread
 // inside the OS loop, and Bun's event loop with it, which is why a windowed
 // app keeps its logic in a worker. These run the OS loop the other way round,
 // from a Bun timer that drains pending OS events each tick, so the UI thread
@@ -35,7 +35,7 @@ export function pumpEvents(): boolean {
 }
 
 /**
- * Internal, for `createWebviewApp(...).dispose()`. Destroying a webview asks
+ * Internal, for `WebView.dispose()`. Destroying a webview asks
  * the OS loop to end, which is right after `run()` and wrong for one window
  * of several under `runEventLoop`. Windows: dispatches what is waiting until
  * that request comes out, and drops it. macOS: nothing to take back.

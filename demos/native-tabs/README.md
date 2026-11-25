@@ -31,7 +31,11 @@ address in [`web-address.ts`](web-address.ts): `bun.sh` is https, `localhost:300
 address are http, anything that is not http or https (`mailto:`, `tel:`, `javascript:`) is refused
 in words.
 
-## macOS
+## Built-in tabs architecture
+
+Native tabs are built directly into `@n1h/sweetview` (`createApp({ tabs: true })`, `WebView.openTab`, `Window({ tabs: true })`). This demo's [`app.ts`](app.ts) is a thin consumer of that API, plus the demo page ([`frontend/main.ts`](frontend/main.ts), [`tab-page.ts`](tab-page.ts), [`web-address.ts`](web-address.ts)) and automated drive scripts (`scripts/`).
+
+### macOS
 
 On macOS a tab **is** a window. AppKit's window tabbing puts `NSWindow`s that share a tabbing
 identifier behind one tab bar, and draws the bar, the `+`, reordering and tear-off itself. So "one
@@ -39,8 +43,8 @@ webview per tab" is the platform's own model:
 
 | Piece | File | What it does |
 | --- | --- | --- |
-| A tab's window | [`mac-window-tabs.ts`](mac-window-tabs.ts) | makes a framed `NSWindow` set up for tabbing, joins it to the tab bar (`addTabbedWindow:ordered:`), reports "the user asked for a tab" and "this tab closed" |
-| A tab's webview | [`mac-tabs-app.ts`](mac-tabs-app.ts) | `createWebviewApp({ window })` hosts a webview in that window; a tab's window, webview and record are made together and torn down together |
+| Window tabbing primitives | `src/native/darwin/tabs.ts` | makes a framed `NSWindow` set up for tabbing, joins it to the tab bar (`addTabbedWindow:ordered:`), reports "the user asked for a tab" and "this tab closed" |
+| Tab webview coordinator | `src/tabs/darwin-tabs.ts`, `src/tabs/darwin-webview.ts` | `WebView.attach` hosts a webview in each tab window; manages `WKWebView` load-error hooks, message-handler detachment, and `Tab` lifecycle |
 
 What the code does that is not obvious:
 
@@ -65,7 +69,7 @@ What the code does that is not obvious:
 - **A site that cannot be loaded** shows the address, the system's reason and a Try Again button
   (`onLoadFailed`), not a blank page.
 
-## Windows
+### Windows
 
 Windows has no window tabbing to borrow, and a tab is not a window there. So the window is ours,
 built the way Windows 11's own tabbed apps are: one window whose title bar is the tab strip.
@@ -78,10 +82,10 @@ the frame        a normal resizable window, minus its caption
 
 | Piece | File | What it does |
 | --- | --- | --- |
-| The window | [`win-tab-window.ts`](win-tab-window.ts) | the frame and its panes: takes the caption off (`WM_NCCALCSIZE`), lays the panes out, hands drags to the window manager, shows the system's popup menu |
-| The strip | [`frontend/strip.ts`](frontend/strip.ts), [`strip-shared.ts`](strip-shared.ts) | a page that draws the tabs, the `+` and the minimise, maximise and close buttons, and tells the UI thread what was done with them |
-| The tabs | [`win-tabs-app.ts`](win-tabs-app.ts) | which tabs are in which window, in what order, and which is shown; `createWebviewApp({ window: pane })` for each |
-| WebView2 | [`win-webview2.ts`](win-webview2.ts), [`win-shortcuts.ts`](win-shortcuts.ts) | the few WebView2 calls the webview library does not make, through the controller's COM vtable: hide a tab's page, give one the keyboard, hear accelerator keys, take over "open a new window" |
+| The frame & panes | `src/native/win32/tab-window.ts`, `src/native/win32/shortcuts.ts`, `src/native/win32/strip-shared.ts` | webview-free frame and child panes: takes the caption off (`WM_NCCALCSIZE`), lays the panes out, hands drags to the window manager, shows native popup menus via `Menu.popup` and `Screen` |
+| The embedded strip | `src/tabs/win-strip-assets.ts` | self-contained HTML/CSS/JS tab strip page drawing the tabs, `+`, and window buttons (no build step required) |
+| The tabs coordinator | `src/tabs/win-tabs.ts` | which tabs are in which window, in what order, and which is shown; `WebView.attach` per tab pane |
+| WebView2 helpers | `src/tabs/win-webview2.ts` | COM vtable calls the webview library does not expose: hide a tab's page, give one the keyboard, hear accelerator keys, take over "open a new window" |
 
 What the code does that is not obvious:
 
@@ -174,5 +178,3 @@ loading. It writes PNG captures of the window into `build/drive/`. `DRIVE_APPEAR
   `Win+Z` work as for any window.
 - Windows: tabs have no icons (a site's favicon, a loading mark), and a strip with more tabs than
   fit has no arrows, only the wheel.
-- `mac-window-tabs.ts` and the `win-*.ts` files live in this demo, not in `@n1h/sweetview/native`,
-  because what the cross-platform API should look like is still open.

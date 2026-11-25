@@ -75,7 +75,7 @@ does.
   `libwebview-<arch>.so` from `@n1h/sweetview-webview-bun/build/`.
 - The webview, the worker's `webview_dispatch` and the two extra calls use
   that one file, and `bun build --compile` embeds it.
-- `createWebviewApp` looks the two symbols up at run time ([app.md](app.md)):
+- `WebView.attach` (and `createApp`) caches the opened library per path and looks the two symbols up at run time ([app.md](app.md)):
 
 | Situation | Behaviour |
 |---|---|

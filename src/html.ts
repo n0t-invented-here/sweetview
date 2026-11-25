@@ -1,6 +1,6 @@
 // The page's index document, served as an asset like everything else. It only
 // references the bundle and stylesheet by relative URL; the bytes of those are
-// assets too (see createWebviewApp's `assets`). Nothing is inlined, so there
+// assets too (see WebView / createApp `assets`). Nothing is inlined, so there
 // is no size cap (webview_set_html on Windows stops at 2 MB).
 //
 //   assets: { "index.html": indexHtml({ title: "My App" }), "main.js": js, "main.css": css }

@@ -39,12 +39,12 @@ platform differences and thread rules.
 
 | Module | Contents |
 |---|---|
-| [`@n1h/sweetview`](docs/app.md) | `createWebviewApp`: the window, the page, assets, the transport between page, UI thread and worker; `runEventLoop` and `quitEventLoop` for an app with no window, or a window with no worker; `indexHtml`, `assetMime`, `Ring`, and `Webview` from the webview library |
+| [`@n1h/sweetview`](docs/app.md) | `createApp`, `WebView` (`WebView.attach`, `WebView.openTab`), native tabs (`Tab`, `TabOptions`), `runEventLoop` and `quitEventLoop`, `windowChromeMethods`, `indexHtml`, `assetMime`, `Ring`, and `RawWebview` from the webview library |
 | [`@n1h/sweetview/worker`](docs/worker.md) | `hostService` |
 | [`@n1h/sweetview/page`](docs/page.md) | `isWebview`, `webviewTransport` |
 | [`@n1h/sweetview/ipc`](docs/ipc.md) | the contract: `defineService`, `createBridge`, `memoryTransport`, the wire frames |
 | [`@n1h/sweetview/ipc-ws`](docs/ipc-ws.md) | the contract over WebSockets: `wsHost` for `Bun.serve`, `wsTransport` and `wsUrl` for the browser; each side alone as `/ipc-ws/server` and `/ipc-ws/client` |
-| [`@n1h/sweetview/native`](docs/native.md) | tray, notifications, windows and overlays, click-through hit regions, folder picker, app menu, the OS event loop for an app with no window, icons; the hit-region helpers alone, without FFI, as `/native/hit-regions` |
+| [`@n1h/sweetview/native`](docs/native.md) | unified `Window` / `createWindow` (`Window.fromHandle`, overlays, frames, tabs), `Screen`, `Menu.popup`, `Tray`, `Notifier`, `HitRelay` & hit regions, `pickFolder`, `setAppMenu`, `setAppIcon`, `runEventLoop` / `quitEventLoop`, icon encoders (`dotIco`, `dotPng`, `dotIcns`); the hit-region helpers alone, without FFI, as `/native/hit-regions` |
 | [`@n1h/sweetview/settings-store`](docs/settings-store.md) | a JSON settings file in the user's application data folder |
 | [`@n1h/sweetview/window-chrome`](docs/window-chrome.md) | a page-drawn title bar and resize handles backed by OS moves and resizes |
 | [`@n1h/sweetview/build`](docs/build.md) | `writeIconFiles` and `makeMacApp`; the page also covers the `make-app.ts` script and the `/file-imports` types |
@@ -167,19 +167,21 @@ closes or `quit()` is called.
   `Bun.main`, which is this file. The same path works under `bun run` and
   inside an executable from `bun build --compile`.
 - `title` defaults to the page's `<title>`; `assets` adds files the page
-  fetches, such as models or images. All options:
-  [`createWebviewApp`](docs/app.md#createwebviewapp).
+  fetches, such as models or images. Windows are created hidden so you can
+  wire trays, menus, or bounds before calling `app.window.show()`. All options:
+  [`createApp`](docs/app.md#createapp).
 
 ```ts
-import { createWebviewApp } from "@n1h/sweetview";
+import { createApp } from "@n1h/sweetview";
 import index from "./index.html";
 import type { Events, Methods } from "./protocol";
 
-const app = await createWebviewApp<Methods, Events>({
+const app = await createApp<Methods, Events>({
   page: index,
   worker: "./worker.ts",
 });
 
+app.window.show();
 app.run();
 ```
 
@@ -222,8 +224,8 @@ explains both ways and when to use which.
 
 | | Windows x64 | macOS arm64 | Linux x64 |
 |---|---|---|---|
-| Window, asset serving, transparency | yes | yes | no: `createWebviewApp` throws |
-| `native` (tray, notifications, overlays, folder picker, app menu, event loop) | yes | yes | throws on first call; icons and hit regions work |
+| Window, asset serving, transparency, native tabs | yes | yes | no: `WebView.attach` / `createApp` throws |
+| `native` (window, screen, popup menu, tray, notifications, folder picker, app menu, event loop) | yes | yes | throws on first call; icons and hit regions work |
 | Build host that can embed the Windows exe file icon | yes | no, Bun's stock icon | no, Bun's stock icon |
 
 - Bun accepts `--windows-icon` only on a Windows host; the demos pass it

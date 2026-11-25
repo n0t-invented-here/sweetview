@@ -51,7 +51,7 @@ The answer to `window.info`.
 | Field | Type | Meaning |
 |---|---|---|
 | `chrome` | `WindowChromeKind` | Who draws the frame. |
-| `maximized` | `boolean` | Windows: `true` while `window.maximize` has the window maximised; the OS's own maximised state is not read. macOS: whether the window is zoomed. |
+| `maximized` | `boolean` | `window.isMaximized()`: on Windows `IsZoomed` for framed windows and `toggleMaximize()` state for frameless windows; on macOS whether the window is zoomed. |
 
 ### WindowChromeMethods
 
@@ -66,16 +66,16 @@ export type WindowChromeMethods = {
 };
 ```
 
-The UI-thread methods a page-drawn chrome calls, as `[params, result]` pairs. Add it to the method map `M` that `createWebviewApp` is called with: `type Methods = WindowChromeMethods & { ... }`.
+The UI-thread methods a page-drawn chrome calls, as `[params, result]` pairs. Add it to the method map `M` that `WebView.attach` or `createApp` is called with: `type Methods = WindowChromeMethods & { ... }`.
 
 | Method | Params | Result | What `windowChromeMethods` does on the UI thread |
 |---|---|---|---|
-| `window.info` | `void` | `WindowChromeInfo` | Returns the configured `chrome` kind and `window.maximized()`. |
+| `window.info` | `void` | `WindowChromeInfo` | Returns the configured `chrome` kind and `window.isMaximized()`. |
 | `window.drag` | `void` | `void` | Calls `window.startDrag()`: the window follows the cursor until the mouse button is released. Windows: the OS's own move loop runs. macOS: the drag starts from the application's current event. |
-| `window.resize` | `ResizeEdge` | `void` | Calls `window.startResize(edge)`. Windows: the edge or corner follows the cursor until the left mouse button is released. macOS: nothing happens. |
+| `window.resize` | `ResizeEdge` | `void` | Calls `window.startResize(edge)`. Both Windows and macOS drag the requested edge or corner with the cursor while the left mouse button is held. |
 | `window.minimize` | `void` | `void` | Calls `window.minimize()`. |
 | `window.maximize` | `void` | `void` | Calls `window.toggleMaximize()`: maximised, or back to the previous bounds when already maximised. |
-| `window.close` | `void` | `void` | Calls the `close` option. Without one, it calls `window.hide()`: the window disappears and the app keeps running. |
+| `window.close` | `void` | `void` | Calls the `onClose` option. Without one, it calls `window.hide()`: the window disappears and the app keeps running. |
 
 ### WindowChromeMethodTable
 
@@ -87,14 +87,14 @@ One handler per method of `WindowChromeMethods`, each taking that method's param
 
 ## UI thread
 
-This half runs on the UI thread, inside the process that owns the window. It answers the `window.*` calls through the `uiMethods` option of `createWebviewApp`, see [app.md](app.md). `windowChromeMethods`, `WindowChromeInfo`, `WindowChromeKind`, `WindowChromeMethods` and `WindowChromeOptions` are also exported from `@n1h/sweetview`.
+This half runs on the UI thread, inside the process that owns the window. It answers the `window.*` calls through the `uiMethods` option of `WebView.attach` or `createApp`, see [app.md](app.md). `windowChromeMethods`, `WindowChromeInfo`, `WindowChromeKind`, `WindowChromeMethods` and `WindowChromeOptions` are also exported from `@n1h/sweetview`.
 
 ### WindowChromeOptions
 
 ```ts
 export type WindowChromeOptions = {
   chrome?: WindowChromeKind;
-  close?: () => void;
+  onClose?: () => void;
 };
 ```
 
@@ -103,28 +103,28 @@ The options of `windowChromeMethods`.
 | Field | Type | Default | Meaning |
 |---|---|---|---|
 | `chrome` | `WindowChromeKind` | `"page"` | What `window.info` reports. Pass `"os"` when the same page is hosted in a plain framed window. |
-| `close` | `() => void` | `() => window.hide()` | What `window.close` does. The default hides the window and does not quit, so a tray or a menu can show it again. Pass `app.quit` for a main window, so the close button ends the app. |
+| `onClose` | `() => void` | `() => window.hide()` | What `window.close` does. The default hides the window and does not quit, so a tray or a menu can show it again. Pass `app.quit` for a main window, so the close button ends the app. |
 
 ### windowChromeMethods
 
 ```ts
-export function windowChromeMethods(window: Overlay, options: WindowChromeOptions = {}): WindowChromeMethodTable
+export function windowChromeMethods(window: Window, options: WindowChromeOptions = {}): WindowChromeMethodTable
 ```
 
 Builds the `window.*` handlers for one window. Spread the result into `uiMethods`. The table in `WindowChromeMethods` lists what each handler does.
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
-| `window` | `Overlay` | required | The window the methods act on, from `createOverlayWindow` in `@n1h/sweetview/native`, see [native.md](native.md). Create it with `transparent: true`, `topmost: false`, `hideFromTaskbar: false` and `noActivate: false` for a page-drawn chrome. |
+| `window` | `Window` | required | The window the methods act on, from `new Window(...)` / `createWindow(...)` in `@n1h/sweetview/native`, see [native.md](native.md). Create it with `frame: false, transparent: true` for a page-drawn chrome. |
 | `options` | `WindowChromeOptions` | `{}` | See `WindowChromeOptions`. |
 
 Returns: a `WindowChromeMethodTable` bound to `window`.
 
-Throws: on Windows, the `window.resize` handler throws `sweetnative: SetTimer failed (<code>)` when the resize timer cannot be created; `createWebviewApp` passes the message to the page as a failed call.
+Throws: on Windows, the `window.resize` handler throws `sweetview: SetTimer failed (<code>)` when the resize timer cannot be created; `WebView` passes the message to the page as a failed call.
 
-Platforms: Windows: implemented; `window.resize` moves the edge or corner with the cursor every 10 ms, down to 160x120 window units, and `window.maximize` toggles between the primary monitor's work area and the previous bounds. macOS: implemented except `window.resize`, which is a no-op; a frameless window has no resizable style, so the user cannot resize it; `window.maximize` zooms. Linux: not available; `createOverlayWindow` throws, so there is no `Overlay` to pass.
+Platforms: Windows: implemented; `window.resize` moves the edge or corner with the cursor every 10 ms, down to 160x120 window units, and `window.maximize` toggles between the current monitor's work area (`Screen.of(window).workArea`) and the previous bounds (or OS maximize on framed windows). macOS: implemented; `window.resize` polls cursor movement at 10 ms while the left mouse button is held, and `window.maximize` zooms. Linux: not available; `new Window()` throws.
 
-Thread: UI thread. Each handler calls the `Overlay` directly.
+Thread: UI thread. Each handler calls the `Window` directly.
 
 ## Page
 

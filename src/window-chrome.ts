@@ -2,19 +2,19 @@
 // minimise / maximise / close buttons and the resize handles are the page's,
 // what the user does with them is the OS's. The page tells the UI thread
 // which part was pressed, and the UI thread hands the gesture to the window
-// manager (sweetnative's Overlay.startDrag / startResize), so moving snaps
+// manager (Window.startDrag / startResize), so moving snaps
 // and docks like a real window and resizing lays the page out live.
 //
 // Two halves, one method table between them, both in this module because it
-// imports nothing native (the sweetnative and sweetipc imports are types):
+// imports nothing native (the native and ipc imports are type-only):
 //
 //   UI thread:  uiMethods: { ...windowChromeMethods(settingsWindow, { chrome: "page" }), ... }
 //   page:       const chrome = windowChromeControls(webviewTransport());
 //               <div onPointerDown={chrome.onTitlePointerDown}>…</div>
 //               {resizeHandles().map((h) => <div key={h.edge} style={{ position: "absolute", ...h.style }} onPointerDown={chrome.onHandlePointerDown(h.edge)} />)}
 //
-// The window: createOverlayWindow({ transparent: true, topmost: false, hideFromTaskbar: false, noActivate: false, … })
-// and createWebviewApp({ window: it.handle, transparent: true, … }); the page is see-through outside what it draws.
+// The window: new Window({ frame: false, transparent: true, ... })
+// paired with WebView.attach(win, { ... }); the page is see-through outside what it draws.
 
 import type { Transport } from "./ipc";
 import type { ResizeEdge, Window } from "./native";

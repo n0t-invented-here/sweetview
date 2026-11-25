@@ -1,32 +1,40 @@
 // Platform selector for built-in native tabs. Imported by src/index.ts to
 // register the TabsDriver with WebView.openTab / createApp({ tabs: true }).
+// Uses dynamic import() rather than require() so `bun build --compile` works
+// cleanly with the top-level await inside @n1h/sweetview-webview-bun.
 
-import { registerTabsDriver, type TabsDriver } from "../app";
+import { registerTabsDriver, type Tab, type TabOptions, type TabsDriver } from "../app";
 import type { EventMap, MethodMap } from "../ipc";
-import type { Tab, TabOptions } from "../app";
 import type { Window } from "../native/window";
 
 let cached: TabsDriver | undefined;
-function driver(): TabsDriver {
+let loading: Promise<TabsDriver> | undefined;
+
+async function driver(): Promise<TabsDriver> {
   if (cached) return cached;
-  if (process.platform === "win32") {
-    cached = (require("./win-tabs") as { winTabsDriver: TabsDriver }).winTabsDriver;
-  } else if (process.platform === "darwin") {
-    cached = (require("./darwin-tabs") as { darwinTabsDriver: TabsDriver }).darwinTabsDriver;
-  } else {
-    throw new Error(`sweetview: native tabs are not supported on ${process.platform} (win32 and darwin only)`);
+  if (!loading) {
+    loading = (async () => {
+      if (process.platform === "win32") {
+        cached = (await import("./win-tabs")).winTabsDriver;
+      } else if (process.platform === "darwin") {
+        cached = (await import("./darwin-tabs")).darwinTabsDriver;
+      } else {
+        throw new Error(`sweetview: native tabs are not supported on ${process.platform} (win32 and darwin only)`);
+      }
+      return cached;
+    })();
   }
-  return cached;
+  return loading;
 }
 
 registerTabsDriver({
-  openTab<M extends MethodMap, E extends EventMap>(window: Window, options: TabOptions<M>): Promise<Tab<M, E>> {
-    return driver().openTab(window, options);
+  async openTab<M extends MethodMap, E extends EventMap>(window: Window, options: TabOptions<M>): Promise<Tab<M, E>> {
+    return (await driver()).openTab<M, E>(window, options);
   },
   mergeAllWindows(into?: Window) {
-    driver().mergeAllWindows(into);
+    cached?.mergeAllWindows(into);
   },
   disposeWindow(window: Window) {
-    if (cached) cached.disposeWindow(window);
+    cached?.disposeWindow(window);
   },
 });

@@ -3,7 +3,7 @@
 A settings file for a small app: one JSON document in the user's per-app folder, read once at start and written whole on every change. Every call is synchronous, so the UI thread can use it after `run()` has blocked it in the OS loop, and it runs on any thread and in any build or test script. It imports only `node:fs`, `node:os` and `node:path`, and loads neither `bun:ffi` nor the webview library.
 
 ```ts
-import { appDataDir, createSettingsStore, type SettingsStore, type SettingsStoreOptions } from "@n1h/sweetview/settings-store";
+import { appDataDir, createSettingsStore, SettingsStore, type SettingsStoreOptions } from "@n1h/sweetview/settings-store";
 ```
 
 - [Reference](#reference)
@@ -66,14 +66,15 @@ The default `sanitize` returns `{ ...defaults, ...input }` when `input` is a non
 ### SettingsStore
 
 ```ts
-export type SettingsStore<T> = {
+export class SettingsStore<T extends object> {
   readonly path: string;
+  constructor(options: SettingsStoreOptions<T>);
   load(): T;
   save(settings: T): void;
-};
+}
 ```
 
-The handle `createSettingsStore` returns.
+Construct directly with `new SettingsStore(options)` or via the `createSettingsStore(options)` alias. It touches no file at construction.
 
 | Field | Type | Meaning |
 |---|---|---|
@@ -114,12 +115,12 @@ Returns: a `SettingsStore<T>` for that path.
 ## Example
 
 ```ts
-import { createSettingsStore } from "@n1h/sweetview/settings-store";
+import { SettingsStore } from "@n1h/sweetview/settings-store";
 
 type Settings = { volume: number; muted: boolean };
 const DEFAULTS: Settings = { volume: 50, muted: false };
 
-const store = createSettingsStore<Settings>({
+const store = new SettingsStore<Settings>({
   app: "my-app",
   defaults: DEFAULTS,
   sanitize: (input) => {

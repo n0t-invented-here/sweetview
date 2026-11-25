@@ -156,7 +156,7 @@ A `--plist` entry splits at its first `=`. The value may contain further `=` sig
 
 ## File-import types
 
-`@n1h/sweetview/file-imports` is a types-only module: the package maps it to `file-imports.d.ts` under the `types` condition, and it has no runtime module. It declares path-valued modules for the files an app imports with `with { type: "file" }`, such as `import js from "./build/frontend/main.js" with { type: "file" };`. Bun resolves such an import to a path the file can be read from. `Bun.file(js)` reads that file and can be passed as an asset to `createWebviewApp`, see [app.md](app.md). `bun build --compile` embeds the file.
+`@n1h/sweetview/file-imports` is a types-only module: the package maps it to `file-imports.d.ts` under the `types` condition, and it has no runtime module. It declares path-valued modules for the files an app imports with `with { type: "file" }`, such as `import js from "./build/frontend/main.js" with { type: "file" };`. Bun resolves such an import to a path the file can be read from. `Bun.file(js)` reads that file and can be passed as an asset to `WebView.attach` or `createApp`, see [app.md](app.md). `bun build --compile` embeds the file.
 
 | Module pattern | Default export |
 |---|---|
