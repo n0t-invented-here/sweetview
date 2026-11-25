@@ -323,7 +323,7 @@ Returns: a `Transport` with `kind` set to `session.kind`, plus `dispose()`.
 - `call` rejects with whatever `Service.call` rejects with.
 - `notify` discards both the result and any rejection.
 - Events reach this transport when they are broadcast or targeted at `session.id`. They are delivered synchronously inside `emit`, so a listener on this transport that throws makes the backend's `emit` throw.
-- `dispose()` stops event delivery and calls `service.endSession(session.id)`. Each further `dispose()` calls `service.endSession(session.id)` again. Calls made after `dispose()` still reach the service.
+- `dispose()` is idempotent: the first call stops event delivery, clears listeners, and calls `service.endSession(session.id)`. Later `dispose()` calls do nothing. Calls made after `dispose()` still reach the service.
 
 ## Example
 

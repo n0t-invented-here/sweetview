@@ -37,8 +37,15 @@ just demos native-tabs drive
 
 Expected:
 
-- Every check line prints `PASS` (opening tabs, `Cmd+T` / `+` button via responder chain, renaming, switching, separate page state, `moveToNewWindow`, `mergeAllWindows`, load-error fallback page, closing tabs down to 0, and clean exit without crashes or use-after-free).
-- PNG screenshots are written into `demos/native-tabs/build/drive/`. Visually inspect them to confirm the native AppKit tab bar renders cleanly in both light and dark modes (`DRIVE_APPEARANCE=light` and `DRIVE_APPEARANCE=dark`).
+- Every check line prints `ok` and ends with `PASS`:
+  - Window stays hidden until `app.window.show()`, then becomes visible.
+  - Renaming tab 1 leaves tab 2's title independent.
+  - Responder-chain `newWindowForTab:` (the AppKit `+` / `Cmd+T` action) opens a 3rd tab.
+  - Unreachable site tab (`http://127.0.0.1:1`) triggers the load-error fallback without crashing.
+  - `app.window.setBounds(...)` fires `app.window.onResize`.
+  - `moveToNewWindow()` isolates the tab into a 1-tab window group and `mergeAllWindows()` recombines all tabs into one group.
+  - Closing every tab down to 0 exits the event loop cleanly without crashes or use-after-free.
+- `demos/native-tabs/build/drive/tabs-initial.png` is written via `captureWindow`. Visually inspect it to confirm the native AppKit tab bar renders cleanly.
 
 ## 3. Targeted macOS v1 audit regression checks
 

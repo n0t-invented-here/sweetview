@@ -373,7 +373,7 @@ Notes on `onResize` / `onMove` / `onClose`:
 
 * All handlers run synchronously on the UI thread; thrown exceptions are caught, logged (`sweetview: ...`), and swallowed so nothing unwinds across `bun:ffi`.
 * **Windows**: `WM_SIZE` / `WM_MOVE` / `WM_CLOSE` via our `WndProc` (for `new Window`) or `SetWindowSubclass` (for `Window.fromHandle`).
-* **macOS**: `NSWindowDidResizeNotification` / `NSWindowDidMoveNotification` via `NSNotificationCenter` (leaving `NSWindowDelegate` untouched on externally owned `Window.fromHandle` windows), and `performClose:` interception on our `NSWindow` subclass (with close-button retargeting fallback for `Window.fromHandle`) so `onClose` catches the close button, `Cmd+W`, programmatic closes, and frameless windows.
+* **macOS**: `NSWindowDidResizeNotification` / `NSWindowDidMoveNotification` via `NSNotificationCenter` (leaving `NSWindowDelegate` untouched on externally owned `Window.fromHandle` windows), and `performClose:` interception on our `NSWindow` subclass so owned `new Window(...)` instances catch the close button, `Cmd+W`, programmatic closes, and frameless windows. On external windows wrapped via `Window.fromHandle(handle)` (not created by Sweetview), `onClose` retargets `standardWindowButton:(NSWindowCloseButton)` when present without touching the foreign `delegate`, so direct `performClose:` / `Cmd+W` and borderless external windows are not intercepted.
 
 #### `Screen`
 

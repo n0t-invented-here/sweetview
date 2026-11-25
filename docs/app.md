@@ -189,7 +189,7 @@ Throws:
 - `Error` `sweetview: cannot attach WebView to a window with a NULL handle` when `window.handle` is null or 0.
 - `Error` `sweetview: webview_create failed for the given window (is the WebView2 runtime installed?)` on Windows (or without the WebView2 parenthetical on macOS).
 - `Error` `sweetview: webview_set_background_color failed (<code>)` when transparency setup fails.
-- `RangeError` `ring capacity must be a power of two between 16 and 2^30, got <value>` when `ringBytes` is out of range.
+- `RangeError` `sweetview: ringBytes must be a power of two of at least 128 bytes, got <value>` or `ring capacity must be a power of two between 16 and 2^30, got <value>` when `ringBytes` is out of range.
 - `Error` `sweetview: this webview library has no webview_set_asset; it needs the library @n1h/sweetview-webview-bun ships (is WEBVIEW_PATH pointing at a stock one?)` when the symbol is missing.
 - `Error` `sweetview: webview_set_asset(<path>) failed (<code>)` when an asset is rejected.
 
@@ -235,7 +235,7 @@ export type WebViewOptions<M extends MethodMap = MethodMap> = {
 | `worker` | `URL \| string` | none | Worker entry calling `hostService`. Relative strings resolve against `pathToFileURL(Bun.main)`. |
 | `debug` | `boolean` | `false` | Enables devtools and the context menu. |
 | `uiMethods` | `UiMethods<M>` | `{}` | Synchronous handlers answered on the UI thread before consulting the worker. |
-| `ringBytes` | `number` | `1048576` | Capacity of the worker-to-UI shared-memory ring (power of two, `16..2^30`). |
+| `ringBytes` | `number` | `1048576` | Capacity of the worker-to-UI shared-memory ring (power of two, `128..2^30`). |
 
 ### Tab and TabOptions
 

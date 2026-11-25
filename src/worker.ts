@@ -28,6 +28,47 @@ function dispatchCall(libPath: string): (w: Pointer, fn: Pointer, arg: Pointer |
 }
 
 /**
+ * Encodes `{ kind: "reply", seq, ok: false, error }` clamped by exact UTF-8
+ * JSON byte length (accounting for JSON escaping such as quotes, NUL bytes,
+ * and multibyte UTF-8 characters) so it always fits within `maxBytes`.
+ */
+function encodeClampedErrorReply(seq: string, message: string, maxBytes: number, encoder: TextEncoder): Uint8Array | null {
+  const make = (error: string) => encoder.encode(JSON.stringify({ kind: "reply", seq, ok: false, error } satisfies ReplyFrame));
+  const full = make(message);
+  if (full.length <= maxBytes) return full;
+
+  const empty = make("");
+  if (empty.length > maxBytes) return null;
+
+  const withEllipsis = (len: number) => {
+    // Avoid splitting a UTF-16 surrogate pair.
+    let end = len;
+    if (end > 0 && end < message.length) {
+      const code = message.charCodeAt(end - 1);
+      if (code >= 0xd800 && code <= 0xdbff) end--;
+    }
+    return make(end > 0 ? `${message.slice(0, end)}...` : "...");
+  };
+
+  if (withEllipsis(0).length > maxBytes) return empty;
+
+  let lo = 0;
+  let hi = message.length;
+  let best = withEllipsis(0);
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    const candidate = withEllipsis(mid);
+    if (candidate.length <= maxBytes) {
+      best = candidate;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  return best;
+}
+
+/**
  * Serializes `frame` and writes it into `ring`, waking the consumer when
  * needed. Never throws on oversized or unserializable replies: sends a compact
  * error reply frame instead so RPC callers never hang.
@@ -48,18 +89,11 @@ export function writeWorkerFrame(
       console.error(`sweetview worker: ${frame.kind === "event" ? `event ${frame.name}` : "frame"} could not be sent:`, reason);
       return;
     }
-    // Fall back to a compact error reply guaranteed to fit in the ring.
-    const prefix = "sweetview worker: reply could not be sent: ";
     const maxBytes = Math.max(0, ring.capacity - 4);
-    let error = `${prefix}${reason}`;
-    let fallback: ReplyFrame = { kind: "reply", seq: frame.seq, ok: false, error };
-    let encoded = encoder.encode(JSON.stringify(fallback));
-    if (encoded.length > maxBytes) {
-      const overhead = encoder.encode(JSON.stringify({ kind: "reply", seq: frame.seq, ok: false, error: "" } satisfies ReplyFrame)).length;
-      const room = Math.max(0, maxBytes - overhead - 3);
-      error = room > 0 ? `${error.slice(0, room)}...` : "";
-      fallback = { kind: "reply", seq: frame.seq, ok: false, error };
-      encoded = encoder.encode(JSON.stringify(fallback));
+    const encoded = encodeClampedErrorReply(frame.seq, `sweetview worker: reply could not be sent: ${reason}`, maxBytes, encoder);
+    if (!encoded) {
+      console.error(`sweetview worker: ring capacity (${ring.capacity} bytes) is too small to send an error reply for seq ${frame.seq}`);
+      return;
     }
     try {
       ring.write(encoded);

@@ -132,6 +132,8 @@ type TabListeners = {
 const windowMetaMap = new WeakMap<Window, WindowMeta>();
 const windowBackendMap = new WeakMap<Window, WindowBackend>();
 const windowTabListeners = new WeakMap<Window, TabListeners>();
+const windowDisposeHooks = new WeakMap<Window, Set<() => void>>();
+const windowDisposed = new WeakSet<Window>();
 
 /** Internal metadata read by WebView.attach / tabs coordinator. */
 export function getWindowMeta(win: Window): WindowMeta {
@@ -141,6 +143,22 @@ export function getWindowMeta(win: Window): WindowMeta {
 /** Internal backend accessor used by platform tab drivers. */
 export function getWindowBackend(win: Window): WindowBackend {
   return windowBackendMap.get(win)!;
+}
+
+/** Internal hook invoked right before native Window disposal (used by tabs drivers). */
+export function onWindowDispose(win: Window, fn: () => void): () => void {
+  let set = windowDisposeHooks.get(win);
+  if (!set) {
+    set = new Set();
+    windowDisposeHooks.set(win, set);
+  }
+  set.add(fn);
+  return () => set.delete(fn);
+}
+
+/** Internal check for whether Window.dispose() has already run. */
+export function isWindowDisposed(win: Window): boolean {
+  return windowDisposed.has(win);
 }
 
 /** Internal emitter used by the tabs coordinator to dispatch Window tab events. */
@@ -343,6 +361,19 @@ export class Window {
 
   /** Releases timers, subclasses, notification observers, icons, and per-window entries. Safe to call twice. */
   dispose(): void {
+    if (windowDisposed.has(this)) return;
+    windowDisposed.add(this);
+    const hooks = windowDisposeHooks.get(this);
+    if (hooks) {
+      windowDisposeHooks.delete(this);
+      for (const fn of [...hooks]) {
+        try {
+          fn();
+        } catch (err) {
+          console.error("sweetview: window dispose hook threw:", err);
+        }
+      }
+    }
     this.#tabListeners.newTab.clear();
     this.#tabListeners.tabSelect.clear();
     this.#tabListeners.tabClose.clear();

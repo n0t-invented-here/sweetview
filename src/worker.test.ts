@@ -58,6 +58,17 @@ describe("writeWorkerFrame", () => {
     expect(frames[0]).toMatchObject({ kind: "reply", seq: "9", ok: false });
   });
 
+  test("clamps error messages containing quotes, NUL bytes, and multibyte UTF-8 accurately by byte length", () => {
+    const ring = new Ring(Ring.create(128));
+    let wakes = 0;
+    const nasty = '"\\"\0'.repeat(60) + "🥐".repeat(40);
+    writeWorkerFrame(ring, { kind: "reply", seq: "n1", ok: false, error: nasty }, () => wakes++);
+    expect(wakes).toBe(1);
+    const frames = drainFrames(ring);
+    expect(frames).toHaveLength(1);
+    expect(frames[0]).toMatchObject({ kind: "reply", seq: "n1", ok: false });
+  });
+
   test("swallows oversized or unserializable event frames without crashing", () => {
     const ring = new Ring(Ring.create(128));
     let wakes = 0;

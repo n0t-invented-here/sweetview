@@ -624,6 +624,8 @@ function buildWindow(hwnd: bigint, options: WindowOptions, framed: boolean, owne
   let restoreBounds: Rect | undefined;
   let disposed = false;
   let resizing: { edge: ResizeEdge; from: Rect; cursor: Point } | undefined;
+  const localUnsubs = new Set<() => void>();
+  let ownsHitState = false;
 
   const minW = options.minWidth ?? DEFAULT_MIN_RESIZE.width;
   const minH = options.minHeight ?? DEFAULT_MIN_RESIZE.height;
@@ -802,6 +804,7 @@ function buildWindow(hwnd: bigint, options: WindowOptions, framed: boolean, owne
 
     setClickThrough(on) {
       if (disposed) return;
+      ownsHitState = false;
       hits.delete(hwnd);
       user32.KillTimer(hwnd, HIT_TIMER_ID);
       passThrough(on);
@@ -810,11 +813,13 @@ function buildWindow(hwnd: bigint, options: WindowOptions, framed: boolean, owne
     setHitRegions(polygons, refine) {
       if (disposed) return;
       if (polygons === null) {
+        ownsHitState = false;
         hits.delete(hwnd);
         user32.KillTimer(hwnd, HIT_TIMER_ID);
         passThrough(false);
         return;
       }
+      ownsHitState = true;
       const previous = hits.get(hwnd);
       hits.set(hwnd, {
         packed: packRegions(polygons),
@@ -832,45 +837,61 @@ function buildWindow(hwnd: bigint, options: WindowOptions, framed: boolean, owne
     },
 
     onResize(handler) {
-      if (!owned) attachSubclass(hwnd);
+      if (!owned && !disposeCallbacks.has(hwnd)) attachSubclass(hwnd);
       const b = bucketFor(hwnd);
       b.resize.add(handler);
-      return () => {
+      const unsub = () => {
+        localUnsubs.delete(unsub);
         b.resize.delete(handler);
-        if (!owned) detachSubclassIfUnused(hwnd);
+        if (!owned && !disposeCallbacks.has(hwnd)) detachSubclassIfUnused(hwnd);
       };
+      localUnsubs.add(unsub);
+      return unsub;
     },
 
     onMove(handler) {
-      if (!owned) attachSubclass(hwnd);
+      if (!owned && !disposeCallbacks.has(hwnd)) attachSubclass(hwnd);
       const b = bucketFor(hwnd);
       b.move.add(handler);
-      return () => {
+      const unsub = () => {
+        localUnsubs.delete(unsub);
         b.move.delete(handler);
-        if (!owned) detachSubclassIfUnused(hwnd);
+        if (!owned && !disposeCallbacks.has(hwnd)) detachSubclassIfUnused(hwnd);
       };
+      localUnsubs.add(unsub);
+      return unsub;
     },
 
     onClose(handler) {
-      if (!owned) attachSubclass(hwnd);
+      if (!owned && !disposeCallbacks.has(hwnd)) attachSubclass(hwnd);
       const b = bucketFor(hwnd);
       b.close.add(handler);
-      return () => {
+      const unsub = () => {
+        localUnsubs.delete(unsub);
         b.close.delete(handler);
-        if (!owned) detachSubclassIfUnused(hwnd);
+        if (!owned && !disposeCallbacks.has(hwnd)) detachSubclassIfUnused(hwnd);
       };
+      localUnsubs.add(unsub);
+      return unsub;
     },
 
     dispose() {
       if (disposed) return;
       disposed = true;
       resizing = undefined;
-      if (!owned && subclassedHwnds.has(hwnd)) {
-        subclassedHwnds.delete(hwnd);
-        comctl32.RemoveWindowSubclass(hwnd, ensureSubclassProc().ptr, SUBCLASS_ID);
+      for (const unsub of [...localUnsubs]) unsub();
+      localUnsubs.clear();
+      if (!owned) {
+        if (ownsHitState) {
+          ownsHitState = false;
+          hits.delete(hwnd);
+          user32.KillTimer(hwnd, HIT_TIMER_ID);
+        }
+        if (!disposeCallbacks.has(hwnd)) detachSubclassIfUnused(hwnd);
+        return;
       }
       cleanupHwnd(hwnd);
-      if (owned && user32.IsWindow(hwnd) !== 0) {
+      if (user32.IsWindow(hwnd) !== 0) {
         user32.DestroyWindow(hwnd);
       }
     },

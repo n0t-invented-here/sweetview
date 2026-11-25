@@ -212,6 +212,11 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
       throw new Error("sweetview: cannot attach WebView to a window with a NULL handle");
     }
 
+    const ringBytes = options.ringBytes ?? 1 << 20;
+    if (!Number.isInteger(ringBytes) || ringBytes < 128) {
+      throw new RangeError(`sweetview: ringBytes must be a power of two of at least 128 bytes, got ${ringBytes}`);
+    }
+
     // Read DIPs directly from the Window so callers never duplicate width/height/scale/resizable.
     const widthDips = Math.max(1, Math.round(winBounds.width / scale));
     const heightDips = Math.max(1, Math.round(winBounds.height / scale));
@@ -223,6 +228,16 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
           ? "sweetview: webview_create failed for the given window (is the WebView2 runtime installed?)"
           : "sweetview: webview_create failed for the given window",
       );
+    }
+
+    // webview_set_size on Windows treats width/height as client area and calls
+    // AdjustWindowRectEx, which expands framed windows. Restore exact outer
+    // bounds on owned windows so Window.bounds() never drifts on attach.
+    if (meta.owned) {
+      const after = window.bounds();
+      if (after.x !== winBounds.x || after.y !== winBounds.y || after.width !== winBounds.width || after.height !== winBounds.height) {
+        window.setBounds(winBounds);
+      }
     }
 
     try {
@@ -245,7 +260,7 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
         }
       }
 
-      const sab = Ring.create(options.ringBytes ?? 1 << 20);
+      const sab = Ring.create(ringBytes);
       const ring = new Ring(sab);
       const taps = new Set<(event: { name: string; payload: unknown }) => void>();
 

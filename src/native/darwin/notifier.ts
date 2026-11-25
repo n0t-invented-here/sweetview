@@ -5,6 +5,8 @@
 // soon as the event loop runs, without waiting for the first notify() call.
 // Reuses one shared ObjC delegate and one pair of global completion blocks per
 // process so repeated Notifier creation never leaks runtime classes or blocks.
+// Routes clicks by notification ID to the notifier that sent it, keeping
+// multiple independent Notifier instances isolated.
 
 import { FFIType } from "bun:ffi";
 import { type NotificationClick, type NotifierBackend, type NotifierOptions, notificationId } from "../notifications";
@@ -47,10 +49,42 @@ function readClick(response: Id): NotificationClick {
 
 const bundled = (): boolean => asId(send(asId(send(cls("NSBundle"), sel("mainBundle"))), sel("bundleIdentifier"))) !== NIL;
 
+type NotifierEntry = {
+  readonly token: symbol;
+  readonly onClick?: (click: NotificationClick) => void;
+};
+
 let sharedDelegate: Id = NIL;
 let sharedAuthBlock: Id = NIL;
 let sharedRequestBlock: Id = NIL;
-let activeHandler: { token: symbol; onClick?: (click: NotificationClick) => void } | undefined;
+const liveNotifiers = new Set<NotifierEntry>();
+const ownerByNotificationId = new Map<string, NotifierEntry>();
+
+function deliverClick(click: NotificationClick): void {
+  const owner = ownerByNotificationId.get(click.id);
+  if (owner) {
+    ownerByNotificationId.delete(click.id);
+    if (liveNotifiers.has(owner) && owner.onClick) {
+      try {
+        owner.onClick(click);
+      } catch (err) {
+        console.error("sweetview: notification onClick threw:", err); // never unwind into AppKit
+      }
+      return;
+    }
+  }
+  // Cold-launch click (from an earlier process) or unmapped id: deliver to the first live notifier with a handler.
+  for (const entry of liveNotifiers) {
+    if (entry.onClick) {
+      try {
+        entry.onClick(click);
+      } catch (err) {
+        console.error("sweetview: notification onClick threw:", err);
+      }
+      return;
+    }
+  }
+}
 
 function ensureSharedDelegate(): Id {
   if (sharedDelegate !== NIL) return sharedDelegate;
@@ -64,13 +98,10 @@ function ensureSharedDelegate(): Id {
     "userNotificationCenter:didReceiveNotificationResponse:withCompletionHandler:": {
       args: 3,
       impl: (_center, response, handler) => {
-        const current = activeHandler;
-        if (current?.onClick) {
-          try {
-            current.onClick(readClick(response));
-          } catch (err) {
-            console.error("sweetview: notification onClick threw:", err); // never unwind into AppKit
-          }
+        try {
+          deliverClick(readClick(response));
+        } catch (err) {
+          console.error("sweetview: notification click handling threw:", err);
         }
         invokeBlock(handler, []);
       },
@@ -109,9 +140,9 @@ export function createNotifier(options: NotifierOptions = {}): NotifierBackend {
   let disposed = false;
   let authorized = false;
   let center: Id = NIL;
-  const token = Symbol("notifier");
+  const entry: NotifierEntry = { token: Symbol("notifier"), onClick: options.onClick };
   const delegate = ensureSharedDelegate();
-  activeHandler = { token, onClick: options.onClick };
+  liveNotifiers.add(entry);
 
   const ensureCenter = (): boolean => {
     if (center !== NIL) return true;
@@ -142,6 +173,8 @@ export function createNotifier(options: NotifierOptions = {}): NotifierBackend {
       if (disposed || !ensureCenter()) return false;
       ensureAuthorized();
       const { req } = ensureSharedBlocks();
+      const id = notificationId(n);
+      ownerByNotificationId.set(id, entry);
       const content = asId(send(allocRaw("UNMutableNotificationContent"), sel("init")));
       sendPtr(content, sel("setTitle:"), nsString(n.title));
       if (n.body) sendPtr(content, sel("setBody:"), nsString(n.body));
@@ -150,7 +183,7 @@ export function createNotifier(options: NotifierOptions = {}): NotifierBackend {
         const userInfo = asId(sendPtrPtr(cls("NSDictionary"), sel("dictionaryWithObject:forKey:"), nsString(JSON.stringify(n.data)), nsString(DATA_KEY)));
         sendPtr(content, sel("setUserInfo:"), userInfo);
       }
-      const request = asId(sendPtrPtrPtr(cls("UNNotificationRequest"), sel("requestWithIdentifier:content:trigger:"), nsString(notificationId(n)), content, NIL));
+      const request = asId(sendPtrPtrPtr(cls("UNNotificationRequest"), sel("requestWithIdentifier:content:trigger:"), nsString(id), content, NIL));
       sendPtrPtr(center, sel("addNotificationRequest:withCompletionHandler:"), request, req);
       release(content); // the request retains it
       return true;
@@ -158,11 +191,12 @@ export function createNotifier(options: NotifierOptions = {}): NotifierBackend {
     dispose() {
       if (disposed) return;
       disposed = true;
-      if (activeHandler?.token === token) {
-        activeHandler = undefined;
-        if (center !== NIL && asId(send(center, sel("delegate"))) === delegate) {
-          sendPtr(center, sel("setDelegate:"), NIL);
-        }
+      liveNotifiers.delete(entry);
+      for (const [id, owner] of ownerByNotificationId) {
+        if (owner === entry) ownerByNotificationId.delete(id);
+      }
+      if (liveNotifiers.size === 0 && center !== NIL && asId(send(center, sel("delegate"))) === delegate) {
+        sendPtr(center, sel("setDelegate:"), NIL);
       }
     },
   };

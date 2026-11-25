@@ -144,4 +144,26 @@ describe.if(onWindows)("win32 Window", () => {
       msg.destroy();
     }
   });
+
+  test("disposing a Window.fromHandle wrapper of an owned Window preserves the owner's onClose listener", async () => {
+    const { user32, WM_CLOSE } = await import("./api");
+    const { asHwnd } = await import("./window");
+    const owner = new Window({ title: "Owned Close Preservation" });
+    const hwnd = asHwnd(owner.handle);
+    let ownerCalls = 0;
+    let wrapperCalls = 0;
+    owner.onClose(() => ownerCalls++);
+    try {
+      const borrowed = Window.fromHandle(owner.handle);
+      borrowed.onClose(() => wrapperCalls++);
+      borrowed.dispose();
+
+      user32.SendMessageW(hwnd, WM_CLOSE, 0n, 0n);
+      expect(ownerCalls).toBe(1);
+      expect(wrapperCalls).toBe(0);
+      expect(user32.IsWindow(hwnd)).not.toBe(0);
+    } finally {
+      owner.dispose();
+    }
+  });
 });

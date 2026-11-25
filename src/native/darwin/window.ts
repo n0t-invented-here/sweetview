@@ -575,6 +575,8 @@ function buildWindow(win: Id, options: WindowOptions, framed: boolean, owned: bo
   }
 
   let disposed = false;
+  const localUnsubs = new Set<() => void>();
+  let ownsHitState = false;
 
   const self: WindowBackend = {
     handle: win,
@@ -699,6 +701,7 @@ function buildWindow(win: Id, options: WindowOptions, framed: boolean, owned: bo
 
     setClickThrough(on) {
       if (disposed) return;
+      ownsHitState = false;
       hits.delete(win);
       stopHitTimerIfIdle();
       setIgnoring(win, on);
@@ -707,11 +710,13 @@ function buildWindow(win: Id, options: WindowOptions, framed: boolean, owned: bo
     setHitRegions(polygons, refine) {
       if (disposed) return;
       if (polygons === null) {
+        ownsHitState = false;
         hits.delete(win);
         stopHitTimerIfIdle();
         setIgnoring(win, false);
         return;
       }
+      ownsHitState = true;
       const previous = hits.get(win);
       hits.set(win, { packed: packRegions(polygons), refine, inPolygon: previous?.inPolygon ?? false, askSeq: previous?.askSeq ?? 0 });
       ensureHitTimer();
@@ -722,25 +727,32 @@ function buildWindow(win: Id, options: WindowOptions, framed: boolean, owned: bo
       ensureObserved(win);
       const b = bucketFor(win);
       b.resize.add(handler);
-      return () => {
+      const unsub = () => {
+        localUnsubs.delete(unsub);
         b.resize.delete(handler);
         if (b.resize.size === 0 && b.move.size === 0) removeObserved(win);
       };
+      localUnsubs.add(unsub);
+      return unsub;
     },
 
     onMove(handler) {
       ensureObserved(win);
       const b = bucketFor(win);
       b.move.add(handler);
-      return () => {
+      const unsub = () => {
+        localUnsubs.delete(unsub);
         b.move.delete(handler);
         if (b.resize.size === 0 && b.move.size === 0) removeObserved(win);
       };
+      localUnsubs.add(unsub);
+      return unsub;
     },
 
     onClose(handler) {
       const b = bucketFor(win);
-      if (!owned && b.close.size === 0) {
+      const isExternal = !owned && !disposeByWin.has(win);
+      if (isExternal && b.close.size === 0) {
         // Fallback for externally-created NSWindows whose class we do not own.
         const button = asId(sendUIntRetPtr(win, sel("standardWindowButton:"), NSWindowCloseButton));
         if (button !== NIL) {
@@ -749,9 +761,10 @@ function buildWindow(win: Id, options: WindowOptions, framed: boolean, owned: bo
         }
       }
       b.close.add(handler);
-      return () => {
+      const unsub = () => {
+        localUnsubs.delete(unsub);
         b.close.delete(handler);
-        if (!owned && b.close.size === 0) {
+        if (isExternal && b.close.size === 0) {
           const button = asId(sendUIntRetPtr(win, sel("standardWindowButton:"), NSWindowCloseButton));
           if (button !== NIL) {
             sendPtr(button, sel("setTarget:"), NIL);
@@ -759,32 +772,34 @@ function buildWindow(win: Id, options: WindowOptions, framed: boolean, owned: bo
           }
         }
       };
+      localUnsubs.add(unsub);
+      return unsub;
     },
 
     dispose() {
       if (disposed) return;
       disposed = true;
+      for (const unsub of [...localUnsubs]) unsub();
+      localUnsubs.clear();
+      if (!owned) {
+        if (ownsHitState) {
+          ownsHitState = false;
+          hits.delete(win);
+          stopHitTimerIfIdle();
+        }
+        return;
+      }
       removeObserved(win);
       hits.delete(win);
       stopHitTimerIfIdle();
       resizers.delete(win);
       stopResizeTimerIfIdle();
       ignoring.delete(win);
-      const b = eventsByWin.get(win);
-      if (!owned && b && b.close.size > 0) {
-        const button = asId(sendUIntRetPtr(win, sel("standardWindowButton:"), NSWindowCloseButton));
-        if (button !== NIL) {
-          sendPtr(button, sel("setTarget:"), NIL);
-          sendPtr(button, sel("setAction:"), sel("performClose:"));
-        }
-      }
       eventsByWin.delete(win);
       disposeByWin.delete(win);
-      if (owned) {
-        sendPtr(win, sel("orderOut:"), NIL);
-        send(win, sel("close"));
-        release(win);
-      }
+      sendPtr(win, sel("orderOut:"), NIL);
+      send(win, sel("close"));
+      release(win);
     },
   };
 

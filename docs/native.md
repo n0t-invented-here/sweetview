@@ -176,7 +176,7 @@ Windows are always created **hidden**. Call `win.show()` after positioning and w
 | `setHitRegions(polygons, refine?)` | Makes only the given polygons accept clicks; `null` restores normal hit testing and stops polling. |
 | `onResize(handler)` | Fires on size changes with the new outer `Rect`. Supports multiple listeners. |
 | `onMove(handler)` | Fires on position changes with the new outer `Rect`. Supports multiple listeners. |
-| `onClose(handler)` | Intercepts user close requests (close button, Alt+F4, Cmd+W, programmatic `performClose:`). When at least one `onClose` listener is registered, the window stays open so the listener decides (`hide()`, `dispose()`, `quit()`, etc.). When no `onClose` listener is registered, closing destroys and disposes the window without terminating the process event loop. |
+| `onClose(handler)` | Intercepts user close requests. On Windows (owned and wrapped windows) and on macOS owned windows (`new Window(...)`), catches the close button, Alt+F4 / Cmd+W, programmatic `performClose:`, and frameless windows. On macOS external windows wrapped via `Window.fromHandle(handle)`, intercepts the standard close button when present without replacing the foreign window's `delegate` (direct `performClose:` / `Cmd+W` and borderless foreign windows are not intercepted). When at least one `onClose` listener is registered, the window stays open so the listener decides (`hide()`, `dispose()`, `quit()`, etc.). When no `onClose` listener is registered on an owned window, closing destroys and disposes the window without terminating the process event loop. |
 | `onNewTab` / `onTabSelect` / `onTabClose` | Tab lifecycle events emitted on tabbed windows (`tabs: true`). |
 | `dispose()` | Destroys an owned window (or detaches hooks on a `Window.fromHandle` wrapper) and releases all timers, subclass hooks, notification observers, icons, and map entries. Idempotent. |
 
@@ -361,7 +361,7 @@ export function createNotifier(options?: NotifierOptions): Notifier;
 Platform behavior:
 
 - **Windows**: works standalone **with or without a `Tray`**. Uses per-notification hidden `Shell_NotifyIconW` (`NIS_HIDDEN | NIF_INFO`) channels on a dedicated message window so each notification carries its own UID and clicking an earlier toast delivers that toast's exact `{ id, data }`. Default generated IDs are `sweetview-<n>`.
-- **macOS**: uses `UNUserNotificationCenter` and registers its delegate **eagerly in the constructor** (before the first `notify()`), so cold-launch notification clicks are delivered as soon as the event loop pumps. Uses a shared delegate class and shared ObjC blocks so repeated instances do not leak. Requires a signed `.app` bundle with a bundle ID outside temporary folders.
+- **macOS**: uses `UNUserNotificationCenter` and registers its delegate **eagerly in the constructor** (before the first `notify()`), so cold-launch notification clicks are delivered as soon as the event loop pumps. Uses a shared delegate class and shared ObjC blocks so repeated instances do not leak, routes in-process clicks by notification `id` to the notifier that sent them (so multiple `Notifier` instances stay independent), and only clears the center delegate when the last live notifier is disposed. Requires a signed `.app` bundle with a bundle ID outside temporary folders.
 
 ## Hit regions
 

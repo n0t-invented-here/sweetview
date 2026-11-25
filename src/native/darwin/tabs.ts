@@ -50,6 +50,8 @@ export type WindowTabsOptions = {
   appearance?: Appearance;
   onNewTabRequest(): void;
   onSelected?(window: Id): void;
+  onResized?(window: Id): void;
+  onMoved?(window: Id): void;
   onClosed(window: Id): void;
 };
 
@@ -82,6 +84,8 @@ type GroupHooks = {
   onNewTab: () => void;
   onWillClose: (window: Id) => void;
   onDidBecomeMain: (window: Id) => void;
+  onDidResize: (window: Id) => void;
+  onDidMove: (window: Id) => void;
 };
 
 const hooksByWindow = new Map<Id, GroupHooks>();
@@ -111,6 +115,14 @@ function ensureResponder(): Id {
           hooks.onDidBecomeMain(win);
         }
       },
+      "tabWindowDidResize:": (notification) => {
+        const win = asId(send(notification, sel("object")));
+        hooksByWindow.get(win)?.onDidResize(win);
+      },
+      "tabWindowDidMove:": (notification) => {
+        const win = asId(send(notification, sel("object")));
+        hooksByWindow.get(win)?.onDidMove(win);
+      },
     },
     "NSResponder",
   );
@@ -120,6 +132,8 @@ function ensureResponder(): Id {
 const OBSERVED: [name: string, selector: string][] = [
   ["NSWindowWillCloseNotification", "tabWindowWillClose:"],
   ["NSWindowDidBecomeMainNotification", "tabWindowDidBecomeMain:"],
+  ["NSWindowDidResizeNotification", "tabWindowDidResize:"],
+  ["NSWindowDidMoveNotification", "tabWindowDidMove:"],
 ];
 
 export function createWindowTabs(options: WindowTabsOptions): WindowTabs {
@@ -166,6 +180,14 @@ export function createWindowTabs(options: WindowTabsOptions): WindowTabs {
       if (disposed || !shown.has(window)) return;
       options.onSelected?.(window);
       setTimeout(() => pooled(() => keepTabBar(window)), 0);
+    },
+    onDidResize: (window) => {
+      if (disposed || !shown.has(window)) return;
+      options.onResized?.(window);
+    },
+    onDidMove: (window) => {
+      if (disposed || !shown.has(window)) return;
+      options.onMoved?.(window);
     },
   };
   lastActiveGroup = hooks;

@@ -1,8 +1,8 @@
 {
   "name": "@n1h/sweetview",
-  "version": "0.2.2",
+  "version": "1.0.0",
   "type": "module",
-  "description": "Desktop windows for Bun applications: a webview window on the UI thread, the backend in a Worker, a typed IPC contract between page and backend (also over WebSockets), and bun:ffi helpers for tray, notifications, overlay windows and dialogs. One package with a module per part.",
+  "description": "Desktop windows for Bun applications: unified native Window, Screen, Menu, Tray, Notifier, HitRelay, WebView, built-in native tabs, typed IPC (shared ring and WebSockets), and bun:ffi desktop helpers. One package with a module per part.",
   "license": "MIT OR 0BSD",
   "repository": {
     "type": "git",

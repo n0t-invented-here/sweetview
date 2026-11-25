@@ -19,7 +19,16 @@ import {
   type FrameWindow,
 } from "../native/win32/tab-window";
 import { asHwnd } from "../native/win32/window";
-import { Window, emitWindowNewTab, emitWindowTabClose, emitWindowTabSelect, forwardWindowTabEvents, getWindowMeta } from "../native/window";
+import {
+  Window,
+  emitWindowNewTab,
+  emitWindowTabClose,
+  emitWindowTabSelect,
+  forwardWindowTabEvents,
+  getWindowMeta,
+  isWindowDisposed,
+  onWindowDispose,
+} from "../native/window";
 import { webviewLibPath } from "../webview-lib";
 import { STRIP_BODY, STRIP_CSS, STRIP_JS } from "./win-strip-assets";
 import { controllerOf, moveFocus, notifyMoved, onAcceleratorKey, onNewWindowRequested, setVisible, type Controller } from "./win-webview2";
@@ -359,6 +368,9 @@ async function ensureHost(window: Window): Promise<WinTabHost> {
   if (!meta.tabs) {
     throw new Error("sweetview: WebView.openTab requires a Window created with { tabs: true }");
   }
+  if (isWindowDisposed(window)) {
+    throw new Error("sweetview: cannot open tab in a disposed window");
+  }
   const hwnd = asHwnd(window.handle);
   const frame = getTabFrame(hwnd);
   if (!frame) {
@@ -381,6 +393,7 @@ async function ensureHost(window: Window): Promise<WinTabHost> {
   };
   hosts.set(window, host);
   hostOrder.unshift(host);
+  onWindowDispose(window, () => disposeHost(host));
 
   let maximized = frame.isMaximized();
   frame.addCallbacks({
