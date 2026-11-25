@@ -9,7 +9,7 @@ import { basename, extname } from "node:path";
 import { pathToFileURL } from "node:url";
 import { SizeHint, Webview as RawWebview } from "@n1h/sweetview-webview-bun";
 import { assetMime, indexHtml } from "./html";
-import type { AnyEvent, EventMap, Frame, MethodMap } from "./ipc";
+import { createFrameAssembler, type AnyEvent, type EventMap, type MethodMap, type WireFrame } from "./ipc";
 import type { InitMessage } from "./messages";
 import { discardQuit, quitEventLoop, runEventLoop } from "./native/event-loop";
 import { Window, getWindowMeta, preserveWindowGeometry, type Rect, type TabHandle, type WindowOptions } from "./native/window";
@@ -264,12 +264,15 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
         raw.eval(`__sweetview_emit(${JSON.stringify(name)}, ${asJsLiteral(JSON.stringify(payload ?? null))})`);
       };
 
+      const assembler = createFrameAssembler();
       const drain = new JSCallback(
         () => {
           ring.acknowledgeWakeup();
           const decoder = new TextDecoder();
           for (const bytes of ring.drain()) {
-            const frame = JSON.parse(decoder.decode(bytes)) as Frame;
+            const wire = JSON.parse(decoder.decode(bytes)) as WireFrame;
+            const frame = assembler.push(wire);
+            if (!frame) continue;
             if (frame.kind === "reply") {
               if (frame.ok) raw.return(frame.seq, 0, JSON.stringify(frame.result ?? null));
               else raw.return(frame.seq, 1, JSON.stringify({ message: frame.error }));
@@ -307,6 +310,7 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
       const shutdown = () => {
         if (down) return;
         down = true;
+        assembler.clear();
         worker?.terminate();
         drain.close();
         if (raw.unsafeHandle !== null) raw.destroy();

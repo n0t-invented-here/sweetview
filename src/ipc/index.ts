@@ -1,4 +1,4 @@
-export type { CallFrame, EventFrame, Frame, ReplyFrame } from "./frame";
+export { createFrameAssembler, type CallFrame, type ChunkFrame, type EventFrame, type Frame, type ReplyFrame, type WireFrame } from "./frame";
 export {
   defineService,
   type AnyEvent,

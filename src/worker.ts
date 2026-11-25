@@ -8,7 +8,7 @@
 //   hostService(createService());
 
 import { FFIType, dlopen, type Pointer } from "bun:ffi";
-import type { CallFrame, EventMap, Frame, MethodMap, ReplyFrame, Service } from "./ipc";
+import type { CallFrame, ChunkFrame, EventMap, Frame, MethodMap, ReplyFrame, Service } from "./ipc";
 import { WEBVIEW_SESSION, type WorkerMessage } from "./messages";
 import { Ring } from "./ring";
 
@@ -41,7 +41,6 @@ function encodeClampedErrorReply(seq: string, message: string, maxBytes: number,
   if (empty.length > maxBytes) return null;
 
   const withEllipsis = (len: number) => {
-    // Avoid splitting a UTF-16 surrogate pair.
     let end = len;
     if (end > 0 && end < message.length) {
       const code = message.charCodeAt(end - 1);
@@ -68,10 +67,40 @@ function encodeClampedErrorReply(seq: string, message: string, maxBytes: number,
   return best;
 }
 
+let nextChunkId = 1;
+
+/**
+ * Attempts to stream `payloadBytes` across sequential ChunkFrame records in `ring`.
+ * Returns true if chunking succeeded, false if the ring is too tiny even for chunk envelopes.
+ */
+function writeChunked(ring: Ring, payloadBytes: Uint8Array, wake: () => void, encoder: TextEncoder): boolean {
+  const maxBytes = ring.capacity - 4;
+  const id = nextChunkId++;
+  const b64 = Buffer.from(payloadBytes).toString("base64");
+  // Estimate envelope overhead conservatively (up to 10-digit index/total).
+  const probeOverhead = encoder.encode(
+    JSON.stringify({ kind: "chunk", id, index: 9999999, total: 9999999, data: "" } satisfies ChunkFrame),
+  ).length;
+  const maxDataLen = maxBytes - probeOverhead;
+  if (maxDataLen < 16) return false;
+
+  const total = Math.max(1, Math.ceil(b64.length / maxDataLen));
+  for (let index = 0; index < total; index++) {
+    const data = b64.slice(index * maxDataLen, (index + 1) * maxDataLen);
+    const chunkBytes = encoder.encode(JSON.stringify({ kind: "chunk", id, index, total, data } satisfies ChunkFrame));
+    ring.write(chunkBytes);
+    if (ring.claimWakeup()) wake();
+  }
+  return true;
+}
+
 /**
  * Serializes `frame` and writes it into `ring`, waking the consumer when
- * needed. Never throws on oversized or unserializable replies: sends a compact
- * error reply frame instead so RPC callers never hang.
+ * needed. Valid JSON frames larger than `ring.capacity - 4` are automatically
+ * streamed via ChunkFrame records when the ring can hold chunk envelopes.
+ * Unserializable replies (BigInt, circular refs) or frames on tiny rings fall
+ * back to a byte-clamped `{ kind: "reply", seq, ok: false, error }` frame so
+ * RPC callers never hang.
  */
 export function writeWorkerFrame(
   ring: Ring,
@@ -80,9 +109,16 @@ export function writeWorkerFrame(
   encoder: TextEncoder = new TextEncoder(),
 ): void {
   try {
-    ring.write(encoder.encode(JSON.stringify(frame)));
-    if (ring.claimWakeup()) wake();
-    return;
+    const bytes = encoder.encode(JSON.stringify(frame));
+    if (bytes.length <= ring.capacity - 4) {
+      ring.write(bytes);
+      if (ring.claimWakeup()) wake();
+      return;
+    }
+    if (writeChunked(ring, bytes, wake, encoder)) {
+      return;
+    }
+    throw new RangeError(`frame of ${bytes.length} bytes exceeds ring capacity ${ring.capacity}`);
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
     if (frame.kind !== "reply") {

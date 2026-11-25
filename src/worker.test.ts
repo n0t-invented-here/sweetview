@@ -1,12 +1,18 @@
 import { describe, expect, test } from "bun:test";
-import type { Frame } from "./ipc";
+import { createFrameAssembler, type Frame, type WireFrame } from "./ipc";
 import { Ring } from "./ring";
 import { writeWorkerFrame } from "./worker";
 
-function drainFrames(ring: Ring): Frame[] {
+function drainFrames(ring: Ring, assembler = createFrameAssembler()): Frame[] {
   const decoder = new TextDecoder();
   ring.acknowledgeWakeup();
-  return [...ring.drain()].map((bytes) => JSON.parse(decoder.decode(bytes)) as Frame);
+  const out: Frame[] = [];
+  for (const bytes of ring.drain()) {
+    const wire = JSON.parse(decoder.decode(bytes)) as WireFrame;
+    const frame = assembler.push(wire);
+    if (frame) out.push(frame);
+  }
+  return out;
 }
 
 describe("writeWorkerFrame", () => {
@@ -18,20 +24,30 @@ describe("writeWorkerFrame", () => {
     expect(drainFrames(ring)).toEqual([{ kind: "reply", seq: "1", ok: true, result: { ok: 1 } }]);
   });
 
-  test("turns oversized reply frames into an error reply instead of throwing or hanging", () => {
-    const ring = new Ring(Ring.create(256));
+  test("chunks oversized valid JSON reply frames across the ring and reassembles them intact", () => {
+    const ring = new Ring(Ring.create(512));
+    const assembler = createFrameAssembler();
+    const collected: Frame[] = [];
+    // Drain asynchronously whenever producer wakes (simulating real UI thread draining during multi-chunk bursts)
+    const wake = () => collected.push(...drainFrames(ring, assembler));
+    const big = "x".repeat(2000);
+    writeWorkerFrame(ring, { kind: "reply", seq: "42", ok: true, result: big }, wake);
+    writeWorkerFrame(ring, { kind: "reply", seq: "43", ok: true, result: "small" }, wake);
+    collected.push(...drainFrames(ring, assembler));
+    expect(collected).toEqual([
+      { kind: "reply", seq: "42", ok: true, result: big },
+      { kind: "reply", seq: "43", ok: true, result: "small" },
+    ]);
+  });
+
+  test("falls back to a clamped error reply when ring is too small even for chunk envelopes", () => {
+    const ring = new Ring(Ring.create(64));
     let wakes = 0;
-    writeWorkerFrame(ring, { kind: "reply", seq: "42", ok: true, result: "x".repeat(500) }, () => wakes++);
-    // Subsequent healthy calls still succeed on the same ring
-    writeWorkerFrame(ring, { kind: "reply", seq: "43", ok: true, result: "small" }, () => wakes++);
+    writeWorkerFrame(ring, { kind: "reply", seq: "7", ok: true, result: "x".repeat(500) }, () => wakes++);
     expect(wakes).toBe(1);
     const frames = drainFrames(ring);
-    expect(frames).toHaveLength(2);
-    expect(frames[0]).toMatchObject({ kind: "reply", seq: "42", ok: false });
-    if (frames[0]?.kind === "reply" && !frames[0].ok) {
-      expect(frames[0].error).toContain("exceeds ring capacity");
-    }
-    expect(frames[1]).toEqual({ kind: "reply", seq: "43", ok: true, result: "small" });
+    expect(frames).toHaveLength(1);
+    expect(frames[0]).toMatchObject({ kind: "reply", seq: "7", ok: false });
   });
 
   test("turns unserializable replies (BigInt and circular) into error replies", () => {
@@ -48,8 +64,8 @@ describe("writeWorkerFrame", () => {
     expect(frames[1]).toMatchObject({ kind: "reply", seq: "c1", ok: false });
   });
 
-  test("clamps error message when even the error reason is larger than the ring", () => {
-    const ring = new Ring(Ring.create(128));
+  test("clamps error message when even the error reason is larger than a tiny ring", () => {
+    const ring = new Ring(Ring.create(64));
     let wakes = 0;
     writeWorkerFrame(ring, { kind: "reply", seq: "9", ok: false, error: "e".repeat(400) }, () => wakes++);
     expect(wakes).toBe(1);
@@ -59,7 +75,7 @@ describe("writeWorkerFrame", () => {
   });
 
   test("clamps error messages containing quotes, NUL bytes, and multibyte UTF-8 accurately by byte length", () => {
-    const ring = new Ring(Ring.create(128));
+    const ring = new Ring(Ring.create(64));
     let wakes = 0;
     const nasty = '"\\"\0'.repeat(60) + "🥐".repeat(40);
     writeWorkerFrame(ring, { kind: "reply", seq: "n1", ok: false, error: nasty }, () => wakes++);
@@ -69,12 +85,18 @@ describe("writeWorkerFrame", () => {
     expect(frames[0]).toMatchObject({ kind: "reply", seq: "n1", ok: false });
   });
 
-  test("swallows oversized or unserializable event frames without crashing", () => {
-    const ring = new Ring(Ring.create(128));
-    let wakes = 0;
-    expect(() => writeWorkerFrame(ring, { kind: "event", name: "big", payload: "z".repeat(400) }, () => wakes++)).not.toThrow();
-    expect(() => writeWorkerFrame(ring, { kind: "event", name: "bigint", payload: 99n }, () => wakes++)).not.toThrow();
-    expect(wakes).toBe(0);
-    expect(drainFrames(ring)).toEqual([]);
+  test("swallows unserializable event frames without crashing and chunks oversized valid events", () => {
+    const ring = new Ring(Ring.create(512));
+    const assembler = createFrameAssembler();
+    const collected: Frame[] = [];
+    const wake = () => collected.push(...drainFrames(ring, assembler));
+
+    expect(() => writeWorkerFrame(ring, { kind: "event", name: "bigint", payload: 99n }, wake)).not.toThrow();
+    expect(collected).toEqual([]);
+
+    const largePayload = { text: "z".repeat(1200) };
+    writeWorkerFrame(ring, { kind: "event", name: "big", payload: largePayload }, wake);
+    collected.push(...drainFrames(ring, assembler));
+    expect(collected).toEqual([{ kind: "event", name: "big", payload: largePayload }]);
   });
 });

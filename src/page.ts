@@ -46,3 +46,14 @@ export function webviewTransport(): Transport {
     },
   };
 }
+
+/**
+ * Signals to the Sweetview host that the page has finished booting (cancels
+ * any configured `readyTimeoutMs` watchdog, reveals the window when
+ * `showOnReady: true`, and drains buffered activation/deep-link URLs).
+ * Safe no-op outside a sweetview window.
+ */
+export function signalReady(): Promise<void> {
+  if (!isWebview()) return Promise.resolve();
+  return window.__sweetview_rpc!("__sweetview.ready", null).then(() => {});
+}
