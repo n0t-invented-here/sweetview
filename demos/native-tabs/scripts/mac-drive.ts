@@ -5,8 +5,10 @@
 //   just demos native-tabs drive
 
 import { mkdirSync } from "node:fs";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
+import { asId, sel, send, sharedApp } from "../../../src/native/darwin/objc";
 import { startDemoTabs } from "../app";
+import { captureWindow } from "./mac-capture";
 
 const out = resolve(process.argv[2] ?? "build/drive");
 mkdirSync(out, { recursive: true });
@@ -37,6 +39,15 @@ check("three tabs opened", openTabs.size === 3, openTabs.size);
 t1.select();
 t1.setTitle("Alpha Tab");
 check("tab 1 renamed", t1.title === "Alpha Tab", t1.title);
+await Bun.sleep(200);
+
+const keyWin = asId(send(sharedApp(), sel("keyWindow")));
+if (keyWin !== 0n) {
+  const shot = captureWindow(keyWin, join(out, "tabs-initial.png"));
+  check("captured tabbed window screenshot", shot.width > 0 && shot.height > 0, `${shot.width}x${shot.height}`);
+} else {
+  check("captured tabbed window screenshot", false, "no keyWindow");
+}
 
 await t2.moveToNewWindow();
 await Bun.sleep(300);

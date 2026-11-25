@@ -586,7 +586,7 @@ function buildWindow(win: Id, options: WindowOptions, framed: boolean, owned: bo
     show() {
       if (disposed) return;
       if (noActivate) {
-        sendPtr(win, sel("orderFrontRegardless"), NIL);
+        send(win, sel("orderFrontRegardless"));
       } else {
         sendPtr(win, sel("makeKeyAndOrderFront:"), NIL);
         sendBool(sharedApp(), sel("activateIgnoringOtherApps:"), true);
@@ -650,7 +650,7 @@ function buildWindow(win: Id, options: WindowOptions, framed: boolean, owned: bo
 
     isMaximized() {
       if (disposed) return false;
-      return BigInt(sendInt(win, sel("isZoomed")) ?? 0) !== 0n;
+      return Boolean(sendRetBool(win, sel("isZoomed")));
     },
 
     setTopmost(on) {

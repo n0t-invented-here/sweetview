@@ -298,15 +298,14 @@ function addMenu(menubar: Id, title: string, items: MenuItem[], index?: number):
   return menu;
 }
 
-let tabMenusInstalled = false;
+let installedMenuBar: Id = NIL;
 
-/** Adds File (New/Close Tab), View (Show All Tabs), and Window tab menus to the macOS mainMenu (once per process). */
+/** Adds File (New/Close Tab), View (Show All Tabs), and Window tab menus to the macOS mainMenu (once per menu bar). */
 export function installTabMenus(): void {
-  if (tabMenusInstalled) return;
   const app = sharedApp();
   const menubar = asId(send(app, sel("mainMenu")));
-  if (menubar === NIL) return;
-  tabMenusInstalled = true;
+  if (menubar === NIL || installedMenuBar === menubar) return;
+  installedMenuBar = menubar;
   addMenu(
     menubar,
     "File",

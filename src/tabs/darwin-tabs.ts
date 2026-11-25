@@ -4,7 +4,7 @@
 
 import { WebView, type Tab, type TabOptions, type TabsDriver } from "../app";
 import type { EventMap, MethodMap } from "../ipc";
-import { NIL, type Id, sel, send, sendPtr, sendRectBool } from "../native/darwin/objc";
+import { NIL, type Id, sel, sendPtr, sendRectBool, sendRetBool } from "../native/darwin/objc";
 import { fromCocoa, rectOf, toCocoa } from "../native/darwin/screen";
 import { createWindowTabs, installTabMenus, pooled, type WindowTabs } from "../native/darwin/tabs";
 import { bindDarwinTabGroup } from "../native/darwin/window";
@@ -139,7 +139,7 @@ function ensureHost(window: Window): MacTabHost {
     },
     isMaximized() {
       const cur = group.current();
-      return cur !== undefined ? pooled(() => BigInt(send(cur, sel("isZoomed")) ?? 0) !== 0n) : false;
+      return cur !== undefined ? pooled(() => Boolean(sendRetBool(cur, sel("isZoomed")))) : false;
     },
     dispose() {
       if (host.closed) return;

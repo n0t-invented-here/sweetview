@@ -23,6 +23,7 @@ import {
   sendPtr,
   sendPtrPointPtrRetBool,
   sendPtrSelPtr,
+  sharedApp,
 } from "./objc";
 import { cursorPoint, primaryHeight } from "./screen";
 
@@ -93,6 +94,7 @@ export function buildMenu(template: MenuTemplate): BuiltMenu {
 /** Opens a native popup menu at `at` (default: current cursor position). Returns true when an item was chosen. */
 export function popupMenu(_owner: WindowHandle, template: MenuTemplate, at?: Point): boolean {
   if (template.length === 0) return false;
+  sharedApp();
   const pt = at ?? cursorPoint() ?? { x: 0, y: 0 };
   const built = buildMenu(template);
   try {

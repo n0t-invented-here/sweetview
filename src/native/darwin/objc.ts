@@ -119,7 +119,7 @@ export function makeTarget(baseName: string, methods: Record<string, TargetMetho
 
 /**
  * Register a subclass whose listed selectors answer YES: `defineYesClass("NSWindow",
- * "SweetnativeKeyWindow", ["canBecomeKeyWindow"])` makes a borderless window
+ * "SweetviewKeyWindow", ["canBecomeKeyWindow"])` makes a borderless window
  * that can take keyboard focus. Once per class name; a second call is a no-op.
  */
 export function defineYesClass(superclass: string, className: string, selectors: string[]): void {
