@@ -5,8 +5,9 @@
 // soon as the event loop runs, without waiting for the first notify() call.
 // Reuses one shared ObjC delegate and one pair of global completion blocks per
 // process so repeated Notifier creation never leaks runtime classes or blocks.
-// Routes clicks by notification ID to the notifier that sent it, keeping
-// multiple independent Notifier instances isolated.
+// Routes clicks strictly by notification ID to the notifier that sent it, using
+// bounded tombstones so disposed or handler-less notifiers never leak clicks
+// into unrelated notifiers and the map never grows without bound.
 
 import { FFIType } from "bun:ffi";
 import { type NotificationClick, type NotifierBackend, type NotifierOptions, notificationId } from "../notifications";
@@ -38,6 +39,7 @@ const PRESENT_BANNER_LIST_SOUND = 8n | 16n | 2n;
 
 // userInfo key under which `data` travels, as JSON text.
 const DATA_KEY = "sweetview.data";
+const MAX_TRACKED_IDS = 256;
 
 function readClick(response: Id): NotificationClick {
   const request = asId(send(asId(send(response, sel("notification"))), sel("request")));
@@ -58,22 +60,39 @@ let sharedDelegate: Id = NIL;
 let sharedAuthBlock: Id = NIL;
 let sharedRequestBlock: Id = NIL;
 const liveNotifiers = new Set<NotifierEntry>();
-const ownerByNotificationId = new Map<string, NotifierEntry>();
+/**
+ * Bounded insertion-ordered map of notification IDs sent in this process:
+ * - `NotifierEntry`: owned by that live notifier
+ * - `null`: sent by a notifier in this process that was since disposed (tombstone so clicks never fall through to another notifier)
+ */
+const sentByThisProcess = new Map<string, NotifierEntry | null>();
+
+function recordSent(id: string, entry: NotifierEntry): void {
+  if (sentByThisProcess.has(id)) sentByThisProcess.delete(id);
+  sentByThisProcess.set(id, entry);
+  while (sentByThisProcess.size > MAX_TRACKED_IDS) {
+    const oldest = sentByThisProcess.keys().next().value;
+    if (oldest === undefined) break;
+    sentByThisProcess.delete(oldest);
+  }
+}
 
 function deliverClick(click: NotificationClick): void {
-  const owner = ownerByNotificationId.get(click.id);
-  if (owner) {
-    ownerByNotificationId.delete(click.id);
-    if (liveNotifiers.has(owner) && owner.onClick) {
+  if (sentByThisProcess.has(click.id)) {
+    const owner = sentByThisProcess.get(click.id);
+    sentByThisProcess.delete(click.id);
+    // Strict isolation: if sent in this process and the owning notifier was disposed
+    // or had no onClick, do NOT fall through to an unrelated notifier.
+    if (owner && liveNotifiers.has(owner) && owner.onClick) {
       try {
         owner.onClick(click);
       } catch (err) {
         console.error("sweetview: notification onClick threw:", err); // never unwind into AppKit
       }
-      return;
     }
+    return;
   }
-  // Cold-launch click (from an earlier process) or unmapped id: deliver to the first live notifier with a handler.
+  // True cold-launch click from a previous process: deliver to the first live notifier with a handler.
   for (const entry of liveNotifiers) {
     if (entry.onClick) {
       try {
@@ -174,7 +193,7 @@ export function createNotifier(options: NotifierOptions = {}): NotifierBackend {
       ensureAuthorized();
       const { req } = ensureSharedBlocks();
       const id = notificationId(n);
-      ownerByNotificationId.set(id, entry);
+      recordSent(id, entry);
       const content = asId(send(allocRaw("UNMutableNotificationContent"), sel("init")));
       sendPtr(content, sel("setTitle:"), nsString(n.title));
       if (n.body) sendPtr(content, sel("setBody:"), nsString(n.body));
@@ -192,8 +211,8 @@ export function createNotifier(options: NotifierOptions = {}): NotifierBackend {
       if (disposed) return;
       disposed = true;
       liveNotifiers.delete(entry);
-      for (const [id, owner] of ownerByNotificationId) {
-        if (owner === entry) ownerByNotificationId.delete(id);
+      for (const [id, owner] of sentByThisProcess) {
+        if (owner === entry) sentByThisProcess.set(id, null);
       }
       if (liveNotifiers.size === 0 && center !== NIL && asId(send(center, sel("delegate"))) === delegate) {
         sendPtr(center, sel("setDelegate:"), NIL);

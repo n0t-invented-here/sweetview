@@ -78,17 +78,22 @@ app.window.setBounds({ x: beforeBounds.x, y: beforeBounds.y, width: beforeBounds
 await Bun.sleep(200);
 check("virtual Window.onResize fires on tabbed window resize", resizeEvents > 0, resizeEvents);
 
-// Tear off tab 2 into its own window, then merge all windows back together.
+// Tear off tab 2 into its own tabbed Window, then merge all windows back together.
 const detachedWin = await t2.moveToNewWindow();
 await Bun.sleep(300);
-const tabGroupAfterDetach = asId(send(asId(detachedWin.handle as bigint), sel("tabGroup")));
+const detachedNsWin = asId(t2.webview.window.handle as bigint);
+const tabGroupAfterDetach = asId(send(detachedNsWin, sel("tabGroup")));
 const groupCountAfterDetach =
   tabGroupAfterDetach === NIL ? 0 : Number(sendInt(asId(send(tabGroupAfterDetach, sel("windows"))), sel("count")) ?? 0);
-check("moveToNewWindow isolates tab into a 1-tab window group", groupCountAfterDetach === 1, `groupCount=${groupCountAfterDetach}, totalWin=${appWindowCount()}`);
+check(
+  "moveToNewWindow returns a new tabbed Window isolating tab 2",
+  detachedWin !== app.window && groupCountAfterDetach === 1,
+  `groupCount=${groupCountAfterDetach}, totalWin=${appWindowCount()}`,
+);
 
 app.mergeAllWindows();
 await Bun.sleep(350);
-const tabGroupAfterMerge = asId(send(asId(detachedWin.handle as bigint), sel("tabGroup")));
+const tabGroupAfterMerge = asId(send(detachedNsWin, sel("tabGroup")));
 const groupCountAfterMerge =
   tabGroupAfterMerge === NIL ? 0 : Number(sendInt(asId(send(tabGroupAfterMerge, sel("windows"))), sel("count")) ?? 0);
 check("mergeAllWindows recombines tabs into one window group", groupCountAfterMerge === openTabs.size, `groupCount=${groupCountAfterMerge}/${openTabs.size}`);

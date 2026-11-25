@@ -13,6 +13,7 @@ import {
   emitWindowNewTab,
   emitWindowTabClose,
   emitWindowTabSelect,
+  forwardWindowTabEvents,
   getWindowBackend,
   getWindowMeta,
   isWindowDisposed,
@@ -46,6 +47,7 @@ const loadFailedPage = (address: string, reason: string) => `<!doctype html>
 
 type MacTabRecord = {
   readonly nsWin: Id;
+  host: MacTabHost;
   title: string;
   webview: WebView<any, any>;
   shown: boolean;
@@ -61,6 +63,7 @@ type PendingShow = {
 type MacTabHost = {
   readonly window: Window;
   readonly group: WindowTabs;
+  readonly ownsGroup: boolean;
   readonly tabs: Map<Id, MacTabRecord>;
   readonly pendingShow: PendingShow[];
   selectedBeforeShow?: Id;
@@ -72,6 +75,7 @@ type MacTabHost = {
 };
 
 const hosts = new Map<Window, MacTabHost>();
+const recordByNsWin = new Map<Id, MacTabRecord>();
 const tabRecordByApi = new WeakMap<object, MacTabRecord>();
 let nextGroupId = 1;
 let nextTabId = 1;
@@ -83,13 +87,14 @@ function disposeMacHost(host: MacTabHost): void {
   host.pendingShow.length = 0;
   for (const [nsWin, rec] of [...host.tabs]) {
     host.tabs.delete(nsWin);
+    recordByNsWin.delete(nsWin);
     if (!rec.closed) {
       rec.closed = true;
       detachPage(nsWin);
       rec.webview.dispose();
     }
   }
-  host.group.dispose();
+  if (host.ownsGroup) host.group.dispose();
 }
 
 function flushPendingShow(host: MacTabHost): void {
@@ -109,6 +114,85 @@ function flushPendingShow(host: MacTabHost): void {
   }
 }
 
+function bindHostToWindow(window: Window, group: WindowTabs, ownsGroup: boolean, initialBounds: Rect): MacTabHost {
+  const tabs = new Map<Id, MacTabRecord>();
+  let host!: MacTabHost;
+  const activeWin = (): Id | undefined => {
+    const cur = group.current();
+    if (cur !== undefined && tabs.has(cur)) return cur;
+    for (const [nsWin, rec] of tabs) if (rec.shown && !rec.closed) return nsWin;
+    return undefined;
+  };
+
+  const hooks = bindDarwinTabGroup(getWindowBackend(window), {
+    show() {
+      host.visible = true;
+      flushPendingShow(host);
+      const cur = activeWin();
+      if (cur !== undefined) group.select(cur);
+    },
+    hide() {
+      host.visible = false;
+      pooled(() => {
+        for (const [nsWin, rec] of tabs) {
+          if (rec.shown) sendPtr(nsWin, sel("orderOut:"), NIL);
+        }
+      });
+    },
+    isVisible() {
+      return host.visible && activeWin() !== undefined;
+    },
+    bounds(): Rect {
+      const cur = activeWin();
+      return cur !== undefined ? pooled(() => fromCocoa(rectOf(cur, "frame"))) : initialBounds;
+    },
+    setBounds(rect: Rect) {
+      const cur = activeWin();
+      if (cur !== undefined) {
+        pooled(() => {
+          const c = toCocoa(rect);
+          sendRectBool(cur, sel("setFrame:display:"), c.x, c.y, c.w, c.h, true);
+        });
+      }
+    },
+    setTitle(title: string) {
+      const cur = activeWin();
+      if (cur !== undefined) group.setTitle(cur, title);
+    },
+    minimize() {
+      const cur = activeWin();
+      if (cur !== undefined) pooled(() => sendPtr(cur, sel("miniaturize:"), NIL));
+    },
+    toggleMaximize() {
+      const cur = activeWin();
+      if (cur !== undefined) pooled(() => sendPtr(cur, sel("zoom:"), NIL));
+    },
+    isMaximized() {
+      const cur = activeWin();
+      return cur !== undefined ? pooled(() => Boolean(sendRetBool(cur, sel("isZoomed")))) : false;
+    },
+    dispose() {
+      disposeMacHost(host);
+    },
+  });
+
+  host = {
+    window,
+    group,
+    ownsGroup,
+    tabs,
+    pendingShow: [],
+    visible: false,
+    closed: false,
+    fireResize: hooks.fireResize,
+    fireMove: hooks.fireMove,
+    fireClose: hooks.fireClose,
+  };
+  hosts.set(window, host);
+  onWindowDispose(window, () => disposeMacHost(host));
+  return host;
+}
+
 function ensureHost(window: Window): MacTabHost {
   const existing = hosts.get(window);
   if (existing) return existing;
@@ -122,9 +206,6 @@ function ensureHost(window: Window): MacTabHost {
   installTabMenus();
 
   const b = window.bounds();
-  const tabs = new Map<Id, MacTabRecord>();
-
-  let host!: MacTabHost;
   const group = createWindowTabs({
     identifier: `sweetview.tabs.${nextGroupId++}`,
     bounds: b,
@@ -133,98 +214,42 @@ function ensureHost(window: Window): MacTabHost {
     minWidth: meta.minWidth ?? 480,
     minHeight: meta.minHeight ?? 320,
     appearance: meta.appearance,
-    onNewTabRequest: () => emitWindowNewTab(window),
+    onNewTabRequest: () => {
+      const cur = group.current();
+      const targetWin = (cur !== undefined ? recordByNsWin.get(cur)?.host.window : undefined) ?? window;
+      emitWindowNewTab(targetWin);
+    },
     onSelected: (nsWin) => {
-      const rec = tabs.get(nsWin);
-      if (rec && !rec.closed) emitWindowTabSelect(window, rec.api);
+      const rec = recordByNsWin.get(nsWin);
+      if (rec && !rec.closed) emitWindowTabSelect(rec.host.window, rec.api);
     },
     onResized: (nsWin) => {
-      if (!host.closed) host.fireResize(pooled(() => fromCocoa(rectOf(nsWin, "frame"))));
+      const rec = recordByNsWin.get(nsWin);
+      if (rec && !rec.host.closed) rec.host.fireResize(pooled(() => fromCocoa(rectOf(nsWin, "frame"))));
     },
     onMoved: (nsWin) => {
-      if (!host.closed) host.fireMove(pooled(() => fromCocoa(rectOf(nsWin, "frame"))));
+      const rec = recordByNsWin.get(nsWin);
+      if (rec && !rec.host.closed) rec.host.fireMove(pooled(() => fromCocoa(rectOf(nsWin, "frame"))));
     },
     onClosed: (nsWin) => {
-      const rec = tabs.get(nsWin);
-      tabs.delete(nsWin);
+      const rec = recordByNsWin.get(nsWin);
+      recordByNsWin.delete(nsWin);
       detachPage(nsWin);
-      if (rec && !rec.closed) {
+      if (!rec) return;
+      const tabHost = rec.host;
+      tabHost.tabs.delete(nsWin);
+      if (!rec.closed) {
         rec.closed = true;
         rec.webview.dispose();
-        emitWindowTabClose(window, rec.api);
+        emitWindowTabClose(tabHost.window, rec.api);
       }
-      if (tabs.size === 0 && !host.closed) {
-        host.fireClose();
+      if (tabHost.tabs.size === 0 && !tabHost.closed) {
+        if (!tabHost.fireClose()) tabHost.window.dispose();
       }
     },
   });
 
-  const hooks = bindDarwinTabGroup(getWindowBackend(window), {
-    show() {
-      host.visible = true;
-      flushPendingShow(host);
-      const cur = group.current();
-      if (cur !== undefined) group.select(cur);
-    },
-    hide() {
-      host.visible = false;
-      pooled(() => {
-        for (const [nsWin, rec] of tabs) {
-          if (rec.shown) sendPtr(nsWin, sel("orderOut:"), NIL);
-        }
-      });
-    },
-    isVisible() {
-      return host.visible && group.count() > 0;
-    },
-    bounds(): Rect {
-      const cur = group.current();
-      return cur !== undefined ? pooled(() => fromCocoa(rectOf(cur, "frame"))) : b;
-    },
-    setBounds(rect: Rect) {
-      const cur = group.current();
-      if (cur !== undefined) {
-        pooled(() => {
-          const c = toCocoa(rect);
-          sendRectBool(cur, sel("setFrame:display:"), c.x, c.y, c.w, c.h, true);
-        });
-      }
-    },
-    setTitle(title: string) {
-      const cur = group.current();
-      if (cur !== undefined) group.setTitle(cur, title);
-    },
-    minimize() {
-      const cur = group.current();
-      if (cur !== undefined) pooled(() => sendPtr(cur, sel("miniaturize:"), NIL));
-    },
-    toggleMaximize() {
-      const cur = group.current();
-      if (cur !== undefined) pooled(() => sendPtr(cur, sel("zoom:"), NIL));
-    },
-    isMaximized() {
-      const cur = group.current();
-      return cur !== undefined ? pooled(() => Boolean(sendRetBool(cur, sel("isZoomed")))) : false;
-    },
-    dispose() {
-      disposeMacHost(host);
-    },
-  });
-
-  host = {
-    window,
-    group,
-    tabs,
-    pendingShow: [],
-    visible: false,
-    closed: false,
-    fireResize: hooks.fireResize,
-    fireMove: hooks.fireMove,
-    fireClose: hooks.fireClose,
-  };
-  hosts.set(window, host);
-  onWindowDispose(window, () => disposeMacHost(host));
-  return host;
+  return bindHostToWindow(window, group, true, b);
 }
 
 export const darwinTabsDriver: TabsDriver = {
@@ -247,6 +272,7 @@ export const darwinTabsDriver: TabsDriver = {
 
     const record: MacTabRecord = {
       nsWin,
+      host,
       title: initialTitle,
       webview,
       shown: false,
@@ -256,43 +282,62 @@ export const darwinTabsDriver: TabsDriver = {
 
     const api: Tab<M, E> = {
       webview,
-      window,
+      get window() {
+        return record.host.window;
+      },
       get title() {
         return record.title;
       },
       setTitle(title: string) {
         if (record.closed) return;
         record.title = title.trim() || `Tab ${id}`;
-        host.group.setTitle(nsWin, record.title);
+        record.host.group.setTitle(nsWin, record.title);
       },
       select() {
         if (record.closed) return;
-        if (record.shown) host.group.select(nsWin);
-        else host.selectedBeforeShow = nsWin;
+        if (record.shown) record.host.group.select(nsWin);
+        else record.host.selectedBeforeShow = nsWin;
       },
       close() {
         if (record.closed) return;
+        const tabHost = record.host;
         if (record.shown) {
-          host.group.close(nsWin);
+          tabHost.group.close(nsWin);
         } else {
           record.closed = true;
-          host.tabs.delete(nsWin);
+          tabHost.tabs.delete(nsWin);
+          recordByNsWin.delete(nsWin);
+          const idx = tabHost.pendingShow.findIndex((p) => p.nsWin === nsWin);
+          if (idx !== -1) tabHost.pendingShow.splice(idx, 1);
           detachPage(nsWin);
           record.webview.dispose();
-          host.group.discard(nsWin);
-          emitWindowTabClose(window, api);
-          if (host.tabs.size === 0 && !host.closed) host.fireClose();
+          tabHost.group.discard(nsWin);
+          emitWindowTabClose(tabHost.window, api);
+          if (tabHost.tabs.size === 0 && !tabHost.closed) {
+            if (!tabHost.fireClose()) tabHost.window.dispose();
+          }
         }
       },
       async moveToNewWindow() {
-        if (!record.closed) {
-          if (!record.shown) {
-            host.visible = true;
-            flushPendingShow(host);
-          }
-          host.group.moveToNewWindow(nsWin);
+        if (record.closed) return record.host.window;
+        const fromHost = record.host;
+        if (!record.shown) {
+          // Detach ONLY this tab without revealing unrelated hidden pending tabs.
+          const idx = fromHost.pendingShow.findIndex((p) => p.nsWin === nsWin);
+          if (idx !== -1) fromHost.pendingShow.splice(idx, 1);
+          record.shown = true;
+          fromHost.group.show(nsWin, undefined, (w) => focusWebView(w));
+        } else {
+          fromHost.group.moveToNewWindow(nsWin);
         }
-        return wrappedWin;
+        const detachedWin = new Window({ tabs: true, title: record.title, bounds: fromHost.window.bounds() });
+        const detachedHost = bindHostToWindow(detachedWin, fromHost.group, false, fromHost.window.bounds());
+        detachedHost.visible = true;
+        forwardWindowTabEvents(detachedWin, fromHost.window);
+        fromHost.tabs.delete(nsWin);
+        detachedHost.tabs.set(nsWin, record);
+        record.host = detachedHost;
+        return detachedWin;
       },
       dispose() {
         api.close();
@@ -300,6 +345,7 @@ export const darwinTabsDriver: TabsDriver = {
     };
     record.api = api;
     tabRecordByApi.set(api, record);
+    recordByNsWin.set(nsWin, record);
     host.tabs.set(nsWin, record);
 
     if (options.url) {
@@ -311,12 +357,14 @@ export const darwinTabsDriver: TabsDriver = {
     }
 
     const afterRec = options.after ? tabRecordByApi.get(options.after) : undefined;
+    // Anchor inside the target host's own tabs if `after` was not specified.
+    const anchorNsWin = afterRec?.nsWin ?? [...host.tabs.keys()].find((w) => w !== nsWin && host.tabs.get(w)?.shown);
     if (host.visible) {
       record.shown = true;
-      host.group.show(nsWin, afterRec?.nsWin, (w) => focusWebView(w));
+      host.group.show(nsWin, anchorNsWin, (w) => focusWebView(w));
       emitWindowTabSelect(window, api);
     } else {
-      host.pendingShow.push({ nsWin, after: afterRec?.nsWin });
+      host.pendingShow.push({ nsWin, after: anchorNsWin });
       host.selectedBeforeShow ??= nsWin;
     }
     return api;
@@ -324,13 +372,19 @@ export const darwinTabsDriver: TabsDriver = {
 
   mergeAllWindows(into?: Window) {
     const preferred = into ? hosts.get(into) : undefined;
-    if (preferred) {
-      preferred.group.mergeAllWindows();
-      return;
-    }
-    for (const host of hosts.values()) {
-      host.group.mergeAllWindows();
-      break;
+    const target = preferred ?? hosts.values().next().value;
+    if (!target) return;
+    target.group.mergeAllWindows();
+    // Re-associate detached hosts sharing this tabbing group back into `target`.
+    for (const [win, h] of [...hosts]) {
+      if (h === target || h.group !== target.group) continue;
+      for (const [nsWin, rec] of [...h.tabs]) {
+        h.tabs.delete(nsWin);
+        target.tabs.set(nsWin, rec);
+        rec.host = target;
+      }
+      h.closed = true;
+      hosts.delete(win);
     }
   },
 

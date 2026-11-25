@@ -776,6 +776,10 @@ function buildWindow(win: Id, options: WindowOptions, framed: boolean, owned: bo
       return unsub;
     },
 
+    setOwnerDispose(fn) {
+      if (owned) disposeByWin.set(win, fn);
+    },
+
     dispose() {
       if (disposed) return;
       disposed = true;

@@ -482,6 +482,7 @@ function createTabbedWindow(options: WindowOptions): WindowBackend {
   else setDarkWindows(systemIsDark());
 
   let disposed = false;
+  let ownerDispose = () => self.dispose();
   const frame = createFrameWindow({
     title: options.title ?? "",
     bounds: options.bounds,
@@ -492,7 +493,7 @@ function createTabbedWindow(options: WindowOptions): WindowBackend {
     stripHeight: STRIP_HEIGHT,
     onCloseRequest() {
       if (fireClose(frame.hwnd)) return;
-      self.dispose();
+      ownerDispose();
     },
     onActivate() {},
     onResized() {
@@ -572,6 +573,10 @@ function createTabbedWindow(options: WindowOptions): WindowBackend {
       b.close.add(handler);
       return () => b.close.delete(handler);
     },
+    setOwnerDispose(fn) {
+      ownerDispose = fn;
+    },
+
     dispose() {
       if (disposed) return;
       disposed = true;
@@ -873,6 +878,47 @@ function buildWindow(hwnd: bigint, options: WindowOptions, framed: boolean, owne
       };
       localUnsubs.add(unsub);
       return unsub;
+    },
+
+    setOwnerDispose(fn) {
+      if (owned) disposeCallbacks.set(hwnd, fn);
+    },
+
+    preserveGeometry() {
+      const beforeStyle = user32.GetWindowLongPtrW(hwnd, GWL_STYLE);
+      const beforeExStyle = user32.GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+      const beforeBounds = self.bounds();
+      return () => {
+        if (disposed || user32.IsWindow(hwnd) === 0) return;
+        let styleChanged = false;
+        if (user32.GetWindowLongPtrW(hwnd, GWL_STYLE) !== beforeStyle) {
+          user32.SetWindowLongPtrW(hwnd, GWL_STYLE, beforeStyle);
+          styleChanged = true;
+        }
+        if (user32.GetWindowLongPtrW(hwnd, GWL_EXSTYLE) !== beforeExStyle) {
+          user32.SetWindowLongPtrW(hwnd, GWL_EXSTYLE, beforeExStyle);
+          styleChanged = true;
+        }
+        const after = self.bounds();
+        const boundsChanged =
+          after.x !== beforeBounds.x ||
+          after.y !== beforeBounds.y ||
+          after.width !== beforeBounds.width ||
+          after.height !== beforeBounds.height;
+        if (styleChanged || boundsChanged) {
+          const flags = SWP_NOZORDER | SWP_NOACTIVATE | (styleChanged ? SWP_FRAMECHANGED : 0);
+          user32.SetWindowPos(
+            hwnd,
+            0n,
+            Math.round(beforeBounds.x),
+            Math.round(beforeBounds.y),
+            Math.round(beforeBounds.width),
+            Math.round(beforeBounds.height),
+            flags,
+          );
+        }
+        layoutChild(hwnd);
+      };
     },
 
     dispose() {

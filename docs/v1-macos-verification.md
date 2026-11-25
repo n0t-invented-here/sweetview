@@ -74,6 +74,24 @@ await runEventLoop();
 '
 ```
 
+Also verify a frameless `Window({ frame: false })` stays borderless (`styleMask === 0`) after `WebView.attach` (our `sweetview-webview` fork patches `webview_set_size` to be a no-op for caller-provided `NSWindow`s):
+
+```bash
+bun -e '
+import { WebView } from "@n1h/sweetview";
+import { Window } from "@n1h/sweetview/native";
+import { sel, sendInt } from "./src/native/darwin/objc";
+
+const frameless = new Window({ frame: false, transparent: true, bounds: { x: 200, y: 200, width: 320, height: 240 } });
+const view = await WebView.attach(frameless, { url: "about:blank" });
+const mask = BigInt(sendInt(BigInt(frameless.handle as bigint), sel("styleMask")) ?? 0);
+console.log("frameless styleMask after attach:", mask, "bounds:", frameless.bounds());
+if (mask !== 0n) throw new Error(`expected borderless styleMask 0n, got ${mask}`);
+view.dispose();
+frameless.dispose();
+'
+```
+
 Also launch `demos/desktop-pet` with the settings window open and test dragging its frameless resize handles on macOS:
 
 ```bash

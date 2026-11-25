@@ -12,7 +12,7 @@ import { assetMime, indexHtml } from "./html";
 import type { AnyEvent, EventMap, Frame, MethodMap } from "./ipc";
 import type { InitMessage } from "./messages";
 import { discardQuit, quitEventLoop, runEventLoop } from "./native/event-loop";
-import { Window, getWindowMeta, type Rect, type TabHandle, type WindowOptions } from "./native/window";
+import { Window, getWindowMeta, preserveWindowGeometry, type Rect, type TabHandle, type WindowOptions } from "./native/window";
 import { Ring } from "./ring";
 import { ASSET_ORIGIN, backgroundColorCall, openWebviewCore, setAssetCall, webviewLibPath } from "./webview-lib";
 
@@ -213,14 +213,16 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
     }
 
     const ringBytes = options.ringBytes ?? 1 << 20;
-    if (!Number.isInteger(ringBytes) || ringBytes < 128) {
-      throw new RangeError(`sweetview: ringBytes must be a power of two of at least 128 bytes, got ${ringBytes}`);
+    if (!Number.isInteger(ringBytes) || ringBytes < 128 || ringBytes > 1 << 30 || (ringBytes & (ringBytes - 1)) !== 0) {
+      throw new RangeError(`sweetview: ringBytes must be a power of two between 128 and 2^30, got ${ringBytes}`);
     }
 
     // Read DIPs directly from the Window so callers never duplicate width/height/scale/resizable.
     const widthDips = Math.max(1, Math.round(winBounds.width / scale));
     const heightDips = Math.max(1, Math.round(winBounds.height / scale));
-    const hint = meta.resizable ? SizeHint.NONE : SizeHint.FIXED;
+    // Frameless windows resize via Window.startResize(), not WS_THICKFRAME.
+    const hint = meta.frame && meta.resizable ? SizeHint.NONE : SizeHint.FIXED;
+    const restoreGeometry = preserveWindowGeometry(window);
     const raw = new RawWebview(options.debug ?? false, { width: widthDips, height: heightDips, hint }, Number(host) as Pointer);
     if (raw.unsafeHandle === null || Number(raw.unsafeHandle) === 0) {
       throw new Error(
@@ -230,15 +232,8 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
       );
     }
 
-    // webview_set_size on Windows treats width/height as client area and calls
-    // AdjustWindowRectEx, which expands framed windows. Restore exact outer
-    // bounds on owned windows so Window.bounds() never drifts on attach.
-    if (meta.owned) {
-      const after = window.bounds();
-      if (after.x !== winBounds.x || after.y !== winBounds.y || after.width !== winBounds.width || after.height !== winBounds.height) {
-        window.setBounds(winBounds);
-      }
-    }
+    // Restore exact styles and outer bounds if webview_set_size mutated them (Windows).
+    restoreGeometry();
 
     try {
       raw.title = title;
@@ -382,7 +377,10 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
         },
       });
     } catch (err) {
-      if (raw.unsafeHandle !== null) raw.destroy();
+      if (raw.unsafeHandle !== null) {
+        raw.destroy();
+        discardQuit();
+      }
       throw err;
     }
   }
@@ -431,6 +429,13 @@ export async function createApp<M extends MethodMap = MethodMap, E extends Event
   const window = new Window(options);
 
   if (options.tabs) {
+    let unsubAutoQuit: (() => void) | undefined;
+    if (!options.onClose) {
+      unsubAutoQuit = window.onClose(() => {
+        window.dispose();
+        quitEventLoop();
+      });
+    }
     let disposed = false;
     return {
       window,
@@ -459,6 +464,7 @@ export async function createApp<M extends MethodMap = MethodMap, E extends Event
       dispose() {
         if (disposed) return;
         disposed = true;
+        unsubAutoQuit?.();
         tabsDriver?.disposeWindow(window);
         window.dispose();
       },

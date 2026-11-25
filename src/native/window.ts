@@ -110,6 +110,10 @@ export interface WindowBackend {
   onResize(handler: (bounds: Rect) => void): () => void;
   onMove(handler: (bounds: Rect) => void): () => void;
   onClose(handler: () => void): () => void;
+  /** Internal: lets Window wire default native close -> outer Window.dispose(). */
+  setOwnerDispose?(fn: () => void): void;
+  /** Internal: snapshots native window styles and outer bounds before WebView attach and returns a restore thunk. */
+  preserveGeometry?(): () => void;
   dispose(): void;
 }
 
@@ -159,6 +163,11 @@ export function onWindowDispose(win: Window, fn: () => void): () => void {
 /** Internal check for whether Window.dispose() has already run. */
 export function isWindowDisposed(win: Window): boolean {
   return windowDisposed.has(win);
+}
+
+/** Internal helper used by WebView.attach to preserve window styles & outer bounds across webview creation. */
+export function preserveWindowGeometry(win: Window): () => void {
+  return getWindowBackend(win).preserveGeometry?.() ?? (() => {});
 }
 
 /** Internal emitter used by the tabs coordinator to dispatch Window tab events. */
@@ -242,6 +251,7 @@ export class Window {
         owned: true,
       };
       this.#inner = impl().createWindow({ ...options, frame, resizable, transparent, tabs, appearance });
+      this.#inner.setOwnerDispose?.(() => this.dispose());
       this.handle = this.#inner.handle;
       if (options.onResize) this.onResize(options.onResize);
       if (options.onMove) this.onMove(options.onMove);
