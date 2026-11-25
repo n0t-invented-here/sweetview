@@ -25,7 +25,7 @@ export function makeImage(icon: Icon["macos"] | undefined, points?: number, temp
       sendBool(img, sel("setTemplate:"), template);
       return { img, owned: false }; // +0 (autoreleased)
     }
-    console.error(`sweetnative: no SF Symbol named "${icon.symbol}"${icon.png ? "; using the PNG" : ""}`);
+    console.error(`sweetview: no SF Symbol named "${icon.symbol}"${icon.png ? "; using the PNG" : ""}`);
   }
   if (icon?.png) {
     const data = asId(sendBytesLen(cls("NSData"), sel("dataWithBytes:length:"), icon.png, BigInt(icon.png.length)));
@@ -35,7 +35,7 @@ export function makeImage(icon: Icon["macos"] | undefined, points?: number, temp
       if (points !== undefined) sendSize(img, sel("setSize:"), points, points);
       return { img, owned: true }; // +1 from alloc/init
     }
-    console.error("sweetnative: NSImage could not decode the PNG bytes");
+    console.error("sweetview: NSImage could not decode the PNG bytes");
   }
   return { img: NIL, owned: false };
 }

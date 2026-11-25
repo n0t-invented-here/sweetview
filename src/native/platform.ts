@@ -17,7 +17,7 @@ export function backend<T>(win32: () => T, darwin: () => T): () => T {
           loaded = darwin();
           break;
         default:
-          throw new Error(`sweetnative: ${process.platform} is not supported (win32 and darwin are)`);
+          throw new Error(`sweetview: ${process.platform} is not supported (win32 and darwin are)`);
       }
     }
     return loaded;

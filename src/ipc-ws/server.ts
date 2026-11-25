@@ -30,8 +30,8 @@ export type WsHost = {
   upgrade(req: Request, server: Server<WsData>): boolean;
   websocket: WebSocketHandler<WsData>;
   readonly sessions: number;
-  /** Close every socket and stop forwarding events. Does not dispose the service. */
-  close(): void;
+  /** Close every socket and stop forwarding events. Does not dispose the service. Safe to call twice. */
+  dispose(): void;
 };
 
 export function wsHost<M extends MethodMap, E extends EventMap>(service: Service<M, E>, options: WsHostOptions = {}): WsHost {
@@ -123,7 +123,7 @@ export function wsHost<M extends MethodMap, E extends EventMap>(service: Service
     get sessions() {
       return sockets.size;
     },
-    close() {
+    dispose() {
       off();
       for (const ws of sockets.values()) ws.close();
       sockets.clear();

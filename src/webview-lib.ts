@@ -4,7 +4,10 @@
 // its own build/ folder; `bun build --compile` embeds that file. The two extra
 // symbols are probed here at run time rather than assumed: without
 // webview_set_background_color the page stays opaque with a warning; without
-// webview_set_asset createWebviewApp throws, because the page cannot load.
+// webview_set_asset createApp/WebView throws, because the page cannot load.
+//
+// All dlopen() calls are cached per libPath so repeated window/tab creation
+// never leaks open shared-library handles.
 
 import { FFIType, dlopen, ptr, type Pointer } from "bun:ffi";
 
@@ -30,27 +33,77 @@ export async function webviewLibPath(): Promise<string> {
 export type SetBackgroundColor = (w: Pointer, r: number, g: number, b: number, a: number) => number;
 export type SetAsset = (w: Pointer, path: string, mime: string, data: Uint8Array) => number;
 
-/** The library's `webview_set_background_color`, or undefined when this build does not have it. */
+export type WebviewCoreSymbols = {
+  webview_terminate: (w: Pointer) => number;
+  webview_run: (w: Pointer) => number;
+  webview_get_native_handle: (w: Pointer, kind: number) => Pointer | null;
+};
+
+type CachedLib = {
+  core?: WebviewCoreSymbols;
+  backgroundColor?: SetBackgroundColor | null;
+  setAsset?: SetAsset | null;
+};
+
+const cache = new Map<string, CachedLib>();
+
+function entry(libPath: string): CachedLib {
+  let c = cache.get(libPath);
+  if (!c) {
+    c = {};
+    cache.set(libPath, c);
+  }
+  return c;
+}
+
+/** Cached core webview C symbols (`webview_terminate`, `webview_run`, `webview_get_native_handle`). */
+export function openWebviewCore(libPath: string): WebviewCoreSymbols {
+  const c = entry(libPath);
+  if (c.core) return c.core;
+  const lib = dlopen(libPath, {
+    webview_terminate: { args: [FFIType.ptr], returns: FFIType.i32 },
+    webview_run: { args: [FFIType.ptr], returns: FFIType.i32 },
+    webview_get_native_handle: { args: [FFIType.ptr, FFIType.i32], returns: FFIType.ptr },
+  });
+  c.core = {
+    webview_terminate: lib.symbols.webview_terminate as (w: Pointer) => number,
+    webview_run: lib.symbols.webview_run as (w: Pointer) => number,
+    webview_get_native_handle: lib.symbols.webview_get_native_handle as (w: Pointer, kind: number) => Pointer | null,
+  };
+  return c.core;
+}
+
+/** The library's `webview_set_background_color`, or undefined when this build does not have it. Cached per `libPath`. */
 export function backgroundColorCall(libPath: string): SetBackgroundColor | undefined {
+  const c = entry(libPath);
+  if (c.backgroundColor !== undefined) return c.backgroundColor ?? undefined;
   try {
-    return dlopen(libPath, {
+    const fn = dlopen(libPath, {
       webview_set_background_color: { args: [FFIType.ptr, FFIType.i32, FFIType.i32, FFIType.i32, FFIType.i32], returns: FFIType.i32 },
     }).symbols.webview_set_background_color as SetBackgroundColor;
+    c.backgroundColor = fn;
+    return fn;
   } catch {
+    c.backgroundColor = null;
     return undefined;
   }
 }
 
-/** The library's `webview_set_asset`, or undefined when this build does not have it. */
+/** The library's `webview_set_asset`, or undefined when this build does not have it. Cached per `libPath`. */
 export function setAssetCall(libPath: string): SetAsset | undefined {
+  const c = entry(libPath);
+  if (c.setAsset !== undefined) return c.setAsset ?? undefined;
   try {
     const { webview_set_asset } = dlopen(libPath, {
       webview_set_asset: { args: [FFIType.ptr, FFIType.cstring, FFIType.cstring, FFIType.ptr, FFIType.u64], returns: FFIType.i32 },
     }).symbols;
     const cstr = (s: string) => Buffer.from(`${s}\0`, "utf8");
     // The library copies the bytes, so nothing here needs to outlive the call.
-    return (w, path, mime, data) => webview_set_asset(w, cstr(path), cstr(mime), data.byteLength ? ptr(data) : null, BigInt(data.byteLength));
+    const fn: SetAsset = (w, path, mime, data) => webview_set_asset(w, cstr(path), cstr(mime), data.byteLength ? ptr(data) : null, BigInt(data.byteLength));
+    c.setAsset = fn;
+    return fn;
   } catch {
+    c.setAsset = null;
     return undefined;
   }
 }

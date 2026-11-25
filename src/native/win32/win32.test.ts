@@ -2,7 +2,7 @@
 // They run only on Windows.
 
 import { describe, expect, test } from "bun:test";
-import { dotIcon } from "../icon";
+import { dotIco } from "../icon";
 
 const onWindows = process.platform === "win32";
 
@@ -10,7 +10,7 @@ describe.if(onWindows)("win32 FFI", () => {
   test("CreateIconFromResourceEx accepts a generated .ico image", async () => {
     const { loadIcon } = await import("./icon");
     const { user32 } = await import("./api");
-    const icon = loadIcon(dotIcon());
+    const icon = loadIcon(dotIco());
     expect(icon.owned).toBe(true); // false would mean it fell back to the stock icon
     expect(icon.handle).not.toBe(0n);
     user32.DestroyIcon(icon.handle);
@@ -82,7 +82,7 @@ describe.if(onWindows)("win32 FFI", () => {
   test("the 32px balloon icon loads from the generated .ico", async () => {
     const { loadIcon } = await import("./icon");
     const { SM_CXICON, user32 } = await import("./api");
-    const icon = loadIcon(dotIcon(), SM_CXICON);
+    const icon = loadIcon(dotIco(), SM_CXICON);
     expect(icon.owned).toBe(true);
     user32.DestroyIcon(icon.handle);
   });
@@ -136,7 +136,7 @@ describe.if(onWindows)("win32 icons", () => {
   test("iconBitmap makes a DIB section at the asked size and premultiplies", async () => {
     const { iconBitmap } = await import("./icon");
     const { gdi32 } = await import("./api");
-    const hbm = iconBitmap(dotIcon({ color: "#ff0000", sizes: [32] }), 16); // 32 -> 16: the resample path
+    const hbm = iconBitmap(dotIco({ color: "#ff0000", sizes: [32] }), 16); // 32 -> 16: the resample path
     expect(hbm).not.toBe(0n);
     gdi32.DeleteObject(hbm);
   });
@@ -158,7 +158,7 @@ describe.if(onWindows)("win32 icons", () => {
     const { user32, gdi32, wstr } = await import("./api");
     const hmenu = user32.CreatePopupMenu();
     user32.AppendMenuW(hmenu, 0, 1n, wstr("With icon"));
-    const hbm = iconBitmap(dotIcon());
+    const hbm = iconBitmap(dotIco());
     expect(user32.SetMenuItemInfoW(hmenu, 0, 1, bitmapItemInfo(hbm))).not.toBe(0);
     user32.DestroyMenu(hmenu);
     gdi32.DeleteObject(hbm);
@@ -168,8 +168,8 @@ describe.if(onWindows)("win32 icons", () => {
     const { setWindowIcon } = await import("./icon");
     const { createMessageWindow } = await import("./message-window");
     const win = createMessageWindow(() => undefined);
-    setWindowIcon(win.hwnd, dotIcon());
-    setWindowIcon(win.hwnd, dotIcon({ color: "#00ff00" })); // frees the first pair
+    setWindowIcon(win.hwnd, dotIco());
+    setWindowIcon(win.hwnd, dotIco({ color: "#00ff00" })); // frees the first pair
     setWindowIcon(win.hwnd, undefined); // back to stock
     win.destroy();
   });

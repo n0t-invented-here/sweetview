@@ -10,7 +10,7 @@ const activeNotifier = new WeakMap<object, symbol>(); // each tray has one ballo
 
 export function createNotifier(options: NotifierOptions = {}): Notifier {
   const tray = currentTray();
-  if (!tray) throw new Error("sweetnative: on Windows, create the tray before the notifier (toasts hang off the tray icon)");
+  if (!tray) throw new Error("sweetview: on Windows, create the tray before the notifier (toasts hang off the tray icon)");
   tray.balloon.onClick(options.onClick);
   const me = Symbol("notifier");
   activeNotifier.set(tray, me);

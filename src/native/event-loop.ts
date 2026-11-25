@@ -55,7 +55,7 @@ let stopRunning: (() => void) | undefined;
 export function runEventLoop(options: EventLoopOptions = {}): Promise<void> {
   const { intervalMs = 16 } = options;
   if (!Number.isFinite(intervalMs) || intervalMs < 1) throw new RangeError(`intervalMs must be a number of at least 1, got ${intervalMs}`);
-  if (stopRunning) throw new Error("sweetnative: runEventLoop is already running");
+  if (stopRunning) throw new Error("sweetview: runEventLoop is already running");
   const { pumpEvents: pump } = impl(); // an unsupported OS throws here, synchronously, like every other native call
   return new Promise((resolve) => {
     const timer = setInterval(() => {

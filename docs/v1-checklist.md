@@ -4,20 +4,20 @@ Source: `docs/audit-and-v1-plan.md`, `docs/v1-api.md`, and the user's v1.0 direc
 
 ## Acceptance criteria
 
-- [ ] **AC1: Worker IPC never hangs RPC callers and native webview library loading does not leak `dlopen` handles (Audit 2.4, 2.8)**
-  - [ ] Wrap `JSON.stringify` and `ring.write` in `src/worker.ts` so oversized (`> ringBytes - 4`) or unserializable (`BigInt`, circular) return values emit `{ kind: "reply", seq, ok: false, error }` instead of dropping replies
-  - [ ] Cache `dlopen` handles per `libPath` in `src/webview-lib.ts` and reuse from `src/app.ts`
-  - [ ] Add unit tests in `src/worker.test.ts` and `src/webview-lib.test.ts` covering oversized replies, unserializable replies, subsequent healthy calls, and `dlopen` caching
-  - [ ] verify: `bun test src/worker.test.ts src/ring.test.ts src/webview-lib.test.ts` passes with real oversized and circular return values rejecting cleanly
+- [x] **AC1: Worker IPC never hangs RPC callers and native webview library loading does not leak `dlopen` handles (Audit 2.4, 2.8)**
+  - [x] Wrap `JSON.stringify` and `ring.write` in `src/worker.ts` so oversized (`> ringBytes - 4`) or unserializable (`BigInt`, circular) return values emit `{ kind: "reply", seq, ok: false, error }` instead of dropping replies
+  - [x] Cache `dlopen` handles per `libPath` in `src/webview-lib.ts` and reuse from `src/app.ts`
+  - [x] Add unit tests in `src/worker.test.ts` and `src/webview-lib.test.ts` covering oversized replies, unserializable replies, subsequent healthy calls, and `dlopen` caching
+  - [x] verify: `bun test src/worker.test.ts src/ring.test.ts src/webview-lib.test.ts` passes with real oversized and circular return values rejecting cleanly
 
-- [ ] **AC2: Leaf subpaths match v1.0 API surface and naming (`dispose()`, `SettingsStore`, `HitRelay`, `dotIco`, `sweetview:` prefix)**
-  - [ ] Rename `.close()` to `.dispose()` on `memoryTransport` (`src/ipc/memory.ts`), `wsHost` (`src/ipc-ws/server.ts`), and `wsTransport` (`src/ipc-ws/client.ts`)
-  - [ ] Add `SettingsStore` class alongside `createSettingsStore` in `src/settings-store.ts`
-  - [ ] Rename `dotIcon` to `dotIco` in `src/native/icon.ts`
-  - [ ] Add `HitRelay` class with `isEnabled()` alongside `createHitRelay` in `src/native/hit-regions.ts`
-  - [ ] Replace `sweetnative:` error/runtime prefixes with `sweetview:` across `src/native/`
-  - [ ] Update unit tests for `ipc`, `ipc-ws`, `settings-store`, `icon`, `hit-regions`
-  - [ ] verify: `bun test src/ipc src/ipc-ws src/settings-store.test.ts src/native/icon.test.ts src/native/hit-regions.test.ts` passes and `rg "sweetnative:" src/` returns zero matches
+- [x] **AC2: Leaf subpaths match v1.0 API surface and naming (`dispose()`, `SettingsStore`, `HitRelay`, `dotIco`, `sweetview:` prefix)**
+  - [x] Rename `.close()` to `.dispose()` on `memoryTransport` (`src/ipc/memory.ts`), `wsHost` (`src/ipc-ws/server.ts`), and `wsTransport` (`src/ipc-ws/client.ts`)
+  - [x] Add `SettingsStore` class alongside `createSettingsStore` in `src/settings-store.ts`
+  - [x] Rename `dotIcon` to `dotIco` in `src/native/icon.ts`
+  - [x] Add `HitRelay` class with `isEnabled()` alongside `createHitRelay` in `src/native/hit-regions.ts`
+  - [x] Replace `sweetnative:` error/runtime prefixes with `sweetview:` across `src/native/`
+  - [x] Update unit tests for `ipc`, `ipc-ws`, `settings-store`, `icon`, `hit-regions`
+  - [x] verify: `bun test src/ipc src/ipc-ws src/settings-store.test.ts src/native/icon.test.ts src/native/hit-regions.test.ts` passes and `rg "sweetnative:" src/` returns zero matches
 
 - [ ] **AC3: Standalone `Screen`, `Menu.popup`, `Tray`, `Notifier`, `setAppMenu`, and `pickFolder` work cleanly with shared DPI/startup init (Audit 2.5, 2.6, 2.10, 2.12)**
   - [ ] Win32: add shared idempotent `ensureWin32Init()` calling `SetProcessDpiAwarenessContext(PER_MONITOR_AWARE_V2)` + `ensureFirstWindowIsHidden()` invoked by `Screen`, `Window`, `createMessageWindow()`, and `WebView`; deduplicate `ole32.dll` in `win32/folder-picker.ts`

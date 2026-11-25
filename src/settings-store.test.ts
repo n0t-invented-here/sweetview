@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
-import { appDataDir, createSettingsStore } from "./settings-store";
+import { appDataDir, createSettingsStore, SettingsStore } from "./settings-store";
 
 type S = { volume: number; muted: boolean };
 const DEFAULTS: S = { volume: 50, muted: false };
@@ -93,5 +93,15 @@ describe("createSettingsStore, the edges", () => {
     const store = createSettingsStore<S>({ app: "x", dir, defaults: DEFAULTS });
     store.save({ volume: 3, muted: true });
     expect(readdirSync(dir)).toEqual(["settings.json"]);
+  });
+
+  test("SettingsStore class works identically to createSettingsStore", () => {
+    const dir = tempDir();
+    const store = new SettingsStore<S>({ app: "x", dir, defaults: DEFAULTS, sanitize: clamp });
+    expect(store).toBeInstanceOf(SettingsStore);
+    expect(store.load()).toEqual(DEFAULTS);
+    store.save({ volume: 75, muted: true });
+    expect(store.load()).toEqual({ volume: 75, muted: true });
+    expect(createSettingsStore<S>({ app: "x", dir, defaults: DEFAULTS })).toBeInstanceOf(SettingsStore);
   });
 });

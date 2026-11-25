@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { convexHull, hitRegions, packRegions } from "./hit-regions";
+import { convexHull, createHitRelay, HitRelay, hitRegions, packRegions } from "./hit-regions";
 
 const rect = (x: number, y: number, w: number, h: number) => [
   { x, y },
@@ -47,5 +47,39 @@ describe("convexHull", () => {
   });
   test("collinear and duplicate points are dropped", () => {
     expect(convexHull([{ x: 0, y: 0 }, { x: 1, y: 1 }, { x: 2, y: 2 }, { x: 2, y: 2 }])).toHaveLength(2);
+  });
+});
+
+describe("HitRelay", () => {
+  test("tracks enabled state, relays probes, and binds answer for tear-off use", () => {
+    let lastPolys: unknown = "unset";
+    let lastRefine: ((local: { x: number; y: number }, reply: (solid: boolean) => void) => void) | undefined;
+    const probes: { id: number; x: number; y: number }[] = [];
+    const relay = new HitRelay(
+      {
+        setHitRegions(polys, refine) {
+          lastPolys = polys;
+          lastRefine = refine;
+        },
+      },
+      (p) => probes.push(p),
+    );
+    expect(relay).toBeInstanceOf(HitRelay);
+    expect(relay.isEnabled()).toBe(true);
+    const poly = [rect(0, 0, 10, 10)];
+    relay.setRegions(poly);
+    expect(lastPolys).toBe(poly);
+
+    let answered: boolean | undefined;
+    lastRefine?.({ x: 3, y: 4 }, (solid) => (answered = solid));
+    expect(probes).toEqual([{ id: 1, x: 3, y: 4 }]);
+    const unboundAnswer = relay.answer;
+    unboundAnswer({ id: 1, solid: true });
+    expect(answered).toBe(true);
+
+    relay.setEnabled(false);
+    expect(relay.isEnabled()).toBe(false);
+    expect(lastPolys).toBeNull();
+    expect(createHitRelay({ setHitRegions() {} }, () => {})).toBeInstanceOf(HitRelay);
   });
 });

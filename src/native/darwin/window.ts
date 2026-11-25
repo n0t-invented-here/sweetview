@@ -20,7 +20,7 @@ const closeTarget = () =>
   }));
 
 export const asNSWindow = (handle: WindowHandle): Id => {
-  if (handle === null || handle === 0 || handle === 0n) throw new Error("sweetnative: window handle is nil");
+  if (handle === null || handle === 0 || handle === 0n) throw new Error("sweetview: window handle is nil");
   return BigInt(handle);
 };
 
@@ -48,7 +48,7 @@ export function nativeWindow(handle: WindowHandle): NativeWindow {
     },
     onCloseRequest(handler) {
       const button = closeButton();
-      if (button === NIL) throw new Error("sweetnative: window has no close button");
+      if (button === NIL) throw new Error("sweetview: window has no close button");
       closeHandlers.set(win, handler);
       sendPtr(button, sel("setTarget:"), closeTarget());
       sendPtr(button, sel("setAction:"), sel("closeRequested:"));

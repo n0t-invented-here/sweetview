@@ -3,7 +3,7 @@
 // purpose: the UI thread is blocked in the OS loop after run() and cannot
 // await, and a settings change is a few hundred bytes.
 //
-//   const store = createSettingsStore<Settings>({ app: "my-app", defaults: DEFAULTS, sanitize });
+//   const store = new SettingsStore<Settings>({ app: "my-app", defaults: DEFAULTS, sanitize });
 //   let settings = store.load();          // before run(); defaults when the file is missing or unreadable
 //   store.save(settings = { ...settings, ...patch });
 //
@@ -47,55 +47,58 @@ export type SettingsStoreOptions<T> = {
   sanitize?: (input: unknown) => T;
 };
 
-export type SettingsStore<T> = {
+export class SettingsStore<T extends object> {
   /** Where the file is (or will be). */
   readonly path: string;
+  readonly #defaults: T;
+  readonly #sanitize: (input: unknown) => T;
+
+  constructor(options: SettingsStoreOptions<T>) {
+    this.path = join(options.dir ?? appDataDir(options.app), options.file ?? "settings.json");
+    this.#defaults = options.defaults;
+    const isPlainObject = (input: unknown): input is Partial<T> => typeof input === "object" && input !== null && !Array.isArray(input);
+    this.#sanitize = options.sanitize ?? ((input: unknown): T => ({ ...options.defaults, ...(isPlainObject(input) ? input : {}) }));
+  }
+
+  #settle(input: unknown): T {
+    try {
+      return this.#sanitize(input);
+    } catch (err) {
+      console.error(`settings: sanitize failed for ${this.path}, using defaults:`, (err as Error).message);
+      return { ...this.#defaults };
+    }
+  }
+
   /** The saved settings through `sanitize`; `sanitize(undefined)` when the file is missing, unreadable or not JSON (the cause goes to stderr). Never throws. */
-  load(): T;
+  load(): T {
+    if (!existsSync(this.path)) return this.#settle(undefined);
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(readFileSync(this.path, "utf8"));
+    } catch (err) {
+      console.error(`settings: ${this.path} unreadable, using defaults:`, (err as Error).message);
+      return this.#settle(undefined);
+    }
+    return this.#settle(parsed);
+  }
+
   /** Writes the whole document, creating the folder; a failure goes to stderr and is otherwise ignored, so a read-only disk never stops the app. */
-  save(settings: T): void;
-};
+  save(settings: T): void {
+    // written beside the file and renamed over it, so a crash mid-write leaves the previous document rather than a truncated one
+    const tmp = `${this.path}.${process.pid}.tmp`;
+    try {
+      mkdirSync(join(this.path, ".."), { recursive: true });
+      writeFileSync(tmp, `${JSON.stringify(settings, null, 2)}\n`);
+      renameSync(tmp, this.path);
+    } catch (err) {
+      try {
+        rmSync(tmp, { force: true });
+      } catch {}
+      console.error(`settings: could not write ${this.path}:`, (err as Error).message);
+    }
+  }
+}
 
 export function createSettingsStore<T extends object>(options: SettingsStoreOptions<T>): SettingsStore<T> {
-  const path = join(options.dir ?? appDataDir(options.app), options.file ?? "settings.json");
-  const isPlainObject = (input: unknown): input is Partial<T> => typeof input === "object" && input !== null && !Array.isArray(input);
-  const sanitize = options.sanitize ?? ((input: unknown): T => ({ ...options.defaults, ...(isPlainObject(input) ? input : {}) }));
-  // sanitize runs on every path, so a custom one that derives or migrates fields always gets its turn;
-  // a throw from it is reported like an unreadable file and the defaults are used.
-  const settle = (input: unknown): T => {
-    try {
-      return sanitize(input);
-    } catch (err) {
-      console.error(`settings: sanitize failed for ${path}, using defaults:`, (err as Error).message);
-      return { ...options.defaults };
-    }
-  };
-  return {
-    path,
-    load() {
-      if (!existsSync(path)) return settle(undefined);
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(readFileSync(path, "utf8"));
-      } catch (err) {
-        console.error(`settings: ${path} unreadable, using defaults:`, (err as Error).message);
-        return settle(undefined);
-      }
-      return settle(parsed);
-    },
-    save(settings) {
-      // written beside the file and renamed over it, so a crash mid-write leaves the previous document rather than a truncated one
-      const tmp = `${path}.${process.pid}.tmp`;
-      try {
-        mkdirSync(join(path, ".."), { recursive: true });
-        writeFileSync(tmp, `${JSON.stringify(settings, null, 2)}\n`);
-        renameSync(tmp, path);
-      } catch (err) {
-        try {
-          rmSync(tmp, { force: true });
-        } catch {}
-        console.error(`settings: could not write ${path}:`, (err as Error).message);
-      }
-    },
-  };
+  return new SettingsStore(options);
 }

@@ -41,7 +41,7 @@ type Built = { hmenu: bigint; commands: Map<number, () => void>; bitmaps: bigint
 
 function build(template: MenuTemplate): Built {
   const built: Built = { hmenu: user32.CreatePopupMenu(), commands: new Map(), bitmaps: [] };
-  if (built.hmenu === 0n) throw new Error("sweetnative: CreatePopupMenu failed");
+  if (built.hmenu === 0n) throw new Error("sweetview: CreatePopupMenu failed");
   try {
     fill(built.hmenu, template, built);
   } catch (err) {
@@ -66,7 +66,7 @@ function fill(hmenu: bigint, template: MenuTemplate, built: Built): void {
     const label = wstr(escapeLabel(item.label)); // AppendMenuW copies the text
     if (isSubmenu(item)) {
       const sub = user32.CreatePopupMenu();
-      if (sub === 0n) throw new Error("sweetnative: CreatePopupMenu failed");
+      if (sub === 0n) throw new Error("sweetview: CreatePopupMenu failed");
       fill(sub, item.submenu, built);
       user32.AppendMenuW(hmenu, MF_POPUP | MF_STRING | grayed, sub, label);
     } else {
@@ -80,7 +80,7 @@ function fill(hmenu: bigint, template: MenuTemplate, built: Built): void {
       const hbm = iconBitmap(ico);
       if (hbm !== 0n) {
         built.bitmaps.push(hbm);
-        if (!user32.SetMenuItemInfoW(hmenu, position, 1, bitmapItemInfo(hbm))) console.error(`sweetnative: SetMenuItemInfoW(hbmpItem) failed (${lastError()})`);
+        if (!user32.SetMenuItemInfoW(hmenu, position, 1, bitmapItemInfo(hbm))) console.error(`sweetview: SetMenuItemInfoW(hbmpItem) failed (${lastError()})`);
       }
     }
   });

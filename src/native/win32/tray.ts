@@ -138,10 +138,10 @@ export function createTray(options: TrayOptions): Win32Tray {
   const sync = (op: number, balloon?: Balloon) => {
     const nid = notifyIconData(window.hwnd, uid, icon.handle, tooltip, balloon);
     const ok = shell32.Shell_NotifyIconW(op, nid);
-    if (!ok && balloon) console.error(`sweetnative: Shell_NotifyIcon balloon failed (${lastError()})`);
+    if (!ok && balloon) console.error(`sweetview: Shell_NotifyIcon balloon failed (${lastError()})`);
     // NIM_ADD fails with ERROR_TIMEOUT while Explorer is still starting (login autostart);
     // the TaskbarCreated broadcast that follows re-adds the icon, so do not throw.
-    if (!ok && op === NIM_ADD) console.error(`sweetnative: Shell_NotifyIcon(NIM_ADD) failed (${lastError()}); waiting for TaskbarCreated`);
+    if (!ok && op === NIM_ADD) console.error(`sweetview: Shell_NotifyIcon(NIM_ADD) failed (${lastError()}); waiting for TaskbarCreated`);
   };
 
   const onTrayMessage = (mouse: number) => {
@@ -187,7 +187,7 @@ export function createTray(options: TrayOptions): Win32Tray {
         const hIcon = balloonIcon.owned ? balloonIcon.handle : 0n;
         const nid = notifyIconData(window.hwnd, uid, icon.handle, tooltip, { title: n.title, body: n.body ?? "", silent: n.silent === true, hIcon });
         const ok = shell32.Shell_NotifyIconW(NIM_MODIFY, nid) !== 0;
-        if (!ok) console.error(`sweetnative: Shell_NotifyIcon balloon failed (${lastError()})`);
+        if (!ok) console.error(`sweetview: Shell_NotifyIcon balloon failed (${lastError()})`);
         if (ok) lastBalloon = { id: notificationId(n), data: n.data };
         return ok;
       },

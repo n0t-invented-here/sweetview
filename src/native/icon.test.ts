@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { crc32, deflateSync, inflateSync } from "node:zlib";
-import { APP_ICO_SIZES, decodePng, trimTransparent, dotIcns, dotIcon, dotPng, encodeIcns, encodeIco, encodePng, icnsFromPng, icoFromPng, icoFromRgba, icoRgba, parseIco, pickIcoEntry, renderDot, resampleRgba } from "./icon";
+import { APP_ICO_SIZES, decodePng, trimTransparent, dotIcns, dotIco, dotPng, encodeIcns, encodeIco, encodePng, icnsFromPng, icoFromPng, icoFromRgba, icoRgba, parseIco, pickIcoEntry, renderDot, resampleRgba } from "./icon";
 
 describe("renderDot", () => {
   test("centre is opaque fill, corners are transparent", () => {
@@ -20,7 +20,7 @@ describe("renderDot", () => {
 
 describe("ico container", () => {
   test("round-trips sizes and offsets", () => {
-    const ico = dotIcon({ sizes: [16, 32] });
+    const ico = dotIco({ sizes: [16, 32] });
     const entries = parseIco(ico);
     // Largest first: `bun build --compile --windows-icon` numbers the images in file order, and Windows
     // draws a program's large icons from image number 1.
@@ -59,21 +59,21 @@ describe("ico container", () => {
 });
 
 describe("pickIcoEntry", () => {
-  const entries = parseIco(dotIcon({ sizes: [16, 24, 32] }));
+  const entries = parseIco(dotIco({ sizes: [16, 24, 32] }));
   test("exact match wins", () => expect(pickIcoEntry(entries, 24).width).toBe(24));
   test("otherwise the smallest larger", () => expect(pickIcoEntry(entries, 20).width).toBe(24));
   test("otherwise the largest", () => expect(pickIcoEntry(entries, 64).width).toBe(32));
 });
 
 describe("decodeIcoEntry / icoRgba", () => {
-  test("round-trips the pixels dotIcon encoded", () => {
+  test("round-trips the pixels dotIco encoded", () => {
     const px = renderDot(16, { color: "#123456" });
     const ico = encodeIco(new Map([[16, px]]));
     expect([...icoRgba(ico, 16)]).toEqual([...px]);
   });
 
   test("scales the next larger entry down when the size is missing", () => {
-    const ico = dotIcon({ color: "#ff0000", sizes: [32] });
+    const ico = dotIco({ color: "#ff0000", sizes: [32] });
     const px = icoRgba(ico, 16);
     expect(px.length).toBe(16 * 16 * 4);
     const centre = (8 * 16 + 8) * 4;

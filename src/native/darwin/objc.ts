@@ -103,7 +103,7 @@ export function makeTarget(baseName: string, methods: Record<string, TargetMetho
         try {
           impl(...args.map((a) => BigInt(a ?? 0)));
         } catch (err) {
-          console.error(`sweetnative: ${className} ${selector} threw:`, err);
+          console.error(`sweetview: ${className} ${selector} threw:`, err);
         }
       },
       { args: [ID, ID, ...Array<FFIType>(argc).fill(ID)], returns: FFIType.void },
@@ -172,7 +172,7 @@ export function makeBlock(body: (...args: bigint[]) => void, argTypes: FFIType[]
     returns: FFIType.void,
     threadsafe,
   });
-  if (cb.ptr === null) throw new Error("sweetnative: could not allocate a block callback");
+  if (cb.ptr === null) throw new Error("sweetview: could not allocate a block callback");
   retained.push(cb);
   const literal = new Uint8Array(BLOCK_LITERAL_SIZE);
   const dv = new DataView(literal.buffer);
@@ -189,7 +189,7 @@ export function makeBlock(body: (...args: bigint[]) => void, argTypes: FFIType[]
 export function invokeBlock(block: Id, argTypes: FFIType[], ...args: (bigint | number)[]): void {
   if (block === NIL) return;
   const invoke = read.ptr(Number(block) as Pointer, 16) as unknown as Pointer | bigint | null;
-  if (invoke === null) throw new Error("sweetnative: block has no invoke pointer");
+  if (invoke === null) throw new Error("sweetview: block has no invoke pointer");
   const fn = CFunction({ ptr: Number(invoke) as Pointer, args: [FFIType.u64, ...argTypes], returns: FFIType.void }) as unknown as (...a: unknown[]) => void;
   fn(block, ...args);
 }

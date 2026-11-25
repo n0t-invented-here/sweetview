@@ -22,7 +22,7 @@ test("non-object JSON messages are ignored and the socket keeps working", async 
     expect(JSON.parse(reply)).toMatchObject({ kind: "reply", seq: "1", ok: true, result: "pong" });
     ws.close();
   } finally {
-    host.close();
+    host.dispose();
     server.stop(true);
   }
 });

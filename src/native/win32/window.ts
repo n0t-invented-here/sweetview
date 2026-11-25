@@ -9,7 +9,7 @@ import { SW_HIDE, SW_RESTORE, SW_SHOW, WM_CLOSE, WM_NCDESTROY, comctl32, user32 
 import { setWindowIcon } from "./icon";
 
 export const asHwnd = (handle: WindowHandle): bigint => {
-  if (handle === null || handle === 0 || handle === 0n) throw new Error("sweetnative: window handle is NULL");
+  if (handle === null || handle === 0 || handle === 0n) throw new Error("sweetview: window handle is NULL");
   return BigInt(handle);
 };
 
@@ -26,7 +26,7 @@ const proc = () =>
         try {
           handler();
         } catch (err) {
-          console.error("sweetnative: close handler threw:", err);
+          console.error("sweetview: close handler threw:", err);
         }
         return 0n; // handled: the window stays
       }
@@ -62,7 +62,7 @@ export function nativeWindow(handle: WindowHandle): NativeWindow {
       if (!closeHandlers.has(hwnd)) {
         // SetWindowSubclass on an already-subclassed (hwnd, proc, id) just updates refData.
         if (!comctl32.SetWindowSubclass(hwnd, proc().ptr, SUBCLASS_ID, 0n)) {
-          throw new Error("sweetnative: SetWindowSubclass failed");
+          throw new Error("sweetview: SetWindowSubclass failed");
         }
       }
       closeHandlers.set(hwnd, handler);

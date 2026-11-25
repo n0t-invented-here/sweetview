@@ -90,12 +90,12 @@ function ensureResizeProc(): JSCallback {
       try {
         resizers.get(hwnd)?.();
       } catch (err) {
-        console.error("sweetnative: resize gesture threw:", err); // never unwind into user32
+        console.error("sweetview: resize gesture threw:", err); // never unwind into user32
       }
     },
     { args: [FFIType.u64, FFIType.u32, FFIType.u64, FFIType.u32], returns: FFIType.void },
   );
-  if (resizeProc.ptr === null) throw new Error("sweetnative: could not allocate the resize timer procedure");
+  if (resizeProc.ptr === null) throw new Error("sweetview: could not allocate the resize timer procedure");
   return resizeProc;
 }
 
@@ -163,12 +163,12 @@ function ensureTimerProc(): JSCallback {
       try {
         pollHit(hwnd);
       } catch (err) {
-        console.error("sweetnative: hit region poll threw:", err); // never unwind into user32
+        console.error("sweetview: hit region poll threw:", err); // never unwind into user32
       }
     },
     { args: [FFIType.u64, FFIType.u32, FFIType.u64, FFIType.u32], returns: FFIType.void },
   );
-  if (timerProc.ptr === null) throw new Error("sweetnative: could not allocate the hit region timer procedure");
+  if (timerProc.ptr === null) throw new Error("sweetview: could not allocate the hit region timer procedure");
   return timerProc;
 }
 
@@ -188,7 +188,7 @@ function enableAlphaComposition(hwnd: bigint) {
   view.setInt32(16, 0, true);
   const hr = dwmapi.DwmEnableBlurBehindWindow(hwnd, new Uint8Array(bb));
   gdi32.DeleteObject(region);
-  if (hr < 0) throw new Error(`sweetnative: DwmEnableBlurBehindWindow failed (0x${(hr >>> 0).toString(16)})`);
+  if (hr < 0) throw new Error(`sweetview: DwmEnableBlurBehindWindow failed (0x${(hr >>> 0).toString(16)})`);
 }
 
 const CLASS_NAME = "SweetnativeOverlay";
@@ -238,7 +238,7 @@ function registerClass() {
         try {
           if (followsSystem.has(hwnd)) applyDark(hwnd, systemIsDark());
         } catch (err) {
-          console.error("sweetnative: following the system's appearance threw:", err); // never unwind into user32
+          console.error("sweetview: following the system's appearance threw:", err); // never unwind into user32
         }
         return user32.DefWindowProcW(hwnd, message, wParam, lParam);
       }
@@ -255,7 +255,7 @@ function registerClass() {
     },
     { args: [FFIType.u64, FFIType.u32, FFIType.u64, FFIType.i64], returns: FFIType.i64 },
   );
-  if (wndProc.ptr === null) throw new Error("sweetnative: could not allocate the overlay window procedure");
+  if (wndProc.ptr === null) throw new Error("sweetview: could not allocate the overlay window procedure");
   const wc = new Uint8Array(WNDCLASSEXW_SIZE);
   const dv = new DataView(wc.buffer);
   const className = wstr(CLASS_NAME);
@@ -263,7 +263,7 @@ function registerClass() {
   dv.setBigUint64(8, BigInt(wndProc.ptr), true); // lpfnWndProc
   dv.setBigUint64(24, hInstance(), true); // hInstance
   dv.setBigUint64(64, BigInt(ptr(className)), true); // lpszClassName; hbrBackground stays NULL: nothing paints behind the page
-  if (user32.RegisterClassExW(ptr(wc)) === 0) throw new Error(`sweetnative: RegisterClassExW failed (${lastError()})`);
+  if (user32.RegisterClassExW(ptr(wc)) === 0) throw new Error(`sweetview: RegisterClassExW failed (${lastError()})`);
   classRegistered = true;
 }
 
@@ -285,7 +285,7 @@ export function createOverlayWindow(options: OverlayWindowOptions): Overlay {
   // WebView2 needs a single-threaded apartment on this thread; without it
   // webview_create fails and returns NULL.
   const hr = ole32.CoInitializeEx(null, COINIT_APARTMENTTHREADED);
-  if (hr === RPC_E_CHANGED_MODE) throw new Error("sweetnative: this thread already initialised COM as multi-threaded; WebView2 needs an STA");
+  if (hr === RPC_E_CHANGED_MODE) throw new Error("sweetview: this thread already initialised COM as multi-threaded; WebView2 needs an STA");
   user32.SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2); // fails harmlessly if already set
   ensureFirstWindowIsHidden();
   registerClass();
@@ -298,7 +298,7 @@ export function createOverlayWindow(options: OverlayWindowOptions): Overlay {
   // before the caller hands it to the webview, which is the order WebView2 needs.
   const style = (frame ? WS_OVERLAPPEDWINDOW : WS_POPUP) | WS_CLIPCHILDREN;
   const hwnd = user32.CreateWindowExW(0, className, titleW, style, b.x, b.y, b.width, b.height, 0n, 0n, hInstance(), null);
-  if (hwnd === 0n) throw new Error(`sweetnative: CreateWindowExW failed (${lastError()})`);
+  if (hwnd === 0n) throw new Error(`sweetview: CreateWindowExW failed (${lastError()})`);
   if (frame) {
     // The title bar and frame. Windows never moves this by itself, so "system" is ours to keep in step (WM_SETTINGCHANGE).
     if (appearance === "system") followsSystem.add(hwnd);
@@ -342,7 +342,7 @@ function restyle(hwnd: bigint, options: OverlayOptions, framed: boolean): Overla
     const flags = (colorKey !== undefined ? LWA_COLORKEY : 0) | (opacity !== undefined ? LWA_ALPHA : 0);
     const alpha = Math.round(Math.min(1, Math.max(0, opacity ?? 1)) * 255);
     if (!user32.SetLayeredWindowAttributes(hwnd, colorKey !== undefined ? colorRef(colorKey) : 0, alpha, flags)) {
-      throw new Error("sweetnative: SetLayeredWindowAttributes failed");
+      throw new Error("sweetview: SetLayeredWindowAttributes failed");
     }
   }
 
@@ -444,7 +444,7 @@ function restyle(hwnd: bigint, options: OverlayOptions, framed: boolean): Overla
       const previous = hits.get(hwnd);
       hits.set(hwnd, { packed: packRegions(polygons), passThrough, refine, inPolygon: previous?.inPolygon ?? false, askSeq: previous?.askSeq ?? 0 });
       if (!previous && user32.SetTimer(hwnd, HIT_TIMER_ID, HIT_TIMER_MS, ensureTimerProc().ptr) === 0n) {
-        throw new Error(`sweetnative: SetTimer failed (${lastError()})`);
+        throw new Error(`sweetview: SetTimer failed (${lastError()})`);
       }
       pollHit(hwnd); // things moved under a still cursor: the polygons are new, so the refiner is asked again
     },
@@ -463,7 +463,7 @@ function restyle(hwnd: bigint, options: OverlayOptions, framed: boolean): Overla
       // since the press becomes the window's new bounds on every tick while the button is down.
       user32.GetCursorPos(pointBuf);
       resizing = { edge, from: self.bounds(), cursor: { x: pointBuf[0]!, y: pointBuf[1]! } };
-      if (user32.SetTimer(hwnd, RESIZE_TIMER_ID, RESIZE_TIMER_MS, ensureResizeProc().ptr) === 0n) throw new Error(`sweetnative: SetTimer failed (${lastError()})`);
+      if (user32.SetTimer(hwnd, RESIZE_TIMER_ID, RESIZE_TIMER_MS, ensureResizeProc().ptr) === 0n) throw new Error(`sweetview: SetTimer failed (${lastError()})`);
     },
     minimize() {
       user32.ShowWindow(hwnd, SW_MINIMIZE);

@@ -14,7 +14,7 @@
 // callback, and the menu and the window drag run a loop of their own.
 
 import { createWebviewApp, indexHtml, type WebviewApp } from "@n1h/sweetview";
-import { dotIcon, nativeWindow, quitEventLoop, type Icon } from "@n1h/sweetview/native";
+import { dotIco, nativeWindow, quitEventLoop, type Icon } from "@n1h/sweetview/native";
 import { webviewLibPath } from "../../src/webview-lib";
 import pageCss from "./build/frontend/main.css" with { type: "file" };
 import pageJs from "./build/frontend/main.js" with { type: "file" };
@@ -110,7 +110,7 @@ const STRIP_BODY = `<div id="strip">
 </div>`;
 
 /** In the taskbar and Alt+Tab; the window has no title bar to show one in. */
-const APP_ICON: Icon = { windows: { ico: dotIcon({ color: "#6d5df6", sizes: [16, 24, 32, 48] }) } };
+const APP_ICON: Icon = { windows: { ico: dotIco({ color: "#6d5df6", sizes: [16, 24, 32, 48] }) } };
 const WIDTH = 1040;
 const HEIGHT = 720 + STRIP_HEIGHT; // the page area macOS gives a tab, plus the strip
 

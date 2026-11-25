@@ -8,11 +8,67 @@
 //   hostService(createService());
 
 import { FFIType, dlopen, type Pointer } from "bun:ffi";
-import type { CallFrame, EventMap, Frame, MethodMap, Service } from "./ipc";
+import type { CallFrame, EventMap, Frame, MethodMap, ReplyFrame, Service } from "./ipc";
 import { WEBVIEW_SESSION, type WorkerMessage } from "./messages";
 import { Ring } from "./ring";
 
 declare const self: Worker;
+
+const dispatchLibs = new Map<string, (w: Pointer, fn: Pointer, arg: Pointer | null) => void>();
+
+function dispatchCall(libPath: string): (w: Pointer, fn: Pointer, arg: Pointer | null) => void {
+  const cached = dispatchLibs.get(libPath);
+  if (cached) return cached;
+  const lib = dlopen(libPath, {
+    webview_dispatch: { args: [FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.void },
+  });
+  const fn = lib.symbols.webview_dispatch as (w: Pointer, fn: Pointer, arg: Pointer | null) => void;
+  dispatchLibs.set(libPath, fn);
+  return fn;
+}
+
+/**
+ * Serializes `frame` and writes it into `ring`, waking the consumer when
+ * needed. Never throws on oversized or unserializable replies: sends a compact
+ * error reply frame instead so RPC callers never hang.
+ */
+export function writeWorkerFrame(
+  ring: Ring,
+  frame: Frame,
+  wake: () => void,
+  encoder: TextEncoder = new TextEncoder(),
+): void {
+  try {
+    ring.write(encoder.encode(JSON.stringify(frame)));
+    if (ring.claimWakeup()) wake();
+    return;
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    if (frame.kind !== "reply") {
+      console.error(`sweetview worker: ${frame.kind === "event" ? `event ${frame.name}` : "frame"} could not be sent:`, reason);
+      return;
+    }
+    // Fall back to a compact error reply guaranteed to fit in the ring.
+    const prefix = "sweetview worker: reply could not be sent: ";
+    const maxBytes = Math.max(0, ring.capacity - 4);
+    let error = `${prefix}${reason}`;
+    let fallback: ReplyFrame = { kind: "reply", seq: frame.seq, ok: false, error };
+    let encoded = encoder.encode(JSON.stringify(fallback));
+    if (encoded.length > maxBytes) {
+      const overhead = encoder.encode(JSON.stringify({ kind: "reply", seq: frame.seq, ok: false, error: "" } satisfies ReplyFrame)).length;
+      const room = Math.max(0, maxBytes - overhead - 3);
+      error = room > 0 ? `${error.slice(0, room)}...` : "";
+      fallback = { kind: "reply", seq: frame.seq, ok: false, error };
+      encoded = encoder.encode(JSON.stringify(fallback));
+    }
+    try {
+      ring.write(encoded);
+      if (ring.claimWakeup()) wake();
+    } catch (fallbackErr) {
+      console.error("sweetview worker: fallback error reply could not be written:", fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr));
+    }
+  }
+}
 
 export function hostService<M extends MethodMap, E extends EventMap>(service: Service<M, E>): void {
   let ring: Ring | undefined;
@@ -26,8 +82,7 @@ export function hostService<M extends MethodMap, E extends EventMap>(service: Se
       beforeInit.push(frame);
       return;
     }
-    ring.write(encoder.encode(JSON.stringify(frame)));
-    if (ring.claimWakeup()) wake();
+    writeWorkerFrame(ring, frame, wake, encoder);
   }
 
   service.onEvent((name, payload, to) => {
@@ -50,21 +105,13 @@ export function hostService<M extends MethodMap, E extends EventMap>(service: Se
     const msg = event.data;
     if (msg.kind === "init") {
       ring = new Ring(msg.ring);
-      const lib = dlopen(msg.libPath, {
-        webview_dispatch: { args: [FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.void },
-      });
-      const handle = msg.webviewHandle as Pointer;
+      const dispatch = dispatchCall(msg.libPath);
+      const handlePtr = msg.webviewHandle as Pointer;
       const fn = msg.drainCallbackPtr as Pointer;
-      wake = () => lib.symbols.webview_dispatch(handle, fn, null);
+      wake = () => dispatch(handlePtr, fn, null);
       const queued = beforeInit;
       beforeInit = [];
-      for (const frame of queued) {
-        try {
-          send(frame);
-        } catch (err) {
-          console.error("sweetview worker: a queued frame could not be sent:", (err as Error).message); // the rest still go
-        }
-      }
+      for (const frame of queued) send(frame);
       return;
     }
     void handle(msg);

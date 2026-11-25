@@ -12,7 +12,7 @@ export type NotificationOptions = {
   body?: string;
   silent?: boolean;
   /**
-   * Names the notification; `onClick` reports it. Default `sweetnative-<n>`,
+   * Names the notification; `onClick` reports it. Default `sweetview-<n>`,
    * counting up per process. macOS: a new notification with the id of one
    * still showing replaces it.
    */
@@ -41,7 +41,7 @@ export interface Notifier {
 }
 
 let nextId = 1;
-export const notificationId = (n: NotificationOptions): string => n.id ?? `sweetnative-${nextId++}`;
+export const notificationId = (n: NotificationOptions): string => n.id ?? `sweetview-${nextId++}`;
 
 type Backend = { createNotifier(options?: NotifierOptions): Notifier };
 const impl = backend<Backend>(

@@ -39,49 +39,63 @@ export type HitProbe = Point & { id: number };
 
 /**
  * The UI-thread side of exact click-through: the page sends its polygons
- * (coarse), the overlay asks for the exact answer inside one through
+ * (coarse), the window asks for the exact answer inside one through
  * `probe` (an event to the page), and the page's reply comes back through
- * `answer`. See `Overlay.setHitRegions`. A reply to anything but the latest
- * probe is dropped; a page that never replies leaves polygon precision.
+ * `answer`. A reply to anything but the latest probe is dropped; a page
+ * that never replies leaves polygon precision.
  */
-export type HitRelay = {
-  /** The page's latest polygons (window-local units). Applied at once when enabled. */
-  setRegions(polygons: HitPolygon[]): void;
-  /** The page's reply to the probe with that id. */
-  answer(reply: { id: number; solid: boolean }): void;
-  /** Off: the whole window takes clicks, whatever the regions say (a "click through" toggle). Default on. */
-  setEnabled(on: boolean): void;
-  enabled(): boolean;
-  /** Re-sends the current state to the overlay; after creating the webview, say. */
-  apply(): void;
-};
+export class HitRelay {
+  readonly #target: { setHitRegions(polygons: HitPolygon[] | null, refine?: HitRefiner): void };
+  readonly #refine: HitRefiner;
+  #regions: HitPolygon[] = [];
+  #on = true;
+  #seq = 0;
+  #pending: { id: number; answer: (solid: boolean) => void } | undefined;
 
-export function createHitRelay(overlay: Pick<Overlay, "setHitRegions">, probe: (question: HitProbe) => void): HitRelay {
-  let regions: HitPolygon[] = [];
-  let on = true;
-  let seq = 0;
-  let pending: { id: number; answer: (solid: boolean) => void } | undefined;
-  const refine: HitRefiner = (local, reply) => {
-    const id = ++seq;
-    pending = { id, answer: reply };
-    probe({ id, x: local.x, y: local.y });
+  constructor(
+    window: { setHitRegions(polygons: HitPolygon[] | null, refine?: HitRefiner): void },
+    probe: (question: HitProbe) => void,
+  ) {
+    this.#target = window;
+    this.#refine = (local, reply) => {
+      const id = ++this.#seq;
+      this.#pending = { id, answer: reply };
+      probe({ id, x: local.x, y: local.y });
+    };
+  }
+
+  /** The page's latest polygons (window-local units). Applied at once when enabled. */
+  setRegions(polygons: HitPolygon[]): void {
+    this.#regions = polygons;
+    this.apply();
+  }
+
+  /** The page's reply to the probe with that id. Bound so it can be passed directly into `uiMethods`. */
+  readonly answer = ({ id, solid }: { id: number; solid: boolean }): void => {
+    if (this.#pending?.id === id) this.#pending.answer(solid);
   };
-  const apply = () => overlay.setHitRegions(on ? regions : null, refine);
-  return {
-    setRegions(polygons) {
-      regions = polygons;
-      apply();
-    },
-    answer({ id, solid }) {
-      if (pending?.id === id) pending.answer(solid);
-    },
-    setEnabled(next) {
-      on = next;
-      apply();
-    },
-    enabled: () => on,
-    apply,
-  };
+
+  /** Off: the whole window takes clicks, whatever the regions say (a "click through" toggle). Default on. */
+  setEnabled(on: boolean): void {
+    this.#on = on;
+    this.apply();
+  }
+
+  isEnabled(): boolean {
+    return this.#on;
+  }
+
+  /** Re-sends the current state to the window; after creating the webview, say. */
+  apply(): void {
+    this.#target.setHitRegions(this.#on ? this.#regions : null, this.#refine);
+  }
+}
+
+export function createHitRelay(
+  window: { setHitRegions(polygons: HitPolygon[] | null, refine?: HitRefiner): void },
+  probe: (question: HitProbe) => void,
+): HitRelay {
+  return new HitRelay(window, probe);
 }
 
 /**

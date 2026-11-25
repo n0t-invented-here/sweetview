@@ -68,7 +68,7 @@ const rectBuf = new Float64Array(4);
 /** `[obj valueForKey:key]` boxes a struct-returning property into an NSValue; `getValue:size:` copies it out. */
 function rectOf(obj: Id, key: string): CocoaRect {
   const value = asId(sendPtr(obj, sel("valueForKey:"), nsString(key)));
-  if (value === NIL) throw new Error(`sweetnative: ${key} unavailable`);
+  if (value === NIL) throw new Error(`sweetview: ${key} unavailable`);
   rectBuf.fill(0);
   sendBytesLen(value, sel("getValue:size:"), rectBuf, 32n);
   return { x: rectBuf[0]!, y: rectBuf[1]!, w: rectBuf[2]!, h: rectBuf[3]! };
@@ -92,7 +92,7 @@ function cursorPoint(): Point | null {
     const signature = asId(sendPtr(eventClass, sel("methodSignatureForSelector:"), selector));
     const invocation = signature === NIL ? NIL : asId(sendPtr(cls("NSInvocation"), sel("invocationWithMethodSignature:"), signature));
     if (invocation === NIL) {
-      if (!warnedNoCursor) console.error("sweetnative: cannot build the NSInvocation for +[NSEvent mouseLocation]; hit regions will not work");
+      if (!warnedNoCursor) console.error("sweetview: cannot build the NSInvocation for +[NSEvent mouseLocation]; hit regions will not work");
       warnedNoCursor = true;
       return null;
     }
@@ -164,7 +164,7 @@ function ensureTimer() {
   tickTarget = makeTarget("SweetnativeOverlayHitTimer", { "tick:": () => pollHits() });
   // Runs on the main run loop, which is the one webview.run() spins.
   timer = asId(sendF64PtrSelPtrBool(cls("NSTimer"), sel("scheduledTimerWithTimeInterval:target:selector:userInfo:repeats:"), 0.01, tickTarget, sel("tick:"), NIL, true));
-  if (timer === NIL) throw new Error("sweetnative: NSTimer for the hit regions failed");
+  if (timer === NIL) throw new Error("sweetview: NSTimer for the hit regions failed");
 }
 
 /** Cocoa (bottom-left origin) -> ours (top-left origin). */
@@ -190,7 +190,7 @@ export function createOverlayWindow(options: OverlayWindowOptions): Overlay {
   const activatable = !framed && options.noActivate === false;
   if (activatable) defineYesClass("NSWindow", KEY_WINDOW_CLASS, ["canBecomeKeyWindow", "canBecomeMainWindow"]);
   const win = asId(sendRectUIntUIntBool(allocRaw(activatable ? KEY_WINDOW_CLASS : "NSWindow"), sel("initWithContentRect:styleMask:backing:defer:"), b.x, b.y, b.w, b.h, styleMask, NSBackingStoreBuffered, false));
-  if (win === NIL) throw new Error("sweetnative: NSWindow init failed");
+  if (win === NIL) throw new Error("sweetview: NSWindow init failed");
   sendBool(win, sel("setReleasedWhenClosed:"), false); // the close button only orders the window out
   if (options.title) sendPtr(win, sel("setTitle:"), nsString(options.title));
   // "system" leaves the appearance unset: the window then takes the system's, and follows it when it changes.
@@ -221,7 +221,7 @@ function restyle(win: Id, options: OverlayOptions, framed: boolean): Overlay {
       sendBool(win, sel("setOpaque:"), false);
       sendPtr(win, sel("setBackgroundColor:"), asId(send(cls("NSColor"), sel("clearColor"))));
     }
-    if (colorKey !== undefined) console.warn("sweetnative: colorKey is Windows-only; use transparent on macOS");
+    if (colorKey !== undefined) console.warn("sweetview: colorKey is Windows-only; use transparent on macOS");
     if (opacity !== undefined) sendF64Void(win, sel("setAlphaValue:"), Math.min(1, Math.max(0, opacity)));
     sendIntArg(win, sel("setLevel:"), topmost ? NSStatusWindowLevel : NSNormalWindowLevel);
     sendUIntArg(

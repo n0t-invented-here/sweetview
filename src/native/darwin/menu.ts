@@ -55,7 +55,7 @@ export function buildMenu(template: MenuTemplate): BuiltMenu {
       sendBool(inited, sel("setEnabled:"), item.enabled !== false);
       if (item.icon?.macos) {
         const made = makeImage(item.icon.macos, MENU_ITEM_POINTS);
-        if (made.img === NIL) console.error(`sweetnative: menu item "${item.label}" has no usable macOS image`);
+        if (made.img === NIL) console.error(`sweetview: menu item "${item.label}" has no usable macOS image`);
         applyImage(inited, "setImage:", made);
         if (sendIntRetBool(inited, sel("respondsToSelector:"), sel("setPreferredImageVisibility:"))) {
           sendIntArg(inited, sel("setPreferredImageVisibility:"), NSMenuItemImageVisibilityVisible);

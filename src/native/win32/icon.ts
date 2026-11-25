@@ -21,7 +21,7 @@ export function loadIcon(ico: Uint8Array | undefined, metric: number = SM_CXSMIC
     const bits = ico.subarray(entry.offset, entry.offset + entry.size);
     const handle = user32.CreateIconFromResourceEx(bits, bits.length, 1, 0x00030000, want, want, LR_DEFAULTCOLOR);
     if (handle !== 0n) return { handle, owned: true };
-    console.error(`sweetnative: CreateIconFromResourceEx failed (${lastError()}); using the default icon`);
+    console.error(`sweetview: CreateIconFromResourceEx failed (${lastError()}); using the default icon`);
   }
   return { handle: user32.LoadIconW(0n, IDI_APPLICATION), owned: false };
 }
@@ -40,7 +40,7 @@ export function iconBitmap(ico: Uint8Array, size: number = user32.GetSystemMetri
   try {
     rgba = icoRgba(ico, size);
   } catch (err) {
-    console.error(`sweetnative: menu icon skipped: ${err instanceof Error ? err.message : err}`);
+    console.error(`sweetview: menu icon skipped: ${err instanceof Error ? err.message : err}`);
     return 0n;
   }
   const info = new Uint8Array(40); // BITMAPINFOHEADER; no colour table for BI_RGB 32bpp
@@ -53,7 +53,7 @@ export function iconBitmap(ico: Uint8Array, size: number = user32.GetSystemMetri
   const bitsOut = new BigUint64Array(1);
   const hbm = gdi32.CreateDIBSection(0n, info, DIB_RGB_COLORS, ptr(bitsOut), 0n, 0);
   if (hbm === 0n || bitsOut[0] === 0n) {
-    console.error(`sweetnative: CreateDIBSection failed (${lastError()})`);
+    console.error(`sweetview: CreateDIBSection failed (${lastError()})`);
     return 0n;
   }
   const bits = new Uint8Array(toArrayBuffer(Number(bitsOut[0]) as never, 0, size * size * 4));

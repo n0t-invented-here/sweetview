@@ -32,14 +32,14 @@ function ensureClass(): void {
         handlers.get(hwnd)?.(message, wParam, lParam);
       } catch (err) {
         // Never let an exception unwind into user32.
-        console.error("sweetnative: tray handler threw:", err);
+        console.error("sweetview: tray handler threw:", err);
       }
       // Only destroy() tears this window down; an external WM_CLOSE is ignored.
       return message === WM_CLOSE ? 0n : user32.DefWindowProcW(hwnd, message, wParam, lParam);
     },
     { args: [FFIType.u64, FFIType.u32, FFIType.u64, FFIType.i64], returns: FFIType.i64 },
   );
-  if (wndProc.ptr === null) throw new Error("sweetnative: could not allocate the window procedure");
+  if (wndProc.ptr === null) throw new Error("sweetview: could not allocate the window procedure");
 
   const wc = new Uint8Array(WNDCLASSEXW_SIZE);
   const dv = new DataView(wc.buffer);
@@ -49,7 +49,7 @@ function ensureClass(): void {
   dv.setBigUint64(24, hInstance(), true); // hInstance
   dv.setBigUint64(64, BigInt(ptr(className)), true); // lpszClassName
   if (user32.RegisterClassExW(ptr(wc)) === 0) {
-    throw new Error(`sweetnative: RegisterClassExW failed (${lastError()})`);
+    throw new Error(`sweetview: RegisterClassExW failed (${lastError()})`);
   }
 }
 
@@ -57,7 +57,7 @@ export function createMessageWindow(handler: MessageHandler): MessageWindow {
   ensureClass();
   const className = wstr(CLASS_NAME);
   const hwnd = user32.CreateWindowExW(WS_EX_TOOLWINDOW, className, null, WS_OVERLAPPED, 0, 0, 0, 0, 0n, 0n, hInstance(), null);
-  if (hwnd === 0n) throw new Error(`sweetnative: CreateWindowExW failed (${lastError()})`);
+  if (hwnd === 0n) throw new Error(`sweetview: CreateWindowExW failed (${lastError()})`);
   handlers.set(hwnd, handler);
   let destroyed = false;
   return {

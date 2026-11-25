@@ -9,7 +9,7 @@ let nextId = 1;
 export function memoryTransport<M extends MethodMap, E extends EventMap>(
   service: Service<M, E>,
   session: Session = { id: `memory-${nextId++}`, kind: "web" },
-): Transport & { close(): void } {
+): Transport & { dispose(): void } {
   const ctx = { session };
   const listeners = new Set<(name: string, payload: unknown) => void>();
   const off = service.onEvent((name, payload, to) => {
@@ -17,6 +17,7 @@ export function memoryTransport<M extends MethodMap, E extends EventMap>(
     for (const fn of listeners) fn(name, payload);
   });
   const call = (method: string, params: unknown) => service.call(method as keyof M & string, params as never, ctx);
+  let disposed = false;
   return {
     kind: session.kind,
     call,
@@ -25,8 +26,11 @@ export function memoryTransport<M extends MethodMap, E extends EventMap>(
       listeners.add(fn);
       return () => listeners.delete(fn);
     },
-    close() {
+    dispose() {
+      if (disposed) return;
+      disposed = true;
       off();
+      listeners.clear();
       service.endSession(session.id);
     },
   };

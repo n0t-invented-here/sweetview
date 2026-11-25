@@ -14,7 +14,7 @@ export {
   type Rect,
   type ResizeEdge,
 } from "./overlay";
-export { convexHull, createHitRelay, flattenRegions, hitRegions, packRegions, unpackRegions, type HitPolygon, type HitProbe, type HitRelay } from "./hit-regions";
+export { convexHull, createHitRelay, flattenRegions, hitRegions, HitRelay, packRegions, unpackRegions, type HitPolygon, type HitProbe } from "./hit-regions";
 export { pickFolder } from "./folder-picker";
 export { installAppMenu, type AppMenuOptions } from "./app-menu";
 export { setAppIcon } from "./app-icon";
@@ -22,7 +22,7 @@ export { resolveMenu, type MenuItem, type MenuSource, type MenuTemplate } from "
 export {
   decodePng,
   dotIcns,
-  dotIcon,
+  dotIco,
   dotPng,
   encodeIcns,
   encodeIco,

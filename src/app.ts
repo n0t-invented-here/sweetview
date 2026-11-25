@@ -20,8 +20,8 @@
 // Everything in sweetnative (tray, notifications, window, dialogs, app menu)
 // runs on this thread too; create those between createWebviewApp() and run().
 
-import { ASSET_ORIGIN, backgroundColorCall, setAssetCall, webviewLibPath } from "./webview-lib";
-import { FFIType, JSCallback, dlopen, type Pointer } from "bun:ffi";
+import { ASSET_ORIGIN, backgroundColorCall, openWebviewCore, setAssetCall, webviewLibPath } from "./webview-lib";
+import { FFIType, JSCallback, type Pointer } from "bun:ffi";
 import type { AnyEvent, EventMap, Frame, MethodMap } from "./ipc";
 import { nativeWindow, type NativeWindow, type WindowHandle } from "./native";
 import { discardQuit } from "./native/event-loop";
@@ -230,13 +230,10 @@ export async function createWebviewApp<M extends MethodMap, E extends EventMap>(
   const window = nativeWindow(windowHandle);
 
   // webview-bun exposes terminate only inside destroy(), which run() calls again on exit;
-  // take the one symbol we need from the same library file.
-  const lib = dlopen(libPath, {
-    webview_terminate: { args: [FFIType.ptr], returns: FFIType.i32 },
-    webview_run: { args: [FFIType.ptr], returns: FFIType.i32 },
-  });
+  // reuse the cached native symbols for this library path.
+  const core = openWebviewCore(libPath);
   const handle = () => Number(webview.unsafeHandle) as Pointer;
-  const quit = () => void lib.symbols.webview_terminate(handle());
+  const quit = () => void core.webview_terminate(handle());
 
   if (options.transparent) {
     const set = backgroundColorCall(libPath);
@@ -356,7 +353,7 @@ export async function createWebviewApp<M extends MethodMap, E extends EventMap>(
       return () => taps.delete(tap);
     },
     run() {
-      lib.symbols.webview_run(handle()); // blocks until the window closes or quit()
+      core.webview_run(handle()); // blocks until the window closes or quit()
       shutdown();
     },
     quit,

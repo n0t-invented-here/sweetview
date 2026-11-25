@@ -73,7 +73,8 @@ describe("sweetipc", () => {
       dispose: () => void (disposed = true),
     }));
     const t = memoryTransport(service, { id: "s1", kind: "webview" });
-    t.close();
+    t.dispose();
+    t.dispose(); // idempotent
     await service.dispose();
     expect(ended).toEqual(["s1"]);
     expect(disposed).toBe(true);

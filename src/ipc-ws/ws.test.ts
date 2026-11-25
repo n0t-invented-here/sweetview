@@ -43,7 +43,7 @@ beforeAll(() => {
 });
 
 afterAll(() => {
-  host.close();
+  host.dispose();
   server.stop(true);
 });
 
@@ -62,14 +62,14 @@ describe("sweetipc-ws", () => {
     const bridge = createBridge<Methods, Events>(t);
     expect(await bridge.rpc("ping")).toBe("pong");
     expect(await bridge.rpc("whoami")).toMatch(/^web:ws-\d+$/);
-    t.close();
+    t.dispose();
   });
 
   test("handler errors reject with the message", async () => {
     const t = connect();
     const bridge = createBridge<Methods, Events>(t);
     await expect(bridge.rpc("fail")).rejects.toThrow("nope");
-    t.close();
+    t.dispose();
   });
 
   test("broadcast reaches every session, targeted events reach one", async () => {
@@ -92,8 +92,8 @@ describe("sweetipc-ws", () => {
     await Bun.sleep(20);
     expect(bHeard).toBe(false);
     offB();
-    ta.close();
-    tb.close();
+    ta.dispose();
+    tb.dispose();
   });
 
   test("a browser Origin from elsewhere is refused; the page's own origin and non-browsers get in", async () => {
@@ -126,7 +126,7 @@ describe("sweetipc-ws", () => {
     const bridge = createBridge<Methods, Events>(t);
     const id = (await bridge.rpc("whoami")).split(":")[1]!;
     const closed = new Promise<void>((resolve) => t.onClose(resolve));
-    t.close();
+    t.dispose();
     await closed;
     await expect(bridge.rpc("ping")).rejects.toThrow("websocket closed");
     await Bun.sleep(20);

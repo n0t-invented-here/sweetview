@@ -44,7 +44,7 @@ const UNAuthorizationOptionAlert = 4n;
 const PRESENT_BANNER_LIST_SOUND = 8n | 16n | 2n;
 
 // userInfo key under which `data` travels, as JSON text.
-const DATA_KEY = "sweetnative.data";
+const DATA_KEY = "sweetview.data";
 
 function readClick(response: Id): NotificationClick {
   const request = asId(send(asId(send(response, sel("notification"))), sel("request")));
@@ -75,7 +75,7 @@ export function createNotifier(options: NotifierOptions = {}): Notifier {
           try {
             options.onClick(readClick(response));
           } catch (err) {
-            console.error("sweetnative: notification onClick threw:", err); // never unwind into AppKit
+            console.error("sweetview: notification onClick threw:", err); // never unwind into AppKit
           }
         }
         invokeBlock(handler, []);
@@ -95,7 +95,7 @@ export function createNotifier(options: NotifierOptions = {}): Notifier {
   // (BOOL granted, NSError*) on a background queue
   const authorizationDone = makeBlock(
     (granted, error) => {
-      if (!granted) console.error(`sweetnative: notification permission ${error === NIL ? "denied by the user" : "refused by macOS: the app is not a signed .app bundle (makeMacApp signs one), or it runs from a temporary folder"}`);
+      if (!granted) console.error(`sweetview: notification permission ${error === NIL ? "denied by the user" : "refused by macOS: the app is not a signed .app bundle (makeMacApp signs one), or it runs from a temporary folder"}`);
     },
     [FFIType.bool, FFIType.u64],
     true,
@@ -103,7 +103,7 @@ export function createNotifier(options: NotifierOptions = {}): Notifier {
   // (NSError*) on a background queue
   const requestDone = makeBlock(
     (error) => {
-      if (error !== NIL) console.error("sweetnative: notification not shown: macOS rejected it (permission refused, denied, or not answered yet)");
+      if (error !== NIL) console.error("sweetview: notification not shown: macOS rejected it (permission refused, denied, or not answered yet)");
     },
     [FFIType.u64],
     true,

@@ -9,7 +9,7 @@ export type WsTransport = Transport & {
   readonly ready: Promise<void>;
   /** Fires once, when the socket closes for any reason. */
   onClose(fn: () => void): () => void;
-  close(): void;
+  dispose(): void;
 };
 
 /** `ws://` or `wss://` to match the page's own origin, with the given path. */
@@ -104,7 +104,7 @@ export function wsTransport(url: string = wsUrl()): WsTransport {
       closeListeners.add(fn);
       return () => closeListeners.delete(fn);
     },
-    close() {
+    dispose() {
       ws.close();
     },
   };

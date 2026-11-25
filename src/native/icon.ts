@@ -137,7 +137,7 @@ export function encodeIco(images: Map<number, Uint8Array>): Uint8Array {
 }
 
 /** A coloured disc as a multi-size .ico, for `Icon.windows.ico`. */
-export function dotIcon(opts: DotIconOptions = {}): Uint8Array {
+export function dotIco(opts: DotIconOptions = {}): Uint8Array {
   const sizes = opts.sizes ?? [16, 24, 32];
   return encodeIco(new Map(sizes.map((s) => [s, renderDot(s, opts)])));
 }

@@ -50,7 +50,7 @@ export function createTray(options: TrayOptions): Tray {
   const statusBar = asId(send(cls("NSStatusBar"), sel("systemStatusBar")));
   // statusItemWithLength: returns +0; keep our own reference until dispose.
   const item = retain(asId(sendF64(statusBar, sel("statusItemWithLength:"), NSVariableStatusItemLength)));
-  if (item === NIL) throw new Error("sweetnative: NSStatusBar.statusItemWithLength: returned nil");
+  if (item === NIL) throw new Error("sweetview: NSStatusBar.statusItemWithLength: returned nil");
   const button = asId(send(item, sel("button")));
 
   let menu: MenuSource | undefined = options.menu;

@@ -147,7 +147,7 @@ export const wstr = (s: string): Uint8Array => new Uint8Array(Buffer.from(s + "\
 
 /** A non-null pointer from a bigint/number out-parameter; throws on NULL. */
 export const asPointer = (v: bigint | number | null): Pointer => {
-  if (v === null || v === 0 || v === 0n) throw new Error("sweetnative: unexpected NULL pointer");
+  if (v === null || v === 0 || v === 0n) throw new Error("sweetview: unexpected NULL pointer");
   return Number(v) as Pointer;
 };
 
