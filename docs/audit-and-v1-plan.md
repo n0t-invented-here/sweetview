@@ -74,10 +74,10 @@ Twelve concrete defects verified in `src/` at commit `1246944`:
 - `src/app.ts:234-237` and `src/webview-lib.ts:34-56` call `dlopen(libPath, ...)` 2–3 times on every `createWebviewApp()` call (`webview_terminate`/`webview_run`, `webview_set_background_color`, `webview_set_asset`) and never cache or `.close()` the resulting handles.
 - **Fix**: Open the shared library once per `libPath` in a cached singleton wrapper in `src/webview-lib.ts`.
 
-### 2.5 macOS Notifier Lazy Delegate & Hardcoded ObjC Class Name Collisions
+### 2.5 macOS Notifier Lazy Delegate & Unreleased ObjC Runtime Allocations
 - `src/native/darwin/notifier.ts:86-93`: `UNUserNotificationCenter.setDelegate:` is only called inside `ensureCenter()`, which runs lazily on the first `notify()` call — never inside `createNotifier()`. Clicking a notification that launches the app before the app sends a new notification drops the click (contradicting `docs/native.md`).
-- Hardcoded Objective-C runtime class names in `src/native/darwin/notifier.ts:64` (`NativeShellNotificationDelegate`) and `src/native/darwin/app-menu.ts:69` (`SweetviewAppMenuTarget`) collide if created more than once in a process.
-- **Fix**: Register the delegate eagerly in `Notifier` construction; register each ObjC class once or generate unique class names with safe disposal.
+- Repeated calls to `createNotifier()` or `installAppMenu()` do not collide on ObjC class names (because `makeTarget()` in `src/native/darwin/objc.ts` appends a monotonic counter), but every call permanently allocates and leaks a fresh ObjC class pair, an unreleased `+1` instance, `JSCallback`s, and global blocks. (Meanwhile, `demos/native-tabs/mac-window-tabs.ts` hardcodes `"SweetviewWindowTabs"` and `"SweetviewTabNavigation"`.)
+- **Fix**: Register the delegate eagerly in `Notifier` construction; reuse or safely dispose ObjC targets/blocks instead of leaking per instance, and guard/uniquify ObjC classes in promoted macOS tabs.
 
 ### 2.6 Win32 Notifier Coupled to Tray, Legacy Balloons, and Wrong Click Payload
 - `src/native/win32/notifier.ts:12-13`: Throws if no tray has been created yet because it piggybacks on `Shell_NotifyIconW(NIF_INFO)` balloons.
@@ -104,9 +104,9 @@ Twelve concrete defects verified in `src/` at commit `1246944`:
 - Complete macOS AppKit tabbing and Win32 custom tab-strip + multi-WebView2 implementations were built inside `demos/native-tabs/` instead of `src/` (`demos/native-tabs/README.md:177-178` explicitly notes it isn't exported).
 - **Fix**: Promote into the native/webview library behind `Window({ tabs: true })`, `WebView.openTab`, and `createApp({ tabs: true })` (see `docs/v1-api.md`).
 
-### 2.12 Win32 Windows 11 Topmost Anchor Workaround Only Runs in `createOverlayWindow`
-- `src/native/win32/overlay.ts:270-281`: Works around a Windows 11 25H2 bug where the first top-level window in a process can never be made `HWND_TOPMOST` by creating a hidden message window first — but only invokes `ensureFirstWindowIsHidden()` inside `createOverlayWindow`, not inside `createWebviewApp()` or `makeOverlay()`.
-- **Fix**: Run `ensureDpiAware()` and `ensureFirstWindowIsHidden()` from a single shared Win32 startup initializer called by both `Window` and `WebView`.
+### 2.12 Win32 Windows 11 Topmost Anchor & DPI Init Only Run in `createOverlayWindow`
+- `src/native/win32/overlay.ts:270-281`: Works around a Windows 11 25H2 bug where the first top-level window in a process can never be made `HWND_TOPMOST` by creating a hidden message window first — and calls `SetProcessDpiAwarenessContext(PER_MONITOR_AWARE_V2)` — but only inside `createOverlayWindow`, not inside `createWebviewApp()`, `makeOverlay()`, or `createMessageWindow()` (`src/native/win32/message-window.ts:56-60`). Creating a tray before a window therefore locks the process into DPI-unaware mode.
+- **Fix**: Run `ensureDpiAware()` and `ensureFirstWindowIsHidden()` from a single shared Win32 startup initializer called by `Screen`, `Window`, `createMessageWindow()`, and `WebView`.
 
 ---
 
@@ -116,11 +116,11 @@ Goal: run real Bun web apps as desktop Sweetview apps with **zero localhost TCP 
 
 ### 3.1 Analysis of the Three Target Apps
 
-| App | Path | Backend ↔ Frontend Transport Today | Special Requirements | Refactor Cost (JSON-RPC Only) |
+| App | Repo | Backend ↔ Frontend Transport Today | Special Requirements | Refactor Cost (JSON-RPC Only) |
 |---|---|---|---|---|
-| **TracLite** | `D:\Repos\Gitea\Apps\TracLite` | 35 JSON REST routes (`web/api.ts`) + 1 SSE stream (`web/hooks/useLive.ts`), zero binary HTTP. `Bun.serve` + SQLite + HTTP MCP. | Clean API client boundary; SSE live refresh. | **Low (~1–2 hours)** |
-| **gitweb** | `D:\Repos\Gitea\Apps\gitweb` | 19 JSON routes + 1 SSE stream in `src/web/api/client.ts`. | Direct browser URL loads to `/api/repos/:id/raw` via `<img src>` (`BlobView.tsx`, `MarkdownView.tsx`) and `<a download>`. | **Medium-low (~½ day)** — JSON/SSE is easy, but `<img src>` and downloads need blob URLs or custom URL interception. |
-| **UntidyDiary** | `D:\Repos\Gitea\Apps\UntidyDiary` | 10 HTTP endpoints (`diaryClient.ts`) + `/~/live` WebSocket (`live.ts`, already DI'd via `SocketLike`). | 25 MB image uploads, arbitrary dynamic on-disk media (`<img>`, `<video>`, `<audio>`, PDFs), dynamic `themes.css`, **second-origin `Bun.serve` (`framesOrigin`)** for cross-origin sandboxed `<iframe src>` day apps, and `POST /~/backend/...`. | **High** with JSON-RPC alone — rewriting every dynamic media URL, 25 MB upload, and cross-origin iframe protocol into JSON-RPC + blob URLs is heavy and fragile. |
+| **TracLite** | `Apps/TracLite` | 35 JSON REST routes (`web/api.ts`) + 1 SSE stream (`web/hooks/useLive.ts`), zero binary HTTP. `Bun.serve` + SQLite + HTTP MCP. | Clean API client boundary; SSE live refresh. | **Low (~1–2 hours)** |
+| **gitweb** | `Apps/gitweb` | 19 JSON routes + 1 SSE stream in `src/web/api/client.ts`. | Direct browser URL loads to `/api/repos/:id/raw` via `<img src>` (`BlobView.tsx`, `MarkdownView.tsx`) and `<a download>`. | **Medium-low (~½ day)** — JSON/SSE is easy, but `<img src>` and downloads need blob URLs or custom URL interception. |
+| **UntidyDiary** | `Apps/UntidyDiary` | 10 HTTP endpoints (`diaryClient.ts`) + `/~/live` WebSocket (`live.ts`, already DI'd via `SocketLike`). | 25 MB image uploads, arbitrary dynamic on-disk media (`<img>`, `<video>`, `<audio>`, PDFs), dynamic `themes.css`, **second-origin `Bun.serve` (`framesOrigin`)** for cross-origin sandboxed `<iframe src>` day apps, and `POST /~/backend/...`. | **High** with JSON-RPC alone — rewriting every dynamic media URL, 25 MB upload, and cross-origin iframe protocol into JSON-RPC + blob URLs is heavy and fragile. |
 
 ### 3.2 Two Ways to Dramatically Reduce Migration Cost
 
@@ -167,7 +167,7 @@ Unify cold-launch URLs, warm-launch URLs, CLI args, and OS file-open events behi
 
 ## 5. Lessons From `delightful-qt-web-shell`
 
-Non-theming architectural practices from `D:\Repos\GitHub\mrowrpurr\delightful-qt-web-shell\app\docs\DelightfulQtWebShell\for-agents\01..08.md` worth carrying into Sweetview:
+Non-theming architectural practices from `mrowrpurr/delightful-qt-web-shell` (`app/docs/DelightfulQtWebShell/for-agents/01..08.md`) worth carrying into Sweetview:
 
 1. **Ready handshake + startup watchdog**: Keep the window hidden until the page explicitly calls `signalReady()` (or an opt-in timeout fires), and display a fallback error surface if the frontend fails to boot instead of flashing white/blank windows or hanging invisibly.
 2. **Close-to-tray only on the last visible window**: Multi-window apps should destroy closed secondary windows normally and only intercept close-to-tray when the last visible window is closed.

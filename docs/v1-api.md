@@ -373,7 +373,7 @@ Notes on `onResize` / `onMove` / `onClose`:
 
 * All handlers run synchronously on the UI thread; thrown exceptions are caught, logged (`sweetview: ...`), and swallowed so nothing unwinds across `bun:ffi`.
 * **Windows**: `WM_SIZE` / `WM_MOVE` / `WM_CLOSE` via our `WndProc` (for `new Window`) or `SetWindowSubclass` (for `Window.fromHandle`).
-* **macOS**: `NSWindowDidResizeNotification` / `NSWindowDidMoveNotification` via `NSNotificationCenter` (leaving `NSWindowDelegate` untouched), and close-button retargeting for `onClose`.
+* **macOS**: `NSWindowDidResizeNotification` / `NSWindowDidMoveNotification` via `NSNotificationCenter` (leaving `NSWindowDelegate` untouched on externally owned `Window.fromHandle` windows), and `performClose:` interception on our `NSWindow` subclass (with close-button retargeting fallback for `Window.fromHandle`) so `onClose` catches the close button, `Cmd+W`, programmatic closes, and frameless windows.
 
 #### `Screen`
 
@@ -692,4 +692,4 @@ export function appDataDir(app: string): string;
 * **macOS `NSApp` init**: `Screen.*` and `new Window()` both call `sharedApp()` before touching `NSScreen` or `NSWindow`.
 * **macOS outer-frame `bounds`**: Convert requested outer frame to content rect via `[NSWindow contentRectForFrameRect:styleMask:]` during `initWithContentRect:styleMask:backing:defer:`, or apply `setFrame:display:` immediately while still hidden before returning.
 * **macOS resize/move observers**: Subscribe to `NSWindowDidResizeNotification` and `NSWindowDidMoveNotification` via `NSNotificationCenter.defaultCenter` scoped to the `NSWindow` object, removing observers on `win.dispose()`. Never replace `NSWindow.delegate`.
-* **Native tabs promotion**: Move `demos/native-tabs/mac-window-tabs.ts` into `src/native/darwin/tabs.ts` and `demos/native-tabs/win-tab-window.ts`, `win-webview2.ts`, `win-shortcuts.ts`, and the built-in strip assets into `src/native/win32/tabs.ts`, reusing `src/native/`'s shared `Menu.popup`, `Screen.cursor()`, and window lifecycle hooks. Rewrite `demos/native-tabs/app.ts` to demo the built-in tabs API in ~50 lines.
+* **Native tabs promotion**: Keep `@n1h/sweetview/native` strictly webview-free by moving webview-free primitives (`win-tab-window.ts`, `win-shortcuts.ts`, `strip-shared.ts` into `src/native/win32/`, and `NSWindow` tabbing primitives into `src/native/darwin/`, reusing `Menu.popup`, `Screen`, and window lifecycle hooks). Move webview-dependent tab pieces (`win-webview2.ts`, the embedded strip webview + assets, macOS `WKWebView` hooks, and the cross-platform `Tab` / `WebView.openTab` coordinator) into `src/tabs/`. On macOS, a tabbed `Window({ tabs: true })` acts as the tab-group controller coordinating per-tab `NSWindow`s so closing or tearing off the first tab never invalidates the controller. Rewrite `demos/native-tabs/app.ts` to demo the built-in tabs API.
