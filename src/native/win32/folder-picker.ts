@@ -4,17 +4,10 @@
 // Must be called on the thread that owns the window (the webview UI thread),
 // which is already COM-initialised (apartment threaded) by WebView2.
 
-import { CFunction, FFIType, dlopen, ptr, read, toArrayBuffer, type Pointer } from "bun:ffi";
-import type { WindowHandle } from "../window";
-import { asPointer, toPointer, wstr } from "./api";
+import { CFunction, FFIType, ptr, read, toArrayBuffer, type Pointer } from "bun:ffi";
+import type { WindowHandle } from "../types";
+import { COINIT_APARTMENTTHREADED, asPointer, ole32, toPointer, wstr } from "./api";
 
-const ole32 = dlopen("ole32.dll", {
-  CoInitializeEx: { args: [FFIType.ptr, FFIType.u32], returns: FFIType.i32 },
-  CoCreateInstance: { args: [FFIType.ptr, FFIType.ptr, FFIType.u32, FFIType.ptr, FFIType.ptr], returns: FFIType.i32 },
-  CoTaskMemFree: { args: [FFIType.ptr], returns: FFIType.void },
-});
-
-const COINIT_APARTMENTTHREADED = 0x2;
 const CLSCTX_INPROC_SERVER = 0x1;
 const CLSID_FileOpenDialog = guid("DC1C5A9C-E88A-4DDE-A5A1-60F82A20AEF7");
 const IID_IFileOpenDialog = guid("D57C7288-D4AD-4768-BE02-9D969532D960");
@@ -72,11 +65,11 @@ function check(hr: number, what: string) {
 export function pickFolder(owner: WindowHandle, title: string): string | null {
   const hwnd = toPointer(owner);
   // S_OK or S_FALSE (already initialised on this thread by WebView2).
-  check(ole32.symbols.CoInitializeEx(null, COINIT_APARTMENTTHREADED), "CoInitializeEx");
+  check(ole32.CoInitializeEx(null, COINIT_APARTMENTTHREADED), "CoInitializeEx");
 
   const out = new BigUint64Array(1);
   check(
-    ole32.symbols.CoCreateInstance(ptr(CLSID_FileOpenDialog), null, CLSCTX_INPROC_SERVER, ptr(IID_IFileOpenDialog), ptr(out)),
+    ole32.CoCreateInstance(ptr(CLSID_FileOpenDialog), null, CLSCTX_INPROC_SERVER, ptr(IID_IFileOpenDialog), ptr(out)),
     "CoCreateInstance(FileOpenDialog)",
   );
   const dialog = asPointer(out[0]!);
@@ -110,7 +103,7 @@ export function pickFolder(owner: WindowHandle, title: string): string | null {
       try {
         return readWide(pwsz);
       } finally {
-        ole32.symbols.CoTaskMemFree(pwsz);
+        ole32.CoTaskMemFree(pwsz);
       }
     } finally {
       release(item);

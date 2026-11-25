@@ -32,9 +32,11 @@ export const user32 = dlopen("user32.dll", {
   RegisterWindowMessageW: { args: [FFIType.ptr], returns: FFIType.u32 },
 
   ShowWindow: { args: [FFIType.u64, FFIType.i32], returns: FFIType.i32 },
+  IsWindow: { args: [FFIType.u64], returns: FFIType.i32 },
   IsWindowVisible: { args: [FFIType.u64], returns: FFIType.i32 },
   IsIconic: { args: [FFIType.u64], returns: FFIType.i32 },
   IsZoomed: { args: [FFIType.u64], returns: FFIType.i32 },
+  SetWindowTextW: { args: [FFIType.u64, FFIType.ptr], returns: FFIType.i32 },
   ReleaseCapture: { args: [], returns: FFIType.i32 },
   SendMessageW: { args: [FFIType.u64, FFIType.u32, FFIType.u64, FFIType.i64], returns: FFIType.i64 },
   SetForegroundWindow: { args: [FFIType.u64], returns: FFIType.i32 },
@@ -43,6 +45,10 @@ export const user32 = dlopen("user32.dll", {
   GetSystemMetrics: { args: [FFIType.i32], returns: FFIType.i32 },
   // (const RECT*, DWORD flags) -> HMONITOR; the monitor with the largest overlap, or the nearest one with MONITOR_DEFAULTTONEAREST
   MonitorFromRect: { args: [FFIType.ptr, FFIType.u32], returns: FFIType.u64 },
+  // (HWND, DWORD flags) -> HMONITOR
+  MonitorFromWindow: { args: [FFIType.u64, FFIType.u32], returns: FFIType.u64 },
+  // (HDC, LPCRECT, MONITORENUMPROC, LPARAM) -> BOOL
+  EnumDisplayMonitors: { args: [FFIType.u64, FFIType.ptr, FFIType.ptr, FFIType.i64], returns: FFIType.i32 },
   // (HMONITOR, MONITORINFO*) -> BOOL; cbSize set by the caller
   GetMonitorInfoW: { args: [FFIType.u64, FFIType.ptr], returns: FFIType.i32 },
   GetDoubleClickTime: { args: [], returns: FFIType.u32 },
@@ -110,6 +116,13 @@ export const comctl32 = dlopen("comctl32.dll", {
 export const ole32 = dlopen("ole32.dll", {
   // (LPVOID reserved, DWORD coinit) -> HRESULT (S_OK, S_FALSE if already initialised, RPC_E_CHANGED_MODE if the other model)
   CoInitializeEx: { args: [FFIType.ptr, FFIType.u32], returns: FFIType.i32 },
+  CoCreateInstance: { args: [FFIType.ptr, FFIType.ptr, FFIType.u32, FFIType.ptr, FFIType.ptr], returns: FFIType.i32 },
+  CoTaskMemFree: { args: [FFIType.ptr], returns: FFIType.void },
+}).symbols;
+
+export const shcore = dlopen("shcore.dll", {
+  // (HMONITOR, MONITOR_DPI_TYPE, UINT* dpiX, UINT* dpiY) -> HRESULT
+  GetDpiForMonitor: { args: [FFIType.u64, FFIType.i32, FFIType.ptr, FFIType.ptr], returns: FFIType.i32 },
 }).symbols;
 
 export const dwmapi = dlopen("dwmapi.dll", {
@@ -172,17 +185,24 @@ export const ICON_SMALL = 0n;
 export const ICON_BIG = 1n;
 
 export const SW_HIDE = 0;
+export const SW_MAXIMIZE = 3;
 export const SW_SHOWNOACTIVATE = 4;
 export const SW_SHOW = 5;
-export const SW_RESTORE = 9;
 export const SW_MINIMIZE = 6;
+export const SW_RESTORE = 9;
 /** Non-client mouse down: with a hit-test code it starts the OS's own move (HTCAPTION) or size loop. */
 export const WM_NCLBUTTONDOWN = 0x00a1;
 export const HTCAPTION = 2;
 
 export const WM_DESTROY = 0x0002;
+export const WM_MOVE = 0x0003;
 export const WM_SIZE = 0x0005;
 export const WM_SETTINGCHANGE = 0x001a;
+export const WM_GETMINMAXINFO = 0x0024;
+export const WS_THICKFRAME = 0x00040000;
+export const WS_MAXIMIZEBOX = 0x00010000;
+export const MONITORINFOF_PRIMARY = 1;
+export const MDT_EFFECTIVE_DPI = 0;
 
 export const GW_CHILD = 5;
 

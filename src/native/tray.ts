@@ -22,20 +22,44 @@ export type TrayOptions = {
   onDoubleClick?: () => void;
 };
 
-export interface Tray {
+export interface TrayBackend {
   setTooltip(text: string): void;
   setIcon(icon: TrayIcon): void;
   setMenu(menu: MenuSource | undefined): void;
-  /** Safe to call twice. */
   dispose(): void;
 }
 
-type Backend = { createTray(options: TrayOptions): Tray };
+type Backend = { createTray(options: TrayOptions): TrayBackend };
 const impl = backend<Backend>(
   () => require("./win32/tray"),
   () => require("./darwin/tray"),
 );
 
+export class Tray {
+  readonly #inner: TrayBackend;
+
+  constructor(options: TrayOptions) {
+    this.#inner = impl().createTray(options);
+  }
+
+  setTooltip(text: string): void {
+    this.#inner.setTooltip(text);
+  }
+
+  setIcon(icon: TrayIcon): void {
+    this.#inner.setIcon(icon);
+  }
+
+  setMenu(menu: MenuSource | undefined): void {
+    this.#inner.setMenu(menu);
+  }
+
+  /** Safe to call twice. */
+  dispose(): void {
+    this.#inner.dispose();
+  }
+}
+
 export function createTray(options: TrayOptions): Tray {
-  return impl().createTray(options);
+  return new Tray(options);
 }

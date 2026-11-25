@@ -247,5 +247,17 @@ export const release = (obj: Id): void => {
 export const sendPtrIntVoid = fn([ID, ID, ID, FFIType.i64], FFIType.void);
 /** [obj sel:id :SEL :id :id] -> void  (addObserver:selector:name:object:) */
 export const sendPtrSelPtrPtrVoid = fn([ID, ID, ID, ID, ID, ID], FFIType.void);
+/** [obj sel:id :id :id] -> void  (removeObserver:name:object:) */
+export const sendPtrPtrPtrVoid = fn([ID, ID, ID, ID, ID], FFIType.void);
+/** [obj sel:id :NSPoint :id] -> BOOL  (popUpMenuPositioningItem:atLocation:inView:) */
+export const sendPtrPointPtrRetBool = fn([ID, ID, ID, FFIType.f64, FFIType.f64, ID], FFIType.bool);
 /** [obj sel:NSUInteger :id :id :BOOL] -> id  (nextEventMatchingMask:untilDate:inMode:dequeue:) */
 export const sendUIntPtrPtrBool = fn([ID, ID, FFIType.u64, ID, ID, FFIType.bool], ID);
+
+export const objc_getClass = objc.symbols.objc_getClass;
+export const objc_allocateClassPair = objc.symbols.objc_allocateClassPair;
+export const objc_registerClassPair = objc.symbols.objc_registerClassPair;
+export const class_addMethod = objc.symbols.class_addMethod;
+export const retainCallback = (cb: JSCallback): void => {
+  retained.push(cb);
+};

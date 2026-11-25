@@ -1,7 +1,8 @@
-// Menus as data. A template describes items; each platform renders it with
-// its own menu system when the menu opens.
+// Menus as data plus native popup menus backed by Win32 HMENU and AppKit NSMenu.
 
 import type { Icon } from "./icon";
+import { backend } from "./platform";
+import { unwrapHandle, type Point, type WindowHandle, type WindowRef } from "./types";
 
 export type MenuItem =
   | {
@@ -39,3 +40,18 @@ export const isSeparator = (item: MenuItem): item is { type: "separator" } => it
 
 export const isSubmenu = (item: MenuItem): item is Extract<MenuItem, { submenu: MenuTemplate }> =>
   !isSeparator(item) && "submenu" in item;
+
+type Backend = { popupMenu(owner: WindowHandle, template: MenuTemplate, at?: Point): boolean };
+const impl = backend<Backend>(
+  () => require("./win32/menu"),
+  () => require("./darwin/menu"),
+);
+
+export const Menu = {
+  /** Opens a native popup menu at `at` (default: cursor position). Returns true if an item was chosen. */
+  popup(owner: WindowRef, menu: MenuSource, at?: Point): boolean {
+    const template = resolveMenu(menu);
+    if (template.length === 0) return false;
+    return impl().popupMenu(unwrapHandle(owner), template, at);
+  },
+};

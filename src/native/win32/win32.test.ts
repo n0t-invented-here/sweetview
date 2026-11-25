@@ -165,12 +165,54 @@ describe.if(onWindows)("win32 icons", () => {
   });
 
   test("setWindowIcon on a message window does not fail and replaces its handles", async () => {
-    const { setWindowIcon } = await import("./icon");
+    const { clearWindowIcon, setWindowIcon } = await import("./icon");
     const { createMessageWindow } = await import("./message-window");
     const win = createMessageWindow(() => undefined);
     setWindowIcon(win.hwnd, dotIco());
     setWindowIcon(win.hwnd, dotIco({ color: "#00ff00" })); // frees the first pair
     setWindowIcon(win.hwnd, undefined); // back to stock
+    clearWindowIcon(win.hwnd);
     win.destroy();
+  });
+
+  test("hiddenBalloonData sets NIS_HIDDEN and NIF_INFO for standalone notifications", async () => {
+    const { hiddenBalloonData } = await import("./notifier");
+    const t = await import("./tray");
+    const nid = hiddenBalloonData(0x4444n, 10001, 0x11n, 0x22n, "Hello", "World", true);
+    const dv = new DataView(nid.buffer);
+    expect(dv.getUint32(0, true)).toBe(t.NID_SIZE);
+    expect(dv.getBigUint64(t.NID_HWND, true)).toBe(0x4444n);
+    expect(dv.getUint32(t.NID_UID, true)).toBe(10001);
+    // NIF_MESSAGE|NIF_ICON|NIF_TIP|NIF_STATE|NIF_INFO
+    expect(dv.getUint32(t.NID_FLAGS, true)).toBe(0x1 | 0x2 | 0x4 | 0x8 | 0x10);
+    expect(dv.getUint32(296, true)).toBe(1); // NIS_HIDDEN
+    expect(dv.getUint32(300, true)).toBe(1); // NIS_HIDDEN mask
+  });
+
+  test("buildMenu and destroyMenu handle submenus, separators, checkmarks, and icons", async () => {
+    const { buildMenu, destroyMenu } = await import("./menu");
+    const built = buildMenu([
+      { label: "One", checked: true, icon: { windows: { ico: dotIco() } }, click: () => {} },
+      { type: "separator" },
+      { type: "submenu", label: "Sub", submenu: [{ label: "Child", enabled: false }] },
+    ]);
+    expect(built.hmenu).not.toBe(0n);
+    expect(built.commands.size).toBe(2);
+    expect(built.bitmaps.length).toBe(1);
+    destroyMenu(built);
+  });
+
+  test("Screen.of(hwnd) resolves the monitor hosting a message window", async () => {
+    const { Screen } = await import("../screen");
+    const { createMessageWindow } = await import("./message-window");
+    const win = createMessageWindow(() => {});
+    try {
+      const info = Screen.of(win.hwnd);
+      expect(info.bounds.width).toBeGreaterThan(0);
+      expect(info.workArea.width).toBeGreaterThan(0);
+      expect(info.scale).toBeGreaterThan(0);
+    } finally {
+      win.destroy();
+    }
   });
 });

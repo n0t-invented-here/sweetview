@@ -6,13 +6,13 @@ import { backend } from "./platform";
 
 export type AppMenuOptions = { appName: string; aboutText: string };
 
-type Backend = { installAppMenu(options: AppMenuOptions): void };
+type Backend = { setAppMenu(options: AppMenuOptions): void };
 const impl = backend<Backend>(
   () => require("./win32/app-menu"),
   () => require("./darwin/app-menu"),
 );
 
 /** Call on the UI thread before the run loop starts. */
-export function installAppMenu(options: AppMenuOptions): void {
-  impl().installAppMenu(options);
+export function setAppMenu(options: AppMenuOptions): void {
+  impl().setAppMenu(options);
 }

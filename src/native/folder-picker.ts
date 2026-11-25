@@ -1,7 +1,7 @@
 // The OS folder dialog (IFileOpenDialog on Windows, NSOpenPanel on macOS).
 
 import { backend } from "./platform";
-import type { WindowHandle } from "./window";
+import { unwrapHandle, type WindowHandle, type WindowRef } from "./types";
 
 type Backend = { pickFolder(owner: WindowHandle, title: string): string | null };
 const impl = backend<Backend>(
@@ -10,6 +10,6 @@ const impl = backend<Backend>(
 );
 
 /** Modal. Blocks until the user picks or cancels. Returns the absolute path, or null when cancelled. */
-export function pickFolder(owner: WindowHandle, title: string): string | null {
-  return impl().pickFolder(owner, title);
+export function pickFolder(owner: WindowRef | null, title: string): string | null {
+  return impl().pickFolder(unwrapHandle(owner), title);
 }

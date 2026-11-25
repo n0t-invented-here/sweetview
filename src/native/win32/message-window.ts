@@ -6,8 +6,9 @@
 
 import { FFIType, JSCallback, ptr } from "bun:ffi";
 import { WM_CLOSE, hInstance, lastError, user32, wstr } from "./api";
+import { ensureDpiAware } from "./init";
 
-const CLASS_NAME = "NativeShellMessageWindow";
+const CLASS_NAME = "SweetviewMessageWindow";
 const WS_EX_TOOLWINDOW = 0x00000080;
 const WS_OVERLAPPED = 0x00000000;
 const WNDCLASSEXW_SIZE = 80;
@@ -32,7 +33,7 @@ function ensureClass(): void {
         handlers.get(hwnd)?.(message, wParam, lParam);
       } catch (err) {
         // Never let an exception unwind into user32.
-        console.error("sweetview: tray handler threw:", err);
+        console.error("sweetview: message window handler threw:", err);
       }
       // Only destroy() tears this window down; an external WM_CLOSE is ignored.
       return message === WM_CLOSE ? 0n : user32.DefWindowProcW(hwnd, message, wParam, lParam);
@@ -53,7 +54,8 @@ function ensureClass(): void {
   }
 }
 
-export function createMessageWindow(handler: MessageHandler): MessageWindow {
+/** Internal constructor used by ensureWin32Init() after DPI awareness is already set. */
+export function createMessageWindowRaw(handler: MessageHandler): MessageWindow {
   ensureClass();
   const className = wstr(CLASS_NAME);
   const hwnd = user32.CreateWindowExW(WS_EX_TOOLWINDOW, className, null, WS_OVERLAPPED, 0, 0, 0, 0, 0n, 0n, hInstance(), null);
@@ -69,4 +71,9 @@ export function createMessageWindow(handler: MessageHandler): MessageWindow {
       user32.DestroyWindow(hwnd);
     },
   };
+}
+
+export function createMessageWindow(handler: MessageHandler): MessageWindow {
+  ensureDpiAware();
+  return createMessageWindowRaw(handler);
 }

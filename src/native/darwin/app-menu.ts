@@ -1,7 +1,5 @@
-// macOS main menu. webview creates an NSApplication with no mainMenu, so there
-// is no app menu, no Quit, and Cmd+Q / Cmd+C / Cmd+V do nothing. Build the
-// standard minimum: app menu (About…, Quit) and an Edit menu so text editing
-// shortcuts reach the webview. Call on the main thread before webview.run().
+// macOS main menu. Reuses a single shared ObjC target so repeated setAppMenu()
+// calls update the About dialog text without leaking runtime classes.
 
 import type { AppMenuOptions } from "../app-menu";
 import {
@@ -62,13 +60,21 @@ function showAbout(appName: string, text: string) {
   release(alert);
 }
 
-export function installAppMenu(opts: AppMenuOptions) {
+let currentAbout: AppMenuOptions = { appName: "", aboutText: "" };
+let sharedTarget: Id | undefined;
+
+function appMenuTarget(): Id {
+  sharedTarget ??= makeTarget("SweetviewAppMenuTarget", {
+    "showAbout:": () => showAbout(currentAbout.appName, currentAbout.aboutText),
+  });
+  return sharedTarget;
+}
+
+export function setAppMenu(opts: AppMenuOptions) {
   const app = sharedApp();
   sendIntRetBool(app, sel("setActivationPolicy:"), NSApplicationActivationPolicyRegular);
-
-  const target = makeTarget("SweetviewAppMenuTarget", {
-    "showAbout:": () => showAbout(opts.appName, opts.aboutText),
-  });
+  currentAbout = opts;
+  const target = appMenuTarget();
 
   const menubar = alloc("NSMenu");
   submenu(menubar, opts.appName, [
@@ -85,4 +91,5 @@ export function installAppMenu(opts: AppMenuOptions) {
     ["Select All", "selectAll:", "a"],
   ]);
   sendPtr(app, sel("setMainMenu:"), menubar);
+  release(menubar); // NSApp retains mainMenu
 }

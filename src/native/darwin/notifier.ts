@@ -1,22 +1,13 @@
-// macOS notifications through UNUserNotificationCenter. It needs a bundle
-// identifier, so this works from the .app and silently does nothing from the
-// bare binary (`bun run dev`): currentNotificationCenter would raise there.
-// The bundle must also be signed (makeMacApp signs it ad-hoc) and not live in
-// a temporary folder, or macOS refuses the permission request outright with
-// UNErrorDomain code 1 and never shows the prompt.
+// macOS notifications through UNUserNotificationCenter.
 //
-// The first notify() asks for permission (system prompt, once per bundle id).
-// A delegate makes banners show while the app is frontmost and routes clicks.
-//
-// The completion handlers log a refused permission or a rejected request to
-// the console. Bun runs a threadsafe callback's body later, on its own event
-// loop, so they report in an app on `runEventLoop`; behind a webview's `run()`
-// the loop is blocked and they never run, which is why `notify` does not wait
-// for them. By the time a body runs the NSError the framework passed has been
-// released, so the bodies read only the scalar arguments and never touch it.
+// Eagerly registers the shared delegate when Notifier is constructed (when
+// running inside a bundled .app) so cold-launch notification clicks arrive as
+// soon as the event loop runs, without waiting for the first notify() call.
+// Reuses one shared ObjC delegate and one pair of global completion blocks per
+// process so repeated Notifier creation never leaks runtime classes or blocks.
 
 import { FFIType } from "bun:ffi";
-import { type NotificationClick, type Notifier, type NotifierOptions, notificationId } from "../notifications";
+import { type NotificationClick, type NotifierBackend, type NotifierOptions, notificationId } from "../notifications";
 import {
   NIL,
   type Id,
@@ -56,24 +47,27 @@ function readClick(response: Id): NotificationClick {
 
 const bundled = (): boolean => asId(send(asId(send(cls("NSBundle"), sel("mainBundle"))), sel("bundleIdentifier"))) !== NIL;
 
-export function createNotifier(options: NotifierOptions = {}): Notifier {
-  let disposed = false;
-  let authorized = false; // asked, not necessarily granted; the answer arrives off-thread and is not awaited
-  let center: Id = NIL;
+let sharedDelegate: Id = NIL;
+let sharedAuthBlock: Id = NIL;
+let sharedRequestBlock: Id = NIL;
+let activeHandler: { token: symbol; onClick?: (click: NotificationClick) => void } | undefined;
 
-  const delegate = makeTarget("NativeShellNotificationDelegate", {
+function ensureSharedDelegate(): Id {
+  if (sharedDelegate !== NIL) return sharedDelegate;
+  sharedDelegate = makeTarget("SweetviewNotificationDelegate", {
     // Called on the main thread while the app is frontmost: show it anyway.
     "userNotificationCenter:willPresentNotification:withCompletionHandler:": {
       args: 3,
       impl: (_center, _notification, handler) => invokeBlock(handler, [FFIType.u64], PRESENT_BANNER_LIST_SOUND),
     },
-    // Main thread: the user clicked a notification. The response is alive for this call, so reading it here is safe.
+    // Main thread: the user clicked a notification.
     "userNotificationCenter:didReceiveNotificationResponse:withCompletionHandler:": {
       args: 3,
       impl: (_center, response, handler) => {
-        if (!disposed && options.onClick) {
+        const current = activeHandler;
+        if (current?.onClick) {
           try {
-            options.onClick(readClick(response));
+            current.onClick(readClick(response));
           } catch (err) {
             console.error("sweetview: notification onClick threw:", err); // never unwind into AppKit
           }
@@ -82,6 +76,42 @@ export function createNotifier(options: NotifierOptions = {}): Notifier {
       },
     },
   });
+  return sharedDelegate;
+}
+
+function ensureSharedBlocks(): { auth: Id; req: Id } {
+  if (sharedAuthBlock === NIL) {
+    sharedAuthBlock = makeBlock(
+      (granted, error) => {
+        if (!granted) {
+          console.error(
+            `sweetview: notification permission ${error === NIL ? "denied by the user" : "refused by macOS: the app is not a signed .app bundle (makeMacApp signs one), or it runs from a temporary folder"}`,
+          );
+        }
+      },
+      [FFIType.bool, FFIType.u64],
+      true,
+    );
+  }
+  if (sharedRequestBlock === NIL) {
+    sharedRequestBlock = makeBlock(
+      (error) => {
+        if (error !== NIL) console.error("sweetview: notification not shown: macOS rejected it (permission refused, denied, or not answered yet)");
+      },
+      [FFIType.u64],
+      true,
+    );
+  }
+  return { auth: sharedAuthBlock, req: sharedRequestBlock };
+}
+
+export function createNotifier(options: NotifierOptions = {}): NotifierBackend {
+  let disposed = false;
+  let authorized = false;
+  let center: Id = NIL;
+  const token = Symbol("notifier");
+  const delegate = ensureSharedDelegate();
+  activeHandler = { token, onClick: options.onClick };
 
   const ensureCenter = (): boolean => {
     if (center !== NIL) return true;
@@ -92,33 +122,26 @@ export function createNotifier(options: NotifierOptions = {}): Notifier {
     return true;
   };
 
-  // (BOOL granted, NSError*) on a background queue
-  const authorizationDone = makeBlock(
-    (granted, error) => {
-      if (!granted) console.error(`sweetview: notification permission ${error === NIL ? "denied by the user" : "refused by macOS: the app is not a signed .app bundle (makeMacApp signs one), or it runs from a temporary folder"}`);
-    },
-    [FFIType.bool, FFIType.u64],
-    true,
-  );
-  // (NSError*) on a background queue
-  const requestDone = makeBlock(
-    (error) => {
-      if (error !== NIL) console.error("sweetview: notification not shown: macOS rejected it (permission refused, denied, or not answered yet)");
-    },
-    [FFIType.u64],
-    true,
-  );
+  // Eagerly register delegate so cold-launch notification clicks are delivered immediately.
+  ensureCenter();
 
   const ensureAuthorized = () => {
     if (authorized) return;
     authorized = true;
-    sendUIntPtrVoid(center, sel("requestAuthorizationWithOptions:completionHandler:"), UNAuthorizationOptionAlert | UNAuthorizationOptionSound | UNAuthorizationOptionBadge, authorizationDone);
+    const { auth } = ensureSharedBlocks();
+    sendUIntPtrVoid(
+      center,
+      sel("requestAuthorizationWithOptions:completionHandler:"),
+      UNAuthorizationOptionAlert | UNAuthorizationOptionSound | UNAuthorizationOptionBadge,
+      auth,
+    );
   };
 
   return {
     notify(n) {
       if (disposed || !ensureCenter()) return false;
       ensureAuthorized();
+      const { req } = ensureSharedBlocks();
       const content = asId(send(allocRaw("UNMutableNotificationContent"), sel("init")));
       sendPtr(content, sel("setTitle:"), nsString(n.title));
       if (n.body) sendPtr(content, sel("setBody:"), nsString(n.body));
@@ -128,14 +151,19 @@ export function createNotifier(options: NotifierOptions = {}): Notifier {
         sendPtr(content, sel("setUserInfo:"), userInfo);
       }
       const request = asId(sendPtrPtrPtr(cls("UNNotificationRequest"), sel("requestWithIdentifier:content:trigger:"), nsString(notificationId(n)), content, NIL));
-      sendPtrPtr(center, sel("addNotificationRequest:withCompletionHandler:"), request, requestDone);
+      sendPtrPtr(center, sel("addNotificationRequest:withCompletionHandler:"), request, req);
       release(content); // the request retains it
       return true;
     },
     dispose() {
       if (disposed) return;
       disposed = true;
-      if (center !== NIL && asId(send(center, sel("delegate"))) === delegate) sendPtr(center, sel("setDelegate:"), NIL); // a newer notifier's delegate stays
+      if (activeHandler?.token === token) {
+        activeHandler = undefined;
+        if (center !== NIL && asId(send(center, sel("delegate"))) === delegate) {
+          sendPtr(center, sel("setDelegate:"), NIL);
+        }
+      }
     },
   };
 }

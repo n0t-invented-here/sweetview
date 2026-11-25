@@ -5,8 +5,10 @@
 // keeps a list to delete afterwards.
 
 import { isSeparator, isSubmenu, type MenuTemplate } from "../menu";
+import type { Point, WindowHandle } from "../types";
 import { WM_NULL, gdi32, lastError, user32, wstr } from "./api";
 import { iconBitmap } from "./icon";
+import { asHwnd } from "./window";
 
 const MF_STRING = 0x0;
 const MF_GRAYED = 0x1;
@@ -39,19 +41,19 @@ export function bitmapItemInfo(hbm: bigint): Uint8Array {
 
 type Built = { hmenu: bigint; commands: Map<number, () => void>; bitmaps: bigint[] };
 
-function build(template: MenuTemplate): Built {
+export function buildMenu(template: MenuTemplate): Built {
   const built: Built = { hmenu: user32.CreatePopupMenu(), commands: new Map(), bitmaps: [] };
   if (built.hmenu === 0n) throw new Error("sweetview: CreatePopupMenu failed");
   try {
     fill(built.hmenu, template, built);
   } catch (err) {
-    destroy(built);
+    destroyMenu(built);
     throw err;
   }
   return built;
 }
 
-function destroy(built: Built): void {
+export function destroyMenu(built: Built): void {
   user32.DestroyMenu(built.hmenu); // takes the submenus with it
   for (const hbm of built.bitmaps) gdi32.DeleteObject(hbm);
 }
@@ -87,20 +89,48 @@ function fill(hmenu: bigint, template: MenuTemplate, built: Built): void {
 }
 
 /**
- * Shows `template` at the cursor, owned by `owner`, and runs the chosen item's
- * click handler. Blocks until the menu closes. Returns true when an item was chosen.
+ * Shows `template` at `at` (or cursor when omitted), owned by `owner`, and runs
+ * the chosen item's click handler. Blocks until the menu closes.
+ */
+export function popupMenu(owner: WindowHandle, template: MenuTemplate, at?: Point): boolean {
+  if (template.length === 0) return false;
+  const hwnd = asHwnd(owner);
+  let x: number;
+  let y: number;
+  if (at) {
+    x = Math.round(at.x);
+    y = Math.round(at.y);
+  } else {
+    const pt = new Int32Array(2);
+    user32.GetCursorPos(pt);
+    x = pt[0]!;
+    y = pt[1]!;
+  }
+  const built = buildMenu(template);
+  user32.SetForegroundWindow(hwnd);
+  const chosen = user32.TrackPopupMenu(built.hmenu, TPM_RIGHTBUTTON | TPM_RETURNCMD, x, y, 0, hwnd, null);
+  user32.PostMessageW(hwnd, WM_NULL, 0n, 0n);
+  destroyMenu(built);
+  const handler = built.commands.get(chosen);
+  handler?.();
+  return handler !== undefined;
+}
+
+/**
+ * Shows `template` at the cursor aligned above the taskbar (for tray menus),
+ * owned by `owner`, and runs the chosen item's click handler.
  */
 export function popupMenuAtCursor(owner: bigint, template: MenuTemplate): boolean {
   const pt = new Int32Array(2);
   user32.GetCursorPos(pt);
-  const built = build(template);
+  const built = buildMenu(template);
   // The owner must be the foreground window or the menu will not dismiss when
   // the user clicks elsewhere; the WM_NULL afterwards is the documented nudge
   // that makes the menu close correctly next time (KB 135788).
   user32.SetForegroundWindow(owner);
   const chosen = user32.TrackPopupMenu(built.hmenu, TPM_RIGHTBUTTON | TPM_BOTTOMALIGN | TPM_RETURNCMD, pt[0]!, pt[1]!, 0, owner, null);
   user32.PostMessageW(owner, WM_NULL, 0n, 0n);
-  destroy(built);
+  destroyMenu(built);
   const handler = built.commands.get(chosen);
   handler?.();
   return handler !== undefined;

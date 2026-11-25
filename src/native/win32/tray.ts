@@ -8,7 +8,7 @@
 import { resolveMenu } from "../menu";
 import type { MenuSource } from "../menu";
 import { type NotificationClick, type NotificationOptions, notificationId } from "../notifications";
-import type { Tray, TrayOptions } from "../tray";
+import type { TrayBackend, TrayOptions } from "../tray";
 import {
   SM_CXICON,
   WM_APP,
@@ -22,6 +22,7 @@ import {
   wstr,
 } from "./api";
 import { loadIcon, releaseIcon } from "./icon";
+import { ensureWin32Init } from "./init";
 import { popupMenuAtCursor } from "./menu";
 import { createMessageWindow } from "./message-window";
 
@@ -65,7 +66,8 @@ let taskbarCreated: number | undefined;
  * The Windows tray, as the rest of this folder sees it: the public Tray plus
  * the balloon channel the notifier uses. Not exported from the package.
  */
-export interface Win32Tray extends Tray {
+export interface Win32Tray extends TrayBackend {
+  readonly iconBytes: () => Uint8Array | undefined;
   readonly balloon: {
     /** Shows a balloon (a toast on Windows 10/11), replacing the one still showing. False once the tray is disposed or when the shell refuses. */
     show(n: NotificationOptions): boolean;
@@ -77,6 +79,8 @@ export interface Win32Tray extends Tray {
 let active: Win32Tray | undefined;
 /** The most recently created tray that has not been disposed. */
 export const currentTray = (): Win32Tray | undefined => active;
+/** The active tray's .ico bytes, if a tray currently exists. */
+export const currentTrayIconBytes = (): Uint8Array | undefined => active?.iconBytes();
 
 /** Copies `value` into a fixed WCHAR[wchars] field, truncated so the NUL still fits. */
 const setWide = (nid: Uint8Array, offset: number, value: string, wchars: number) => {
@@ -110,9 +114,11 @@ export function notifyIconData(hwnd: bigint, uid: number, hIcon: bigint, tip: st
 }
 
 export function createTray(options: TrayOptions): Win32Tray {
+  ensureWin32Init();
   const uid = nextUid++;
-  let icon = loadIcon(options.icon?.windows?.ico);
-  let balloonIcon = loadIcon(options.icon?.windows?.ico, SM_CXICON); // toasts want the 32px image
+  let rawIco = options.icon?.windows?.ico;
+  let icon = loadIcon(rawIco);
+  let balloonIcon = loadIcon(rawIco, SM_CXICON); // toasts want the 32px image
   let tooltip = options.tooltip ?? "";
   let balloonClick: ((click: NotificationClick) => void) | undefined;
   let lastBalloon: NotificationClick | undefined; // the shell shows one balloon per icon, so the click is for this one
@@ -180,6 +186,7 @@ export function createTray(options: TrayOptions): Win32Tray {
   sync(NIM_ADD);
 
   const tray: Win32Tray = {
+    iconBytes: () => rawIco,
     balloon: {
       show(n) {
         if (disposed) return false;
@@ -204,8 +211,9 @@ export function createTray(options: TrayOptions): Win32Tray {
       if (disposed) return;
       const previous = icon;
       const previousBalloon = balloonIcon;
-      icon = loadIcon(next.windows?.ico);
-      balloonIcon = loadIcon(next.windows?.ico, SM_CXICON);
+      rawIco = next.windows?.ico;
+      icon = loadIcon(rawIco);
+      balloonIcon = loadIcon(rawIco, SM_CXICON);
       sync(NIM_MODIFY);
       releaseIcon(previous);
       releaseIcon(previousBalloon);

@@ -3,6 +3,7 @@
 // their own Objective-C class.
 
 import { isSeparator, isSubmenu, type MenuTemplate } from "../menu";
+import type { Point, WindowHandle } from "../types";
 import { applyImage, makeImage } from "./image";
 import {
   NIL,
@@ -20,8 +21,10 @@ import {
   sendIntArg,
   sendIntRetBool,
   sendPtr,
+  sendPtrPointPtrRetBool,
   sendPtrSelPtr,
 } from "./objc";
+import { cursorPoint, primaryHeight } from "./screen";
 
 const NSControlStateValueOn = 1n;
 const MENU_ITEM_POINTS = 16;
@@ -35,7 +38,7 @@ const NSMenuItemImageVisibilityVisible = 1n;
 const handlers = new Map<Id, () => void>();
 
 let target: Id | undefined;
-const menuTarget = () => (target ??= makeTarget("NativeShellMenuTarget", { "menuAction:": (sender) => handlers.get(sender)?.() }));
+const menuTarget = () => (target ??= makeTarget("SweetviewMenuTarget", { "menuAction:": (sender) => handlers.get(sender)?.() }));
 
 export type BuiltMenu = { readonly menu: Id; readonly dispose: () => void };
 
@@ -85,4 +88,17 @@ export function buildMenu(template: MenuTemplate): BuiltMenu {
       release(menu);
     },
   };
+}
+
+/** Opens a native popup menu at `at` (default: current cursor position). Returns true when an item was chosen. */
+export function popupMenu(_owner: WindowHandle, template: MenuTemplate, at?: Point): boolean {
+  if (template.length === 0) return false;
+  const pt = at ?? cursorPoint() ?? { x: 0, y: 0 };
+  const built = buildMenu(template);
+  try {
+    const cocoaY = primaryHeight() - pt.y;
+    return Boolean(sendPtrPointPtrRetBool(built.menu, sel("popUpMenuPositioningItem:atLocation:inView:"), NIL, pt.x, cocoaY, NIL));
+  } finally {
+    built.dispose();
+  }
 }

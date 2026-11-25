@@ -19,17 +19,17 @@ Source: `docs/audit-and-v1-plan.md`, `docs/v1-api.md`, and the user's v1.0 direc
   - [x] Update unit tests for `ipc`, `ipc-ws`, `settings-store`, `icon`, `hit-regions`
   - [x] verify: `bun test src/ipc src/ipc-ws src/settings-store.test.ts src/native/icon.test.ts src/native/hit-regions.test.ts` passes and `rg "sweetnative:" src/` returns zero matches
 
-- [ ] **AC3: Standalone `Screen`, `Menu.popup`, `Tray`, `Notifier`, `setAppMenu`, and `pickFolder` work cleanly with shared DPI/startup init (Audit 2.5, 2.6, 2.10, 2.12)**
-  - [ ] Win32: add shared idempotent `ensureWin32Init()` calling `SetProcessDpiAwarenessContext(PER_MONITOR_AWARE_V2)` + `ensureFirstWindowIsHidden()` invoked by `Screen`, `Window`, `createMessageWindow()`, and `WebView`; deduplicate `ole32.dll` in `win32/folder-picker.ts`
-  - [ ] macOS: add shared `sharedApp()` init called by `Screen` and `Window`
-  - [ ] Implement `Screen` (`primary`, `all`, `at`, `of`, `bounds`, `cursor`) on Win32 and macOS
-  - [ ] Export `Menu.popup(owner, menu, at?)` from `@n1h/sweetview/native` on Win32 and macOS
-  - [ ] Export `Tray` class + `createTray`, rename `installAppMenu` to `setAppMenu`, update `pickFolder` to accept `Window | WindowHandle | null`
-  - [ ] Export `Notifier` class + `createNotifier`:
-    - [ ] Win32: decouple `Notifier` from requiring `Tray` first (create its own fallback notification host when no tray exists) and guard/track notification click payloads cleanly
-    - [ ] macOS: register `UNUserNotificationCenter` delegate eagerly in `Notifier` constructor and reuse/dispose ObjC targets instead of leaking class pairs and blocks per instance
-  - [ ] Add Win32 FFI tests for `ensureWin32Init` (including tray-before-window DPI awareness), `Screen.*`, `Menu.popup`, and standalone `Notifier` without tray
-  - [ ] verify: `bun test src/native/` passes on Windows with live Win32 `Screen`, `Menu`, `Tray`, and `Notifier` FFI checks
+- [x] **AC3: Standalone `Screen`, `Menu.popup`, `Tray`, `Notifier`, `setAppMenu`, and `pickFolder` work cleanly with shared DPI/startup init (Audit 2.5, 2.6, 2.10, 2.12)**
+  - [x] Win32: add shared idempotent `ensureWin32Init()` calling `SetProcessDpiAwarenessContext(PER_MONITOR_AWARE_V2)` + `ensureFirstWindowIsHidden()` invoked by `Screen`, `Window`, `createMessageWindow()`, and `WebView`; deduplicate `ole32.dll` in `win32/folder-picker.ts`
+  - [x] macOS: add shared `sharedApp()` init called by `Screen` and `Window`
+  - [x] Implement `Screen` (`primary`, `all`, `at`, `of`, `bounds`, `cursor`) on Win32 and macOS
+  - [x] Export `Menu.popup(owner, menu, at?)` from `@n1h/sweetview/native` on Win32 and macOS
+  - [x] Export `Tray` class + `createTray`, rename `installAppMenu` to `setAppMenu`, update `pickFolder` to accept `Window | WindowHandle | null`
+  - [x] Export `Notifier` class + `createNotifier`:
+    - [x] Win32: decouple `Notifier` from requiring `Tray` first (create its own fallback notification host when no tray exists) and guard/track notification click payloads cleanly
+    - [x] macOS: register `UNUserNotificationCenter` delegate eagerly in `Notifier` constructor and reuse/dispose ObjC targets instead of leaking class pairs and blocks per instance
+  - [x] Add Win32 FFI tests for `ensureWin32Init` (including tray-before-window DPI awareness), `Screen.*`, `Menu.popup`, and standalone `Notifier` without tray
+  - [x] verify: `bun test src/native/` passes on Windows with live Win32 `Screen`, `Menu`, `Tray`, and `Notifier` FFI checks
 
 - [ ] **AC4: Unified `Window` and `createWindow` replace `NativeWindow` + `Overlay` with clean disposal, events, and multi-monitor/macOS fixes (Audit 2.1, 2.2, 2.3, 2.7, 2.9)**
   - [ ] Replace `NativeWindow`, `Overlay`, `createOverlayWindow`, `makeOverlay`, `nativeWindow` with `Window`, `createWindow`, `Window.fromHandle`; remove deprecated `dark` flag

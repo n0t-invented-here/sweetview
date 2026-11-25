@@ -7,7 +7,7 @@
 
 import type { ColorScheme, Events, FsChange, Methods, NotifyStatus, WatchStatus } from "web-app-backend/protocol";
 import { basename } from "node:path";
-import { createNotifier, createTray, installAppMenu, pickFolder, setAppIcon, type Notifier } from "@n1h/sweetview/native";
+import { createNotifier, createTray, pickFolder, setAppIcon, setAppMenu, type Notifier } from "@n1h/sweetview/native";
 import { createWebviewApp, indexHtml, WEBVIEW_VERSION, type WebviewApp } from "@n1h/sweetview";
 import appCss from "./build/frontend/main.css" with { type: "file" };
 import appJs from "./build/frontend/main.js" with { type: "file" };
@@ -116,7 +116,7 @@ notifier = createNotifier({
 });
 
 // macOS only: webview creates NSApplication without a menu bar (no About, no Quit, no Cmd+C/V).
-installAppMenu({
+setAppMenu({
   appName: APP_NAME,
   aboutText: [
     `${APP_NAME} 0.1.0`,

@@ -83,3 +83,11 @@ export function setWindowIcon(hwnd: bigint, ico: Uint8Array | undefined): void {
   windowIcons.get(hwnd)?.forEach(releaseIcon);
   windowIcons.set(hwnd, [small, big]);
 }
+
+/** Releases any HICONs associated with `hwnd` when the window is disposed. */
+export function clearWindowIcon(hwnd: bigint): void {
+  const icons = windowIcons.get(hwnd);
+  if (!icons) return;
+  windowIcons.delete(hwnd);
+  icons.forEach(releaseIcon);
+}

@@ -1,6 +1,7 @@
 // One module per feature. Import what you use.
-export { createTray, type Tray, type TrayIcon, type TrayOptions } from "./tray";
-export { createNotifier, type NotificationClick, type NotificationOptions, type Notifier, type NotifierOptions } from "./notifications";
+export { createTray, Tray, type TrayIcon, type TrayOptions } from "./tray";
+export { createNotifier, Notifier, type NotificationClick, type NotificationOptions, type NotifierOptions } from "./notifications";
+export { Screen, type ScreenInfo } from "./screen";
 export { nativeWindow, type NativeWindow, type WindowHandle } from "./window";
 export {
   createOverlayWindow,
@@ -16,9 +17,9 @@ export {
 } from "./overlay";
 export { convexHull, createHitRelay, flattenRegions, hitRegions, HitRelay, packRegions, unpackRegions, type HitPolygon, type HitProbe } from "./hit-regions";
 export { pickFolder } from "./folder-picker";
-export { installAppMenu, type AppMenuOptions } from "./app-menu";
+export { setAppMenu, type AppMenuOptions } from "./app-menu";
 export { setAppIcon } from "./app-icon";
-export { resolveMenu, type MenuItem, type MenuSource, type MenuTemplate } from "./menu";
+export { Menu, resolveMenu, type MenuItem, type MenuSource, type MenuTemplate } from "./menu";
 export {
   decodePng,
   dotIcns,

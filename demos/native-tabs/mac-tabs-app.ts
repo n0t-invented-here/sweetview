@@ -7,7 +7,7 @@
 // module's record of it. Nothing is shared between tabs but the process.
 
 import { createWebviewApp, indexHtml, type WebviewApp } from "@n1h/sweetview";
-import { installAppMenu, quitEventLoop } from "@n1h/sweetview/native";
+import { setAppMenu, quitEventLoop } from "@n1h/sweetview/native";
 import pageCss from "./build/frontend/main.css" with { type: "file" };
 import pageJs from "./build/frontend/main.js" with { type: "file" };
 import { asWindowHandle, createWindowTabs, detachPage, installTabMenus, onLoadFailed, type WindowTabs } from "./mac-window-tabs";
@@ -71,7 +71,7 @@ const loadFailedPage = (address: string, reason: string) => `<!doctype html>
 </html>`;
 
 export function startTabsApp(): TabsApp {
-  installAppMenu({ appName: APP_NAME, aboutText: "Every tab is its own NSWindow with its own WKWebView. AppKit's window tabbing puts them behind one tab bar." });
+  setAppMenu({ appName: APP_NAME, aboutText: "Every tab is its own NSWindow with its own WKWebView. AppKit's window tabbing puts them behind one tab bar." });
   installTabMenus();
 
   const open = new Map<bigint, Tab>();

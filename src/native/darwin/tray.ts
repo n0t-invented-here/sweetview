@@ -1,20 +1,14 @@
-// Menu bar status item (NSStatusItem). As on every Mac menu bar item, any
-// click (left, right, ctrl+click) opens the menu when there is one. Only when
-// no menu is set do clicks reach the app: left double click fires
-// onDoubleClick; a left click not followed by a second within
-// NSEvent.doubleClickInterval fires onClick. That delay runs on the Cocoa run
-// loop (performSelector:withObject:afterDelay:), not on a JS timer, because
-// Bun's loop is blocked while the webview runs.
-//
-// The menu is attached only for the duration of the click (setMenu:,
-// performClick:, setMenu:nil) so it is rebuilt from current state each time.
+// Menu bar status item (NSStatusItem). Uses one shared ObjC target per process
+// mapped by status-bar button so creating and disposing multiple trays never
+// leaks Objective-C classes or callbacks.
 
 import { resolveMenu, type MenuSource } from "../menu";
-import type { Tray, TrayIcon, TrayOptions } from "../tray";
+import type { TrayBackend, TrayIcon, TrayOptions } from "../tray";
 import { applyImage, makeImage } from "./image";
 import { type BuiltMenu, buildMenu } from "./menu";
 import {
   NIL,
+  type Id,
   asId,
   cls,
   makeTarget,
@@ -40,13 +34,27 @@ const NSEventMaskLeftMouseUp = 1n << NSEventTypeLeftMouseUp;
 const NSEventMaskRightMouseUp = 1n << NSEventTypeRightMouseUp;
 const NSEventModifierFlagControl = 1n << 18n;
 
-let nextUid = 1;
-
 /** Menu bar images are 18x18 points; the PNG's pixels (36 for Retina) are mapped onto that. */
 const MENU_BAR_POINTS = 18;
 
-export function createTray(options: TrayOptions): Tray {
-  const uid = nextUid++;
+type TrayDispatch = {
+  onAction: () => void;
+  onSingleClick: () => void;
+};
+
+const traysByButton = new Map<Id, TrayDispatch>();
+let sharedTarget: Id | undefined;
+
+function trayTarget(): Id {
+  sharedTarget ??= makeTarget("SweetviewTrayTarget", {
+    "trayAction:": (sender) => traysByButton.get(sender)?.onAction(),
+    "traySingleClick:": (sender) => traysByButton.get(sender)?.onSingleClick(),
+  });
+  return sharedTarget;
+}
+
+export function createTray(options: TrayOptions): TrayBackend {
+  sharedApp();
   const statusBar = asId(send(cls("NSStatusBar"), sel("systemStatusBar")));
   // statusItemWithLength: returns +0; keep our own reference until dispose.
   const item = retain(asId(sendF64(statusBar, sel("statusItemWithLength:"), NSVariableStatusItemLength)));
@@ -72,12 +80,12 @@ export function createTray(options: TrayOptions): Tray {
     sendPtr(item, sel("setMenu:"), built.menu);
     sendPtr(button, sel("performClick:"), NIL); // tracks the menu modally
     sendPtr(item, sel("setMenu:"), NIL);
-    // The chosen item's action has already fired; the old menu can go now.
     previous?.dispose();
   };
 
-  const target = makeTarget(`NativeShellTrayTarget${uid}`, {
-    "trayAction:": () => {
+  const target = trayTarget();
+  traysByButton.set(button, {
+    onAction: () => {
       const event = asId(send(sharedApp(), sel("currentEvent")));
       if (event === NIL) return;
       const type = BigInt(sendInt(event, sel("type")) ?? 0);
@@ -90,14 +98,16 @@ export function createTray(options: TrayOptions): Tray {
       if (type !== NSEventTypeLeftMouseUp) return;
       const clicks = BigInt(sendInt(event, sel("clickCount")) ?? 1);
       if (clicks >= 2n) {
-        sendPtrSelPtrVoid(cls("NSObject"), sel("cancelPreviousPerformRequestsWithTarget:selector:object:"), target, sel("traySingleClick:"), NIL);
+        sendPtrSelPtrVoid(cls("NSObject"), sel("cancelPreviousPerformRequestsWithTarget:selector:object:"), target, sel("traySingleClick:"), button);
         options.onDoubleClick?.();
       } else if (options.onClick) {
         const delay = Number(sendRetF64(cls("NSEvent"), sel("doubleClickInterval")) ?? 0.3);
-        sendSelPtrF64(target, sel("performSelector:withObject:afterDelay:"), sel("traySingleClick:"), NIL, delay);
+        sendSelPtrF64(target, sel("performSelector:withObject:afterDelay:"), sel("traySingleClick:"), button, delay);
       }
     },
-    "traySingleClick:": () => options.onClick?.(),
+    onSingleClick: () => {
+      if (!disposed) options.onClick?.();
+    },
   });
 
   applyIcon(options.icon);
@@ -119,7 +129,8 @@ export function createTray(options: TrayOptions): Tray {
     dispose() {
       if (disposed) return;
       disposed = true;
-      sendPtrSelPtrVoid(cls("NSObject"), sel("cancelPreviousPerformRequestsWithTarget:selector:object:"), target, sel("traySingleClick:"), NIL);
+      traysByButton.delete(button);
+      sendPtrSelPtrVoid(cls("NSObject"), sel("cancelPreviousPerformRequestsWithTarget:selector:object:"), target, sel("traySingleClick:"), button);
       sendPtr(statusBar, sel("removeStatusItem:"), item);
       release(item);
       built?.dispose();

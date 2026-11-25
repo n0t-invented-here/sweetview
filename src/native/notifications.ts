@@ -1,9 +1,8 @@
 // System notifications.
 //
-// Windows: the tray icon's balloon, which Windows 10/11 shows as a toast with
-// our icon, so create the tray first. macOS: UNUserNotificationCenter, which
-// asks the user for permission on the first notification and needs a bundle
-// identifier, so run the .app rather than the bare binary.
+// Windows: per-notification hidden Shell_NotifyIconW channels (works standalone
+// with or without a Tray, and delivers exact id/data per clicked notification).
+// macOS: UNUserNotificationCenter with eager delegate registration in constructor.
 
 import { backend } from "./platform";
 
@@ -28,14 +27,7 @@ export type NotifierOptions = {
   onClick?: (click: NotificationClick) => void;
 };
 
-export interface Notifier {
-  /**
-   * Shows a notification. Returns false when the platform cannot show one
-   * right now (macOS without a bundle id; Windows after the tray is gone), in
-   * which case nothing is displayed. Windows shows one balloon per tray icon,
-   * so a new one replaces the one still showing, and a click reports the
-   * newest.
-   */
+export interface NotifierBackend {
   notify(notification: NotificationOptions): boolean;
   dispose(): void;
 }
@@ -43,12 +35,29 @@ export interface Notifier {
 let nextId = 1;
 export const notificationId = (n: NotificationOptions): string => n.id ?? `sweetview-${nextId++}`;
 
-type Backend = { createNotifier(options?: NotifierOptions): Notifier };
+type Backend = { createNotifier(options?: NotifierOptions): NotifierBackend };
 const impl = backend<Backend>(
   () => require("./win32/notifier"),
   () => require("./darwin/notifier"),
 );
 
+export class Notifier {
+  readonly #inner: NotifierBackend;
+
+  constructor(options: NotifierOptions = {}) {
+    this.#inner = impl().createNotifier(options);
+  }
+
+  notify(notification: NotificationOptions): boolean {
+    return this.#inner.notify(notification);
+  }
+
+  /** Safe to call twice. */
+  dispose(): void {
+    this.#inner.dispose();
+  }
+}
+
 export function createNotifier(options: NotifierOptions = {}): Notifier {
-  return impl().createNotifier(options);
+  return new Notifier(options);
 }
