@@ -4,11 +4,15 @@ version: 0.1.0
 targets:
   - claude
   - codex
+  - antigravity
 
 dependencies:
   apm:
-    - git: ssh://git@git.mrowr.dev:2222/AI/mrowr-purr-core-prompts.git
-      path: packages/bundles/working-with-purr
+    - git: ssh://git@git.mrowr.dev:2222/AI/mrowr-purr-core-prompts
+      path: packages/bundles/purr-neon
+      ref: main
+    - git: ssh://git@git.mrowr.dev:2222/AI/mrowr-purr-core-prompts
+      path: packages/mcp/chrome-devtools
       ref: main
 
 includes: auto
