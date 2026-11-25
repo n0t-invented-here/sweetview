@@ -1,40 +1,355 @@
-// Control of a window someone else created (the webview's): show, hide, and
-// what the close button does.
+// Unified native Window abstraction replacing NativeWindow and Overlay.
+// Always created hidden; call win.show() once positioned and wired.
+//
+// Coordinates: top-left origin of the primary monitor on both platforms;
+// physical pixels on Windows (per-monitor DPI aware), points on macOS.
+// `bounds` in options, `bounds()`, and `setBounds()` are all outer window
+// frame coordinates on both Windows and macOS.
 
-import type { Pointer } from "bun:ffi";
+import type { HitPolygon } from "./hit-regions";
 import type { Icon } from "./icon";
 import { backend } from "./platform";
+import type { Point, Rect, WindowHandle } from "./types";
 
-/** A native window handle as the webview hands it out (HWND on Windows, NSWindow* on macOS). */
-export type WindowHandle = Pointer | bigint | number | null;
+export type { Point, Rect, WindowHandle } from "./types";
 
-export interface NativeWindow {
+/** A framed window's title bar and frame: light, dark, or following the system. */
+export type Appearance = "system" | "light" | "dark";
+
+/** An edge or corner of the window, for startResize. */
+export type ResizeEdge = "left" | "right" | "top" | "bottom" | "top-left" | "top-right" | "bottom-left" | "bottom-right";
+
+/**
+ * Asked while the cursor is inside a hit polygon, with the cursor in
+ * window-local units; whoever knows the exact shape (the page, with a
+ * triangle pick) calls `answer` with whether that point is really solid.
+ */
+export type HitRefiner = (local: Point, answer: (solid: boolean) => void) => void;
+
+/** Minimal tab interface visible from `@n1h/sweetview/native` without importing webview types. */
+export interface TabHandle {
+  readonly title: string;
+  setTitle(title: string): void;
+  select(): void;
+  close(): void;
+  dispose(): void;
+}
+
+export type WindowOptions = {
+  title?: string;
+  /** Outer frame bounds. Default: 320x240 centered on the primary work area. */
+  bounds?: Rect;
+  /** Minimum outer size (optional). */
+  minWidth?: number;
+  minHeight?: number;
+  /** Normal OS frame with title bar and borders. Default: true. */
+  frame?: boolean;
+  /** Allow user resizing. Default: true when frame is true, false when frameless. */
+  resizable?: boolean;
+  /** Framed title bar theme. Default: "system". */
+  appearance?: Appearance;
+  /** Windows title bar / taskbar / Alt+Tab icon. */
+  icon?: Icon;
+  /** Enable native tab bar support on this window. Default: false. */
+  tabs?: boolean;
+  /** Alpha-composited transparent window. Default: false. */
+  transparent?: boolean;
+  /** Windows-only 1-bit color key ("#rrggbb"). */
+  colorKey?: string;
+  /** Whole-window opacity, 0..1. */
+  opacity?: number;
+  /** Keep above normal windows. Default: false. */
+  topmost?: boolean;
+  /** Omit from taskbar / Dock / Alt+Tab. Default: false. */
+  hideFromTaskbar?: boolean;
+  /** Never steal focus on click or show. Default: false. */
+  noActivate?: boolean;
+  /** Declarative callbacks (used by createWindow; also accepted by new Window). */
+  onResize?: (bounds: Rect) => void;
+  onMove?: (bounds: Rect) => void;
+  onClose?: () => void;
+  onNewTab?: () => void;
+  onTabSelect?: (tab: TabHandle) => void;
+  onTabClose?: (tab: TabHandle) => void;
+};
+
+export interface WindowMeta {
+  title: string;
+  readonly frame: boolean;
+  readonly resizable: boolean;
+  readonly transparent: boolean;
+  readonly tabs: boolean;
+  readonly appearance: Appearance;
+  readonly icon?: Icon;
+  readonly minWidth?: number;
+  readonly minHeight?: number;
+  readonly owned: boolean;
+}
+
+export interface WindowBackend {
+  readonly handle: WindowHandle;
   isVisible(): boolean;
-  /** Shows, un-minimises and brings to the front. */
   show(): void;
   hide(): void;
   toggle(): void;
-  /**
-   * Windows: the title bar, taskbar and Alt+Tab icon for this window, from
-   * `icon.windows.ico`; undefined restores the stock one. macOS: no-op, a
-   * window has no icon of its own there; `setAppIcon` sets the Dock's.
-   */
+  bounds(): Rect;
+  setBounds(rect: Rect): void;
+  moveTo(x: number, y: number): void;
+  resize(width: number, height: number): void;
+  scale(): number;
+  setTitle(title: string): void;
   setIcon(icon: Icon | undefined): void;
-  /**
-   * Replaces what the window's close button does (destroy the window, which
-   * ends the app) with `handler`, typically `hide`. Returns a function that
-   * restores the default. Only the close button is intercepted; quitting
-   * through a menu still works.
-   */
-  onCloseRequest(handler: () => void): () => void;
+  minimize(): void;
+  toggleMaximize(): void;
+  isMaximized(): boolean;
+  setTopmost(on: boolean): void;
+  startDrag(): void;
+  startResize(edge: ResizeEdge): void;
+  setClickThrough(on: boolean): void;
+  setHitRegions(polygons: HitPolygon[] | null, refine?: HitRefiner): void;
+  onResize(handler: (bounds: Rect) => void): () => void;
+  onMove(handler: (bounds: Rect) => void): () => void;
+  onClose(handler: () => void): () => void;
+  dispose(): void;
 }
 
-type Backend = { nativeWindow(handle: WindowHandle): NativeWindow };
+type Backend = {
+  createWindow(options: WindowOptions): WindowBackend;
+  fromHandle(handle: WindowHandle): WindowBackend;
+};
+
 const impl = backend<Backend>(
   () => require("./win32/window"),
   () => require("./darwin/window"),
 );
 
-export function nativeWindow(handle: WindowHandle): NativeWindow {
-  return impl().nativeWindow(handle);
+type TabListeners = {
+  newTab: Set<() => void>;
+  tabSelect: Set<(tab: TabHandle) => void>;
+  tabClose: Set<(tab: TabHandle) => void>;
+};
+
+const windowMetaMap = new WeakMap<Window, WindowMeta>();
+const windowBackendMap = new WeakMap<Window, WindowBackend>();
+const windowTabListeners = new WeakMap<Window, TabListeners>();
+
+/** Internal metadata read by WebView.attach / tabs coordinator. */
+export function getWindowMeta(win: Window): WindowMeta {
+  return windowMetaMap.get(win)!;
+}
+
+/** Internal backend accessor used by platform tab drivers. */
+export function getWindowBackend(win: Window): WindowBackend {
+  return windowBackendMap.get(win)!;
+}
+
+/** Internal emitter used by the tabs coordinator to dispatch Window tab events. */
+export function emitWindowNewTab(win: Window): void {
+  const listeners = windowTabListeners.get(win);
+  if (!listeners) return;
+  for (const fn of [...listeners.newTab]) {
+    try {
+      fn();
+    } catch (err) {
+      console.error("sweetview: onNewTab handler threw:", err);
+    }
+  }
+}
+
+export function emitWindowTabSelect(win: Window, tab: TabHandle): void {
+  const listeners = windowTabListeners.get(win);
+  if (!listeners) return;
+  for (const fn of [...listeners.tabSelect]) {
+    try {
+      fn(tab);
+    } catch (err) {
+      console.error("sweetview: onTabSelect handler threw:", err);
+    }
+  }
+}
+
+export function emitWindowTabClose(win: Window, tab: TabHandle): void {
+  const listeners = windowTabListeners.get(win);
+  if (!listeners) return;
+  for (const fn of [...listeners.tabClose]) {
+    try {
+      fn(tab);
+    } catch (err) {
+      console.error("sweetview: onTabClose handler threw:", err);
+    }
+  }
+}
+
+/** Forwards tab events emitted on a torn-off window to its parent window's listeners as well. */
+export function forwardWindowTabEvents(from: Window, to: Window): void {
+  from.onNewTab(() => emitWindowNewTab(to));
+  from.onTabSelect((tab) => emitWindowTabSelect(to, tab));
+  from.onTabClose((tab) => emitWindowTabClose(to, tab));
+}
+
+const INTERNAL_CONSTRUCT = Symbol("sweetview.window.internal");
+
+export class Window {
+  readonly handle: WindowHandle;
+  readonly #inner: WindowBackend;
+  readonly #meta: WindowMeta;
+  readonly #tabListeners: TabListeners = {
+    newTab: new Set(),
+    tabSelect: new Set(),
+    tabClose: new Set(),
+  };
+
+  constructor(options: WindowOptions = {}) {
+    if (options && INTERNAL_CONSTRUCT in (options as Record<PropertyKey, unknown>)) {
+      const payload = (options as unknown as { [INTERNAL_CONSTRUCT]: { inner: WindowBackend; meta: WindowMeta } })[INTERNAL_CONSTRUCT];
+      this.#inner = payload.inner;
+      this.#meta = payload.meta;
+      this.handle = payload.inner.handle;
+    } else {
+      const frame = options.frame ?? true;
+      const resizable = options.resizable ?? frame;
+      const transparent = options.transparent ?? false;
+      const tabs = options.tabs ?? false;
+      const appearance = options.appearance ?? "system";
+      this.#meta = {
+        title: options.title ?? "",
+        frame,
+        resizable,
+        transparent,
+        tabs,
+        appearance,
+        icon: options.icon,
+        minWidth: options.minWidth,
+        minHeight: options.minHeight,
+        owned: true,
+      };
+      this.#inner = impl().createWindow({ ...options, frame, resizable, transparent, tabs, appearance });
+      this.handle = this.#inner.handle;
+      if (options.onResize) this.onResize(options.onResize);
+      if (options.onMove) this.onMove(options.onMove);
+      if (options.onClose) this.onClose(options.onClose);
+      if (options.onNewTab) this.onNewTab(options.onNewTab);
+      if (options.onTabSelect) this.onTabSelect(options.onTabSelect);
+      if (options.onTabClose) this.onTabClose(options.onTabClose);
+    }
+    windowMetaMap.set(this, this.#meta);
+    windowBackendMap.set(this, this.#inner);
+    windowTabListeners.set(this, this.#tabListeners);
+  }
+
+  /** Non-mutating wrapper around an existing HWND or NSWindow*. */
+  static fromHandle(handle: WindowHandle): Window {
+    const inner = impl().fromHandle(handle);
+    const meta: WindowMeta = {
+      title: "",
+      frame: true,
+      resizable: true,
+      transparent: false,
+      tabs: false,
+      appearance: "system",
+      owned: false,
+    };
+    return new Window({ [INTERNAL_CONSTRUCT]: { inner, meta } } as unknown as WindowOptions);
+  }
+
+  // Visibility
+  isVisible(): boolean {
+    return this.#inner.isVisible();
+  }
+  show(): void {
+    this.#inner.show();
+  }
+  hide(): void {
+    this.#inner.hide();
+  }
+  toggle(): void {
+    this.#inner.toggle();
+  }
+
+  // Geometry (outer frame)
+  bounds(): Rect {
+    return this.#inner.bounds();
+  }
+  setBounds(rect: Rect): void {
+    this.#inner.setBounds(rect);
+  }
+  moveTo(x: number, y: number): void {
+    this.#inner.moveTo(x, y);
+  }
+  resize(width: number, height: number): void {
+    this.#inner.resize(width, height);
+  }
+  scale(): number {
+    return this.#inner.scale();
+  }
+
+  // State & chrome
+  setTitle(title: string): void {
+    this.#meta.title = title;
+    this.#inner.setTitle(title);
+  }
+  setIcon(icon: Icon | undefined): void {
+    this.#inner.setIcon(icon);
+  }
+  minimize(): void {
+    this.#inner.minimize();
+  }
+  toggleMaximize(): void {
+    this.#inner.toggleMaximize();
+  }
+  isMaximized(): boolean {
+    return this.#inner.isMaximized();
+  }
+  setTopmost(on: boolean): void {
+    this.#inner.setTopmost(on);
+  }
+  startDrag(): void {
+    this.#inner.startDrag();
+  }
+  startResize(edge: ResizeEdge): void {
+    this.#inner.startResize(edge);
+  }
+
+  // Click-through & hit regions
+  setClickThrough(on: boolean): void {
+    this.#inner.setClickThrough(on);
+  }
+  setHitRegions(polygons: HitPolygon[] | null, refine?: HitRefiner): void {
+    this.#inner.setHitRegions(polygons, refine);
+  }
+
+  // Event subscriptions (each returns an unsubscribe thunk)
+  onResize(handler: (bounds: Rect) => void): () => void {
+    return this.#inner.onResize(handler);
+  }
+  onMove(handler: (bounds: Rect) => void): () => void {
+    return this.#inner.onMove(handler);
+  }
+  onClose(handler: () => void): () => void {
+    return this.#inner.onClose(handler);
+  }
+  onNewTab(handler: () => void): () => void {
+    this.#tabListeners.newTab.add(handler);
+    return () => this.#tabListeners.newTab.delete(handler);
+  }
+  onTabSelect(handler: (tab: TabHandle) => void): () => void {
+    this.#tabListeners.tabSelect.add(handler);
+    return () => this.#tabListeners.tabSelect.delete(handler);
+  }
+  onTabClose(handler: (tab: TabHandle) => void): () => void {
+    this.#tabListeners.tabClose.add(handler);
+    return () => this.#tabListeners.tabClose.delete(handler);
+  }
+
+  /** Releases timers, subclasses, notification observers, icons, and per-window entries. Safe to call twice. */
+  dispose(): void {
+    this.#tabListeners.newTab.clear();
+    this.#tabListeners.tabSelect.clear();
+    this.#tabListeners.tabClose.clear();
+    this.#inner.dispose();
+  }
+}
+
+export function createWindow(options?: WindowOptions): Window {
+  return new Window(options);
 }

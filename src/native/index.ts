@@ -2,19 +2,18 @@
 export { createTray, Tray, type TrayIcon, type TrayOptions } from "./tray";
 export { createNotifier, Notifier, type NotificationClick, type NotificationOptions, type NotifierOptions } from "./notifications";
 export { Screen, type ScreenInfo } from "./screen";
-export { nativeWindow, type NativeWindow, type WindowHandle } from "./window";
 export {
-  createOverlayWindow,
-  makeOverlay,
-  type Overlay,
-  type OverlayOptions,
+  createWindow,
+  Window,
   type Appearance,
-  type OverlayWindowOptions,
   type HitRefiner,
   type Point,
   type Rect,
   type ResizeEdge,
-} from "./overlay";
+  type TabHandle,
+  type WindowHandle,
+  type WindowOptions,
+} from "./window";
 export { convexHull, createHitRelay, flattenRegions, hitRegions, HitRelay, packRegions, unpackRegions, type HitPolygon, type HitProbe } from "./hit-regions";
 export { pickFolder } from "./folder-picker";
 export { setAppMenu, type AppMenuOptions } from "./app-menu";

@@ -1,15 +1,12 @@
-// The WebView2 calls a tabbed window needs and the webview library does not
-// make: hide a tab that is not shown, give the keyboard to the one that is,
-// hear accelerator keys (Ctrl+T reaches no window procedure while a page has
-// the focus), and take over a page's request for a new window.
-//
-// The library hands out its ICoreWebView2Controller; everything here is a COM
-// call through that pointer's vtable. Slot numbers and interface ids are from
-// WebView2.h (SDK 1.0.1150.38, the one the library is built with; a COM interface never changes once published).
+// WebView2 COM controller helpers for Windows tabs: visibility, focus,
+// position sync, accelerator keys, new-window interception, and DevTools
+// commands. Lives in src/tabs/ (webview layer), never in src/native/.
 
 import { CFunction, FFIType, JSCallback, dlopen, ptr, read, toArrayBuffer, type Pointer } from "bun:ffi";
 import type { Webview } from "@n1h/sweetview-webview-bun";
-import type { Key } from "./win-shortcuts";
+import { ole32 } from "../native/win32/api";
+import type { Key } from "../native/win32/shortcuts";
+import { openWebviewCore } from "../webview-lib";
 
 export type Controller = Pointer;
 
@@ -39,17 +36,14 @@ const COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN = 0;
 const COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_DOWN = 2;
 
 const S_OK = 0;
-const E_NOINTERFACE = -2147467262; // 0x80004002
+const E_NOINTERFACE = -2147467262;
 const IID_IUNKNOWN = "00000000-0000-0000-c000-000000000046";
 const IID_ACCELERATOR_KEY_PRESSED_HANDLER = "b29c7e28-fa79-41a8-8e44-65811c76dcb2";
 const IID_NEW_WINDOW_REQUESTED_HANDLER = "d4c185fe-c81c-4989-97af-2d3fa7ab5651";
 
 const { GetKeyState } = dlopen("user32.dll", { GetKeyState: { args: [FFIType.i32], returns: FFIType.i16 } }).symbols;
-const { CoTaskMemFree } = dlopen("ole32.dll", { CoTaskMemFree: { args: [FFIType.ptr], returns: FFIType.void } }).symbols;
 
-// One compiled call per method implementation, by its address.
 const compiled = new Map<number, (...args: unknown[]) => number>();
-/** Calls slot `index` of a COM object's vtable; every method here returns an HRESULT, AddRef and Release a count. */
 function call(object: Pointer, index: number, args: FFIType[], ...values: unknown[]): number {
   const address = read.ptr(read.ptr(object, 0) as Pointer, index * 8);
   let method = compiled.get(address);
@@ -60,60 +54,41 @@ function call(object: Pointer, index: number, args: FFIType[], ...values: unknow
   return method(object, ...values);
 }
 
-const failed = (what: string, hr: number) => new Error(`native-tabs: ${what} failed (0x${(hr >>> 0).toString(16)})`);
+const failed = (what: string, hr: number) => new Error(`sweetview: ${what} failed (0x${(hr >>> 0).toString(16)})`);
 
-let getNativeHandle: ((webview: Pointer, kind: number) => Pointer | null) | undefined;
-
-/** The controller of a webview the library made. `libPath` is the library's file, from `webviewLibPath()`. */
+/** The ICoreWebView2Controller of a webview the library made. Reuses the cached libwebview symbols. */
 export function controllerOf(webview: Webview, libPath: string): Controller {
-  const get = (getNativeHandle ??= dlopen(libPath, { webview_get_native_handle: { args: [FFIType.ptr, FFIType.i32], returns: FFIType.ptr } }).symbols.webview_get_native_handle as (webview: Pointer, kind: number) => Pointer | null);
+  const get = openWebviewCore(libPath).webview_get_native_handle;
   const controller = webview.unsafeHandle === null ? null : get(webview.unsafeHandle, WEBVIEW_NATIVE_HANDLE_KIND_BROWSER_CONTROLLER);
-  if (controller === null) throw new Error("native-tabs: the webview has no browser controller");
+  if (controller === null) throw new Error("sweetview: the webview has no browser controller");
   return controller;
 }
 
-/** A tab that is not shown stops painting and its page learns it is hidden (`document.visibilityState`). */
 export function setVisible(controller: Controller, visible: boolean): void {
   call(controller, PUT_IS_VISIBLE, [FFIType.i32], visible ? 1 : 0);
 }
 
-/** Gives the keyboard to the page, where the page last had it. */
 export function moveFocus(controller: Controller): void {
   call(controller, MOVE_FOCUS, [FFIType.i32], COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC);
 }
 
-/** The window the page is in moved on screen, or the page moved to another window: what the page pops up (a select's list, a tooltip) follows. */
 export function notifyMoved(controller: Controller): void {
   call(controller, NOTIFY_PARENT_WINDOW_POSITION_CHANGED, []);
 }
 
-// --- event handlers: COM objects made here, called by WebView2
-//
-// A handler is one pointer to a vtable of four functions: QueryInterface,
-// AddRef, Release, Invoke. The functions are JSCallbacks shared by every
-// handler of a kind; which handler is being called is its own address, the
-// `this` every one of them receives. Handlers live for the process: WebView2
-// may hold one for as long as its webview exists, and a tab's worth is 8 bytes.
-
 type Invoke = (args: Pointer) => void;
 type HandlerKind = { vtable: BigUint64Array; byAddress: Map<number, Invoke>; kept: BigUint64Array[] };
 
-/**
- * Pointer-sized slots whose address native code may keep. A small typed array
- * made the short way lives inside the garbage collector's heap until its
- * `buffer` is first asked for, and is copied out then; one made over an
- * ArrayBuffer is outside from the start and stays where it is.
- */
 const stable = (slots: number) => new BigUint64Array(new ArrayBuffer(slots * 8));
 
 function guidBytes(guid: string): Uint8Array {
   const hex = guid.replaceAll("-", "");
   const byte = (i: number) => parseInt(hex.slice(i * 2, i * 2 + 2), 16);
-  // Data1, Data2 and Data3 are little-endian integers; Data4 is eight bytes as written.
   return Uint8Array.from([3, 2, 1, 0, 5, 4, 7, 6, 8, 9, 10, 11, 12, 13, 14, 15], byte);
 }
 
-const sameBytes = (address: Pointer, bytes: Uint8Array) => new Uint8Array(toArrayBuffer(address, 0, bytes.length)).every((b, i) => b === bytes[i]);
+const sameBytes = (address: Pointer, bytes: Uint8Array) =>
+  new Uint8Array(toArrayBuffer(address, 0, bytes.length)).every((b, i) => b === bytes[i]);
 
 function handlerKind(iid: string): HandlerKind {
   const iids = [guidBytes(IID_IUNKNOWN), guidBytes(iid)];
@@ -126,14 +101,14 @@ function handlerKind(iid: string): HandlerKind {
     },
     { args: [FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.i32 },
   );
-  const addRef = new JSCallback((): number => 2, { args: [FFIType.ptr], returns: FFIType.u32 }); // never freed, so never counted
+  const addRef = new JSCallback((): number => 2, { args: [FFIType.ptr], returns: FFIType.u32 });
   const release = new JSCallback((): number => 1, { args: [FFIType.ptr], returns: FFIType.u32 });
   const invoke = new JSCallback(
     (self: Pointer, _sender: Pointer, args: Pointer): number => {
       try {
         byAddress.get(Number(self))?.(args);
       } catch (err) {
-        console.error("native-tabs: a WebView2 event handler threw:", err); // never let an exception unwind into WebView2
+        console.error("sweetview: a WebView2 event handler threw:", err);
       }
       return S_OK;
     },
@@ -144,11 +119,10 @@ function handlerKind(iid: string): HandlerKind {
   return { vtable, byAddress, kept: [] };
 }
 
-/** A handler object of that kind, and the function that makes it deaf (its webview is gone). */
 function makeHandler(kind: HandlerKind, invoke: Invoke): { object: Pointer; forget(): void } {
   const object = stable(1);
   object[0] = BigInt(ptr(kind.vtable));
-  kind.kept.push(object); // WebView2 holds its address
+  kind.kept.push(object);
   const address = ptr(object);
   kind.byAddress.set(Number(address), invoke);
   return { object: address, forget: () => void kind.byAddress.delete(Number(address)) };
@@ -162,13 +136,6 @@ const VK_CONTROL = 0x11;
 const VK_MENU = 0x12;
 const down = (virtualKey: number) => GetKeyState(virtualKey) < 0;
 
-/**
- * Calls `taken` for every accelerator key pressed while this webview has the
- * focus: a key with Ctrl or Alt, a function key, Tab with Ctrl. Returning
- * true takes the key, so neither the page nor the browser acts on it. `taken`
- * runs inside WebView2: answer, and do the work on a later turn of the loop.
- * Returns the function that stops the calls.
- */
 export function onAcceleratorKey(controller: Controller, taken: (key: Key) => boolean): () => void {
   acceleratorHandlers ??= handlerKind(IID_ACCELERATOR_KEY_PRESSED_HANDLER);
   const number = new Uint32Array(1);
@@ -176,7 +143,9 @@ export function onAcceleratorKey(controller: Controller, taken: (key: Key) => bo
     call(args, GET_KEY_EVENT_KIND, [FFIType.ptr], number);
     if (number[0] !== COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN && number[0] !== COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_DOWN) return;
     call(args, GET_VIRTUAL_KEY, [FFIType.ptr], number);
-    if (taken({ virtualKey: number[0]!, control: down(VK_CONTROL), shift: down(VK_SHIFT), alt: down(VK_MENU) })) call(args, ACCELERATOR_PUT_HANDLED, [FFIType.i32], 1);
+    if (taken({ virtualKey: number[0]!, control: down(VK_CONTROL), shift: down(VK_SHIFT), alt: down(VK_MENU) })) {
+      call(args, ACCELERATOR_PUT_HANDLED, [FFIType.i32], 1);
+    }
   });
   const hr = call(controller, ADD_ACCELERATOR_KEY_PRESSED, [FFIType.ptr, FFIType.ptr], handler.object, new BigInt64Array(1));
   if (hr !== S_OK) throw failed("add_AcceleratorKeyPressed", hr);
@@ -189,12 +158,6 @@ function wideString(address: Pointer): string {
   return text;
 }
 
-/**
- * A page asked for a new window (a link with `target="_blank"`, `window.open`).
- * Left alone, WebView2 opens a bare popup window; here `opened` gets the
- * address instead, on a later turn of the loop, and no window appears.
- * Returns the function that stops the calls.
- */
 export function onNewWindowRequested(controller: Controller, opened: (address: string) => void): () => void {
   newWindowHandlers ??= handlerKind(IID_NEW_WINDOW_REQUESTED_HANDLER);
   const out = new BigUint64Array(1);
@@ -202,7 +165,7 @@ export function onNewWindowRequested(controller: Controller, opened: (address: s
     if (call(args, GET_URI, [FFIType.ptr], out) !== S_OK || out[0] === 0n) return;
     const uri = Number(out[0]) as Pointer;
     const address = wideString(uri);
-    CoTaskMemFree(uri);
+    ole32.CoTaskMemFree(uri);
     call(args, NEW_WINDOW_PUT_HANDLED, [FFIType.i32], 1);
     setTimeout(() => opened(address), 0);
   });
@@ -217,11 +180,6 @@ export function onNewWindowRequested(controller: Controller, opened: (address: s
 
 const wide = (text: string) => new Uint8Array(Buffer.from(`${text}\0`, "utf16le"));
 
-/**
- * Sends one Chrome DevTools Protocol command to a webview's page and does not
- * wait for the answer. For scripts/win-drive.ts, which uses it to show a page
- * in light or dark whatever the system is set to (`Emulation.setEmulatedMedia`).
- */
 export function devTools(controller: Controller, method: string, params: object): void {
   const out = new BigUint64Array(1);
   let hr = call(controller, GET_CORE_WEBVIEW2, [FFIType.ptr], out);

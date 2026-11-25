@@ -34,20 +34,20 @@ test("more tabs than fit scroll just far enough to show the one asked for", () =
   expect(width).toBe(TAB_MIN_WIDTH);
   expect(scrollToShow(STRIP, count, 0)).toBe(0);
   const last = scrollToShow(STRIP, count, count - 1);
-  expect(last).toBe(count * width - viewport); // its right edge at the viewport's
-  expect(scrollToShow(STRIP, count, count - 1, last)).toBe(last); // already in view: stays
-  expect(scrollToShow(STRIP, count, 0, last)).toBe(0); // back to the first
+  expect(last).toBe(count * width - viewport);
+  expect(scrollToShow(STRIP, count, count - 1, last)).toBe(last);
+  expect(scrollToShow(STRIP, count, 0, last)).toBe(0);
   const middle = scrollToShow(STRIP, count, 20, 0);
   expect(20 * width).toBeGreaterThanOrEqual(middle);
   expect(21 * width).toBeLessThanOrEqual(middle + viewport);
 });
 
 test("a tab dropped on a strip goes before the tab whose left half it lands on, after the one whose right half", () => {
-  const width = tabWidth(STRIP, 3); // 240
+  const width = tabWidth(STRIP, 3);
   expect(dropIndex(STRIP, 3, 0)).toBe(0);
   expect(dropIndex(STRIP, 3, TABS_LEFT + width * 0.4)).toBe(0);
   expect(dropIndex(STRIP, 3, TABS_LEFT + width * 0.6)).toBe(1);
   expect(dropIndex(STRIP, 3, TABS_LEFT + width * 2.4)).toBe(2);
   expect(dropIndex(STRIP, 3, TABS_LEFT + width * 2.6)).toBe(3);
-  expect(dropIndex(STRIP, 3, STRIP)).toBe(3); // on the empty part: at the end
+  expect(dropIndex(STRIP, 3, STRIP)).toBe(3);
 });

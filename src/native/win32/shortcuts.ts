@@ -1,8 +1,6 @@
-// Windows: which keys mean what to the tabs. Pure, so it is tested without a
-// window (win-shortcuts.test.ts). On macOS the same job is done by the key
-// equivalents of the menu items in mac-window-tabs.ts.
+// Windows: which keys mean what to tabbed windows. Pure TS, tested headlessly.
 
-/** An accelerator key as WebView2 reports it (win-webview2.ts, `onAcceleratorKey`). */
+/** An accelerator key as WebView2 reports it. */
 export type Key = {
   /** The virtual-key code: 0x54 for T, 0x09 for Tab. */
   virtualKey: number;
@@ -26,15 +24,13 @@ const VK_F4 = 0x73;
 export const LAST_TAB = VK_9 - VK_1;
 
 /**
- * What a key pressed while a page has the focus means to the tabs, if
- * anything: the keys every tabbed Windows app answers to.
- *
- *   Ctrl+T                           a new tab
- *   Ctrl+W, Ctrl+F4                  close the tab
- *   Ctrl+Tab, Ctrl+Page Down         the next tab, round to the first
- *   Ctrl+Shift+Tab, Ctrl+Page Up     the previous tab
- *   Ctrl+1 to Ctrl+8                 that tab; Ctrl+9 the last one
- *   Alt+F4                           close the window
+ * Maps an accelerator key to a tab shortcut:
+ *   Ctrl+T                           new tab
+ *   Ctrl+W, Ctrl+F4                  close tab
+ *   Ctrl+Tab, Ctrl+Page Down         next tab (wraps)
+ *   Ctrl+Shift+Tab, Ctrl+Page Up     previous tab (wraps)
+ *   Ctrl+1..Ctrl+8                   select tab by index; Ctrl+9 last tab
+ *   Alt+F4                           close window
  */
 export function shortcutFor(key: Key): Shortcut | undefined {
   if (key.alt) return !key.control && !key.shift && key.virtualKey === VK_F4 ? "closeWindow" : undefined;

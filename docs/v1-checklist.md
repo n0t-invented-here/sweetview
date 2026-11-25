@@ -31,38 +31,38 @@ Source: `docs/audit-and-v1-plan.md`, `docs/v1-api.md`, and the user's v1.0 direc
   - [x] Add Win32 FFI tests for `ensureWin32Init` (including tray-before-window DPI awareness), `Screen.*`, `Menu.popup`, and standalone `Notifier` without tray
   - [x] verify: `bun test src/native/` passes on Windows with live Win32 `Screen`, `Menu`, `Tray`, and `Notifier` FFI checks
 
-- [ ] **AC4: Unified `Window` and `createWindow` replace `NativeWindow` + `Overlay` with clean disposal, events, and multi-monitor/macOS fixes (Audit 2.1, 2.2, 2.3, 2.7, 2.9)**
-  - [ ] Replace `NativeWindow`, `Overlay`, `createOverlayWindow`, `makeOverlay`, `nativeWindow` with `Window`, `createWindow`, `Window.fromHandle`; remove deprecated `dark` flag
-  - [ ] Win32 `Window`:
-    - [ ] Idempotent `dispose()` destroying HWND and clearing `resizers`, `hits`, `followsSystem`, `windowIcons`, subclass handlers, and hit timer
-    - [ ] Default `WM_CLOSE` closes and disposes the window unless `onClose` intercepts; `WM_DESTROY` no longer unconditionally calls `PostQuitMessage(0)`
-    - [ ] Wire multi-listener `onResize`, `onMove`, `onClose` with FFI-safe exception handling and unsubscribe thunks
-    - [ ] Fix `isMaximized()` (`IsZoomed` for framed, restore state for frameless) and `toggleMaximize()` (`SW_MAXIMIZE`/`SW_RESTORE` for framed, `Screen.of(win).workArea` for frameless); cache `bounds()` in drag-resize tick
-    - [ ] Kill hit-region timer on `hide()` and `dispose()`
-  - [ ] macOS `Window`:
-    - [ ] Consistent outer-frame `bounds` on creation (`contentRectForFrameRect:styleMask:` / hidden `setFrame:display:`), `bounds()`, and `setBounds()`
-    - [ ] Honor `topmost`, `opacity`, `transparent`, `hideFromTaskbar`, and `noActivate` regardless of `frame`
-    - [ ] Implement drag-resize loop in `startResize(edge)`
-    - [ ] Intercept `onClose` cleanly for Cmd+W, programmatic `performClose:`, and frameless windows without replacing `webview/webview`'s delegate on `Window.fromHandle`
-    - [ ] Wire `onResize` and `onMove` via `NSNotificationCenter` and remove observers in `dispose()`
-    - [ ] Invalidate and release the 10ms hit-region `NSTimer` when `hits.size === 0` or on `dispose()`
-    - [ ] Idempotent `dispose()` closing/releasing `NSWindow` and cleaning `hits`, `ignoring`, observers, and timers
-  - [ ] Update `src/window-chrome.ts`: `windowChromeMethods(win, { chrome, onClose })` and `win.isMaximized()`
-  - [ ] Add live Win32 `Window` FFI tests (`src/native/win32/window.test.ts`): multi-window close without killing loop, idempotent `dispose()`, `onClose`/`onResize`/`onMove`, `toggleMaximize()`/`isMaximized()`, `Window.fromHandle`
-  - [ ] verify: `bun test src/native/win32/` passes all new Window FFI assertions on Windows
+- [x] **AC4: Unified `Window` and `createWindow` replace `NativeWindow` + `Overlay` with clean disposal, events, and multi-monitor/macOS fixes (Audit 2.1, 2.2, 2.3, 2.7, 2.9)**
+  - [x] Replace `NativeWindow`, `Overlay`, `createOverlayWindow`, `makeOverlay`, `nativeWindow` with `Window`, `createWindow`, `Window.fromHandle`; remove deprecated `dark` flag
+  - [x] Win32 `Window`:
+    - [x] Idempotent `dispose()` destroying HWND and clearing `resizers`, `hits`, `followsSystem`, `windowIcons`, subclass handlers, and hit timer
+    - [x] Default `WM_CLOSE` closes and disposes the window unless `onClose` intercepts; `WM_DESTROY` no longer unconditionally calls `PostQuitMessage(0)`
+    - [x] Wire multi-listener `onResize`, `onMove`, `onClose` with FFI-safe exception handling and unsubscribe thunks
+    - [x] Fix `isMaximized()` (`IsZoomed` for framed, restore state for frameless) and `toggleMaximize()` (`SW_MAXIMIZE`/`SW_RESTORE` for framed, `Screen.of(win).workArea` for frameless); cache `bounds()` in drag-resize tick
+    - [x] Kill hit-region timer on `hide()` and `dispose()`
+  - [x] macOS `Window`:
+    - [x] Consistent outer-frame `bounds` on creation (`contentRectForFrameRect:styleMask:` / hidden `setFrame:display:`), `bounds()`, and `setBounds()`
+    - [x] Honor `topmost`, `opacity`, `transparent`, `hideFromTaskbar`, and `noActivate` regardless of `frame`
+    - [x] Implement drag-resize loop in `startResize(edge)`
+    - [x] Intercept `onClose` cleanly for Cmd+W, programmatic `performClose:`, and frameless windows without replacing `webview/webview`'s delegate on `Window.fromHandle`
+    - [x] Wire `onResize` and `onMove` via `NSNotificationCenter` and remove observers in `dispose()`
+    - [x] Invalidate and release the 10ms hit-region `NSTimer` when `hits.size === 0` or on `dispose()`
+    - [x] Idempotent `dispose()` closing/releasing `NSWindow` and cleaning `hits`, `ignoring`, observers, and timers
+  - [x] Update `src/window-chrome.ts`: `windowChromeMethods(win, { chrome, onClose })` and `win.isMaximized()`
+  - [x] Add live Win32 `Window` FFI tests (`src/native/win32/window.test.ts`): multi-window close without killing loop, idempotent `dispose()`, `onClose`/`onResize`/`onMove`, `toggleMaximize()`/`isMaximized()`, `Window.fromHandle`
+  - [x] verify: `bun test src/native/win32/` passes all new Window FFI assertions on Windows
 
-- [ ] **AC5: `WebView`, `createApp`, and `RawWebview` work for single-window, overlay, and menubar apps, and all 4 non-tab demos run and compile on v1**
-  - [ ] Implement `WebView` (`WebView.attach`, `emit`, `notify`, `onEvent`, `run`, `quit`, `dispose`) reading geometry, scale, title, resizable, and transparent from `Window`
-  - [ ] Implement `createApp` Layer 2 helper and re-export `RawWebview` from `src/index.ts`
-  - [ ] Migrate `demos/web-app`, `demos/desktop-pet`, `demos/menubar-only`, `demos/menubar-notify` to v1 API
-  - [ ] verify: `just check` passes, `just compile` builds all 4 demos (Windows `.exe` and macOS `.app`), and Windows probe scripts pass
+- [x] **AC5: `WebView`, `createApp`, and `RawWebview` work for single-window, overlay, and menubar apps, and all 4 non-tab demos run and compile on v1**
+  - [x] Implement `WebView` (`WebView.attach`, `emit`, `notify`, `onEvent`, `run`, `quit`, `dispose`) reading geometry, scale, title, resizable, and transparent from `Window`
+  - [x] Implement `createApp` Layer 2 helper and re-export `RawWebview` from `src/index.ts`
+  - [x] Migrate `demos/web-app`, `demos/desktop-pet`, `demos/menubar-only`, `demos/menubar-notify` to v1 API
+  - [x] verify: `just check` passes, `just compile` builds all 4 demos (Windows `.exe` and macOS `.app`), and Windows probe scripts pass
 
-- [ ] **AC6: Native Tabs promoted cleanly out of `demos/native-tabs/` into `src/native/` (webview-free) and `src/` (webview-aware) (Audit 2.11)**
-  - [ ] Keep `@n1h/sweetview/native` webview-free: move Win32 tab frame/panes/system-menu, `win-shortcuts.ts`, and `strip-shared.ts` into `src/native/win32/` (using `Screen` and `Menu.popup`) and macOS `NSWindow` tabbing primitives into `src/native/darwin/` (fixing hardcoded ObjC class names)
-  - [ ] Move webview-dependent tab pieces (`win-webview2.ts`, embedded strip webview + self-contained asset bundling, macOS `WKWebView` hooks, and cross-platform `Tab` / `WebView.openTab` / `createApp({ tabs: true })` coordinator) into `src/tabs/`
-  - [ ] Support `Window({ tabs: true })`, `onNewTab`, `onTabSelect`, `onTabClose`, `WebView.openTab`, `Tab` (`select`, `close`, `setTitle`, `moveToNewWindow`, `dispose`), and `app.mergeAllWindows()`
-  - [ ] Rewrite `demos/native-tabs/app.ts` onto the built-in tabs API and keep unit tests + Windows drive/capture scripts working
-  - [ ] verify: `just check` passes, `@n1h/sweetview/native` imports zero webview modules, and `demos/native-tabs/scripts/win-drive.ts` passes against the migrated tabbed app on Windows
+- [x] **AC6: Native Tabs promoted cleanly out of `demos/native-tabs/` into `src/native/` (webview-free) and `src/` (webview-aware) (Audit 2.11)**
+  - [x] Keep `@n1h/sweetview/native` webview-free: move Win32 tab frame/panes/system-menu, `win-shortcuts.ts`, and `strip-shared.ts` into `src/native/win32/` (using `Screen` and `Menu.popup`) and macOS `NSWindow` tabbing primitives into `src/native/darwin/` (fixing hardcoded ObjC class names)
+  - [x] Move webview-dependent tab pieces (`win-webview2.ts`, embedded strip webview + self-contained asset bundling, macOS `WKWebView` hooks, and cross-platform `Tab` / `WebView.openTab` / `createApp({ tabs: true })` coordinator) into `src/tabs/`
+  - [x] Support `Window({ tabs: true })`, `onNewTab`, `onTabSelect`, `onTabClose`, `WebView.openTab`, `Tab` (`select`, `close`, `setTitle`, `moveToNewWindow`, `dispose`), and `app.mergeAllWindows()`
+  - [x] Rewrite `demos/native-tabs/app.ts` onto the built-in tabs API and keep unit tests + Windows drive/capture scripts working
+  - [x] verify: `just check` passes, `@n1h/sweetview/native` imports zero webview modules, and `demos/native-tabs/scripts/win-drive.ts` passes against the migrated tabbed app on Windows
 
 - [ ] **AC7: Documentation and macOS verification handoff are accurate and complete**
   - [ ] Update `README.md` and `docs/*.md` (`app.md`, `native.md`, `ipc.md`, `ipc-ws.md`, `settings-store.md`, `window-chrome.md`, `README.md`, `v1-api.md`, `audit-and-v1-plan.md`) to match v1.0.0 and remove machine-local paths

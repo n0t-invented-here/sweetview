@@ -1,48 +1,114 @@
-// Tabs with one webview per tab. A tab shows this demo's page or any site;
-// the + in the tab bar, the keyboard and the page's own buttons open tabs.
-//
-// macOS: the system's own tab bar. Every tab is a separate NSWindow hosting a
-// separate WKWebView, joined by AppKit's window tabbing (mac-tabs-app.ts).
-// Windows: there is no window tabbing to borrow, so the window is ours. Its
-// title bar is a tab strip, and every tab is a child window hosting a
-// separate WebView2 (win-tabs-app.ts).
-//
-// The OS loop runs from Bun's event loop (`runEventLoop`) rather than the
-// webview's blocking `run()`, so opening a tab, which awaits, works at any
-// moment on this thread, and a closed tab's webview is disposed by itself.
+// Tabs with one webview per tab, built on @n1h/sweetview's built-in native tabs API.
+// macOS uses AppKit window tabbing; Windows uses a captionless frame with a built-in
+// tab strip and child WebView2 panes.
 //
 //   just demos native-tabs app
 
-import { runEventLoop } from "@n1h/sweetview/native";
+import { createApp, indexHtml, type App, type Tab } from "@n1h/sweetview";
+import { dotIco, setAppMenu, type Icon } from "@n1h/sweetview/native";
+import pageCss from "./build/frontend/main.css" with { type: "file" };
+import pageJs from "./build/frontend/main.js" with { type: "file" };
+import type { Events, Methods, TabInfo } from "./shared";
+import { tabPageBody } from "./tab-page";
+import { displayHost, webAddress } from "./web-address";
 
-if (process.platform !== "darwin" && process.platform !== "win32") {
-  console.error(`native-tabs: macOS and Windows only; ${process.platform} has no backend in @n1h/sweetview/native.`);
-  process.exit(1);
-}
+const APP_NAME = "Native Tabs";
+const APP_ICON: Icon = { windows: { ico: dotIco({ color: "#6d5df6", sizes: [16, 24, 32, 48] }) } };
 
-const loop = runEventLoop(); // first, so the pages below can load and answer while they open
-// Imported here, not at the top: each module loads its platform's libraries as it is evaluated.
-if (process.platform === "darwin") {
-  const { startTabsApp } = await import("./mac-tabs-app");
-  const app = startTabsApp();
-  const first = await app.openTab();
-  await app.openTab();
-  await app.openTab("https://bun.sh");
-  app.tabs.select(first);
-} else {
-  const { startTabsApp } = await import("./win-tabs-app");
-  const app = await startTabsApp();
-  let over = false;
-  void loop.then(() => (over = true));
-  try {
-    const first = await app.openTab();
-    await app.openTab();
-    await app.openTab("https://bun.sh");
-    app.select(first);
-  } catch (err) {
-    if (!over) throw err; // else the window was closed while its first tabs were still opening: the app has ended, and stays ended
+const PAGE_BODY = tabPageBody({
+  lede:
+    process.platform === "darwin"
+      ? "This tab is its own <code>WKWebView</code> inside its own <code>NSWindow</code>. macOS draws the tab bar."
+      : "This tab is its own <code>WebView2</code> in a child window of its own. The tab strip above is built into sweetview.",
+  hint:
+    process.platform === "darwin"
+      ? "Try the <kbd>+</kbd> in the tab bar, <kbd>⌘T</kbd> and <kbd>⌘W</kbd>, dragging a tab out of the window, and Window › Merge All Windows."
+      : "Try the <kbd>+</kbd> in the tab strip, <kbd>Ctrl</kbd>+<kbd>T</kbd>, <kbd>Ctrl</kbd>+<kbd>W</kbd>, <kbd>Ctrl</kbd>+<kbd>Tab</kbd>, dragging tabs to reorder or detach, and right-clicking a tab.",
+});
+
+export type DemoTabsController = {
+  readonly app: App<Methods, Events>;
+  readonly openTabs: ReadonlyMap<number, Tab<Methods, Events>>;
+  openTab(address?: string, after?: Tab<Methods, Events>): Promise<Tab<Methods, Events>>;
+};
+
+export async function startDemoTabs(): Promise<DemoTabsController> {
+  if (process.platform === "darwin") {
+    setAppMenu({
+      appName: APP_NAME,
+      aboutText: "Every tab is its own NSWindow with its own WKWebView. AppKit's window tabbing puts them behind one tab bar.",
+    });
   }
+
+  const openTabs = new Map<number, Tab<Methods, Events>>();
+  let nextNum = 0;
+
+  const announce = () => {
+    for (const tab of openTabs.values()) tab.webview.emit("tabs", { count: openTabs.size });
+  };
+
+  const app = await createApp<Methods, Events>({
+    title: APP_NAME,
+    icon: APP_ICON,
+    tabs: true,
+    onNewTab: () => void openTab().catch((err) => console.error("native-tabs:", err)),
+    onTabClose: (closed) => {
+      for (const [id, t] of openTabs) {
+        if (t === closed) openTabs.delete(id);
+      }
+      announce();
+      if (openTabs.size === 0) app.quit();
+    },
+    onClose: () => app.quit(),
+  });
+
+  async function openTab(address?: string, after?: Tab<Methods, Events>): Promise<Tab<Methods, Events>> {
+    const number = ++nextNum;
+    const title = address ? displayHost(address) : `Tab ${number}`;
+    if (address) {
+      const tab = await app.openTab({ title, url: address, after, debug: process.env.WEBVIEW_DEBUG === "1" });
+      openTabs.set(number, tab);
+      announce();
+      return tab;
+    }
+
+    let created!: Tab<Methods, Events>;
+    created = await app.openTab<Methods, Events>({
+      title,
+      after,
+      debug: process.env.WEBVIEW_DEBUG === "1",
+      assets: { "index.html": indexHtml({ title, body: PAGE_BODY }), "main.js": pageJs, "main.css": pageCss },
+      uiMethods: {
+        "tab.info": (): TabInfo => ({ number, title: created?.title ?? title, tabs: openTabs.size }),
+        "tab.open": (to) => {
+          const target = to === null ? undefined : webAddress(to);
+          void openTab(target, created).catch((err) => console.error("native-tabs:", err));
+        },
+        "tab.rename": (nextTitle) => created.setTitle(nextTitle),
+        "tab.close": () => created.close(),
+      },
+    });
+    openTabs.set(number, created);
+    announce();
+    return created;
+  }
+
+  return { app, openTabs, openTab };
 }
 
-await loop; // until the last tab closes, or Quit
-process.exit(0);
+if (import.meta.main) {
+  if (process.platform !== "darwin" && process.platform !== "win32") {
+    console.error(`native-tabs: macOS and Windows only; ${process.platform} has no backend in @n1h/sweetview/native.`);
+    process.exit(1);
+  }
+  const demo = await startDemoTabs();
+  const loop = demo.app.run();
+  const first = await demo.openTab();
+  await demo.openTab();
+  await demo.openTab("https://bun.sh");
+  first.select();
+  demo.app.window.show();
+  await loop;
+  demo.app.dispose();
+  process.exit(0);
+}

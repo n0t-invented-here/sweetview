@@ -1,14 +1,14 @@
 // The tray menu, as data. Built fresh every time it opens, so every label,
 // check mark and enabled flag reads current state from `ctx`.
 
-import type { MenuTemplate, NativeWindow } from "@n1h/sweetview/native";
+import type { MenuTemplate, Window } from "@n1h/sweetview/native";
 import { basename } from "node:path";
 import type { ColorScheme, WatchStatus } from "web-app-backend/protocol";
 import { menuIcon } from "./icon";
 
 export type TrayMenuContext = {
   appName: string;
-  window: NativeWindow;
+  window: Window;
   theme: () => ColorScheme;
   setTheme: (scheme: ColorScheme) => void;
   watch: () => WatchStatus;

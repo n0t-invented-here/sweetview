@@ -3,7 +3,7 @@
 // it on every timer tick. A rectangle is a four-point polygon; a mesh's
 // silhouette is the convex hull of its projected bounding-box corners.
 
-import type { HitRefiner, Overlay, Point } from "./overlay";
+import type { HitRefiner, Point } from "./window";
 
 /** One region: a simple polygon in window-local units, any winding. */
 export type HitPolygon = Point[];

@@ -11,8 +11,8 @@
 import { appendFileSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { createNotifier, createOverlayWindow, createTray, setActivationPolicy, type MenuTemplate } from "@n1h/sweetview/native";
-import { createWebviewApp, indexHtml, type WebviewApp } from "@n1h/sweetview";
+import { createNotifier, createTray, Screen, setActivationPolicy, type MenuTemplate } from "@n1h/sweetview/native";
+import { createApp, indexHtml, type App } from "@n1h/sweetview";
 import pageCss from "./build/frontend/main.css" with { type: "file" };
 import pageJs from "./build/frontend/main.js" with { type: "file" };
 import { TRAY_ICON } from "./icon";
@@ -22,8 +22,6 @@ const APP_NAME = "Menubar Notify";
 const DELAY_SECONDS = 5;
 const WINDOW_SIZE = { width: 480, height: 400 };
 
-// A launched .app has no console, so everything worth knowing also goes to a log file:
-// ~/Library/Logs/menubar-notify.log on macOS, %LOCALAPPDATA%\menubar-notify.log on Windows.
 const LOG_PATH =
   process.platform === "darwin" ? join(homedir(), "Library", "Logs", "menubar-notify.log") : join(process.env.LOCALAPPDATA ?? homedir(), "menubar-notify.log");
 const logLine = (line: string) => {
@@ -35,7 +33,7 @@ const logLine = (line: string) => {
     // a read-only disk never stops the app
   }
 };
-console.error = (...args: unknown[]) => logLine(`error: ${args.map(String).join(" ")}`); // the library's sweetnative: lines too
+console.error = (...args: unknown[]) => logLine(`error: ${args.map(String).join(" ")}`);
 process.on("uncaughtException", (err) => {
   logLine(`uncaught: ${err.name}: ${err.message}`);
   process.exit(1);
@@ -56,16 +54,18 @@ const happened = (text: string) => {
 
 setActivationPolicy("accessory"); // macOS: no Dock tile; the status item and the window are the whole app
 
-const win = createOverlayWindow({ frame: true, title: APP_NAME, topmost: false, hideFromTaskbar: false, noActivate: false, icon: TRAY_ICON });
-const screen = win.screen();
-win.setBounds({ x: screen.x + Math.round((screen.width - WINDOW_SIZE.width) / 2), y: screen.y + Math.round((screen.height - WINDOW_SIZE.height) / 2), ...WINDOW_SIZE });
+const screen = Screen.primary().bounds;
+const bounds = {
+  x: screen.x + Math.round((screen.width - WINDOW_SIZE.width) / 2),
+  y: screen.y + Math.round((screen.height - WINDOW_SIZE.height) / 2),
+  ...WINDOW_SIZE,
+};
 
-const app: WebviewApp<Methods, Events> = await createWebviewApp<Methods, Events>({
+const app: App<Methods, Events> = await createApp<Methods, Events>({
   title: APP_NAME,
-  window: win.handle,
-  width: WINDOW_SIZE.width / win.scale(),
-  height: WINDOW_SIZE.height / win.scale(),
-  resizable: true,
+  bounds,
+  icon: TRAY_ICON,
+  onClose: () => app.window.hide(),
   assets: {
     "index.html": indexHtml({
       title: APP_NAME,
@@ -88,11 +88,10 @@ const app: WebviewApp<Methods, Events> = await createWebviewApp<Methods, Events>
 });
 
 const tray = createTray({ tooltip: APP_NAME, icon: TRAY_ICON, menu: () => menu() });
-// Windows: the notifier hangs off the tray, so it comes after.
 const notifier = createNotifier({
   onClick: ({ id, data }) => {
     const sentAt = (data as { sentAt?: string } | undefined)?.sentAt;
-    win.show();
+    app.window.show();
     happened(`Clicked ${id}${sentAt ? `, sent at ${sentAt}` : ""}`);
   },
 });
@@ -104,7 +103,7 @@ const send = (body: string) => {
 };
 
 const sendLater = () => {
-  app.call("notify.later", { seconds: DELAY_SECONDS });
+  app.notify("notify.later", { seconds: DELAY_SECONDS });
   happened(`Sending in ${DELAY_SECONDS} seconds…`);
 };
 
@@ -115,7 +114,7 @@ app.onEvent((event) => {
 const menu = (): MenuTemplate => [
   { label: status, enabled: false },
   { type: "separator" },
-  { label: "Show Window", click: () => win.show() },
+  { label: "Show Window", click: () => app.window.show() },
   { label: "Send Notification Now", click: () => send(`Sent from the menu at ${now()}`) },
   { label: `Send Notification in ${DELAY_SECONDS} Seconds`, click: sendLater },
   { type: "separator" },
@@ -128,4 +127,5 @@ app.run(); // the OS loop, until Quit
 logLine("quit");
 notifier.dispose();
 tray.dispose();
+app.dispose();
 process.exit(0);

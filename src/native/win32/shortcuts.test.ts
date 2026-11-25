@@ -1,7 +1,12 @@
 import { expect, test } from "bun:test";
-import { LAST_TAB, shortcutFor, type Key } from "./win-shortcuts";
+import { LAST_TAB, shortcutFor, type Key } from "./shortcuts";
 
-const key = (virtualKey: number, modifiers = "ctrl"): Key => ({ virtualKey, control: modifiers.includes("ctrl"), shift: modifiers.includes("shift"), alt: modifiers.includes("alt") });
+const key = (virtualKey: number, modifiers = "ctrl"): Key => ({
+  virtualKey,
+  control: modifiers.includes("ctrl"),
+  shift: modifiers.includes("shift"),
+  alt: modifiers.includes("alt"),
+});
 const T = 0x54;
 const W = 0x57;
 const TAB = 0x09;
@@ -25,11 +30,11 @@ test("Ctrl+1 to Ctrl+8 pick a tab by place, Ctrl+9 the last", () => {
 });
 
 test("everything else is left to the page and the browser", () => {
-  expect(shortcutFor(key(T, ""))).toBeUndefined(); // a plain t
-  expect(shortcutFor(key(T, "ctrl shift"))).toBeUndefined(); // reopen closed tab, in a browser; nothing here
-  expect(shortcutFor(key(W, "ctrl alt"))).toBeUndefined(); // AltGr is Ctrl+Alt: a character on many layouts
-  expect(shortcutFor(key(0x46))).toBeUndefined(); // Ctrl+F: the browser's find
-  expect(shortcutFor(key(0x52))).toBeUndefined(); // Ctrl+R: reload
+  expect(shortcutFor(key(T, ""))).toBeUndefined();
+  expect(shortcutFor(key(T, "ctrl shift"))).toBeUndefined();
+  expect(shortcutFor(key(W, "ctrl alt"))).toBeUndefined();
+  expect(shortcutFor(key(0x46))).toBeUndefined();
+  expect(shortcutFor(key(0x52))).toBeUndefined();
   expect(shortcutFor(key(F4, "ctrl alt"))).toBeUndefined();
-  expect(shortcutFor(key(0x30))).toBeUndefined(); // Ctrl+0: the browser's zoom reset
+  expect(shortcutFor(key(0x30))).toBeUndefined();
 });

@@ -37,24 +37,21 @@ describe.if(onWindows)("win32 FFI", () => {
     win.destroy();
   });
 
-  test("onCloseRequest swallows WM_CLOSE and the window survives", async () => {
+  test("Window.fromHandle onClose swallows WM_CLOSE and the window survives", async () => {
     const { createMessageWindow } = await import("./message-window");
-    const { nativeWindow } = await import("./window");
-    const { dlopen, FFIType } = await import("bun:ffi");
-    const u = dlopen("user32.dll", {
-      SendMessageW: { args: [FFIType.u64, FFIType.u32, FFIType.u64, FFIType.i64], returns: FFIType.i64 },
-      IsWindow: { args: [FFIType.u64], returns: FFIType.i32 },
-    }).symbols;
+    const { Window } = await import("../window");
+    const { user32, WM_CLOSE } = await import("./api");
     const win = createMessageWindow(() => {});
-    const native = nativeWindow(win.hwnd);
+    const wrapped = Window.fromHandle(win.hwnd);
     let closeRequests = 0;
-    const restore = native.onCloseRequest(() => closeRequests++);
-    u.SendMessageW(win.hwnd, 0x0010, 0n, 0n); // WM_CLOSE
+    const restore = wrapped.onClose(() => closeRequests++);
+    user32.SendMessageW(win.hwnd, WM_CLOSE, 0n, 0n);
     expect(closeRequests).toBe(1);
-    expect(u.IsWindow(win.hwnd)).not.toBe(0);
+    expect(user32.IsWindow(win.hwnd)).not.toBe(0);
     restore();
-    u.SendMessageW(win.hwnd, 0x0010, 0n, 0n);
+    user32.SendMessageW(win.hwnd, WM_CLOSE, 0n, 0n);
     expect(closeRequests).toBe(1); // default chain again (the message window ignores WM_CLOSE itself)
+    wrapped.dispose();
     win.destroy();
   });
 

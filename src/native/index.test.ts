@@ -2,14 +2,15 @@
 // never evaluate the other platform's code (which dlopens its OS libraries).
 
 import { describe, expect, test } from "bun:test";
-import { createNotifier, Menu, nativeWindow, Notifier, pickFolder, Screen, Tray } from "./index";
+import { createNotifier, Menu, Notifier, pickFolder, Screen, Tray, Window } from "./index";
 
 describe("public modules", () => {
-  test("nativeWindow resolves to this platform's implementation on first call", () => {
+  test("Window.fromHandle resolves to this platform's implementation on first call", () => {
     // A bogus handle: no window is touched, IsWindowVisible / isVisible just reports false.
-    const win = nativeWindow(1n);
+    const win = Window.fromHandle(1n);
     expect(typeof win.show).toBe("function");
     if (process.platform === "win32") expect(win.isVisible()).toBe(false);
+    win.dispose();
   });
 
   test("pickFolder and createNotifier are plain synchronous functions", () => {

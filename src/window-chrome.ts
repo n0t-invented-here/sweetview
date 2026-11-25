@@ -17,7 +17,7 @@
 // and createWebviewApp({ window: it.handle, transparent: true, … }); the page is see-through outside what it draws.
 
 import type { Transport } from "./ipc";
-import type { Overlay, ResizeEdge } from "./native";
+import type { ResizeEdge, Window } from "./native";
 
 /** Who draws the frame: the page (frameless, see-through window) or the OS (a plain framed window hosting the same page). */
 export type WindowChromeKind = "page" | "os";
@@ -44,21 +44,21 @@ export type WindowChromeMethodTable = { [K in keyof WindowChromeMethods]: (param
 export type WindowChromeOptions = {
   /** What `window.info` reports; the page renders bare when it says "os". Default "page". */
   chrome?: WindowChromeKind;
-  /** What the close button does. Default: hide the window (a tray or a menu shows it again); pass `app.quit` for a main window. */
-  close?: () => void;
+  /** What the close button does. Default: hide the window (a tray or a menu shows it again); pass `() => app.quit()` for a main window. */
+  onClose?: () => void;
 };
 
 /** The UI-thread half: the `window.*` methods, answered by the window they are given. Spread into `uiMethods`. */
-export function windowChromeMethods(window: Overlay, options: WindowChromeOptions = {}): WindowChromeMethodTable {
+export function windowChromeMethods(window: Pick<Window, "hide" | "isMaximized" | "startDrag" | "startResize" | "minimize" | "toggleMaximize">, options: WindowChromeOptions = {}): WindowChromeMethodTable {
   const chrome = options.chrome ?? "page";
-  const close = options.close ?? (() => window.hide());
+  const onClose = options.onClose ?? (() => window.hide());
   return {
-    "window.info": () => ({ chrome, maximized: window.maximized() }),
+    "window.info": () => ({ chrome, maximized: window.isMaximized() }),
     "window.drag": () => window.startDrag(),
     "window.resize": (edge) => window.startResize(edge),
     "window.minimize": () => window.minimize(),
     "window.maximize": () => window.toggleMaximize(),
-    "window.close": close,
+    "window.close": onClose,
   };
 }
 

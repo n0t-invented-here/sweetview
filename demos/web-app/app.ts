@@ -1,14 +1,14 @@
 // The demo as a desktop app: a sweetview window, the service in a worker,
 // IPC over the shared ring, plus a tray icon, notifications and the macOS
-// menu bar from sweetnative.
+// menu bar from @n1h/sweetview/native.
 //
 //   just demos web-app app        (dev)
 //   just demos web-app compile    (single executables)
 
 import type { ColorScheme, Events, FsChange, Methods, NotifyStatus, WatchStatus } from "web-app-backend/protocol";
 import { basename } from "node:path";
-import { createNotifier, createTray, pickFolder, setAppIcon, setAppMenu, type Notifier } from "@n1h/sweetview/native";
-import { createWebviewApp, indexHtml, WEBVIEW_VERSION, type WebviewApp } from "@n1h/sweetview";
+import { createNotifier, createTray, pickFolder, Screen, setAppIcon, setAppMenu, type Notifier } from "@n1h/sweetview/native";
+import { createApp, indexHtml, WEBVIEW_VERSION, type App } from "@n1h/sweetview";
 import appCss from "./build/frontend/main.css" with { type: "file" };
 import appJs from "./build/frontend/main.js" with { type: "file" };
 import { APP_ICON, TRAY_ICON } from "./icon";
@@ -20,7 +20,7 @@ const APP_NAME = "Web App";
 let watch: WatchStatus = { watching: false, path: null };
 let theme: ColorScheme = "dark";
 let notifyOnChanges = false;
-let notifier: Notifier | undefined; // created after the tray, below
+let notifier: Notifier | undefined;
 let sentCount = 0;
 
 const notifyStatus = (): NotifyStatus => ({ onChanges: notifyOnChanges });
@@ -44,13 +44,26 @@ const sendTestNotification = (): boolean => {
   return sendNotification(APP_NAME, `Hello from the ${where} at ${new Date().toLocaleTimeString()}`);
 };
 
-const app: WebviewApp<Methods, Events> = await createWebviewApp<Methods, Events>({
+const workArea = Screen.primary().workArea;
+const width = Math.min(1100, workArea.width);
+const height = Math.min(800, workArea.height);
+const bounds = {
+  x: workArea.x + Math.round((workArea.width - width) / 2),
+  y: workArea.y + Math.round((workArea.height - height) / 2),
+  width,
+  height,
+};
+
+const app: App<Methods, Events> = await createApp<Methods, Events>({
   title: APP_NAME,
+  bounds,
+  icon: APP_ICON,
   assets: { "index.html": indexHtml({ title: APP_NAME }), "main.js": appJs, "main.css": appCss },
   worker: new URL("./app-worker.ts", import.meta.url),
   debug: process.env.WEBVIEW_DEBUG === "1",
+  onClose: () => app.window.hide(), // the X hides to the tray; Quit lives in the tray menu
   uiMethods: {
-    "pick.folder": () => pickFolder(app.windowHandle, "Pick a folder to watch"),
+    "pick.folder": () => pickFolder(app.window, "Pick a folder to watch"),
     "ui.theme": ({ scheme }) => void (theme = scheme),
     "notify.status": notifyStatus,
     "notify.onChanges": ({ enabled }) => {
@@ -61,8 +74,6 @@ const app: WebviewApp<Methods, Events> = await createWebviewApp<Methods, Events>
   },
 });
 
-app.window.onCloseRequest(() => app.window.hide()); // the X hides to the tray; Quit lives in the tray menu
-app.window.setIcon(APP_ICON); // Windows: title bar and taskbar
 setAppIcon(APP_ICON); // macOS: the Dock tile (a bare binary has none otherwise)
 
 app.onEvent((event) => {
@@ -96,10 +107,10 @@ const tray = createTray({
       watch: () => watch,
       pickFolderToWatch: () => {
         app.window.show(); // the dialog needs a visible owner
-        const path = pickFolder(app.windowHandle, "Pick a folder to watch");
-        if (path) app.call("watch.start", { path });
+        const path = pickFolder(app.window, "Pick a folder to watch");
+        if (path) app.notify("watch.start", { path });
       },
-      stopWatching: () => app.call("watch.stop"),
+      stopWatching: () => app.notify("watch.stop"),
       notifyOnChanges: () => notifyOnChanges,
       toggleNotifyOnChanges: () => setNotifyOnChanges(!notifyOnChanges),
       sendTestNotification,
@@ -126,8 +137,10 @@ setAppMenu({
   ].join("\n"),
 });
 
-app.run(); // blocks until the window closes or Quit
+app.window.show();
+app.run(); // blocks until Quit
 
 notifier.dispose();
 tray.dispose();
+app.dispose();
 process.exit(0);
