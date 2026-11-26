@@ -39,7 +39,22 @@ export const user32 = dlopen("user32.dll", {
   SetWindowTextW: { args: [FFIType.u64, FFIType.ptr], returns: FFIType.i32 },
   ReleaseCapture: { args: [], returns: FFIType.i32 },
   SendMessageW: { args: [FFIType.u64, FFIType.u32, FFIType.u64, FFIType.i64], returns: FFIType.i64 },
+  // (HWND, UINT, WPARAM, LPARAM, UINT fuFlags, UINT uTimeout, PDWORD_PTR lpdwResult) -> LRESULT
+  SendMessageTimeoutW: {
+    args: [FFIType.u64, FFIType.u32, FFIType.u64, FFIType.i64, FFIType.u32, FFIType.u32, FFIType.ptr],
+    returns: FFIType.i64,
+  },
+  // (HWND parent, HWND childAfter, LPCWSTR class, LPCWSTR window) -> HWND
+  FindWindowExW: { args: [FFIType.u64, FFIType.u64, FFIType.ptr, FFIType.ptr], returns: FFIType.u64 },
+  // (HWND, LPDWORD pid) -> DWORD tid
+  GetWindowThreadProcessId: { args: [FFIType.u64, FFIType.ptr], returns: FFIType.u32 },
+  AllowSetForegroundWindow: { args: [FFIType.u32], returns: FFIType.i32 },
   SetForegroundWindow: { args: [FFIType.u64], returns: FFIType.i32 },
+  OpenClipboard: { args: [FFIType.u64], returns: FFIType.i32 },
+  CloseClipboard: { args: [], returns: FFIType.i32 },
+  EmptyClipboard: { args: [], returns: FFIType.i32 },
+  GetClipboardData: { args: [FFIType.u32], returns: FFIType.u64 },
+  SetClipboardData: { args: [FFIType.u32, FFIType.u64], returns: FFIType.u64 },
   GetCursorPos: { args: [FFIType.ptr], returns: FFIType.i32 },
   GetAsyncKeyState: { args: [FFIType.i32], returns: FFIType.i16 },
   GetSystemMetrics: { args: [FFIType.i32], returns: FFIType.i32 },
@@ -103,6 +118,13 @@ export const user32 = dlopen("user32.dll", {
 export const kernel32 = dlopen("kernel32.dll", {
   GetModuleHandleW: { args: [FFIType.ptr], returns: FFIType.u64 },
   GetLastError: { args: [], returns: FFIType.u32 },
+  // (LPSECURITY_ATTRIBUTES, BOOL bInitialOwner, LPCWSTR lpName) -> HANDLE
+  CreateMutexW: { args: [FFIType.ptr, FFIType.i32, FFIType.ptr], returns: FFIType.u64 },
+  CloseHandle: { args: [FFIType.u64], returns: FFIType.i32 },
+  GlobalAlloc: { args: [FFIType.u32, FFIType.u64], returns: FFIType.u64 },
+  GlobalLock: { args: [FFIType.u64], returns: FFIType.ptr },
+  GlobalUnlock: { args: [FFIType.u64], returns: FFIType.i32 },
+  GlobalFree: { args: [FFIType.u64], returns: FFIType.u64 },
 }).symbols;
 
 export const comctl32 = dlopen("comctl32.dll", {
@@ -134,6 +156,19 @@ export const dwmapi = dlopen("dwmapi.dll", {
 export const advapi32 = dlopen("advapi32.dll", {
   // (HKEY, LPCWSTR subKey, LPCWSTR value, DWORD flags, DWORD* type, void* data, DWORD* bytes) -> LSTATUS (0 on success)
   RegGetValueW: { args: [FFIType.u64, FFIType.ptr, FFIType.ptr, FFIType.u32, FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.i32 },
+  // (HKEY, LPCWSTR subKey, DWORD reserved, LPWSTR class, DWORD opts, REGSAM sam, LPSECURITY_ATTRIBUTES, PHKEY result, LPDWORD disp) -> LSTATUS
+  RegCreateKeyExW: {
+    args: [FFIType.u64, FFIType.ptr, FFIType.u32, FFIType.ptr, FFIType.u32, FFIType.u32, FFIType.ptr, FFIType.ptr, FFIType.ptr],
+    returns: FFIType.i32,
+  },
+  // (HKEY, LPCWSTR valueName, DWORD reserved, DWORD type, const BYTE* data, DWORD cbData) -> LSTATUS
+  RegSetValueExW: {
+    args: [FFIType.u64, FFIType.ptr, FFIType.u32, FFIType.u32, FFIType.ptr, FFIType.u32],
+    returns: FFIType.i32,
+  },
+  RegCloseKey: { args: [FFIType.u64], returns: FFIType.i32 },
+  // (HKEY, LPCWSTR subKey) -> LSTATUS
+  RegDeleteTreeW: { args: [FFIType.u64, FFIType.ptr], returns: FFIType.i32 },
 }).symbols;
 
 export const gdi32 = dlopen("gdi32.dll", {
@@ -148,6 +183,12 @@ export const gdi32 = dlopen("gdi32.dll", {
 export const shell32 = dlopen("shell32.dll", {
   // (DWORD message, PNOTIFYICONDATAW) -> BOOL
   Shell_NotifyIconW: { args: [FFIType.u32, FFIType.ptr], returns: FFIType.i32 },
+  // (HWND, BOOL accept) -> void
+  DragAcceptFiles: { args: [FFIType.u64, FFIType.i32], returns: FFIType.void },
+  // (HDROP, UINT iFile, LPWSTR lpszFile, UINT cch) -> UINT
+  DragQueryFileW: { args: [FFIType.u64, FFIType.u32, FFIType.ptr, FFIType.u32], returns: FFIType.u32 },
+  // (HDROP) -> void
+  DragFinish: { args: [FFIType.u64], returns: FFIType.void },
 }).symbols;
 
 /**
@@ -252,3 +293,15 @@ export const DWM_BB_ENABLE = 0x1;
 export const DWM_BB_BLURREGION = 0x2;
 
 export const PM_REMOVE = 0x0001;
+
+export const HWND_MESSAGE = -3n;
+export const WM_COPYDATA = 0x004a;
+export const WM_DROPFILES = 0x0233;
+export const SMTO_ABORTIFHUNG = 0x0002;
+export const ERROR_ALREADY_EXISTS = 183;
+export const ERROR_FILE_NOT_FOUND = 2;
+export const HKEY_CURRENT_USER = 0x80000001n;
+export const KEY_WRITE = 0x20006;
+export const REG_SZ = 1;
+export const CF_UNICODETEXT = 13;
+export const GMEM_MOVEABLE = 0x0002;

@@ -31,4 +31,17 @@ export {
   type ActivationPolicy,
   type EventLoopOptions,
 } from "./native/event-loop";
+export {
+  extractUrlFromArgs,
+  onOpenUrl,
+  registerUrlScheme,
+  signalReady,
+  singleInstance,
+  unregisterUrlScheme,
+  type RegisterUrlSchemeOptions,
+  type SecondInstanceEvent,
+  type SingleInstanceLock,
+  type SingleInstanceOptions,
+} from "./native/activation";
+export { defineAppIdentity, type AppIdentity, type AppIdentityInput } from "./app-identity";
 export { SizeHint, WEBVIEW_VERSION, Webview as RawWebview } from "@n1h/sweetview-webview-bun";

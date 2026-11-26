@@ -11,19 +11,20 @@ import { parseArgs } from "node:util";
 import { makeMacApp, type MacAppOptions } from "./build";
 
 const USAGE = `usage: bun src/make-app.ts --name <name> --bundle-id <id> --binary <path> --out <dir>
-                          [--icns <path>] [--version <x.y.z>] [--min-macos <x.y>] [--plist <Key=value>]...
-                          [--sign <identity> | --no-sign]
+                          [--icns <path>] [--version <x.y.z>] [--min-macos <x.y>] [--url-scheme <scheme>]...
+                          [--plist <Key=value>]... [--sign <identity> | --no-sign]
 
-  --name       what Finder and the Dock show; the bundle is <name>.app
-  --bundle-id  reverse-DNS id (dev.example.my-app); macOS notifications need one
-  --binary     the compiled macOS executable (bun build --compile --target=bun-darwin-arm64)
-  --out        folder the bundle is written into; an existing <name>.app there is replaced
-  --icns       the .icns for Finder and the Dock (sweetview/build writeIconFiles); stock icon without it
-  --version    CFBundleVersion and CFBundleShortVersionString (default 0.1.0)
-  --min-macos  LSMinimumSystemVersion (default 11.0)
-  --plist      an extra Info.plist entry; true/false and numbers are typed, anything else is a string. Repeatable
-  --sign       the codesign identity (default: ad-hoc on macOS, none elsewhere); an unsigned bundle shows no notifications
-  --no-sign    leave the bundle unsigned
+  --name        what Finder and the Dock show; the bundle is <name>.app
+  --bundle-id   reverse-DNS id (dev.example.my-app); macOS notifications need one
+  --binary      the compiled macOS executable (bun build --compile --target=bun-darwin-arm64)
+  --out         folder the bundle is written into; an existing <name>.app there is replaced
+  --icns        the .icns for Finder and the Dock (sweetview/build writeIconFiles); stock icon without it
+  --version     CFBundleVersion and CFBundleShortVersionString (default 0.1.0)
+  --min-macos   LSMinimumSystemVersion (default 11.0)
+  --url-scheme  custom URL scheme written into CFBundleURLTypes. Repeatable
+  --plist       an extra Info.plist entry; true/false and numbers are typed, anything else is a string. Repeatable
+  --sign        the codesign identity (default: ad-hoc on macOS, none elsewhere); an unsigned bundle shows no notifications
+  --no-sign     leave the bundle unsigned
 `;
 
 const SPEC = {
@@ -34,6 +35,7 @@ const SPEC = {
   icns: { type: "string" },
   version: { type: "string" },
   "min-macos": { type: "string" },
+  "url-scheme": { type: "string", multiple: true },
   plist: { type: "string", multiple: true },
   sign: { type: "string" },
   "no-sign": { type: "boolean" },
@@ -89,6 +91,7 @@ function main(argv: string[]): number {
     ...(args.icns !== undefined ? { icns: args.icns } : {}),
     ...(args.version !== undefined ? { version: args.version } : {}),
     ...(args["min-macos"] !== undefined ? { minimumSystemVersion: args["min-macos"] } : {}),
+    ...(args["url-scheme"] && args["url-scheme"].length > 0 ? { urlSchemes: args["url-scheme"] } : {}),
     ...(Object.keys(plist).length > 0 ? { plist } : {}),
     ...(args["no-sign"] ? { sign: false } : args.sign !== undefined ? { sign: args.sign } : {}),
   };

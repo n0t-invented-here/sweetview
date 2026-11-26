@@ -253,6 +253,10 @@ export const sendPtrPtrPtrVoid = fn([ID, ID, ID, ID, ID], FFIType.void);
 export const sendPtrPointPtrRetBool = fn([ID, ID, ID, FFIType.f64, FFIType.f64, ID], FFIType.bool);
 /** [obj sel:NSUInteger :id :id :BOOL] -> id  (nextEventMatchingMask:untilDate:inMode:dequeue:) */
 export const sendUIntPtrPtrBool = fn([ID, ID, FFIType.u64, ID, ID, FFIType.bool], ID);
+/** [obj sel:id :SEL :uint32 :uint32] -> void  (setEventHandler:andSelector:forEventClass:andEventID:) */
+export const sendPtrSelU32U32Void = fn([ID, ID, ID, ID, FFIType.u32, FFIType.u32], FFIType.void);
+/** [obj sel:uint32] -> id  (paramDescriptorForKeyword:) */
+export const sendU32RetPtr = fn([ID, ID, FFIType.u32], ID);
 
 export const objc_getClass = objc.symbols.objc_getClass;
 export const objc_allocateClassPair = objc.symbols.objc_allocateClassPair;

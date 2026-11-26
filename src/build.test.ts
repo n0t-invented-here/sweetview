@@ -27,6 +27,27 @@ describe("makeMacApp", () => {
     expect(plist).toContain("<key>LSUIElement</key><true/>");
   });
 
+  test("writes CFBundleURLTypes from urlSchemes and supports defineAppIdentity", () => {
+    const { defineAppIdentity } = require("./app-identity") as typeof import("./app-identity");
+    const binary = join(dir, "my-app-macos-arm64");
+    writeFileSync(binary, "not a Mach-O");
+    const identity = defineAppIdentity({
+      appId: "dev.example.scheme-app",
+      appName: "Scheme App",
+      version: "2.3.4",
+      urlSchemes: ["My-App", "scheme2"],
+    });
+    const app = makeMacApp({ identity, binary, outDir: join(dir, "dist"), sign: false });
+    expect(app).toBe(join(dir, "dist", "Scheme App.app"));
+    const plist = readFileSync(join(app, "Contents", "Info.plist"), "utf8");
+    expect(plist).toContain("<key>CFBundleIdentifier</key><string>dev.example.scheme-app</string>");
+    expect(plist).toContain("<key>CFBundleVersion</key><string>2.3.4</string>");
+    expect(plist).toContain("<key>CFBundleURLTypes</key>");
+    expect(plist).toContain("<key>CFBundleURLName</key><string>dev.example.scheme-app</string>");
+    expect(plist).toContain("<string>my-app</string>");
+    expect(plist).toContain("<string>scheme2</string>");
+  });
+
   test("a missing binary throws before anything is written", () => {
     expect(() => makeMacApp({ name: "My App", bundleId: "dev.example.my-app", binary: join(dir, "missing"), outDir: join(dir, "dist"), sign: false })).toThrow(/not found/);
     expect(existsSync(join(dir, "dist"))).toBe(false);

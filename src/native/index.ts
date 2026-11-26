@@ -39,3 +39,16 @@ export {
   type Icon,
 } from "./icon";
 export { pumpEvents, quitEventLoop, runEventLoop, setActivationPolicy, type ActivationPolicy, type EventLoopOptions } from "./event-loop";
+export {
+  extractUrlFromArgs,
+  onOpenUrl,
+  registerUrlScheme,
+  signalReady,
+  singleInstance,
+  unregisterUrlScheme,
+  type RegisterUrlSchemeOptions,
+  type SecondInstanceEvent,
+  type SingleInstanceLock,
+  type SingleInstanceOptions,
+} from "./activation";
+export { defineAppIdentity, type AppIdentity, type AppIdentityInput } from "../app-identity";

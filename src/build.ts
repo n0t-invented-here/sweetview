@@ -10,32 +10,36 @@
 import { spawnSync } from "node:child_process";
 import { chmodSync, cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
+import { defineAppIdentity, validateUrlScheme, type AppIdentity, type AppIdentityInput } from "./app-identity";
+
+export { defineAppIdentity, type AppIdentity, type AppIdentityInput };
 
 export type MacAppOptions = {
-  /** What Finder, the Dock and the menu bar show; the bundle is `<name>.app`. */
-  name: string;
-  /** Reverse-DNS, `dev.example.my-app`. Notifications are silently unavailable without one, so a bare binary cannot send them. */
-  bundleId: string;
+  /** Optional unified app identity supplying defaults for `name`, `bundleId`, `version`, and `urlSchemes`. */
+  identity?: AppIdentity;
+  /** What Finder, the Dock and the menu bar show; the bundle is `<name>.app`. Required unless `identity` is given. */
+  name?: string;
+  /** Reverse-DNS, `dev.example.my-app`. Required unless `identity` is given. */
+  bundleId?: string;
   /** The compiled macOS executable (`bun build --compile --target=bun-darwin-arm64 …`). Copied in under its own file name. */
   binary: string;
   /** Where `<name>.app` goes; one already there is replaced. */
   outDir: string;
-  /** The `.icns` for Finder and the Dock (sweetnative's `encodeIcns` / `icnsFromRgba`, written by `writeIconFiles`). Without it the bundle shows the stock icon. */
+  /** The `.icns` for Finder and the Dock (written by `writeIconFiles`). Without it the bundle shows the stock icon. */
   icns?: string;
-  /** `CFBundleVersion` and `CFBundleShortVersionString`. Default `0.1.0`. */
+  /** `CFBundleVersion` and `CFBundleShortVersionString`. Default `0.1.0` (or `identity.version`). */
   version?: string;
   /** `LSMinimumSystemVersion`. Default `11.0`. */
   minimumSystemVersion?: string;
+  /** Custom URL schemes written as `CFBundleURLTypes` in `Info.plist`, e.g. `["my-app"]`. */
+  urlSchemes?: readonly string[];
   /** More `Info.plist` entries, by key: `{ LSUIElement: true }` for a menu-bar-only app with no Dock tile, say. These win over the defaults. */
   plist?: Record<string, string | number | boolean>;
   /**
    * The `codesign` identity for the bundle: `"-"` for an ad-hoc signature, or a
    * certificate name such as `"Developer ID Application: Example (TEAMID)"`;
    * `false` leaves the bundle unsigned. Default: ad-hoc on macOS, `false`
-   * elsewhere, where `codesign` does not exist. A bundle that is not signed
-   * is refused by macOS's notification service, so it can show no
-   * notifications: Bun's compiled binary carries only a linker signature with
-   * the identifier `a.out`, and the bundle around it has no seal.
+   * elsewhere, where `codesign` does not exist.
    */
   sign?: string | false;
 };
@@ -58,11 +62,16 @@ const escapeXml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").
  * `codesign --sign - --force --deep "<name>.app"`.
  */
 export function makeMacApp(options: MacAppOptions): string {
+  const name = options.name ?? options.identity?.appName;
+  const bundleId = options.bundleId ?? options.identity?.appId;
+  if (!name) throw new Error("makeMacApp: name (or identity.appName) is required");
+  if (!bundleId) throw new Error("makeMacApp: bundleId (or identity.appId) is required");
   if (!existsSync(options.binary)) throw new Error(`makeMacApp: ${options.binary} not found (compile the macOS binary first)`);
   if (options.icns !== undefined && !existsSync(options.icns)) throw new Error(`makeMacApp: ${options.icns} not found (write the .icns first)`);
 
+  const schemes = (options.urlSchemes ?? options.identity?.urlSchemes ?? []).map(validateUrlScheme);
   const executable = basename(options.binary);
-  const app = join(options.outDir, `${options.name}.app`);
+  const app = join(options.outDir, `${name}.app`);
   const macos = join(app, "Contents", "MacOS");
   const resources = join(app, "Contents", "Resources");
   rmSync(app, { recursive: true, force: true });
@@ -73,11 +82,11 @@ export function makeMacApp(options: MacAppOptions): string {
   chmodSync(join(macos, executable), 0o755); // kept by tar/zip, lost by some SMB copies
   if (options.icns !== undefined) cpSync(options.icns, join(resources, "AppIcon.icns"));
 
-  const version = options.version ?? "0.1.0";
+  const version = options.version ?? options.identity?.version ?? "0.1.0";
   const entries: Record<string, string | number | boolean> = {
-    CFBundleName: options.name,
-    CFBundleDisplayName: options.name,
-    CFBundleIdentifier: options.bundleId,
+    CFBundleName: name,
+    CFBundleDisplayName: name,
+    CFBundleIdentifier: bundleId,
     CFBundleVersion: version,
     CFBundleShortVersionString: version,
     CFBundleExecutable: executable,
@@ -89,9 +98,25 @@ export function makeMacApp(options: MacAppOptions): string {
     NSPrincipalClass: "NSApplication",
     ...options.plist,
   };
-  const dict = Object.entries(entries)
-    .map(([key, value]) => `  <key>${escapeXml(key)}</key>${plistValue(value)}`)
-    .join("\n");
+  const dictLines = Object.entries(entries).map(([key, value]) => `  <key>${escapeXml(key)}</key>${plistValue(value)}`);
+  if (schemes.length > 0) {
+    const schemeXml = schemes.map((s) => `          <string>${escapeXml(s)}</string>`).join("\n");
+    dictLines.push(
+      [
+        `  <key>CFBundleURLTypes</key>`,
+        `  <array>`,
+        `    <dict>`,
+        `      <key>CFBundleURLName</key><string>${escapeXml(bundleId)}</string>`,
+        `      <key>CFBundleURLSchemes</key>`,
+        `      <array>`,
+        schemeXml,
+        `      </array>`,
+        `    </dict>`,
+        `  </array>`,
+      ].join("\n"),
+    );
+  }
+  const dict = dictLines.join("\n");
   writeFileSync(
     join(app, "Contents", "Info.plist"),
     `<?xml version="1.0" encoding="UTF-8"?>
