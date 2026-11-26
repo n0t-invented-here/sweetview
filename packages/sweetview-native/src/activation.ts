@@ -23,6 +23,24 @@ export type SecondInstanceEvent = {
   readonly url?: string;
 };
 
+/** Validates JSON from the native single-instance handoff. */
+export function parseSecondInstanceEvent(raw: string): SecondInstanceEvent | undefined {
+  let payload: unknown;
+  try {
+    payload = JSON.parse(raw);
+  } catch {
+    return undefined;
+  }
+  if (payload && typeof payload === "object"
+    && "args" in payload && Array.isArray(payload.args)
+    && payload.args.every((arg: unknown) => typeof arg === "string")
+    && "cwd" in payload && typeof payload.cwd === "string"
+    && (!("url" in payload) || typeof payload.url === "string")) {
+    return payload as SecondInstanceEvent;
+  }
+  return undefined;
+}
+
 export type SingleInstanceOptions = {
   /** Unique application identifier (e.g. `"com.example.my-app"`). Required unless `identity` is provided. */
   appId?: string;

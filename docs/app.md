@@ -258,6 +258,14 @@ export type WebViewOptions<M extends MethodMap = MethodMap> = {
 | `readyFallbackHtml` | `string` | built-in error page | HTML shown on watchdog expiry. |
 | `ringBytes` | `number` | `1048576` | Capacity of the worker-to-UI shared-memory ring (power of two, `128..2^30`). |
 
+`Window.onFileDrop` receives OS drops routed to the containing native window
+through `WM_DROPFILES` on Windows or the `NSWindow` drag destination on macOS.
+When the webview fills the client area, WebView2 or WKWebView can handle
+drops over the page as its own drop target. On Windows,
+`allowExternalDrop: false` disables WebView2's built-in drop handling.
+Delivery to `Window.onFileDrop` still depends on native routing. On macOS,
+WKWebView's drop handling is unaffected by `allowExternalDrop`.
+
 ### Tab and TabOptions
 
 ```ts

@@ -4,7 +4,7 @@
 
 import { FFIType, JSCallback, ptr, toArrayBuffer, type Pointer } from "bun:ffi";
 import { validateUrlScheme } from "@n1h/sweetview-settings";
-import type { RegisterUrlSchemeOptions, SecondInstanceEvent, SingleInstanceLock } from "../activation";
+import { parseSecondInstanceEvent, type RegisterUrlSchemeOptions, type SecondInstanceEvent, type SingleInstanceLock } from "../activation";
 import {
   ERROR_ALREADY_EXISTS,
   ERROR_FILE_NOT_FOUND,
@@ -87,7 +87,8 @@ function ensureIpcClass(): void {
           const lpData = dv.getBigUint64(16, true);
           if (magic === COPYDATA_MAGIC && cbData > 0 && lpData !== 0n) {
             const bytes = new Uint8Array(toArrayBuffer(Number(lpData) as Pointer, 0, cbData));
-            const payload = JSON.parse(new TextDecoder().decode(bytes)) as SecondInstanceEvent;
+            const payload = parseSecondInstanceEvent(new TextDecoder().decode(bytes));
+            if (payload === undefined) return 0n;
             handlersByHwnd.get(hwnd)?.(payload);
             return 1n;
           }

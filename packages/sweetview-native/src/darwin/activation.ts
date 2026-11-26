@@ -4,7 +4,7 @@
 import { FFIType, JSCallback, dlopen, toArrayBuffer, type Pointer } from "bun:ffi";
 import { createHash } from "node:crypto";
 import { validateUrlScheme } from "@n1h/sweetview-settings";
-import type { RegisterUrlSchemeOptions, SecondInstanceEvent, SingleInstanceLock } from "../activation";
+import { parseSecondInstanceEvent, type RegisterUrlSchemeOptions, type SecondInstanceEvent, type SingleInstanceLock } from "../activation";
 import { commonRunLoopModes, coreFoundationPath } from "./core-foundation";
 import { scheduleNativeTimeout } from "./event-loop";
 import {
@@ -131,13 +131,8 @@ export async function acquireSingleInstance(params: {
             const length = Number(cf.CFDataGetLength(data));
             const bytes = cf.CFDataGetBytePtr(data);
             if (bytes && length > 0) {
-              const payload: unknown = JSON.parse(new TextDecoder().decode(toArrayBuffer(bytes, 0, length)));
-              if (payload && typeof payload === "object" && "args" in payload && Array.isArray(payload.args)
-                && payload.args.every((arg: unknown) => typeof arg === "string")
-                && "cwd" in payload && typeof payload.cwd === "string"
-                && (!("url" in payload) || typeof payload.url === "string")) {
-                params.onSecondInstance(payload as SecondInstanceEvent);
-              }
+              const payload = parseSecondInstanceEvent(new TextDecoder().decode(toArrayBuffer(bytes, 0, length)));
+              if (payload !== undefined) params.onSecondInstance(payload);
             }
           }
         } catch (err) {

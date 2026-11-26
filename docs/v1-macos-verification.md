@@ -321,3 +321,42 @@ a file-reference URL. Close the secondary window first. It should disappear
 without a hide callback. Close the primary. It should hide and log
 `last window hidden 0`, with the process still running. Quit the probe after
 recording the results.
+
+### Drop over WKWebView
+
+Use the native-only Finder drop above as a baseline. With the rebuilt
+`WEBVIEW_PATH` set, save this as `v1-webview-drop-probe.ts` in the repository
+root and run `bun run v1-webview-drop-probe.ts`:
+
+```ts
+import { createApp } from "@n1h/sweetview";
+
+const app = await createApp({
+  title: "WKWebView file drop probe",
+  assets: {
+    "index.html": new Blob([`<!doctype html>
+      <p>Drop a Finder file in this page</p>
+      <output id="result">Waiting for a page drop</output>
+      <script>
+        window.addEventListener("dragover", (event) => event.preventDefault());
+        window.addEventListener("drop", (event) => {
+          event.preventDefault();
+          const names = Array.from(event.dataTransfer.files, (file) => file.name);
+          document.getElementById("result").textContent = "Page drop: " + names.join(", ");
+        });
+      </script>`], { type: "text/html" }),
+  },
+});
+
+app.window.onFileDrop((paths) => console.log("Native window drop", paths));
+app.window.show();
+await app.run();
+```
+
+Drag the same files from Finder onto the middle of the rendered page, where
+WKWebView covers the window. Record whether the page shows `Page drop`,
+the terminal prints `Native window drop`, both occur, or neither occurs.
+Check any native paths against the baseline. `Window.onFileDrop` observes
+the `NSWindow` drag destination, and WKWebView has its own drop target.
+`allowExternalDrop: false` controls WebView2 on Windows and has no effect
+on this macOS probe.

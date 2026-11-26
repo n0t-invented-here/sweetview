@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { HttpResponseAssembler, runNativeRequest, writeHttpResponse, type HttpResponse } from "./http-response";
 import { Ring } from "./ring";
 import type { NativeResponse } from "./messages";
+import { requestHandlerCalls, webviewLibPath } from "./webview-lib";
 
 test("a synchronous handler that returns a rejected Promise gets an immediate 500", () => {
   const answer = runNativeRequest(
@@ -44,10 +45,10 @@ const nativeFile = process.platform === "darwin" ? "libwebview.dylib" : "libwebv
 const siblingLib = fileURLToPath(new URL(`../../../../sweetview-webview-bun/build/${nativeFile}`, import.meta.url));
 const libPath = process.env.WEBVIEW_PATH ?? (await Bun.file(siblingLib).exists() ? siblingLib : undefined);
 const desktop = process.platform === "win32" || process.platform === "darwin";
-const installed = desktop && libPath === undefined
-  ? (await import("./webview-lib")).requestHandlerCalls(await (await import("./webview-lib")).webviewLibPath())
+const resolvedLibPath = desktop
+  ? libPath ?? await webviewLibPath().catch(() => undefined)
   : undefined;
-const live = desktop && (libPath !== undefined || installed !== undefined);
+const live = resolvedLibPath !== undefined && requestHandlerCalls(resolvedLibPath) !== undefined;
 
 async function runLive(mode: string) {
   const profile = mkdtempSync(join(tmpdir(), "sweetview-request-handler-"));
@@ -57,7 +58,7 @@ async function runLive(mode: string) {
       timeout: 20_000,
       env: {
         ...process.env,
-        ...(libPath ? { WEBVIEW_PATH: libPath } : {}),
+        WEBVIEW_PATH: resolvedLibPath,
         WEBVIEW2_USER_DATA_FOLDER: profile,
         SWEETVIEW_REQUEST_TEST: mode,
       },

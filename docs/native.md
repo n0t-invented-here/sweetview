@@ -164,12 +164,18 @@ disposes the window if another owned window is visible. Otherwise it hides
 the window and invokes `onHide(win)`. The returned function removes that
 listener. Create the tray and wire its reopen action separately.
 
-`win.onFileDrop(handler)` subscribes to native file drops and returns an
-unsubscribe function. Its callback receives file-system paths. Windows uses
-`WM_DROPFILES`. On macOS a Sweetview-managed `NSWindow` accepts Finder drops
-and resolves file-reference URLs to paths. A foreign macOS window wrapper
-throws when asked to subscribe. The webview's `allowExternalDrop` controls
-browser content drops separately.
+`win.onFileDrop(handler)` subscribes to OS file drops delivered to the
+native `Window` and returns an unsubscribe function. Its callback receives
+file-system paths. Windows delivers `WM_DROPFILES`. On macOS, a
+Sweetview-managed `NSWindow` acts as a drag destination and resolves Finder
+file-reference URLs to paths. A foreign macOS window wrapper throws when
+asked to subscribe.
+
+WebView2 and WKWebView have their own drop targets. When a `WebView` fills
+the client area, the engine may consume a drop before the native window
+receives it. On Windows, `allowExternalDrop: false` disables WebView2's
+built-in drop handling. Native delivery still depends on where the OS
+routes the drop. The setting has no effect on WKWebView.
 
 | Member | Meaning |
 |---|---|
