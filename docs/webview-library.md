@@ -67,9 +67,18 @@ Makes the browser's own background transparent (or any color), which
 - Windows: sets `ICoreWebView2Controller2::DefaultBackgroundColor`. For the
   desktop to show through, the host window also needs composition that
   honours alpha, which `transparent: true` sets up.
-- macOS: sets `drawsBackground` on the `WKWebView` to false when `a` is 0 and
-  to true otherwise. It makes the `NSWindow` non-opaque when `a` is below 255
-  and sets the window's background color to the given color.
+- macOS: makes the `WKWebView` layer-backed and paints the RGBA color on its
+  backing layer, behind the page, with WebKit's own background
+  (`drawsBackground`) turned off for every color. When `a` is below 255 the
+  `NSWindow` is made non-opaque with a clear background so the layer shows
+  through. An opaque color restores opacity only on a window the library
+  created; an adopted window (`WebView.attach` to an existing `NSWindow`)
+  keeps its own transparency settings. This is the behaviour of the 2.8.0
+  library (and a library rebuilt from the `v1-drafting` branches). The
+  published 2.7.0 library instead sets `drawsBackground` to `a != 0` and
+  paints the color on the `NSWindow` background (non-opaque unless `a` is
+  255): only a fully transparent color turns WebKit's own background off,
+  so any other color shows WebKit's default background over the window's.
 - Linux: accepted, does nothing.
 
 | Return | When |
@@ -216,7 +225,9 @@ one `onFileDrop` listener ([file drops](native/windows.md#file-drops)).
 
 - Windows: WebView2 reports dropped files through `ICoreWebView2File`, read
   while the drop's event arguments are valid. It needs WebView2 Runtime 113
-  or later, and external drops allowed. Only drops on the top-level document
+  or later, and external drops allowed. On an older Runtime the handler
+  takes nothing: drops are left untouched for the page and the browser's
+  default handling, never swallowed. Only drops on the top-level document
   are captured: a drop inside any `<iframe>`, same-origin or cross-origin,
   stays with that iframe and never reaches the handler.
 - macOS: `SweetviewWKWebView` takes a drag whose pasteboard carries file
@@ -292,4 +303,4 @@ repository, `just build` on the target OS builds the library and
 
 To run Sweetview's own tests against a rebuilt library, set `WEBVIEW_PATH`
 to the built file and run `bun test packages/sweetview/src/request-handler.test.ts`
-from this repository's root. [Platform verification](v1-macos-verification.md).
+from this repository's root.

@@ -31,12 +31,3 @@ available for IPC, WebSocket IPC, native APIs, settings and build tools.
 
 `page`, `window-chrome` and `native/hit-regions` import types only, so a
 page bundle contains no Bun code.
-
-## Planning & Audit
-
-| Document | Contents |
-|---|---|
-| [v1 API and migration](v1-api.md) | The released API, examples, and breaking changes |
-| [Audit & v1 plan](audit-and-v1-plan.md) | Pre-v1 audit findings and the architecture decisions behind the workspace and zero-TCP desktop transport |
-| [v1 checklist](v1-checklist.md) | Implementation and verification tracker for the `1.0.0` release |
-| [v1 macOS and Linux verification](v1-macos-verification.md) | Native library rebuilds, platform tests and macOS GUI checks |

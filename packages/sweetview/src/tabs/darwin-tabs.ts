@@ -19,7 +19,8 @@ import {
   isWindowDisposed,
   onWindowDispose,
 } from "@n1h/sweetview-native/internal";
-import { detachPage, focusWebView, onLoadFailed } from "./darwin-webview";
+import { detachPage, focusWebView, forgetPage, markTabClosing, onLoadFailed, onNewWindowRequested, openPage } from "./darwin-webview";
+import { loadFailedPage } from "./load-failed";
 
 const FOLLOW_TITLE = `(() => {
   const report = () => {
@@ -36,19 +37,13 @@ const FOLLOW_TITLE = `(() => {
   addEventListener("load", report);
 })();`;
 
-const escapeHtml = (s: string) => s.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
-
-const loadFailedPage = (address: string, reason: string) => `<!doctype html>
-<html lang="en"><meta charset="utf-8" /><meta name="color-scheme" content="light dark" />
-<title>${escapeHtml(address)}</title>
-<style>body{margin:0;min-height:100vh;display:grid;place-items:center;padding:32px;font:15px/1.5 -apple-system,system-ui,sans-serif;background:Canvas;color:CanvasText}main{max-width:520px}</style>
-<main><h1>This site did not open</h1><p>${escapeHtml(address)}</p><p>${escapeHtml(reason)}</p><a href="${escapeHtml(address)}">Try Again</a></main></html>`;
-
 type MacTabRecord = {
   readonly nsWin: Id;
   host: MacTabHost;
   title: string;
   webview: WebView<any, any>;
+  /** The borrowed `Window.fromHandle(nsWin)` the webview is attached to; disposed right after `webview`. */
+  readonly wrappedWin: Window;
   /** Attach hooks; `rebindFileDrop` moves webview file-drop delivery to the current `host.window`. */
   readonly hooks: TabAttachHooks;
   shown: boolean;
@@ -162,9 +157,11 @@ function disposeMacHost(host: MacTabHost): void {
       syncFileDrop(rec);
       detachPage(nsWin);
       rec.webview.dispose();
+      rec.wrappedWin.dispose();
     }
     if (rec.shown) pooled(() => send(nsWin, sel("close")));
     else host.group.discard(nsWin);
+    forgetPage(nsWin);
   }
   releaseGroupIfIdle(host);
 }
@@ -406,6 +403,8 @@ function ensureHost(window: Window): MacTabHost {
       const host = recordByNsWin.get(nsWin)?.host;
       return Boolean(host && host.tabs.size === 1 && host.fireClose());
     },
+    // Synchronous, unlike onClosed: no queued popup opening fires once the close began.
+    onWillClose: (nsWin) => markTabClosing(nsWin),
     onClosed: (nsWin) => {
       // Deferred from willClose: a record a host teardown already removed was
       // detached there, so never detach it again or pump events at its torn-down host.
@@ -420,8 +419,10 @@ function ensureHost(window: Window): MacTabHost {
         rec.closed = true;
         syncFileDrop(rec);
         rec.webview.dispose();
+        rec.wrappedWin.dispose();
         emitWindowTabClose(tabHost.window, rec.api);
       }
+      forgetPage(nsWin);
       if (tabHost.tabs.size === 0 && !tabHost.closed) {
         if (!tabHost.fireClose()) tabHost.window.dispose();
       }
@@ -439,6 +440,7 @@ export const darwinTabsDriver: TabsDriver = {
     const id = nextTabId++;
     const initialTitle = options.title ?? (options.url ? new URL(options.url).hostname || options.url : `Tab ${id}`);
     const nsWin = host.group.createWindow(initialTitle);
+    openPage(nsWin);
     host.group.setTopmost(nsWin, host.topmost);
     // While attaching, a host teardown leaves nsWin (and the group) alive for the rollback below.
     host.attaching.add(nsWin);
@@ -448,6 +450,7 @@ export const darwinTabsDriver: TabsDriver = {
     } catch (err) {
       host.attaching.delete(nsWin);
       host.group.discard(nsWin);
+      forgetPage(nsWin);
       releaseGroupIfIdle(host);
       throw err;
     }
@@ -460,6 +463,7 @@ export const darwinTabsDriver: TabsDriver = {
       wrappedWin.dispose();
       host.attaching.delete(nsWin);
       host.group.discard(nsWin);
+      forgetPage(nsWin);
       releaseGroupIfIdle(host);
     };
 
@@ -474,6 +478,32 @@ export const darwinTabsDriver: TabsDriver = {
         if (!h.closed && !isWindowDisposed(h.window) && !h.window.isVisible()) h.window.show();
       },
       isCancelled: () => host.closed,
+      // Installed before the first navigation starts, so a load that fails at
+      // once (a refused port) still shows the failed-load page.
+      beforeNavigate: (raw) => {
+        // HTTP(S) target="_blank" links and window.open() open a tab after this one, as in the Windows driver.
+        onNewWindowRequested(nsWin, (url) => {
+          const record = owner;
+          if (record === undefined || record.closed) return;
+          void darwinTabsDriver.openTab(record.host.window, { url, after: record.api }).catch(console.error);
+        });
+        if (options.url) {
+          const address = options.url;
+          raw.bind("__sweetviewTabTitle", (t: unknown) => {
+            if (typeof t === "string") owner?.api.setTitle(t);
+          });
+          raw.init(FOLLOW_TITLE);
+          // The failed-load page, as on Windows. Its own about:blank load is never a failure to replace.
+          onLoadFailed(nsWin, (url, reason) => {
+            if (owner?.closed || /^(about|data):/i.test(url)) return;
+            raw.setHTML(loadFailedPage(url || address, reason));
+          });
+        }
+      },
+      // However the webview is disposed (a tab close, a rollback, a direct
+      // tab.webview.dispose()), the library's own UIDelegate is back before
+      // WKWebView teardown releases it.
+      beforeDestroy: () => detachPage(nsWin),
     };
     const attachOptions: WebViewOptions<M> & { [tabAttachHooks]: TabAttachHooks } = {
       ...options,
@@ -501,6 +531,7 @@ export const darwinTabsDriver: TabsDriver = {
       host,
       title: initialTitle,
       webview,
+      wrappedWin,
       hooks,
       shown: false,
       closed: false,
@@ -528,6 +559,7 @@ export const darwinTabsDriver: TabsDriver = {
       },
       close() {
         if (record.closed) return;
+        // A shown tab is marked closing by onWillClose (performClose: can be vetoed); an unshown one by detachPage.
         const tabHost = record.host;
         if (record.shown) {
           tabHost.group.close(nsWin);
@@ -542,7 +574,9 @@ export const darwinTabsDriver: TabsDriver = {
           if (tabHost.selectedBeforeShow === nsWin) tabHost.selectedBeforeShow = undefined;
           detachPage(nsWin);
           record.webview.dispose();
+          record.wrappedWin.dispose();
           tabHost.group.discard(nsWin);
+          forgetPage(nsWin);
           emitWindowTabClose(tabHost.window, api);
           if (tabHost.tabs.size === 0 && !tabHost.closed) {
             if (!tabHost.fireClose()) tabHost.window.dispose();
@@ -596,14 +630,6 @@ export const darwinTabsDriver: TabsDriver = {
     recordByNsWin.set(nsWin, record);
     host.tabs.set(nsWin, record);
     syncFileDrop(record);
-
-    if (options.url) {
-      webview.raw.bind("__sweetviewTabTitle", (t: unknown) => {
-        if (typeof t === "string") api.setTitle(t);
-      });
-      webview.raw.init(FOLLOW_TITLE);
-      onLoadFailed(nsWin, (reason) => webview.raw.setHTML(loadFailedPage(options.url!, reason)));
-    }
 
     // `after` anchors only within this host: a tab of another window, or a
     // closed tab, is ignored as in the Windows driver.

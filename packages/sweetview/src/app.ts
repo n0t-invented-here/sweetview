@@ -104,6 +104,20 @@ export type TabAttachHooks = {
    * and throws before touching the borrowed native window again.
    */
   isCancelled?(): boolean;
+  /**
+   * Called by `WebView.attach` once the native webview exists and its
+   * scripts and bindings are set, right before its first `navigate`. A
+   * driver registers native navigation handlers here so even a failure of
+   * that first navigation reaches them. If it throws, the attach fails.
+   */
+  beforeNavigate?(raw: RawWebview): void;
+  /**
+   * Called right before the native webview is destroyed, however the
+   * WebView is disposed (`dispose()`, `run()` returning, a failed attach).
+   * A driver restores native state it changed on the webview here. Errors
+   * are logged; the webview is destroyed anyway.
+   */
+  beforeDestroy?(): void;
 };
 
 /** Internal options key for `TabAttachHooks` (not exported from the package entry). */
@@ -570,7 +584,14 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
         ring.stopDispatch();
         worker?.terminate();
         reqCb?.close();
-        if (raw.unsafeHandle !== null) raw.destroy();
+        if (raw.unsafeHandle !== null) {
+          try {
+            tabHooks?.beforeDestroy?.();
+          } catch (err) {
+            console.error("sweetview: a tab driver's beforeDestroy hook threw:", err);
+          }
+          raw.destroy();
+        }
       };
 
       const respond = (seq: string, status: number, value: unknown) => {
@@ -709,6 +730,7 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
         });
 
         if (useDirectUrl) {
+          tabHooks?.beforeNavigate?.(raw);
           raw.navigate(options.url!);
         } else {
           const setAsset = setAssetCall(libPath);
@@ -721,6 +743,8 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
             const err = setAsset(handle(), path, assetMime(path), bytes);
             if (err !== 0) throw new Error(`sweetview: webview_set_asset(${path}) failed (${err})`);
           }
+          if (!isLive() || tabHooks?.isCancelled?.()) throw new Error("sweetview: the window was disposed during WebView.attach");
+          tabHooks?.beforeNavigate?.(raw);
           raw.navigate(`${ASSET_ORIGIN}/${index}`);
         }
         if (isLive() && !isReady && options.readyTimeoutMs !== undefined && options.readyTimeoutMs > 0) {

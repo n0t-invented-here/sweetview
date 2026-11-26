@@ -87,6 +87,21 @@ app.mergeAllWindows();
 await Bun.sleep(300);
 check("mergeAllWindows moves tab back into primary window", t2.window === app.window);
 
+// A URL tab whose first navigation fails at once (a refused loopback port) shows the failed-load page
+const probe = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+const refusedPort = probe.port;
+probe.stop(true);
+const t4 = await demo.openTab(`http://127.0.0.1:${refusedPort}/`);
+let failedHeading = "";
+for (const end = Date.now() + 6000; Date.now() < end && failedHeading !== "This site did not open"; await Bun.sleep(150)) {
+  failedHeading = await ask(t4.webview.raw, `document.querySelector("h1")?.textContent ?? ""`).catch(() => "");
+}
+check("a refused initial navigation shows the failed-load page", failedHeading === "This site did not open", failedHeading);
+const failedText = await ask(t4.webview.raw, `document.querySelector("main p")?.textContent ?? ""`).catch((e) => String(e));
+check("the failed-load page names the refused address", failedText === `http://127.0.0.1:${refusedPort}/`, failedText);
+t4.close();
+check("closing the failed tab leaves 3 open", await until(() => openTabs.size === 3, 2000), openTabs.size);
+
 // Close tabs one by one; closing the last ends the loop cleanly
 t3.close();
 check("closing tab 3 leaves 2 open", await until(() => openTabs.size === 2, 2000), openTabs.size);

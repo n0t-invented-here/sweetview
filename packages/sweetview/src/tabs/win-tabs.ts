@@ -25,12 +25,15 @@ import {
   emitWindowTabSelect,
   forwardWindowTabEvents,
   getWindowMeta,
+  holdWindowNativeDispose,
   isWindowDisposed,
   onWindowDispose,
 } from "@n1h/sweetview-native/internal";
 import { webviewLibPath } from "../webview-lib";
 import { STRIP_BODY, STRIP_CSS, STRIP_JS } from "./win-strip-assets";
-import { controllerOf, moveFocus, notifyMoved, onAcceleratorKey, onNewWindowRequested, setVisible, type Controller } from "./win-webview2";
+import { loadFailedPage } from "./load-failed";
+import { controllerOf, moveFocus, notifyMoved, onAcceleratorKey, onNavigationFailed, onNewWindowRequested, setVisible, type Controller } from "./win-webview2";
+import type { Webview as RawWebview } from "@n1h/sweetview-webview-bun";
 
 const FOLLOW_TITLE = `(() => {
   const report = () => {
@@ -56,16 +59,43 @@ const later = (work: () => void) =>
     }
   }, 0);
 
+/**
+ * Native-handler removers for one webview. Each is added as soon as its
+ * handler is registered, so a later registration that throws never strands
+ * an earlier one; `run()` removes them all once (they must go before the
+ * webview is destroyed).
+ */
+function cleanupList() {
+  const list: (() => void)[] = [];
+  return {
+    add(stop: () => void) {
+      list.push(stop);
+    },
+    run() {
+      for (const stop of list.splice(0)) {
+        try {
+          stop();
+        } catch (err) {
+          console.error("sweetview: removing a WebView2 handler threw:", err);
+        }
+      }
+    },
+  };
+}
+type Cleanups = ReturnType<typeof cleanupList>;
+
 type WinTabRecord = {
   readonly id: number;
   title: string;
   window: WinTabHost;
   pane: bigint;
   webview: WebView<any, any>;
+  /** The borrowed `Window.fromHandle(pane)` the webview is attached to; disposed right after `webview`. */
+  readonly wrappedWin: Window;
   /** Attach hooks; `rebindFileDrop` moves webview file-drop delivery to the current `window.window`. */
   readonly hooks: TabAttachHooks;
   controller: Controller;
-  cleanups: (() => void)[];
+  readonly cleanups: Cleanups;
   closed: boolean;
   api: Tab<any, any>;
 };
@@ -77,7 +107,11 @@ type WinTabHost = {
   selected?: WinTabRecord;
   shown?: WinTabRecord;
   strip?: WebView<StripMethods, StripEvents>;
+  /** The borrowed `Window.fromHandle(frame.stripPane)` the strip is attached to; disposed right after `strip`. */
+  stripWin?: Window;
   stripController?: Controller;
+  /** The strip's WebView2 handler removers (its accelerator keys). */
+  readonly stripCleanups: Cleanups;
   stripUp: boolean;
   active: boolean;
   scrolledBy: number;
@@ -170,9 +204,9 @@ function closeTab(record: WinTabRecord): void {
   if (host.tabs.length > 0) present(host);
   if (host.shown === record) host.shown = undefined;
   host.frame.hidePane(record.pane);
-  for (const stop of record.cleanups) stop();
-  record.cleanups.length = 0;
+  record.cleanups.run();
   record.webview.dispose();
+  record.wrappedWin.dispose();
   host.frame.destroyPane(record.pane);
   syncWindowTitle(host);
   pushStrip(host);
@@ -361,14 +395,20 @@ function disposeHost(host: WinTabHost): void {
   for (const tab of [...host.tabs]) {
     if (!tab.closed) {
       tab.closed = true;
-      for (const stop of tab.cleanups) stop();
-      tab.cleanups.length = 0;
+      tab.cleanups.run();
       tab.webview.dispose();
+      tab.wrappedWin.dispose();
       host.frame.destroyPane(tab.pane);
     }
   }
   host.tabs.length = 0;
+  // Every webview goes before the frame: host.window.dispose() (or the Window.dispose()
+  // that ran this as its dispose hook) destroys the frame and its child panes afterwards.
+  host.stripCleanups.run();
   host.strip?.dispose();
+  host.strip = undefined;
+  host.stripWin?.dispose();
+  host.stripWin = undefined;
   host.window.dispose();
 }
 
@@ -410,6 +450,7 @@ async function ensureHost(window: Window): Promise<WinTabHost> {
     closed: false,
     baseTitle: meta.title,
     stripReady,
+    stripCleanups: cleanupList(),
   };
   hosts.set(window, host);
   hostOrder.unshift(host);
@@ -453,6 +494,9 @@ async function ensureHost(window: Window): Promise<WinTabHost> {
   // Frames with an explicit appearance start the strip in it; "system" frames follow the OS media query.
   const explicitTheme = frame.appearance() === "system" ? "" : `<script>document.documentElement.dataset.theme = "${frame.isDark() ? "dark" : "light"}";</script>`;
   const stripWin = Window.fromHandle(frame.stripPane);
+  // Until the strip is attached or rolled back, a frame.destroy() (window disposal) must
+  // not destroy the strip pane under WebView2 initialization: it waits for this release.
+  const releaseFrameDispose = holdWindowNativeDispose(window);
   try {
     const lp = await libPath();
     const stripOptions: WebViewOptions<StripMethods> & { [tabAttachHooks]: TabAttachHooks } = {
@@ -490,8 +534,20 @@ async function ensureHost(window: Window): Promise<WinTabHost> {
           user32.SendMessageW(host.frame.hwnd, WM_CLOSE, 0n, 0n);
         }),
       },
-      // A frame disposed mid-attach has destroyed the strip pane: abort before touching it.
-      [tabAttachHooks]: { fileDropHost: () => host.window, isCancelled: () => host.closed },
+      [tabAttachHooks]: {
+        fileDropHost: () => host.window,
+        // A disposed window abandons the attach before it touches the strip pane again.
+        isCancelled: () => host.closed,
+        beforeNavigate: (raw) => {
+          host.stripController = controllerOf(raw, lp);
+          host.stripCleanups.add(onAcceleratorKey(host.stripController, (key) => {
+            const found = shortcutFor(key);
+            if (found !== undefined) later(() => handleShortcut(host, found));
+            return true;
+          }));
+        },
+        beforeDestroy: () => host.stripCleanups.run(),
+      },
     };
     const strip = await WebView.attach<StripMethods, StripEvents>(stripWin, stripOptions);
     if (host.closed || isWindowDisposed(window)) {
@@ -499,14 +555,9 @@ async function ensureHost(window: Window): Promise<WinTabHost> {
       throw new Error("sweetview: the window was disposed while its tab strip was loading");
     }
     host.strip = strip;
+    host.stripWin = stripWin;
 
     frame.layout();
-    host.stripController = controllerOf(host.strip.raw, lp);
-    onAcceleratorKey(host.stripController, (key) => {
-      const found = shortcutFor(key);
-      if (found !== undefined) later(() => handleShortcut(host, found));
-      return true;
-    });
   } catch (err) {
     // Forget the half-built host so a later openTab retries instead of awaiting a strip that never comes.
     rejectStrip(err);
@@ -518,9 +569,12 @@ async function ensureHost(window: Window): Promise<WinTabHost> {
     if (at !== -1) hostOrder.splice(at, 1);
     host.strip?.dispose();
     host.strip = undefined;
+    host.stripWin = undefined;
     host.stripController = undefined;
     stripWin.dispose();
     throw err;
+  } finally {
+    releaseFrameDispose();
   }
 
   resolveStrip();
@@ -552,14 +606,66 @@ export const winTabsDriver: TabsDriver = {
     // exists it is the host the tab opens in.
     let owner: WinTabRecord | undefined;
     const logicalHost = () => owner?.window ?? host;
+    // Set once the tab's webview is going away (closed, abandoned, or a failed
+    // attach); native handlers added during the attach check it.
+    let gone = false;
+    const isGone = () => gone || (owner?.closed ?? false);
+    const cleanups = cleanupList();
+    const native: { controller?: Controller } = {};
+    let lp: string;
     const hooks: TabAttachHooks = {
       fileDropHost: () => logicalHost().window,
       revealWindow: () => {
         const h = logicalHost();
         if (!h.closed && !isWindowDisposed(h.window) && !h.window.isVisible()) h.window.show();
       },
-      // A frame disposed mid-attach has destroyed the pane: abort before touching it.
+      // A disposed window abandons the attach before it touches the pane again.
       isCancelled: () => host.closed,
+      // Registered before the first navigation starts, so even an initial
+      // navigation that fails at once (a refused port) shows the failed-load page.
+      beforeNavigate: (raw: RawWebview) => {
+        const controller = controllerOf(raw, lp);
+        native.controller = controller;
+        cleanups.add(onAcceleratorKey(controller, (key) => {
+          const found = shortcutFor(key);
+          if (found !== undefined) later(() => handleShortcut(logicalHost(), found));
+          return found !== undefined;
+        }));
+        cleanups.add(onNewWindowRequested(controller, (url) => {
+          const record = owner;
+          if (isGone() || record === undefined) return;
+          if (/^https?:\/\//i.test(url)) {
+            void winTabsDriver.openTab(record.window.window, { url, after: record.api }).catch(console.error);
+          }
+        }));
+        if (options.url) {
+          const address = options.url;
+          raw.bind("__sweetviewTabTitle", (t: unknown) => {
+            if (typeof t === "string") later(() => owner && renameTab(owner, t));
+          });
+          raw.init(FOLLOW_TITLE);
+          // The failed-load page, as on macOS. It is shown synchronously inside
+          // NavigationCompleted (NavigateToString is asynchronous and supported there),
+          // and only while the failed navigation is still the latest one. Deferring it
+          // would let a caller's navigate(B) race ahead and then be overwritten. The
+          // error page's own data: navigation is skipped by onNavigationFailed.
+          cleanups.add(onNavigationFailed(controller, ({ url, reason, isCurrent }) => {
+            if (isGone() || !isCurrent()) return;
+            const failedAt = /^https?:\/\//i.test(url) ? url : address;
+            try {
+              raw.setHTML(loadFailedPage(failedAt, reason));
+            } catch (err) {
+              console.error("sweetview: tab action threw:", err);
+            }
+          }));
+        }
+      },
+      // However the webview is disposed (closeTab, abandon, a direct
+      // tab.webview.dispose()), its WebView2 handlers go first.
+      beforeDestroy: () => {
+        gone = true;
+        cleanups.run();
+      },
     };
     const attachOptions: WebViewOptions<M> & { [tabAttachHooks]: TabAttachHooks } = {
       ...options,
@@ -567,25 +673,44 @@ export const winTabsDriver: TabsDriver = {
       [tabAttachHooks]: hooks,
     };
 
+    // Until the record is listed in host.tabs, disposeHost never sees this tab:
+    // release its webview and borrowed window here. A closed host's frame.destroy()
+    // takes the pane with it, so only a live host's pane is destroyed.
+    const abandon = (webview?: WebView<M, E>) => {
+      gone = true;
+      cleanups.run();
+      webview?.dispose();
+      paneWin.dispose();
+      if (!host.closed) host.frame.destroyPane(pane);
+    };
     let webview: WebView<M, E>;
-    let lp: string;
+    let controller: Controller;
+    // Until the attach and any rollback finish, a frame.destroy() (window disposal)
+    // must not destroy the pane under WebView2 initialization: it waits for this release.
+    const releaseFrameDispose = holdWindowNativeDispose(window);
     try {
-      lp = await libPath();
-      webview = await WebView.attach<M, E>(paneWin, attachOptions);
-    } catch (err) {
-      paneWin.dispose();
-      if (!host.closed) host.frame.destroyPane(pane);
-      throw err;
+      try {
+        lp = await libPath();
+        webview = await WebView.attach<M, E>(paneWin, attachOptions);
+      } catch (err) {
+        abandon();
+        throw err;
+      }
+      if (host.closed || isWindowDisposed(window)) {
+        abandon(webview);
+        throw new Error("sweetview: the window was disposed while the tab was opening");
+      }
+      try {
+        host.frame.placePane(pane);
+        if (native.controller === undefined) throw new Error("sweetview: the tab's webview has no browser controller");
+        controller = native.controller;
+      } catch (err) {
+        abandon(webview);
+        throw err;
+      }
+    } finally {
+      releaseFrameDispose();
     }
-    if (host.closed || isWindowDisposed(window)) {
-      webview.dispose();
-      paneWin.dispose();
-      if (!host.closed) host.frame.destroyPane(pane);
-      throw new Error("sweetview: the window was disposed while the tab was opening");
-    }
-
-    host.frame.placePane(pane);
-    const controller = controllerOf(webview.raw, lp);
 
     const afterRec = options.after ? tabRecordByApi.get(options.after) : undefined;
     const base = afterRec && afterRec.window === host ? afterRec : host.selected;
@@ -597,9 +722,10 @@ export const winTabsDriver: TabsDriver = {
       window: host,
       pane,
       webview,
+      wrappedWin: paneWin,
       hooks,
       controller,
-      cleanups: [],
+      cleanups,
       closed: false,
       api: null as unknown as Tab<M, E>,
     };
@@ -631,27 +757,6 @@ export const winTabsDriver: TabsDriver = {
     };
     record.api = api;
     tabRecordByApi.set(api, record);
-
-    record.cleanups.push(
-      onAcceleratorKey(controller, (key) => {
-        const found = shortcutFor(key);
-        if (found !== undefined) later(() => handleShortcut(record.window, found));
-        return found !== undefined;
-      }),
-      onNewWindowRequested(controller, (url) => {
-        if (record.closed) return;
-        if (/^https?:\/\//i.test(url)) {
-          void winTabsDriver.openTab(record.window.window, { url, after: api }).catch(console.error);
-        }
-      }),
-    );
-
-    if (options.url) {
-      webview.raw.bind("__sweetviewTabTitle", (t: unknown) => {
-        if (typeof t === "string") later(() => renameTab(record, t));
-      });
-      webview.raw.init(FOLLOW_TITLE);
-    }
 
     host.tabs.splice(insertAt, 0, record);
     host.selected = record;

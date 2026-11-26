@@ -198,8 +198,13 @@ export function invokeBlock(block: Id, argTypes: FFIType[], ...args: (bigint | n
   if (block === NIL) return;
   const invoke = read.ptr(Number(block) as Pointer, 16) as unknown as Pointer | bigint | null;
   if (invoke === null) throw new Error("sweetview: block has no invoke pointer");
-  const fn = CFunction({ ptr: Number(invoke) as Pointer, args: [FFIType.u64, ...argTypes], returns: FFIType.void }) as unknown as (...a: unknown[]) => void;
-  fn(block, ...args);
+  const fn = CFunction({ ptr: Number(invoke) as Pointer, args: [FFIType.u64, ...argTypes], returns: FFIType.void });
+  try {
+    (fn as unknown as (...a: unknown[]) => void)(block, ...args);
+  } finally {
+    // Each block has its own invoke pointer: free this one-shot wrapper instead of leaking it.
+    fn.close();
+  }
 }
 
 /** [obj sel:double] -> id  (statusItemWithLength:) */

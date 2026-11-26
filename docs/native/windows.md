@@ -132,6 +132,8 @@ and that shows in the `Window` you get back:
 | `win.handle` | the frame's `HWND` | `null`: the `Window` is virtual and stands for the whole group, because no single `NSWindow` is the container |
 | Default size | 1040 x 720 content plus the strip, centered | 1040 x 720 at (100, 100) |
 | Appearance | `appearance` themes the frame and strip | `appearance` applies to each tab's `NSWindow` |
+| New-window links | an HTTP(S) `target="_blank"` link or `window.open()` opens a new tab after the current one (WebView2 `NewWindowRequested`); other schemes are dropped | the same, through the tab's `WKUIDelegate` (`createWebViewWithConfiguration:`); file open panels keep working |
+| Failed loads | a URL tab whose navigation fails shows a "This site did not open" page with the address, the reason and a Try Again link | the same page |
 
 Before the first tab opens, a macOS tabbed `Window` records `show()`,
 `setBounds()`, `setTitle()` and `setTopmost()` calls and replays them on the
@@ -286,7 +288,7 @@ pointer is over:
 | Drop target | Windows | macOS |
 |---|---|---|
 | The native window itself (a window without a webview, or its frame) | `WM_DROPFILES` | the Sweetview `NSWindow` subclass registers as a drag destination and resolves Finder file-reference URLs to paths |
-| An attached webview's surface | the webview library's `webview_set_file_drop_handler`: WebView2 reports paths through `ICoreWebView2File` (WebView2 Runtime 113 or later) | `webview_set_file_drop_handler`: the library's `SweetviewWKWebView` reads Finder file URLs |
+| An attached webview's surface | the webview library's `webview_set_file_drop_handler`: WebView2 reports paths through `ICoreWebView2File` (WebView2 Runtime 113 or later; an older Runtime leaves the drop untouched for the page and the browser instead of swallowing it) | `webview_set_file_drop_handler`: the library's `SweetviewWKWebView` reads Finder file URLs |
 
 Subscribe before or after attaching a webview. The first listener turns
 webview surface drops on, and removing the last listener turns them off,

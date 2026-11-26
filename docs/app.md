@@ -236,8 +236,13 @@ win.show();
 
 Opens a new native tab hosting its own webview inside a tabbed `Window` created with `{ tabs: true }`:
 
-- **Windows**: creates a child pane inside the custom Windows 11 tab-strip frame, attaches a WebView2 instance, hooks accelerator keys (`Ctrl+T`, `Ctrl+W`, `Ctrl+Tab`, `Ctrl+1..9`, etc.) and `NewWindowRequested`, and wires native right-click menus (`Menu.popup`), tear-off dragging, and window merging.
-- **macOS**: creates an `NSWindow` participating in AppKit window tabbing (`addTabbedWindow:ordered:`), attaches a `WKWebView`, keeps the tab bar visible, hooks load errors, and detaches message handlers cleanly on close.
+- **Windows**: creates a child pane inside the custom Windows 11 tab-strip frame, attaches a WebView2 instance, hooks accelerator keys (`Ctrl+T`, `Ctrl+W`, `Ctrl+Tab`, `Ctrl+1..9`, etc.), `NewWindowRequested` and `NavigationCompleted`, and wires native right-click menus (`Menu.popup`), tear-off dragging, and window merging.
+- **macOS**: creates an `NSWindow` participating in AppKit window tabbing (`addTabbedWindow:ordered:`), attaches a `WKWebView`, keeps the tab bar visible, hooks new-window requests and load errors, and detaches message handlers cleanly on close.
+
+Both platforms behave the same inside a tab:
+
+- An HTTP(S) `target="_blank"` link or `window.open()` call opens the address as a new tab right after the current one, in the tab's current tabbed window. Other schemes are dropped.
+- A URL tab (one opened with `url`) whose navigation fails, for example on an unreachable host or a certificate error, shows a "This site did not open" page with the address, the reason, and a Try Again link. A navigation cancelled by a newer one is not a failure, and on Windows neither is an HTTP error response, whose page the server supplies (as on macOS).
 
 Run the app under `runEventLoop()` (or `createApp({ tabs: true }).run()`). `WebViewOptions` apply per tab, so set `worker`, `onRequest`, `uiMethods` and the rest on each `openTab()` call. Opening a tab does not show a hidden tabbed window unless that tab sets `showOnReady` (see [Tab and TabOptions](#tab-and-taboptions)); otherwise call `show()` on it.
 

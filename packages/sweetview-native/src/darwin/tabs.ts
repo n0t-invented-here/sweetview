@@ -70,6 +70,8 @@ export type WindowTabsOptions = {
   onResized?(window: Id): void;
   onMoved?(window: Id): void;
   onCloseRequest?(window: Id): boolean;
+  /** Called synchronously from `windowWillClose:`, before the deferred `onClosed`. */
+  onWillClose?(window: Id): void;
   onClosed(window: Id): void;
 };
 
@@ -199,6 +201,11 @@ export function createWindowTabs(options: WindowTabsOptions): WindowTabs {
     },
     onWillClose: (window) => {
       if (!shown.delete(window)) return;
+      try {
+        options.onWillClose?.(window);
+      } catch (err) {
+        console.error("sweetview: a tab window's onWillClose threw:", err);
+      }
       if (lastSelected === window) {
         // Advance to another live tab in the same group (or none; current() falls back).
         const group = groupOf(window);
