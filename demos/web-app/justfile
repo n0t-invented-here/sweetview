@@ -32,13 +32,13 @@ icons:
 
 compile-win: icons
     bun build --compile --target=bun-windows-x64 --windows-hide-console {{win_icon}} --minify --sourcemap app.ts app-worker.ts --outfile dist/{{exe}}-windows-x64.exe
-    bun ../../src/refresh-icons.ts
+    bun ../../packages/sweetview-build/src/refresh-icons.ts
 
 compile-mac:
     bun build --compile --target=bun-darwin-arm64 --minify --sourcemap app.ts app-worker.ts --outfile dist/{{exe}}-macos-arm64
 
 mac-app: icons
-    bun ../../src/make-app.ts --name "Web App" --bundle-id dev.mrowr.web-app --binary dist/{{exe}}-macos-arm64 --icns build/AppIcon.icns --out dist
+    bun ../../packages/sweetview-build/src/make-app.ts --name "Web App" --bundle-id dev.mrowr.web-app --binary dist/{{exe}}-macos-arm64 --icns build/AppIcon.icns --out dist
 
 # A missing path makes ri fail the recipe
 clean:

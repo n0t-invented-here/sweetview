@@ -1,0 +1,31 @@
+{
+  "name": "@n1h/sweetview-build",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Icon and macOS application bundle build tools for Sweetview.",
+  "license": "MIT OR 0BSD",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/n0t-invented-here/sweetview.git"
+  },
+  "homepage": "https://github.com/n0t-invented-here/sweetview#readme",
+  "bugs": {
+    "url": "https://github.com/n0t-invented-here/sweetview/issues"
+  },
+  "files": [
+    "src",
+    "!src/**/*.test.ts",
+    "!src/**/*.test.worker.ts"
+  ],
+  "exports": {
+    ".": "./src/index.ts",
+    "./make-app": "./src/make-app.ts",
+    "./refresh-icons": "./src/refresh-icons.ts"
+  },
+  "engines": {
+    "bun": ">=1.4.2"
+  },
+  "dependencies": {
+    "@n1h/sweetview-settings": "workspace:*"
+  }
+}

@@ -126,7 +126,13 @@ Thread: blocks the calling thread on file I/O.
 
 ## make-app command line
 
-`src/make-app.ts` is `makeMacApp` as a command. It is not a package export. Run it by path with Bun: `bun node_modules/@n1h/sweetview/src/make-app.ts --name "My App" --bundle-id com.example.my-app --binary dist/my-app-macos-arm64 --out dist`. It calls `makeMacApp` and writes the same files. Importing the file runs nothing.
+`@n1h/sweetview-build/make-app` is `makeMacApp` as a command. With `@n1h/sweetview-build` installed, run it by path with Bun:
+
+```sh
+bun node_modules/@n1h/sweetview-build/src/make-app.ts --name "My App" --bundle-id com.example.my-app --binary dist/my-app-macos-arm64 --out dist
+```
+
+It calls `makeMacApp` and writes the same files. Importing the file runs nothing.
 
 | Flag | Value | Default | Meaning |
 |---|---|---|---|

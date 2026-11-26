@@ -11,12 +11,6 @@
         "@types/react-dom": "^19.1.0",
         "typescript": "^5.9.0",
       },
-      "peerDependencies": {
-        "@n1h/sweetview-webview-bun": "^2.7.0",
-      },
-      "optionalPeers": [
-        "@n1h/sweetview-webview-bun",
-      ],
     },
     "demos/desktop-pet": {
       "name": "sweetview-desktop-pet",
@@ -26,6 +20,8 @@
         "@babylonjs/loaders": "^9.35.0",
         "@mantine/core": "^9.7.4",
         "@mantine/hooks": "^9.7.4",
+        "@n1h/sweetview": "workspace:*",
+        "@n1h/sweetview-native": "workspace:*",
         "@n1h/sweetview-webview-bun": "^2.7.0",
         "react": "^19.1.0",
         "react-dom": "^19.1.0",
@@ -35,17 +31,23 @@
       "name": "sweetview-menubar-notify",
       "version": "0.1.0",
       "dependencies": {
+        "@n1h/sweetview": "workspace:*",
         "@n1h/sweetview-webview-bun": "^2.7.0",
       },
     },
     "demos/menubar-only": {
       "name": "sweetview-menubar-only",
       "version": "0.1.0",
+      "dependencies": {
+        "@n1h/sweetview": "workspace:*",
+      },
     },
     "demos/native-tabs": {
       "name": "sweetview-native-tabs",
       "version": "0.1.0",
       "dependencies": {
+        "@n1h/sweetview": "workspace:*",
+        "@n1h/sweetview-native": "workspace:*",
         "@n1h/sweetview-webview-bun": "^2.7.0",
       },
     },
@@ -53,6 +55,7 @@
       "name": "sweetview-web-app",
       "version": "0.1.0",
       "dependencies": {
+        "@n1h/sweetview": "workspace:*",
         "@n1h/sweetview-webview-bun": "^2.7.0",
         "web-app-backend": "workspace:*",
         "web-app-frontend": "workspace:*",
@@ -61,6 +64,9 @@
     "demos/web-app/packages/web-app-backend": {
       "name": "web-app-backend",
       "version": "0.1.0",
+      "dependencies": {
+        "@n1h/sweetview": "workspace:*",
+      },
     },
     "demos/web-app/packages/web-app-frontend": {
       "name": "web-app-frontend",
@@ -68,10 +74,57 @@
       "dependencies": {
         "@mantine/core": "^9.7.4",
         "@mantine/hooks": "^9.7.4",
+        "@n1h/sweetview": "workspace:*",
         "react": "^19.1.0",
         "react-dom": "^19.1.0",
         "web-app-backend": "workspace:*",
       },
+    },
+    "packages/sweetview": {
+      "name": "@n1h/sweetview",
+      "version": "1.0.0",
+      "dependencies": {
+        "@n1h/sweetview-build": "workspace:*",
+        "@n1h/sweetview-ipc": "workspace:*",
+        "@n1h/sweetview-ipc-ws": "workspace:*",
+        "@n1h/sweetview-native": "workspace:*",
+        "@n1h/sweetview-settings": "workspace:*",
+      },
+      "peerDependencies": {
+        "@n1h/sweetview-webview-bun": "^2.7.0",
+      },
+      "optionalPeers": [
+        "@n1h/sweetview-webview-bun",
+      ],
+    },
+    "packages/sweetview-build": {
+      "name": "@n1h/sweetview-build",
+      "version": "1.0.0",
+      "dependencies": {
+        "@n1h/sweetview-settings": "workspace:*",
+      },
+    },
+    "packages/sweetview-ipc": {
+      "name": "@n1h/sweetview-ipc",
+      "version": "1.0.0",
+    },
+    "packages/sweetview-ipc-ws": {
+      "name": "@n1h/sweetview-ipc-ws",
+      "version": "1.0.0",
+      "dependencies": {
+        "@n1h/sweetview-ipc": "workspace:*",
+      },
+    },
+    "packages/sweetview-native": {
+      "name": "@n1h/sweetview-native",
+      "version": "1.0.0",
+      "dependencies": {
+        "@n1h/sweetview-settings": "workspace:*",
+      },
+    },
+    "packages/sweetview-settings": {
+      "name": "@n1h/sweetview-settings",
+      "version": "1.0.0",
     },
   },
   "packages": {
@@ -92,6 +145,18 @@
     "@mantine/core": ["@mantine/core@9.8.0", "", { "dependencies": { "@floating-ui/react": "^0.27.20", "clsx": "^2.1.1", "react-number-format": "^5.4.5", "react-remove-scroll": "^2.7.2", "type-fest": "^5.10.0" }, "peerDependencies": { "@mantine/hooks": "9.8.0", "react": "^19.2.0", "react-dom": "^19.2.0" } }, "sha512-+2Y+GBM6WvBJgBBb7hrfEvHbyljuRsOqC1GjxNpmX6NcD2SwmDXf9ZVFfquyXvi8fFerMrTpAwYdfb6k2PGAlQ=="],
 
     "@mantine/hooks": ["@mantine/hooks@9.8.0", "", { "peerDependencies": { "react": "^19.2.0" } }, "sha512-fUA3PS8Ys2kih6VEuozgdEO0UyiGhryTJqx+Bf2lxee1XpXQ0XFXsQY7lNB4f+eBDzYCczYykQjIIuUzyJft7A=="],
+
+    "@n1h/sweetview": ["@n1h/sweetview@workspace:packages/sweetview"],
+
+    "@n1h/sweetview-build": ["@n1h/sweetview-build@workspace:packages/sweetview-build"],
+
+    "@n1h/sweetview-ipc": ["@n1h/sweetview-ipc@workspace:packages/sweetview-ipc"],
+
+    "@n1h/sweetview-ipc-ws": ["@n1h/sweetview-ipc-ws@workspace:packages/sweetview-ipc-ws"],
+
+    "@n1h/sweetview-native": ["@n1h/sweetview-native@workspace:packages/sweetview-native"],
+
+    "@n1h/sweetview-settings": ["@n1h/sweetview-settings@workspace:packages/sweetview-settings"],
 
     "@n1h/sweetview-webview-bun": ["@n1h/sweetview-webview-bun@2.7.0", "", {}, "sha512-qagqmU0WMdOGmR+B6fEa2C/2qu7z6cm8BKEc3+uDF3ByNtB88JIKoYjnWevubr3Z8jKjbkiyweM6Wt3q3GlGJw=="],
 

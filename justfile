@@ -25,8 +25,21 @@ compile: demos::web-app::compile demos::desktop-pet::compile demos::menubar-only
 
 clean: demos::web-app::clean demos::desktop-pet::clean demos::menubar-only::clean demos::menubar-notify::clean demos::native-tabs::clean
 
+[script("pwsh", "-NoProfile", "-File")]
 pack:
-    bun pm pack --dry-run
+    $ErrorActionPreference = 'Stop'
+    $PSNativeCommandUseErrorActionPreference = $true
+    foreach ($package in Get-ChildItem packages -Directory) {
+        if (!(Test-Path (Join-Path $package.FullName 'package.json'))) { continue }
+        Push-Location $package.FullName
+        try { bun pm pack --dry-run } finally { Pop-Location }
+    }
 
+[script("pwsh", "-NoProfile", "-File")]
 publish:
-    bun publish --access public
+    $ErrorActionPreference = 'Stop'
+    $PSNativeCommandUseErrorActionPreference = $true
+    foreach ($package in @('sweetview-ipc', 'sweetview-ipc-ws', 'sweetview-settings', 'sweetview-native', 'sweetview-build', 'sweetview')) {
+        Push-Location (Join-Path packages $package)
+        try { bun publish --access public } finally { Pop-Location }
+    }

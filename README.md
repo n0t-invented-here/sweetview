@@ -50,10 +50,10 @@ platform differences and thread rules.
 | [`@n1h/sweetview/build`](docs/build.md) | `writeIconFiles` and `makeMacApp`; the page also covers the `make-app.ts` script and the `/file-imports` types |
 | [the webview library](docs/webview-library.md) | the two C API additions the package relies on, and how the library is loaded |
 
-Dependencies between the modules point one way. `ipc` imports nothing.
-`ipc-ws`, `worker` and `page` import `ipc`. `native`, `settings-store` and
-`build` import nothing else in the package. The root module imports `ipc`,
-`native`, `window-chrome` and the webview library.
+The compatibility subpaths above use five standalone packages.
+`@n1h/sweetview-ipc-ws` depends on `@n1h/sweetview-ipc`, and
+`@n1h/sweetview-native` and `@n1h/sweetview-build` depend on
+`@n1h/sweetview-settings`. The top-level `@n1h/sweetview` package depends on all five.
 
 `page`, `window-chrome` and `native/hit-regions` import types only, so a
 page bundle contains no Bun code.
@@ -231,9 +231,9 @@ explains both ways and when to use which.
 - Bun accepts `--windows-icon` only on a Windows host; the demos pass it
   only there.
 - The macOS `.app` bundle is assembled on any OS by `makeMacApp` or
-  `src/make-app.ts`, and signed ad-hoc when assembled on macOS. macOS shows
-  no notifications from an unsigned bundle, or from one in a temporary
-  folder.
+  the [`make-app` command](docs/build.md#make-app-command-line), and signed
+  ad-hoc when assembled on macOS. macOS shows no notifications from an unsigned
+  bundle, or from one in a temporary folder.
 - On a Mac that reports a copied bundle as damaged, these commands remove the
   quarantine flag, restore the executable bit and add an ad-hoc signature:
 
@@ -247,7 +247,7 @@ codesign --sign - --force --deep "App.app"
 
 | Path | Contents |
 |---|---|
-| `src/` | the package: `ipc/`, `ipc-ws/`, `native/`, and at the top level the window host, `worker`, `page`, `settings-store`, `window-chrome`, `build` and the `make-app.ts` command line |
+| `packages/` | the Sweetview facade, IPC, WebSocket transport, native helpers, settings and build packages |
 | `docs/` | the reference pages, indexed by the [reference index](docs/README.md) |
 | `demos/web-app/` | one backend and one React page run two ways: a desktop window with tray and notifications, or `Bun.serve` with WebSockets |
 | [`demos/desktop-pet/`](demos/desktop-pet/README.md) | a transparent always-on-top pet rendered with Babylon.js, with click-through hit regions and a page-drawn settings window |
@@ -256,22 +256,21 @@ codesign --sign - --force --deep "App.app"
 | [`demos/native-tabs/`](demos/native-tabs/README.md) | tabs with one webview per tab. macOS: every tab is its own `NSWindow` hosting its own `WKWebView`, behind the tab bar AppKit draws. Windows: a window whose title bar is a tab strip, every tab a child window hosting its own `WebView2` |
 | [`webview/`](webview/README.md) | recipes that clone the webview-bun fork, with the webview fork as its submodule, and build the library from it, for working on the library itself; not needed to build the demos |
 
-Inside this repository `@n1h/sweetview` resolves to `src/` through the
-`paths` mapping in `tsconfig.json`, which Bun honours at run time and in
-`bun build`.
+Bun links the packages and demos through the root workspace. The `paths`
+mapping in `tsconfig.json` mirrors the package entry points for typechecking.
 
 Recipes run with [just](https://github.com/casey/just) and PowerShell 7,
 from the repository root:
 
 | Recipe | Does |
 |---|---|
-| `just check` | `tsc --noEmit` over `src/` and `demos/`, then `bun test` |
+| `just check` | `tsc --noEmit` over `packages/` and `demos/`, then `bun test` |
 | `just demos web-app serve` | the web build on `http://127.0.0.1:4747` (`PORT`, `HOST`) |
 | `just demos web-app app`, `just demos desktop-pet app`, `just demos menubar-only app`, `just demos menubar-notify app`, `just demos native-tabs app` | the desktop application from source, with `bun run` (`WEBVIEW_DEBUG=1` opens devtools) |
 | `just demos web-app compile`, `just demos desktop-pet compile`, `just demos menubar-only compile`, `just demos menubar-notify compile` | Windows exe, macOS arm64 binary and `.app` into each demo's `dist/` |
 | `just compile`, `just clean` | every demo that has that recipe (`native-tabs` has no `compile`) |
-| `just pack` | what `bun publish` would upload |
-| `just publish` | publishes `@n1h/sweetview`; needs a registry login |
+| `just pack` | what `bun publish` would upload for each of the six packages |
+| `just publish` | publishes all six packages in dependency order, with a registry login |
 
 ## License
 

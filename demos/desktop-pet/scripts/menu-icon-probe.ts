@@ -5,8 +5,8 @@
 //   bun scripts/menu-icon-probe.ts [x y]      (default 200 400)
 
 import { dlopen, FFIType } from "bun:ffi";
-import { createMessageWindow } from "../../../src/native/win32/message-window";
-import { popupMenuAtCursor } from "../../../src/native/win32/menu";
+import { createMessageWindow } from "@n1h/sweetview-native/win32/message-window";
+import { popupMenuAtCursor } from "@n1h/sweetview-native/win32/menu";
 import { petIcon } from "../icon";
 import { PETS, petLabel } from "../pets";
 

@@ -3,7 +3,7 @@
 // Screen Recording grant; a process asking for its own window does not.
 
 import { dlopen, FFIType } from "bun:ffi";
-import { NIL, asId, cls, nsString, sel, sendInt, sendPtr } from "../../../src/native/darwin/objc";
+import { NIL, asId, cls, nsString, sel, sendInt, sendPtr } from "@n1h/sweetview-native/darwin/objc";
 
 const { u64, f64, u32 } = FFIType;
 const graphics = dlopen("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics", {

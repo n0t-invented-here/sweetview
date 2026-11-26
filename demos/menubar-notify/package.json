@@ -5,6 +5,7 @@
   "type": "module",
   "description": "A menu-bar app: a status item (macOS) or tray icon (Windows) whose menu sends a system notification, now or five seconds later, and a window that shows what was sent and clicked; a notification click opens it.",
   "dependencies": {
+    "@n1h/sweetview": "workspace:*",
     "@n1h/sweetview-webview-bun": "^2.7.0"
   }
 }

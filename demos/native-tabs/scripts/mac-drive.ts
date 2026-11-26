@@ -7,7 +7,7 @@
 
 import { mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { asId, NIL, sel, send, sendInt, sendPtr, sharedApp } from "../../../src/native/darwin/objc";
+import { asId, NIL, sel, send, sendInt, sendPtr, sharedApp } from "@n1h/sweetview-native/darwin/objc";
 import { startDemoTabs } from "../app";
 import { captureWindow } from "./mac-capture";
 

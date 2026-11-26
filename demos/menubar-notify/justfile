@@ -28,14 +28,14 @@ icons: install
 
 compile-win: frontend icons
     bun build --compile --target=bun-windows-x64 --windows-hide-console {{win_icon}} --minify --sourcemap app.ts app-worker.ts --outfile dist/{{exe}}-windows-x64.exe
-    bun ../../src/refresh-icons.ts
+    bun ../../packages/sweetview-build/src/refresh-icons.ts
 
 compile-mac: frontend
     bun build --compile --target=bun-darwin-arm64 --minify --sourcemap app.ts app-worker.ts --outfile dist/{{exe}}-macos-arm64
 
 # Signed ad-hoc by make-app; notifications need that and the bundle id
 mac-app: icons compile-mac
-    bun ../../src/make-app.ts --name "{{name}}" --bundle-id dev.mrowr.menubar-notify --binary dist/{{exe}}-macos-arm64 --icns build/AppIcon.icns --plist LSUIElement=true --out dist
+    bun ../../packages/sweetview-build/src/make-app.ts --name "{{name}}" --bundle-id dev.mrowr.menubar-notify --binary dist/{{exe}}-macos-arm64 --icns build/AppIcon.icns --plist LSUIElement=true --out dist
 
 open: mac-app
     open "dist/{{name}}.app"

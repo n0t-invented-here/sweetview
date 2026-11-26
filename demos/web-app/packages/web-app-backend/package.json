@@ -8,5 +8,7 @@
     ".": "./src/index.ts",
     "./protocol": "./src/protocol.ts"
   },
-  "dependencies": {}
+  "dependencies": {
+    "@n1h/sweetview": "workspace:*"
+  }
 }
