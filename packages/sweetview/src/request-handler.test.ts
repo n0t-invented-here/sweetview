@@ -100,7 +100,7 @@ const nativeDrop = resolvedLibPath !== undefined && fileDropHandlerCall(resolved
 async function runLive(mode: string) {
   const profile = mkdtempSync(join(tmpdir(), "sweetview-request-handler-"));
   try {
-    const name = mode === "drop" ? "webview-file-drop" : "request-handler";
+    const name = mode !== "drop" ? "request-handler" : process.platform === "darwin" ? "webview-file-drop.darwin" : "webview-file-drop";
     const fixture = fileURLToPath(new URL(`../test/fixtures/${name}.ts`, import.meta.url));
     const proc = Bun.spawn([process.execPath, fixture], {
       timeout: 20_000,
@@ -118,7 +118,12 @@ async function runLive(mode: string) {
     ]);
     const line = stdout.split(/\r?\n/).find((line) => line.startsWith("RESULT "));
     if (code !== 0 || !line) throw new Error(`Live fixture exit ${code}\n${stdout}\n${stderr}`);
-    expect(stderr).toBe("");
+    // macOS logs this line itself when a process reads a file URL from a
+    // pasteboard it filled, which is how the drop fixture stands in for Finder.
+    const ownStderr = mode === "drop" && process.platform === "darwin"
+      ? stderr.split("\n").filter((line) => !line.startsWith("sandbox_extension_consume failed")).join("\n")
+      : stderr;
+    expect(ownStderr).toBe("");
     const result = JSON.parse(line.slice("RESULT ".length));
     expect(result.timedOut).toBe(false);
     expect(result.report?.error).toBeUndefined();
@@ -151,7 +156,10 @@ test.if(live)("serves worker routes and isolates the frames origin in a real des
   });
   expect(report.binary).toEqual({ length: 20_480, correct: true });
   expect(report.stream).toEqual({ status: 200, body: `one:${"x".repeat(8192)}:three` });
-  if (process.platform === "win32" && nativeStreaming) expect(report.streamFirstReadAfterEof).toBe(true);
+  // WebView2 hands the page a response only once its body has ended; a
+  // WKURLSchemeTask delivers each chunk as it is written, so the page's first
+  // read returns before the worker's stream has closed.
+  if (nativeStreaming) expect(report.streamFirstReadAfterEof).toBe(process.platform === "win32");
   expect(report.image).toEqual([1, 1]);
   expect(report.parentOrigin).toBe(assetOrigin);
   expect(report.frame).toEqual({
@@ -177,6 +185,22 @@ test.if(process.platform === "win32" && nativeDrop)("registers and clears file d
   const { report } = await runLive("drop");
   expect(report.states).toEqual([true, true, false, true]);
   expect(report.delivered).toEqual([report.path]);
+  expect(report.disposed).toBe(true);
+}, 30_000);
+
+test.if(process.platform === "darwin" && nativeDrop)("registers and clears file drops on a live WKWebView as Window listeners change, and delivers a dropped file", async () => {
+  const { report } = await runLive("drop");
+  // One listener, a second replacing the first, none, one again: the file
+  // drop handler takes an external file drag exactly while a listener exists,
+  // and WebKit is handed the drag otherwise.
+  expect(report.states).toEqual([true, true, false, true]);
+  // The drop is accepted at every step without WebKit seeing it, and the
+  // listener runs after performDragOperation: returned, with the file's path.
+  expect(report.dropSteps).toEqual({ entered: true, updated: true, prepared: true, performed: true, deliveredInsidePerform: false });
+  expect(report.webkitSawDrop).toBe(false);
+  // The fixture's NSURL fileURLWithPath: decomposes the name's "ü" (file
+  // system representation), so the two are compared in one normal form.
+  expect(report.delivered.map((path: string) => path.normalize("NFC"))).toEqual([report.path.normalize("NFC")]);
   expect(report.disposed).toBe(true);
 }, 30_000);
 

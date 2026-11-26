@@ -5,8 +5,27 @@ import { describe, expect, test } from "bun:test";
 import { createNotifier, Menu, Notifier, pickFolder, Screen, Tray, Window } from "./index";
 
 describe("public modules", () => {
-  test("Window.fromHandle resolves to this platform's implementation on first call", () => {
-    // A bogus handle: no window is touched, IsWindowVisible / isVisible just reports false.
+  test("Window.fromHandle resolves to this platform's implementation on first call", async () => {
+    if (process.platform === "darwin") {
+      // fromHandle reads the NSWindow's styleMask to detect its chrome, and
+      // sending a message to a pointer that is not an object crashes the
+      // process, so macOS wraps a real window that is never shown.
+      const { alloc, release, sharedApp } = await import("./darwin/objc");
+      sharedApp();
+      const nsWindow = alloc("NSWindow");
+      try {
+        const win = Window.fromHandle(nsWindow);
+        expect(typeof win.show).toBe("function");
+        expect(win.isVisible()).toBe(false);
+        // A wrapper does not own the window: dispose() leaves it alive.
+        win.dispose();
+        expect(Window.fromHandle(nsWindow).isVisible()).toBe(false);
+      } finally {
+        release(nsWindow);
+      }
+      return;
+    }
+    // A bogus handle: no window is touched, IsWindowVisible just reports false.
     const win = Window.fromHandle(1n);
     expect(typeof win.show).toBe("function");
     if (process.platform === "win32") expect(win.isVisible()).toBe(false);

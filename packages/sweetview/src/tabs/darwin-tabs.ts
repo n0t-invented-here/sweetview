@@ -48,6 +48,8 @@ type MacTabRecord = {
   readonly hooks: TabAttachHooks;
   shown: boolean;
   closed: boolean;
+  /** True only while `tab.close()` is inside `performClose:`; see `onCloseRequest`. */
+  closingByApi?: boolean;
   api: Tab<any, any>;
   stopFileDrop?: () => void;
 };
@@ -400,8 +402,13 @@ function ensureHost(window: Window): MacTabHost {
       rec.host.fireMove(frame);
     },
     onCloseRequest: (nsWin) => {
-      const host = recordByNsWin.get(nsWin)?.host;
-      return Boolean(host && host.tabs.size === 1 && host.fireClose());
+      const record = recordByNsWin.get(nsWin);
+      // tab.close() always closes its tab; only a close the user asked for
+      // (the close button, Close Tab) on a window's last tab is first offered
+      // to the window's onClose listeners.
+      if (record === undefined || record.closingByApi) return false;
+      const host = record.host;
+      return host.tabs.size === 1 && host.fireClose();
     },
     // Synchronous, unlike onClosed: no queued popup opening fires once the close began.
     onWillClose: (nsWin) => markTabClosing(nsWin),
@@ -562,7 +569,16 @@ export const darwinTabsDriver: TabsDriver = {
         // A shown tab is marked closing by onWillClose (performClose: can be vetoed); an unshown one by detachPage.
         const tabHost = record.host;
         if (record.shown) {
-          tabHost.group.close(nsWin);
+          // As on Windows, the tab closes even when it is its window's last:
+          // onTabClose fires, and then the emptied window's onClose
+          // listeners run (or, with none, the window is disposed) from
+          // onClosed. performClose: runs the close request synchronously.
+          record.closingByApi = true;
+          try {
+            tabHost.group.close(nsWin);
+          } finally {
+            record.closingByApi = false;
+          }
         } else {
           record.closed = true;
           stopDarwinWindowResize(nsWin);

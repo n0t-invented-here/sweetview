@@ -162,7 +162,9 @@ length, and the caller's context. The pointers expire when the callback
 returns, so Sweetview copies them first. While a request is open, WebView2
 holds an `ICoreWebView2Deferral` and WebKit holds the `WKURLSchemeTask`
 (WebKit drops tasks it stops). Linux accepts registration without serving
-requests.
+requests. On macOS the body is what WebKit gives a `WKURLSchemeHandler`: the
+parts the page holds in memory. A `Blob` body, or a `FormData` containing a
+`File`, arrives empty; see [dynamic requests](app.md#dynamic-requests).
 
 `webview_complete_request` answers a request in one call. It copies the
 response, queues delivery, and accepts status 100 to 599, headers as an

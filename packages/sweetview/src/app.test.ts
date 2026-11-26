@@ -1,6 +1,7 @@
 // Live Windows tests for WebView.attach, createApp outer-bounds & style preservation,
 // ringBytes validation, error-path recovery, and Layer 1 tabbed Window disposal
-// (both explicit win.dispose() and default WM_CLOSE).
+// (both explicit win.dispose() and default WM_CLOSE), and their live macOS
+// counterparts on NSWindow and WKWebView.
 
 import { describe, expect, test } from "bun:test";
 import { createApp, WebView } from "./index";
@@ -312,5 +313,186 @@ describe.if(onWindows)("WebView & createApp (win32)", () => {
     expect(t1.webview.raw.unsafeHandle).toBeNull();
     expect(t2.webview.raw.unsafeHandle).toBeNull();
     await expect(WebView.openTab(win, { title: "Three", url: "about:blank" })).rejects.toThrow(/disposed window/);
+  });
+});
+
+describe.if(process.platform === "darwin")("WebView, createApp & tabs (darwin)", () => {
+  const NSStatusWindowLevel = 25n;
+  const objc = () => import("@n1h/sweetview-native/darwin/objc");
+  const styleMaskOf = async (win: Window) => {
+    const { asId, sel, sendInt } = await objc();
+    return BigInt(sendInt(asId(win.handle as bigint), sel("styleMask")) ?? -1);
+  };
+  // Tab closes finish on a Bun timer (after AppKit's windowWillClose:), so the
+  // wait yields to Bun's loop as well as pumping AppKit's.
+  const settle = async (done: () => boolean, budgetMs = 3000) => {
+    for (const end = performance.now() + budgetMs; performance.now() < end; await Bun.sleep(10)) {
+      pumpEvents();
+      if (done()) return true;
+    }
+    return done();
+  };
+
+  test("WebView.attach rejects invalid ringBytes without poisoning later attaches", async () => {
+    const win = new Window({ title: "Ring Validation", bounds: { x: 100, y: 100, width: 400, height: 300 }, noActivate: true });
+    try {
+      await expect(WebView.attach(win, { url: "about:blank", ringBytes: 32 })).rejects.toThrow(/power of two between 128/);
+      await expect(WebView.attach(win, { url: "about:blank", ringBytes: 200 })).rejects.toThrow(/power of two between 128/);
+      const view = await WebView.attach(win, { url: "about:blank", ringBytes: 256 });
+      expect(view.raw.unsafeHandle).not.toBeNull();
+      view.dispose();
+    } finally {
+      win.dispose();
+    }
+  });
+
+  test("WebView.attach preserves outer bounds and the NSWindow styleMask for framed, frameless, and Window.fromHandle windows", async () => {
+    const target = { x: 120, y: 120, width: 640, height: 480 };
+    const win = new Window({ title: "Attach Bounds", bounds: target, noActivate: true });
+    const framedMask = await styleMaskOf(win);
+    const view = await WebView.attach(win, { url: "about:blank" });
+    try {
+      expect(win.bounds()).toEqual(target);
+      expect(await styleMaskOf(win)).toBe(framedMask);
+    } finally {
+      view.dispose();
+      win.dispose();
+    }
+
+    // A frameless window stays borderless (styleMask 0) through the attach and after it is shown.
+    const bounds = { x: 100, y: 100, width: 500, height: 400 };
+    const frameless = new Window({ frame: false, bounds, noActivate: true });
+    expect(await styleMaskOf(frameless)).toBe(0n);
+    const framelessView = await WebView.attach(frameless, { url: "about:blank" });
+    try {
+      expect(await styleMaskOf(frameless)).toBe(0n);
+      expect(frameless.bounds()).toEqual(bounds);
+      frameless.show();
+      pumpUntil(() => frameless.isVisible());
+      expect(await styleMaskOf(frameless)).toBe(0n);
+      expect(frameless.bounds()).toEqual(bounds);
+    } finally {
+      framelessView.dispose();
+      frameless.dispose();
+    }
+
+    // A borrowed Window.fromHandle wrapper leaves the host's style and bounds alone.
+    const host = new Window({ frame: false, bounds, noActivate: true });
+    const borrowed = Window.fromHandle(host.handle);
+    const borrowedView = await WebView.attach(borrowed, { url: "about:blank" });
+    try {
+      expect(await styleMaskOf(host)).toBe(0n);
+      expect(host.bounds()).toEqual(bounds);
+    } finally {
+      borrowedView.dispose();
+      borrowed.dispose();
+      host.dispose();
+    }
+  });
+
+  test("a tabbed Window shown before its first tab reveals the tabs, and setTopmost and Screen.of follow the tab windows", async () => {
+    const { asId, sel, sendInt, sendRetBool } = await objc();
+    const { Screen } = await import("@n1h/sweetview-native");
+    const win = new Window({ title: "Tabs", tabs: true, bounds: { x: 140, y: 140, width: 720, height: 500 }, noActivate: true });
+    try {
+      win.show(); // before any tab exists
+      const t1 = await WebView.openTab(win, { title: "One", url: "about:blank" });
+      const t2 = await WebView.openTab(win, { title: "Two", url: "about:blank" });
+      const tabWindows = [t1, t2].map((tab) => asId(tab.webview.window.handle as bigint));
+      expect(await settle(() => win.isVisible() && tabWindows.every((w) => Boolean(sendRetBool(w, sel("isVisible")))))).toBe(true);
+
+      win.setTopmost(true);
+      expect(tabWindows.map((w) => BigInt(sendInt(w, sel("level")) ?? -1))).toEqual([NSStatusWindowLevel, NSStatusWindowLevel]);
+      win.setTopmost(false);
+      expect(tabWindows.map((w) => BigInt(sendInt(w, sel("level")) ?? -1))).toEqual([0n, 0n]);
+
+      const screen = Screen.of(win);
+      expect(screen.bounds.width).toBeGreaterThan(0);
+      expect(screen.scale).toBeGreaterThan(0);
+
+      // With no mouse button down these do nothing, and must not throw.
+      win.startResize("right");
+      pumpEvents();
+      expect(win.bounds().width).toBe(720);
+    } finally {
+      win.dispose();
+    }
+  });
+
+  test("tab.close() closes a window's last tab, fires onTabClose, then asks the window's onClose listeners", async () => {
+    const win = new Window({ title: "Last Tab", tabs: true, bounds: { x: 150, y: 150, width: 720, height: 500 }, noActivate: true });
+    const events: string[] = [];
+    win.onTabClose((tab) => events.push(`tab:${tab.title}`));
+    win.onClose(() => events.push("window"));
+    try {
+      const t1 = await WebView.openTab(win, { title: "One", url: "about:blank" });
+      const t2 = await WebView.openTab(win, { title: "Two", url: "about:blank" });
+      win.show();
+      await settle(() => win.isVisible());
+      t2.close();
+      expect(await settle(() => events.length === 1)).toBe(true);
+      expect(events).toEqual(["tab:Two"]);
+      expect(t2.webview.raw.unsafeHandle).toBeNull();
+      t1.close();
+      expect(await settle(() => events.length === 3)).toBe(true);
+      expect(events).toEqual(["tab:Two", "tab:One", "window"]);
+      expect(t1.webview.raw.unsafeHandle).toBeNull();
+    } finally {
+      win.dispose();
+    }
+  });
+
+  test("a tab survives its webview being disposed directly, and the library's UIDelegate is restored first", async () => {
+    const { asId, jsString, sel, send } = await objc();
+    const { hostedWebView } = await import("./tabs/darwin-webview");
+    const className = (object: bigint) => jsString(asId(send(object, sel("className"))));
+    const win = new Window({ title: "Direct Dispose", tabs: true, bounds: { x: 160, y: 160, width: 720, height: 500 }, noActivate: true });
+    const closed: string[] = [];
+    win.onTabClose((tab) => closed.push(tab.title));
+    try {
+      const t1 = await WebView.openTab(win, { title: "One", url: "about:blank" });
+      const t2 = await WebView.openTab(win, { title: "Two", url: "about:blank" });
+      win.show();
+      await settle(() => win.isVisible());
+      const wkWebView = hostedWebView(asId(t1.webview.window.handle as bigint))!;
+      // A tab's WKWebView is the library's subclass, behind the tab driver's UIDelegate.
+      expect(className(wkWebView)).toBe("SweetviewWKWebView");
+      expect(className(asId(send(wkWebView, sel("UIDelegate"))))).toBe("SweetviewTabUIDelegate");
+
+      t1.webview.dispose();
+      t1.webview.dispose(); // idempotent
+      expect(t1.webview.raw.unsafeHandle).toBeNull();
+      expect(t2.webview.raw.unsafeHandle).not.toBeNull();
+      t1.close();
+      expect(await settle(() => closed.length === 1)).toBe(true);
+      expect(closed).toEqual(["One"]);
+    } finally {
+      win.dispose();
+    }
+  });
+
+  test("tabbed Window.dispose() disposes its tabs' webviews, leaves a torn-off tab alone, and blocks later openTab calls", async () => {
+    const win = new Window({ title: "Layer 1 Tabs", tabs: true, bounds: { x: 170, y: 170, width: 720, height: 500 }, noActivate: true });
+    const t1 = await WebView.openTab(win, { title: "One", url: "about:blank" });
+    const t2 = await WebView.openTab(win, { title: "Two", url: "about:blank" });
+    const t3 = await WebView.openTab(win, { title: "Three", url: "about:blank" });
+    win.show();
+    await settle(() => win.isVisible());
+    const detached = await t3.moveToNewWindow();
+    try {
+      expect(detached).not.toBe(win);
+      expect(t3.window).toBe(detached);
+      expect(await settle(() => detached.isVisible())).toBe(true);
+
+      win.dispose();
+      win.dispose(); // idempotent
+      expect(t1.webview.raw.unsafeHandle).toBeNull();
+      expect(t2.webview.raw.unsafeHandle).toBeNull();
+      expect(t3.webview.raw.unsafeHandle).not.toBeNull();
+      await expect(WebView.openTab(win, { title: "Four", url: "about:blank" })).rejects.toThrow(/disposed window/);
+    } finally {
+      detached.dispose();
+    }
+    expect(t3.webview.raw.unsafeHandle).toBeNull();
   });
 });

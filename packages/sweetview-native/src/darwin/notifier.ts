@@ -143,11 +143,19 @@ function ensureSharedDelegate(): Id {
 
 function ensureSharedBlocks(): { auth: Id; req: Id } {
   if (sharedAuthBlock === NIL) {
+    // These bodies run later on Bun's event loop (threadsafe), after the
+    // completion handler has returned and its arguments may be freed: compare
+    // object arguments with NIL, never send them messages.
     sharedAuthBlock = makeBlock(
       (granted, error) => {
         if (!granted) {
+          // macOS answers a user's denial (UNErrorDomain 1, "Notifications are
+          // not allowed") and an unsigned or temporary-folder bundle both with
+          // an error, so its presence does not tell the two apart.
           console.error(
-            `sweetview: notification permission ${error === NIL ? "denied by the user" : "refused by macOS: the app is not a signed .app bundle (makeMacApp signs one), or it runs from a temporary folder"}`,
+            error === NIL
+              ? "sweetview: notification permission denied by the user"
+              : "sweetview: notification permission not granted: turned off for this app in System Settings > Notifications, or refused by macOS because the app is not a signed .app bundle (makeMacApp signs one) or runs from a temporary folder",
           );
         }
       },

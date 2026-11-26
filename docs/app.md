@@ -298,7 +298,7 @@ Explorer or Finder. See [file drops](native/windows.md#file-drops).
 | `title` | Current tab title. |
 | `setTitle(title)` | Updates the tab's title in the tab strip / title bar. |
 | `select()` | Focuses and activates this tab (and its hosting window). |
-| `close()` | Requests closing the tab. |
+| `close()` | Closes the tab, the window's last tab included: `onTabClose` fires, and when no tab is left the window's `onClose` listeners run, or with none the window is disposed. A close the user asks for on a macOS window's last tab (the close button, Close Tab) is offered to the `onClose` listeners first and closes nothing while one is registered. |
 | `moveToNewWindow()` | Detaches the tab into its own tabbed window (keeping its webview state intact) and resolves with the new `Window`. |
 | `dispose()` | Tears down the tab and its webview. |
 
@@ -588,6 +588,16 @@ static table. With no handler, those requests return 404.
   pairs, with repeated names supported), and `body` (UTF-8 string,
   `Uint8Array`, `ArrayBuffer` or `null`). A throw returns 500. Returning a
   Promise gives an immediate 500 with instructions for worker mode.
+
+On macOS a request body that is a `Blob`, or a `FormData` containing a
+`File` or `Blob`, reaches the handler empty: WebKit hands its scheme handler
+only the body parts the page holds in memory. Strings, `ArrayBuffer` and
+typed arrays, `URLSearchParams`, and a `FormData` of text fields arrive
+whole. A page that uploads files reads them first, which works on both
+platforms: send `await blob.arrayBuffer()`, or for a form
+`const encoded = new Response(formData)` and post
+`await encoded.arrayBuffer()` with `encoded.headers.get("Content-Type")` as
+the `Content-Type`.
 
 Both modes use native interception and zero TCP. They require the request
 symbols that arrive with `@n1h/sweetview-webview-bun` 2.8.0, which the
