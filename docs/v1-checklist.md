@@ -102,7 +102,7 @@ Source: `docs/audit-and-v1-plan.md`, `docs/v1-api.md`, and the user's v1.0 direc
   - [x] `n0t-invented-here/sweetview-webview-bun` (branch `v1-drafting`): expose `framesOrigin`, `setRequestHandler` / `completeRequest`, and `setAllowExternalDrop`. The Windows C++ build, `build/libwebview.dll`, and Bun bindings are built and verified on the `v1-drafting` checkouts with zero TCP ports.
   - [x] `n0t-invented-here/sweetview` (branch `v1-drafting`): wire native dynamic `onRequest`, `FRAMES_ORIGIN`, and `allowExternalDrop` with no sockets. Verify static precedence, worker HTML and POST routes, dynamic images, binary ring chunking, iframe isolation, and shutdown in live WebView2.
   - [x] verify: `sweetview-webview` builds cleanly on Windows, `sweetview-webview-bun` live WebView2 test passes, and `sweetview` end-to-end zero-TCP dynamic request + frames origin tests pass
-  - [ ] Update the bindings' `webview` submodule to the reviewed C++ revision. Rebuild macOS `build/libwebview.dylib` and Linux `build/libwebview-x64.so` from that revision and verify the artifacts on their target platforms. See [macOS and Linux verification](v1-macos-verification.md).
+  - [ ] Rebuild macOS `build/libwebview.dylib` and Linux `build/libwebview-x64.so` in `n0t-invented-here/sweetview-webview-bun` (`v1-drafting`, submodule already pinned to the final reviewed `sweetview-webview` commit) and verify the artifacts on their target platforms. See [macOS and Linux verification](v1-macos-verification.md).
   - [ ] After the macOS and Linux builds and verification, publish `@n1h/sweetview-webview-bun@2.8.0` to npm. Then raise `sweetview`'s `^2.7.0` dependency ranges to `^2.8.0`, refresh `bun.lock`, and re-run the live Windows and macOS request tests against the published package.
 
 - [x] **AC13: Updated docs and macOS/Linux verification instructions**
@@ -139,6 +139,9 @@ Source: `docs/audit-and-v1-plan.md`, `docs/v1-api.md`, and the user's v1.0 direc
   - Finding 3 identified the request-handler tests assuming that an explicit or sibling library had the new symbols. The live tests now probe the resolved library for both request symbols before launching a fixture.
   - Finding 4 identified unchecked `WM_COPYDATA` payloads. Both native receivers use the same `SecondInstanceEvent` validator, with unit coverage for malformed JSON, invalid fields, and valid messages.
   - The file-drop flag identified possible interception by WebView2 or WKWebView. The app and native references now describe window and webview drop routing. The [live Finder probe](v1-macos-verification.md#drop-over-wkwebview) measures delivery over the page on macOS.
+- [x] Verification passes 4A, 4B, and 5A verified all Pass 3A/3B/4A fixes across all three repositories.
+  - Pass 4B (`sweetview` at `5cf3ca3`): CLEAN — zero remaining code findings (`just check` 159 pass / 4 skip / 0 fail; `just pack` all 6 packages).
+  - Pass 4A and Pass 5A (`sweetview-webview` and `sweetview-webview-bun`): caught and fixed process-wide monotonic `request_id` generation, fail-closed deferral completion and `m_controller->Close()` teardown ordering, `m_submitted_requests` protection so a throwing native handler cannot clobber a submitted response (Win32 and macOS), `com_ptr` COM release and init wait-loop failure signaling, Windows-only Service Worker test gating, and `Webview.completeRequest()` throwing `-3` after `destroy()`. Rebuilt Windows `libwebview.dll` with zero `/W4` warnings, 26/26 C++ tests passing, and 45/45 live WebView2 Bun assertions passing.
 
 ## Host OS constraint (Windows-only machine)
 
