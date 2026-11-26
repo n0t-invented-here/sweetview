@@ -7,7 +7,7 @@ import type { EventMap, MethodMap } from "@n1h/sweetview-ipc";
 import { NIL, type Id, asId, sel, send, sendPtr, sendRectBool, sendRetBool, sharedApp } from "@n1h/sweetview-native/darwin/objc";
 import { fromCocoa, rectOf, toCocoa } from "@n1h/sweetview-native/darwin/screen";
 import { createWindowTabs, installTabMenus, pooled, type WindowTabs } from "@n1h/sweetview-native/darwin/tabs";
-import { bindDarwinTabGroup, startDarwinWindowResize, stopDarwinWindowResize, subscribeDarwinFileDrop } from "@n1h/sweetview-native/darwin/window";
+import { bindDarwinTabGroup, startDarwinWindowDrag, startDarwinWindowResize, stopDarwinWindowResize, subscribeDarwinFileDrop } from "@n1h/sweetview-native/darwin/window";
 import { Window, type Rect, type ResizeEdge } from "@n1h/sweetview-native";
 import {
   emitWindowNewTab,
@@ -290,10 +290,7 @@ function bindHostToWindow(window: Window, group: WindowTabs, initialBounds: Rect
     startDrag() {
       const cur = activeWin();
       if (cur === undefined || host.closed) return;
-      pooled(() => {
-        const event = asId(send(sharedApp(), sel("currentEvent")));
-        if (event !== NIL) sendPtr(cur, sel("performWindowDragWithEvent:"), event);
-      });
+      pooled(() => startDarwinWindowDrag(cur));
     },
     startResize(edge: ResizeEdge) {
       if (host.closed || meta.resizable === false) return;

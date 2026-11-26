@@ -419,6 +419,95 @@ describe.if(process.platform === "darwin")("WebView, createApp & tabs (darwin)",
     }
   });
 
+  test("startResize and startDrag act only while the left mouse button is down", async () => {
+    // The button state AppKit reports and NSWindow's own drag entry point are
+    // replaced for the test, so no real input is needed. The cursor is moved
+    // with CGWarpMouseCursorPosition, which posts no events, and put back.
+    const { dlopen, FFIType, JSCallback } = await import("bun:ffi");
+    const { asId, cls, sel, send, NIL } = await objc();
+    const { Screen } = await import("@n1h/sweetview-native");
+    const { u64, f64, i64, i16 } = FFIType;
+    const runtime = dlopen("/usr/lib/libobjc.A.dylib", {
+      class_getClassMethod: { args: [u64, u64], returns: u64 },
+      class_getInstanceMethod: { args: [u64, u64], returns: u64 },
+      method_setImplementation: { args: [u64, u64], returns: u64 },
+    }).symbols;
+    // +[NSEvent otherEventWithType:location:modifierFlags:timestamp:windowNumber:context:subtype:data1:data2:]
+    const makeEvent = dlopen("/usr/lib/libobjc.A.dylib", {
+      objc_msgSend: { args: [u64, u64, u64, f64, f64, u64, f64, i64, u64, i16, i64, i64], returns: u64 },
+    }).symbols.objc_msgSend;
+    const { CGWarpMouseCursorPosition } = dlopen("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics", {
+      CGWarpMouseCursorPosition: { args: [f64, f64], returns: FFIType.i32 },
+    }).symbols;
+
+    let buttons = 0n;
+    const pressedStub = new JSCallback(() => buttons, { args: [u64, u64], returns: u64 });
+    const drags: bigint[] = [];
+    const dragStub = new JSCallback((_self: bigint, _cmd: bigint, event: bigint) => void drags.push(BigInt(event)), { args: [u64, u64, u64], returns: FFIType.void });
+    const pressedMethod = runtime.class_getClassMethod(cls("NSEvent"), sel("pressedMouseButtons"));
+    const dragMethod = runtime.class_getInstanceMethod(cls("NSWindow"), sel("performWindowDragWithEvent:"));
+    expect(pressedMethod).not.toBe(0n);
+    expect(dragMethod).not.toBe(0n);
+    const realPressed = runtime.method_setImplementation(pressedMethod, BigInt(pressedStub.ptr!));
+    const realDrag = runtime.method_setImplementation(dragMethod, BigInt(dragStub.ptr!));
+
+    const home = Screen.cursor();
+    const moveCursor = (dx: number) => CGWarpMouseCursorPosition(home.x + dx, home.y);
+    const bounds = { x: 300, y: 300, width: 400, height: 300 };
+    const win = new Window({ frame: false, resizable: true, bounds, noActivate: true });
+    const widthAfter = async (ms = 120) => {
+      for (const end = performance.now() + ms; performance.now() < end; await Bun.sleep(10)) pumpEvents();
+      return win.bounds().width;
+    };
+    try {
+      win.show();
+      await settle(() => win.isVisible());
+
+      // Right button only: no resize gesture starts.
+      buttons = 2n;
+      win.startResize("right");
+      moveCursor(40);
+      expect(await widthAfter()).toBe(400);
+
+      // Left button: the right edge follows the cursor.
+      moveCursor(0);
+      buttons = 1n;
+      win.startResize("right");
+      moveCursor(40);
+      expect(await settle(() => win.bounds().width === 440)).toBe(true);
+      moveCursor(60);
+      expect(await settle(() => win.bounds().width === 460)).toBe(true);
+      expect(win.bounds().x).toBe(300);
+
+      // Released: the gesture ends, and the cursor no longer moves the edge.
+      buttons = 0n;
+      await widthAfter(60);
+      moveCursor(120);
+      expect(await widthAfter()).toBe(460);
+
+      // startDrag hands AppKit the current event only while the left button is down.
+      const event = asId(makeEvent(cls("NSEvent"), sel("otherEventWithType:location:modifierFlags:timestamp:windowNumber:context:subtype:data1:data2:"), 15n, 0, 0, 0n, 0, 0n, NIL, 0, 0n, 0n));
+      expect(event).not.toBe(NIL);
+      const postEvent = dlopen("/usr/lib/libobjc.A.dylib", { objc_msgSend: { args: [u64, u64, u64, FFIType.bool], returns: FFIType.void } }).symbols.objc_msgSend;
+      postEvent(asId(send(cls("NSApplication"), sel("sharedApplication"))), sel("postEvent:atStart:"), event, true);
+      pumpEvents();
+      for (const down of [0n, 2n]) {
+        buttons = down;
+        win.startDrag();
+      }
+      expect(drags).toEqual([]);
+      buttons = 1n;
+      win.startDrag();
+      expect(drags).toHaveLength(1);
+      expect(drags[0]).not.toBe(NIL);
+    } finally {
+      runtime.method_setImplementation(pressedMethod, realPressed);
+      runtime.method_setImplementation(dragMethod, realDrag);
+      CGWarpMouseCursorPosition(home.x, home.y);
+      win.dispose();
+    }
+  });
+
   test("tab.close() closes a window's last tab, fires onTabClose, then asks the window's onClose listeners", async () => {
     const win = new Window({ title: "Last Tab", tabs: true, bounds: { x: 150, y: 150, width: 720, height: 500 }, noActivate: true });
     const events: string[] = [];

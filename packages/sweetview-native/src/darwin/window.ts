@@ -483,6 +483,20 @@ export function startDarwinWindowResize(
   ensureResizeTimer();
 }
 
+/**
+ * Starts an OS-driven move of `win` that follows the cursor, shared by regular
+ * windows and macOS tab-group windows. Does nothing unless the primary (left)
+ * mouse button is down, like `startDarwinWindowResize` and Windows'
+ * `VK_LBUTTON` check: the window server moves a window only while that button
+ * is held, and asked without it AppKit logs "Window move completed without
+ * beginning".
+ */
+export function startDarwinWindowDrag(win: Id): void {
+  if (!primaryMouseButtonDown()) return;
+  const event = asId(send(sharedApp(), sel("currentEvent")));
+  if (event !== NIL) sendPtr(win, sel("performWindowDragWithEvent:"), event);
+}
+
 /** Cancels an in-progress `startDarwinWindowResize` gesture on `win`, if any. */
 export function stopDarwinWindowResize(win: Id): void {
   if (!resizers.delete(win)) return;
@@ -918,8 +932,7 @@ function buildWindow(win: Id, options: WindowOptions, framed: boolean, owned: bo
 
     startDrag() {
       if (disposed) return;
-      const event = asId(send(sharedApp(), sel("currentEvent")));
-      if (event !== NIL) sendPtr(win, sel("performWindowDragWithEvent:"), event);
+      startDarwinWindowDrag(win);
     },
 
     startResize(edge: ResizeEdge) {

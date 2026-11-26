@@ -133,7 +133,7 @@ import type { WindowChromeInfo, WindowChromeKind, WindowChromeMethods } from "@n
 | Method | Params | Result | What `windowChromeMethods` does on the UI thread |
 |---|---|---|---|
 | `window.info` | `void` | `WindowChromeInfo` | Returns the configured `chrome` kind and `window.isMaximized()`. |
-| `window.drag` | `void` | `void` | Calls `window.startDrag()`: the window follows the cursor until the mouse button is released. Windows: the OS's own move loop runs. macOS: the drag starts from the application's current event. |
+| `window.drag` | `void` | `void` | Calls `window.startDrag()`: the window follows the cursor until the mouse button is released. Windows: the OS's own move loop runs. macOS: the drag starts from the application's current event, and only while the left mouse button is down. |
 | `window.resize` | `ResizeEdge` | `void` | Calls `window.startResize(edge)`. Both Windows and macOS drag the requested edge or corner with the cursor while the left mouse button is held. |
 | `window.minimize` | `void` | `void` | Calls `window.minimize()`. |
 | `window.maximize` | `void` | `void` | Calls `window.toggleMaximize()`: maximised, or back to the previous bounds when already maximised. |
