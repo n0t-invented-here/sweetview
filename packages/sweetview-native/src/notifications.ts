@@ -1,10 +1,10 @@
 // System notifications.
 //
-// Windows: per-notification hidden Shell_NotifyIconW channels (works standalone
-// with or without a Tray, and delivers exact id/data per clicked notification).
+// Windows: WinRT toasts with per-notification Shell_NotifyIconW fallback.
 // macOS: UNUserNotificationCenter with eager delegate registration in constructor.
 
 import { backend } from "./platform";
+import type { AppIdentity } from "@n1h/sweetview-settings";
 
 export type NotificationOptions = {
   title: string;
@@ -25,6 +25,10 @@ export type NotificationClick = { id: string; data: unknown };
 
 export type NotifierOptions = {
   onClick?: (click: NotificationClick) => void;
+  /** Windows toast identity. Defaults to `identity.appId` or `Sweetview.DesktopApp`. */
+  appId?: string;
+  /** Supplies the Windows toast app ID and display name. */
+  identity?: AppIdentity;
 };
 
 export interface NotifierBackend {

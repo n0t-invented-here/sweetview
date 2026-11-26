@@ -1,10 +1,5 @@
-// Windows notifications: per-notification hidden Shell_NotifyIconW channels on
-// a dedicated message window, so:
-// 1. Notifier works standalone with or without a Tray.
-// 2. Each notification has its own uID, so firing multiple notifications and
-//    clicking an earlier one delivers that notification's exact id and data.
-// 3. When a Tray exists, we reuse its icon bytes for the toast icon; otherwise
-//    the stock application icon is used.
+// WinRT toasts and hidden Shell_NotifyIconW fallback share a message window.
+// Each toast or balloon carries its own click payload, with or without a Tray.
 
 import { type NotificationClick, type NotificationOptions, type NotifierBackend, type NotifierOptions, notificationId } from "../notifications";
 import { SM_CXICON, WM_APP, lastError, shell32, wstr } from "./api";
@@ -12,6 +7,7 @@ import { loadIcon, releaseIcon, type LoadedIcon } from "./icon";
 import { ensureWin32Init } from "./init";
 import { createMessageWindow } from "./message-window";
 import { NID_BALLOON_ICON, NID_CALLBACK, NID_FLAGS, NID_HICON, NID_HWND, NID_INFO, NID_INFO_FLAGS, NID_INFO_TITLE, NID_SIZE, NID_TIP, NID_UID, currentTrayIconBytes } from "./tray";
+import { WM_TOAST_EVENT, WinRtToastNotifier } from "./winrt-toast";
 
 const WM_NOTIFIER = WM_APP + 2;
 
@@ -92,7 +88,18 @@ type PendingEntry = {
 export function createNotifier(options: NotifierOptions = {}): NotifierBackend {
   ensureWin32Init();
   let disposed = false;
+  let toasts: WinRtToastNotifier | undefined;
+  let triedWinRt = false;
   const pending = new Map<number, PendingEntry>();
+
+  const onClick = (click: NotificationClick): void => {
+    if (disposed) return;
+    try {
+      options.onClick?.(click);
+    } catch (err) {
+      console.error("sweetview: notification onClick threw:", err);
+    }
+  };
 
   const removeUid = (uid: number): PendingEntry | undefined => {
     const entry = pending.get(uid);
@@ -105,39 +112,43 @@ export function createNotifier(options: NotifierOptions = {}): NotifierBackend {
   };
 
   const window = createMessageWindow((message, wParam, lParam) => {
+    if (message === WM_TOAST_EVENT) {
+      toasts?.handleEvent(wParam, lParam);
+      return;
+    }
     if (message !== WM_NOTIFIER) return;
     const uid = Number(wParam);
     const event = Number(lParam) & 0xffff;
     if (event === NIN_BALLOONUSERCLICK) {
       const entry = removeUid(uid);
-      if (entry && !disposed && options.onClick) {
-        try {
-          options.onClick(entry.click);
-        } catch (err) {
-          console.error("sweetview: notification onClick threw:", err);
-        }
-      }
+      if (entry) onClick(entry.click);
     } else if (event === NIN_BALLOONTIMEOUT || event === NIN_BALLOONHIDE) {
       removeUid(uid);
     }
   });
 
+  const showBalloon = (n: NotificationOptions, click: NotificationClick): boolean => {
+    if (disposed) return false;
+    const uid = nextNotificationUid++;
+    const ico = currentTrayIconBytes();
+    const smallIcon = loadIcon(ico);
+    const largeIcon = loadIcon(ico, SM_CXICON);
+    const hBalloon = largeIcon.owned ? largeIcon.handle : 0n;
+    const nid = hiddenBalloonData(window.hwnd, uid, smallIcon.handle, hBalloon, n.title, n.body ?? "", n.silent === true);
+    const ok = shell32.Shell_NotifyIconW(NIM_ADD, nid) !== 0;
+    if (!ok) {
+      console.error(`sweetview: Shell_NotifyIcon notification failed (${lastError()})`);
+      releaseIcon(smallIcon);
+      releaseIcon(largeIcon);
+      return false;
+    }
+    pending.set(uid, { click, smallIcon, largeIcon });
+    return true;
+  };
+
   return {
     notify(n: NotificationOptions): boolean {
       if (disposed) return false;
-      const uid = nextNotificationUid++;
-      const ico = currentTrayIconBytes();
-      const smallIcon = loadIcon(ico);
-      const largeIcon = loadIcon(ico, SM_CXICON);
-      const hBalloon = largeIcon.owned ? largeIcon.handle : 0n;
-      const nid = hiddenBalloonData(window.hwnd, uid, smallIcon.handle, hBalloon, n.title, n.body ?? "", n.silent === true);
-      const ok = shell32.Shell_NotifyIconW(NIM_ADD, nid) !== 0;
-      if (!ok) {
-        console.error(`sweetview: Shell_NotifyIcon notification failed (${lastError()})`);
-        releaseIcon(smallIcon);
-        releaseIcon(largeIcon);
-        return false;
-      }
       // Clone data through JSON when possible to match macOS behavior cleanly; fallback to raw value if needed.
       let data: unknown = n.data;
       if (data !== undefined) {
@@ -145,14 +156,35 @@ export function createNotifier(options: NotifierOptions = {}): NotifierBackend {
           data = JSON.parse(JSON.stringify(data));
         } catch {}
       }
-      pending.set(uid, { click: { id: notificationId(n), data }, smallIcon, largeIcon });
-      return true;
+      const click = { id: notificationId(n), data };
+      if (!triedWinRt) {
+        triedWinRt = true;
+        try {
+          toasts = new WinRtToastNotifier(window.hwnd, { ...options, onClick });
+        } catch {
+          // WinRT or per-user identity registration can be unavailable.
+        }
+      }
+      if (toasts) {
+        const notification = { title: n.title, body: n.body, silent: n.silent };
+        try {
+          toasts.show(notification, click, () => showBalloon(notification, click));
+          return true;
+        } catch {
+          // A synchronous WinRT failure leaves the balloon responsible for delivery.
+        }
+      }
+      return showBalloon(n, click);
     },
     dispose() {
       if (disposed) return;
       disposed = true;
-      for (const uid of [...pending.keys()]) removeUid(uid);
-      window.destroy();
+      try {
+        toasts?.dispose();
+      } finally {
+        for (const uid of pending.keys()) removeUid(uid);
+        window.destroy();
+      }
     },
   };
 }

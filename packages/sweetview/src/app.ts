@@ -10,7 +10,7 @@ import { pathToFileURL } from "node:url";
 import { SizeHint, Webview as RawWebview } from "@n1h/sweetview-webview-bun";
 import { assetMime, indexHtml } from "./html";
 import { createFrameAssembler, type AnyEvent, type EventMap, type MethodMap, type WireFrame } from "@n1h/sweetview-ipc";
-import { HttpResponseAssembler, requestError, runNativeRequest, type HttpResponse } from "./http-response";
+import { RequestResponseAssembler, requestError, runNativeRequest, type NativeRequestResponse } from "./request-response";
 import type { HttpRequestMessage, InitMessage, NativeRequest, NativeResponse } from "./messages";
 import { Window, quitEventLoop, runEventLoop, signalReady, type Rect, type TabHandle, type WindowOptions } from "@n1h/sweetview-native";
 import { discardQuit, getWindowMeta, isWindowDisposed, onWindowDispose, preserveWindowGeometry, scheduleNativeTimeout } from "@n1h/sweetview-native/internal";
@@ -333,11 +333,11 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
       };
 
       const assembler = createFrameAssembler();
-      const httpResponses = new HttpResponseAssembler();
+      const requestResponses = new RequestResponseAssembler();
       const decoder = new TextDecoder();
       let down = false;
       const isLive = () => !down && !isWindowDisposed(window) && raw.unsafeHandle !== null;
-      const completeRequest = ({ id, status, headers, body }: HttpResponse) => {
+      const completeRequest = ({ id, status, headers, body }: NativeRequestResponse) => {
         if (!isLive() || !requestCalls) return;
         const error = requestCalls.completeRequest(handle(), BigInt(id), status, JSON.stringify(headers), body);
         if (error !== 0) console.error(`sweetview: webview_complete_request failed (${error})`);
@@ -347,7 +347,7 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
         for (const bytes of ring.drain()) {
           if (!isLive()) break;
           if (bytes[0] === 0) {
-            const response = httpResponses.push(bytes);
+            const response = requestResponses.push(bytes);
             if (response) completeRequest(response);
             continue;
           }
@@ -402,7 +402,7 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
         cancelStartup();
         clearDispatches();
         assembler.clear();
-        httpResponses.clear();
+        requestResponses.clear();
         if (reqCb && raw.unsafeHandle !== null) requestCalls?.setRequestHandler(handle(), null, null);
         workerDrains.delete(drainToken);
         ring.stopDispatch();

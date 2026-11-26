@@ -33,6 +33,9 @@ const script = isWorkerCase ? `
       report.frame = await frameResult;
       try { report.frameAccess = typeof frame.contentWindow.document; }
       catch (err) { report.frameAccess = err.name; }
+      report.frameRoutesOnAssetOrigin = await Promise.all(
+        ["/sandbox.html", "/frame-data.json"].map(async (path) => (await fetch(path)).status),
+      );
       const failed = await fetch("/throws");
       report.failure = [failed.status, failed.headers.get("Content-Type"), await failed.text()];
       report.missing = (await fetch("/missing")).status;
@@ -57,7 +60,11 @@ const script = isWorkerCase ? `
 let report: Record<string, unknown> | undefined;
 let pending = false;
 let timedOut = false;
-const app = await createApp<{ report: [Record<string, unknown>, void] }, { pending: null }>({
+let escaped = false;
+const app = await createApp<{
+  report: [Record<string, unknown>, void];
+  iframeEscaped: [null, void];
+}, { pending: null }>({
   assets: { "index.html": new Blob([`<!doctype html><body><script>${script}</script>`]), "asset.txt": new Blob(["static asset"]) },
   worker: mode === "sync" ? undefined : "./request-handler.worker.ts",
   onRequest: mode === "sync" ? () => Promise.reject(new Error("Async handler")) as unknown as NativeResponse : "worker",
@@ -69,6 +76,7 @@ const app = await createApp<{ report: [Record<string, unknown>, void] }, { pendi
     app.quit();
   },
   uiMethods: {
+    iframeEscaped: () => { escaped = true; },
     report: (value: Record<string, unknown>) => {
       report = value;
       if (!isWorkerCase || pending || value.error) app.quit();
@@ -84,7 +92,7 @@ app.onEvent(({ name }) => {
 
 try {
   app.run();
-  console.log("RESULT " + JSON.stringify({ report, pending, timedOut, assetOrigin: ASSET_ORIGIN, framesOrigin: FRAMES_ORIGIN }));
+  console.log("RESULT " + JSON.stringify({ report, pending, timedOut, escaped, assetOrigin: ASSET_ORIGIN, framesOrigin: FRAMES_ORIGIN }));
 } finally {
   app.dispose();
 }

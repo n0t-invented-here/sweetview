@@ -10,6 +10,8 @@ const service = defineService<{ paths: [null, string[]] }, { pending: null }>((e
 
 const onRequest: RequestHandler = async (request) => {
   const url = new URL(request.url);
+  const isFramesOrigin = url.origin === "http://frames.webview.localhost"
+    || (url.protocol === "webview-frames:" && url.host === "localhost");
   seen.push(url.pathname);
   switch (url.pathname) {
     case "/dynamic":
@@ -32,12 +34,39 @@ const onRequest: RequestHandler = async (request) => {
         headers: { "Content-Type": "image/gif" },
       });
     case "/sandbox.html":
-      if (url.hostname === "frames.webview.localhost" || url.protocol === "webview-frames:") {
+      if (isFramesOrigin) {
+        const assetOrigin = url.protocol === "webview-frames:" ? "webview://localhost" : "http://webview.localhost";
         return new Response(
-          '<!doctype html><script>parent.postMessage({href: location.href, origin: self.origin}, "*");</script>',
+          `<!doctype html><script>
+            (async () => {
+              const result = {
+                href: location.href,
+                origin: self.origin,
+                hasRpc: typeof window.__sweetview_rpc !== "undefined" || typeof window.__webview__ !== "undefined",
+              };
+              try { void parent.document; result.parentDoc = "allowed"; }
+              catch (error) { result.parentDoc = error.name; }
+
+              const escape = JSON.stringify({ id: "999", method: "__sweetview_rpc", params: ["iframeEscaped", null] });
+              window.chrome?.webview?.postMessage?.(escape);
+              window.webkit?.messageHandlers?.__webview__?.postMessage?.(escape);
+
+              try {
+                await fetch(${JSON.stringify(assetOrigin + "/asset.txt")});
+                result.crossOriginFetch = "allowed";
+              } catch {
+                result.crossOriginFetch = "blocked";
+              }
+              result.sameOriginSubresource = await (await fetch("/frame-data.json")).json();
+              parent.postMessage(result, "*");
+            })().catch((error) => parent.postMessage({ error: String(error.stack || error) }, "*"));
+          </script>`,
           { headers: { "Content-Type": "text/html" } },
         );
       }
+      break;
+    case "/frame-data.json":
+      if (isFramesOrigin) return Response.json({ source: "frames" });
       break;
     case "/throws":
       throw new Error("Private handler error");

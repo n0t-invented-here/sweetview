@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { HttpResponseAssembler, runNativeRequest, writeHttpResponse, type HttpResponse } from "./http-response";
+import { RequestResponseAssembler, runNativeRequest, writeRequestResponse, type NativeRequestResponse } from "./request-response";
 import { Ring } from "./ring";
 import type { NativeResponse } from "./messages";
 import { requestHandlerCalls, webviewLibPath } from "./webview-lib";
@@ -19,8 +19,8 @@ test("a synchronous handler that returns a rejected Promise gets an immediate 50
 
 test("binary response frames preserve uint64 IDs, repeated headers and arbitrary bytes", () => {
   const ring = new Ring(Ring.create(128));
-  const assembler = new HttpResponseAssembler();
-  const result: HttpResponse[] = [];
+  const assembler = new RequestResponseAssembler();
+  const result: NativeRequestResponse[] = [];
   const wake = () => {
     ring.acknowledgeWakeup();
     for (const bytes of ring.drain()) {
@@ -36,8 +36,8 @@ test("binary response frames preserve uint64 IDs, repeated headers and arbitrary
     body: Uint8Array.from({ length: 1000 }, (_, i) => i % 256),
   };
   const empty = { ...large, id: "1", status: 204, body: new Uint8Array() };
-  writeHttpResponse(ring, large, wake);
-  writeHttpResponse(ring, empty, wake);
+  writeRequestResponse(ring, large, wake);
+  writeRequestResponse(ring, empty, wake);
   expect(result).toEqual([large, empty]);
 });
 
@@ -90,7 +90,7 @@ async function runLive(mode: string) {
 }
 
 test.if(live)("serves worker routes and isolates the frames origin in a real desktop webview", async () => {
-  const { report, pending, assetOrigin, framesOrigin } = await runLive("worker");
+  const { report, pending, escaped, assetOrigin, framesOrigin } = await runLive("worker");
   expect(report.asset).toBe("static asset");
   expect(report.paths).not.toContain("/asset.txt");
   expect(report.paths).toContain("/dynamic");
@@ -103,8 +103,20 @@ test.if(live)("serves worker routes and isolates the frames origin in a real des
   expect(report.binary).toEqual({ length: 20_480, correct: true });
   expect(report.image).toEqual([1, 1]);
   expect(report.parentOrigin).toBe(assetOrigin);
-  expect(report.frame).toEqual({ origin: framesOrigin, data: { origin: framesOrigin, href: `${framesOrigin}/sandbox.html` } });
+  expect(report.frame).toEqual({
+    origin: framesOrigin,
+    data: {
+      origin: framesOrigin,
+      href: `${framesOrigin}/sandbox.html`,
+      hasRpc: false,
+      parentDoc: "SecurityError",
+      crossOriginFetch: "blocked",
+      sameOriginSubresource: { source: "frames" },
+    },
+  });
   expect(report.frameAccess).toBe("SecurityError");
+  expect(report.frameRoutesOnAssetOrigin).toEqual([404, 404]);
+  expect(escaped).toBe(false);
   expect(report.failure).toEqual([500, "text/plain", "Internal Server Error"]);
   expect(report.missing).toBe(404);
   expect(pending).toBe(true);

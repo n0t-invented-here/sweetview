@@ -9,7 +9,7 @@
 
 import type { CallFrame, ChunkFrame, EventMap, Frame, MethodMap, ReplyFrame, Service } from "@n1h/sweetview-ipc";
 import type { Pointer } from "bun:ffi";
-import { requestError, writeHttpResponse } from "./http-response";
+import { requestError, writeRequestResponse } from "./request-response";
 import { WEBVIEW_SESSION, type HttpRequestMessage, type WorkerMessage } from "./messages";
 import { Ring } from "./ring";
 import { openWebviewCore } from "./webview-lib";
@@ -154,7 +154,7 @@ function createWorkerHost() {
   async function handleRequest(msg: HttpRequestMessage, ring: Ring, wake: () => void) {
     const handler = host.onRequest;
     if (!handler) {
-      writeHttpResponse(ring, requestError(msg.id, 404, "Not Found"), wake);
+      writeRequestResponse(ring, requestError(msg.id, 404, "Not Found"), wake);
       return;
     }
     try {
@@ -166,14 +166,14 @@ function createWorkerHost() {
       });
       const response = await handler(request);
       if (response.status < 100 || response.status > 599) throw new RangeError("Invalid response status");
-      writeHttpResponse(ring, {
+      writeRequestResponse(ring, {
         id: String(id),
         status: response.status,
         headers: [...response.headers.entries()],
         body: new Uint8Array(await response.arrayBuffer()),
       }, wake);
     } catch {
-      writeHttpResponse(ring, requestError(msg.id, 500, "Internal Server Error"), wake);
+      writeRequestResponse(ring, requestError(msg.id, 500, "Internal Server Error"), wake);
     }
   }
 

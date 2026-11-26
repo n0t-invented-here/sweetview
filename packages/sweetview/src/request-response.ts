@@ -1,7 +1,7 @@
 import type { NativeRequest, NativeResponse } from "./messages";
 import type { Ring } from "./ring";
 
-export type HttpResponse = {
+export type NativeRequestResponse = {
   id: string;
   status: number;
   headers: [string, string][];
@@ -14,7 +14,7 @@ const encoder = new TextEncoder();
 export function runNativeRequest(
   handler: (request: NativeRequest) => NativeResponse,
   request: NativeRequest,
-): HttpResponse {
+): NativeRequestResponse {
   let response: NativeResponse;
   try {
     response = handler(request);
@@ -38,7 +38,7 @@ export function runNativeRequest(
   }
 }
 
-export function requestError(id: bigint, status: number, message: string): HttpResponse {
+export function requestError(id: bigint, status: number, message: string): NativeRequestResponse {
   return {
     id: String(id),
     status,
@@ -48,7 +48,7 @@ export function requestError(id: bigint, status: number, message: string): HttpR
 }
 
 /** The worker writes complete responses into the ring, one frame or chunk at a time. */
-export function writeHttpResponse(ring: Ring, response: HttpResponse, wake: () => void): void {
+export function writeRequestResponse(ring: Ring, response: NativeRequestResponse, wake: () => void): void {
   const { id, status, headers, body } = response;
   const maxBytes = ring.capacity - 4 - PREFIX_BYTES;
   function write(kind: number, meta: Uint8Array, chunk: Uint8Array) {
@@ -82,14 +82,14 @@ export function writeHttpResponse(ring: Ring, response: HttpResponse, wake: () =
   }
 }
 
-type ResponseMeta = Omit<HttpResponse, "body">;
+type ResponseMeta = Omit<NativeRequestResponse, "body">;
 type PendingResponse = { meta: ResponseMeta; total: number; chunks: Uint8Array[]; length: number };
 
-export class HttpResponseAssembler {
+export class RequestResponseAssembler {
   readonly #pending = new Map<string, PendingResponse>();
   readonly #decoder = new TextDecoder();
 
-  push(bytes: Uint8Array): HttpResponse | undefined {
+  push(bytes: Uint8Array): NativeRequestResponse | undefined {
     const size = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getUint32(2, true);
     const meta = JSON.parse(this.#decoder.decode(bytes.subarray(PREFIX_BYTES, PREFIX_BYTES + size))) as
       ResponseMeta & { seq: number; total: number };
