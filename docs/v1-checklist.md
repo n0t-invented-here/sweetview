@@ -69,30 +69,43 @@ Source: `docs/audit-and-v1-plan.md`, `docs/v1-api.md`, and the user's v1.0 direc
   - [x] Write concrete macOS verification steps in `docs/v1-macos-verification.md` (and include in the final done-report) for Mac agents to execute
   - [x] verify: `just check`, `just compile`, and `just pack` succeed cleanly on Windows with zero stale `0.2.x` export errors
 
-- [x] **AC8: Chunked ring framing for large IPC payloads (Audit 2.8)**
-  - [x] Support transparent chunked framing in `src/ipc/frame.ts`, `src/worker.ts`, and `src/app.ts` so valid JSON replies and events larger than `ringBytes - 4` (e.g. > 1 MB) reassemble cleanly on the UI thread instead of failing, while unserializable replies still fall back to a clamped error reply
-  - [x] Add unit tests in `src/worker.test.ts` covering chunked multi-frame replies/events, tiny-ring fallback, and unserializable replies
-  - [x] verify: `bun test src/worker.test.ts src/ring.test.ts` passes and browser-safe bundle of `@n1h/sweetview/page` pulls zero Bun/FFI code
+- [x] **AC8: Workspace package split into `packages/*` with root `src/` removed (Plan Section 1)**
+  - [x] Split `src/` into 6 workspace packages: `@n1h/sweetview-ipc` (`packages/sweetview-ipc`), `@n1h/sweetview-ipc-ws` (`packages/sweetview-ipc-ws`), `@n1h/sweetview-settings` (`packages/sweetview-settings`), `@n1h/sweetview-native` (`packages/sweetview-native`), `@n1h/sweetview-build` (`packages/sweetview-build`), and `@n1h/sweetview` (`packages/sweetview`)
+  - [x] Delete root `src/` completely (`Test-Path src` is `False`) and convert root `package.json` to a private workspace root
+  - [x] Keep all 13 `@n1h/sweetview` subpath exports working and update `tsconfig.json`, `justfile`, and `demos/*`
+  - [x] verify: `just check`, `just compile`, `just pack`, browser bundle check, and `just demos native-tabs drive` all pass cleanly
 
-- [ ] **AC9: Custom URL schemes, single-instance lock & handoff, and unified activation pipeline (Plan Section 4)**
-  - [ ] Implement Windows HKCU protocol registration (`registerUrlScheme`, `unregisterUrlScheme`), `CreateMutexW` single-instance lock, and `WM_COPYDATA` + `AllowSetForegroundWindow` handoff in `src/native/win32/activation.ts`
-  - [ ] Implement macOS `makeMacApp({ urlSchemes })` `CFBundleURLTypes` plist generation in `src/build.ts` (+ `--url-scheme` in `src/make-app.ts`), `NSAppleEventManager` `kInternetEventClass`/`kAEGetURL` handler, and Unix-socket single-instance handoff in `src/native/darwin/activation.ts`
-  - [ ] Implement unified activation pipeline (`registerUrlScheme`, `unregisterUrlScheme`, `singleInstance`, `onOpenUrl`, `signalReady`, `extractUrlFromArgs`) with cold-launch event buffering until `signalReady()` in `src/native/activation.ts`
-  - [ ] Add live Windows FFI tests (`src/native/win32/activation.test.ts`) for HKCU scheme registration + cleanup, real two-process `WM_COPYDATA` single-instance handoff, and buffered `onOpenUrl` -> `signalReady()` drain, plus `CFBundleURLTypes` tests in `src/build.test.ts`
-  - [ ] verify: `bun test src/native/win32/activation.test.ts src/build.test.ts` passes on Windows
+- [x] **AC9: Chunked ring framing for large IPC payloads (Audit 2.8)**
+  - [x] Support transparent chunked framing in `packages/sweetview-ipc/src/frame.ts`, `packages/sweetview/src/worker.ts`, and `packages/sweetview/src/app.ts` so valid JSON replies and events larger than `ringBytes - 4` (e.g. > 1 MB) reassemble cleanly on the UI thread instead of failing, while unserializable replies still fall back to a clamped error reply
+  - [x] Add unit tests in `packages/sweetview/src/worker.test.ts` covering chunked multi-frame replies/events, tiny-ring fallback, and unserializable replies
+  - [x] verify: `bun test packages/sweetview/src/worker.test.ts packages/sweetview/src/ring.test.ts` passes and browser-safe bundle of `@n1h/sweetview/page` pulls zero Bun/FFI code
 
-- [ ] **AC10: Shell architecture improvements from `delightful-qt-web-shell` (Plan Section 5)**
-  - [ ] Ready handshake + startup watchdog: page `signalReady()` in `src/page.ts`, host `__sweetview.ready` handling, `readyTimeoutMs`, `onReady`, `onReadyTimeout`, `readyFallbackHtml`, `showOnReady` in `src/app.ts`
-  - [ ] Close-to-tray only on last visible window: `Window.visibleWindows()` and `closeToTrayOnLastWindow` helper in `src/native/window.ts`
+- [ ] **AC10: Custom URL schemes, single-instance lock & handoff, and unified activation pipeline (Plan Section 4)**
+  - [x] Implement Windows HKCU protocol registration (`registerUrlScheme`, `unregisterUrlScheme`), `CreateMutexW` single-instance lock, and `WM_COPYDATA` + `AllowSetForegroundWindow` handoff in `packages/sweetview-native/src/win32/activation.ts`
+  - [ ] Add startup retry on Windows `FindWindowExW` race and upgrade macOS `packages/sweetview-native/src/darwin/activation.ts` to native CoreFoundation `CFMessagePort` (runs inside `NSApp.run()` with zero sockets / zero `node:net`)
+  - [x] Implement macOS `makeMacApp({ urlSchemes })` `CFBundleURLTypes` plist generation in `packages/sweetview-build/src/build.ts` (+ `--url-scheme` in `packages/sweetview-build/src/make-app.ts`) and `NSAppleEventManager` `kInternetEventClass`/`kAEGetURL` handler
+  - [x] Implement unified activation pipeline (`registerUrlScheme`, `unregisterUrlScheme`, `singleInstance`, `onOpenUrl`, `signalReady`, `extractUrlFromArgs`) with cold-launch event buffering until `signalReady()` in `packages/sweetview-native/src/activation.ts`
+  - [x] Add live Windows FFI tests (`packages/sweetview-native/src/win32/activation.test.ts`) for HKCU scheme registration + cleanup, real two-process `WM_COPYDATA` single-instance handoff, and buffered `onOpenUrl` -> `signalReady()` drain, plus `CFBundleURLTypes` tests in `packages/sweetview-build/src/build.test.ts`
+  - [ ] verify: `bun test packages/sweetview-native/src/win32/activation.test.ts packages/sweetview-build/src/build.test.ts` passes on Windows and zero `node:net` remains in `sweetview-native`
+
+- [ ] **AC11: Shell architecture improvements from `delightful-qt-web-shell` (Plan Section 5)**
+  - [ ] Opt-in ready handshake + native main-loop startup watchdog (`scheduleNativeTimeout`): page `signalReady()` in `packages/sweetview/src/page.ts`, host `__sweetview.ready` handling, `readyTimeoutMs`, `onReady`, `onReadyTimeout`, `readyFallbackHtml`, `showOnReady` in `packages/sweetview/src/app.ts`
+  - [ ] Close-to-tray only on last visible window: `Window.visibleWindows()` and `closeToTrayOnLastWindow` helper in `packages/sweetview-native/src/window.ts`
   - [ ] Deferred modal OS dialogs off synchronous bridge callback: `deferredUiMethods` on `WebViewOptions` scheduled onto the next native UI tick via `webview_dispatch` (never re-entering the active RPC callback)
-  - [ ] Three-tier native file access (`readTextFile`, `readFileBytes`, `openFileHandle`, `readFileChunk`, `closeFileHandle`), native `Clipboard` (`readText`, `writeText`, `clear` on Win32 + macOS), and OS drag-and-drop file paths (`Window.onFileDrop` via Win32 `WM_DROPFILES` + macOS `NSWindow` drag destination)
+  - [ ] Three-tier native file access (`readTextFile`, `readFileBytes`, `openFileHandle`, `readFileChunk`, `closeFileHandle`, `closeAllFileHandles`), native `Clipboard` (`readText`, `writeText`, `clear` on Win32 + macOS), and OS drag-and-drop file paths (`Window.onFileDrop` via Win32 `WM_DROPFILES` + macOS `NSWindow` drag destination)
   - [ ] Unified `defineAppIdentity` (`AppIdentity`) shared across `SettingsStore`, `singleInstance`, `registerUrlScheme`, `Window`, and `makeMacApp`
-  - [ ] Add tests (`src/native/fs.test.ts`, `src/native/clipboard.test.ts`, `src/app-identity.test.ts`, `src/app.test.ts`, `src/native/win32/window.test.ts`) verifying all 5 capabilities
+  - [ ] Add tests (`packages/sweetview-native/src/fs.test.ts`, `packages/sweetview-native/src/clipboard.test.ts`, `packages/sweetview-settings/src/app-identity.test.ts`, `packages/sweetview/src/app.test.ts`, `packages/sweetview-native/src/win32/window.test.ts`) verifying all capabilities
   - [ ] verify: `just check`, `just compile`, `just pack`, and `just demos native-tabs drive` all pass cleanly on Windows
 
-- [ ] **AC11: Updated docs, macOS verification steps, and clean final adversarial review (Pass 3)**
-  - [ ] Update `README.md`, `docs/README.md`, `docs/app.md`, `docs/native.md`, `docs/page.md`, `docs/build.md`, `docs/settings-store.md`, `docs/worker.md`, and `docs/v1-macos-verification.md`
-  - [ ] Run a fresh independent adversarial review pass after all AC8–AC10 and Pass 2 fixes are complete, fix any findings, and verify zero open findings remain
+- [ ] **AC12: Native dynamic request handler, second cross-origin (`frames`), and external drop control across `sweetview-webview`, `sweetview-webview-bun`, and `sweetview` (Plan Section 3 Option B)**
+  - [ ] `n0t-invented-here/sweetview-webview` (branch `v1-drafting`): add `webview_set_request_handler`, `webview_complete_request` (async `ICoreWebView2Deferral` on Windows + `WKURLSchemeTask` with `stopURLSchemeTask:` cancellation on macOS), second cross-origin (`http://frames.webview.localhost` / `webview-frames://localhost`), and `webview_set_allow_external_drop` (`ICoreWebView2Controller4::put_AllowExternalDrop`)
+  - [ ] `n0t-invented-here/sweetview-webview-bun` (branch `v1-drafting`): update `webview` submodule pointer, rebuild and commit Windows `build/libwebview.dll`, expose `framesOrigin`, `setRequestHandler` / `completeRequest`, and `setAllowExternalDrop` in `src/webview.ts` (v2.8.0), and verify live on Windows with zero TCP ports
+  - [ ] `n0t-invented-here/sweetview` (branch `v1-drafting`): wire native dynamic `requestHandler` + `FRAMES_ORIGIN` + `allowExternalDrop` through `packages/sweetview/src/webview-lib.ts`, `app.ts`, and `worker.ts` (zero TCP / zero HTTP server), with live Windows WebView2 end-to-end tests proving dynamic routes, binary `<img>`, POST bodies, and real cross-origin `<iframe>` isolation
+  - [ ] verify: `sweetview-webview` builds cleanly on Windows, `sweetview-webview-bun` live WebView2 test passes, and `sweetview` end-to-end zero-TCP dynamic request + frames origin tests pass
+
+- [ ] **AC13: Updated docs, macOS/Linux verification & rebuild steps, and clean final adversarial review (Pass 3)**
+  - [ ] Update `README.md`, `docs/README.md`, `docs/app.md`, `docs/native.md`, `docs/page.md`, `docs/build.md`, `docs/settings-store.md`, `docs/worker.md`, `docs/webview-library.md`, and `docs/v1-macos-verification.md` (including macOS `libwebview.dylib` and Linux `libwebview-x64.so` rebuild steps for `sweetview-webview-bun` on `v1-drafting`)
+  - [ ] Run a fresh independent adversarial review pass across all 3 repos after all ACs are complete, fix any findings, and verify zero open findings remain
 
 ## Review passes
 
@@ -115,9 +128,8 @@ Source: `docs/audit-and-v1-plan.md`, `docs/v1-api.md`, and the user's v1.0 direc
   - Finding 7 (AC3): macOS `Notifier.dispose()` deleted owner IDs so later clicks on disposed or handler-less notifiers could fall through to another live notifier, and the ID map was unbounded. Fixed: bounded `sentByThisProcess` map (max 256 entries) with `null` tombstones on `dispose()` in `src/native/darwin/notifier.ts`.
   - Finding 8 (AC4, AC6): On macOS tabs, closing the last tab with no `onClose` listener did not dispose the host, and `createApp({ tabs: true })` did not auto-quit when `onClose` was omitted. Fixed: default dispose on last-tab close in `src/tabs/darwin-tabs.ts` and default `onClose` auto-quit in `src/app.ts` `createApp({ tabs: true })`.
   - Finding 9 (AC6): macOS `tab.moveToNewWindow()` before `show()` flushed unrelated hidden tabs and returned a non-tabbed `Window.fromHandle`. Fixed: detach only the target tab and return a real tabbed `Window({ tabs: true })` bound to a detached `MacTabHost` sharing the tabbing group in `src/tabs/darwin-tabs.ts`, updated `demos/native-tabs/scripts/mac-drive.ts`.
-- [ ] Adversarial review pass 3 verifying AC8–AC10 and all Pass 2 fixes (pass 3)
+- [ ] Adversarial review pass 3 across `sweetview`, `sweetview-webview`, and `sweetview-webview-bun` verifying AC8–AC13 and all Pass 2 fixes (pass 3)
 
-## Platform boundary (from user's request)
+## Host OS constraint (Windows-only machine)
 
-- macOS live runtime execution of AppKit / WKWebView / `UNUserNotificationCenter` / `NSAppleEventManager` / `NSPasteboard` / `mac-drive.ts`: this session only has a Windows host; macOS code is updated as thoroughly as possible and exact verification steps are delivered in `docs/v1-macos-verification.md` for Mac agents to run afterward.
-- External C++ companion repos (`sweetview-webview`, `sweetview-webview-bun`): outside this repository (`docs/v1-api.md` scopes `@n1h/sweetview` v1.0.0 to `sweetview` TypeScript/`bun:ffi`).
+- macOS live runtime execution of AppKit / WKWebView / `UNUserNotificationCenter` / `NSAppleEventManager` / `CFMessagePort` / `NSPasteboard` / `mac-drive.ts` and native compilation of `libwebview.dylib` (macOS) / `libwebview-x64.so` (Linux) for `sweetview-webview-bun`: this machine runs Windows only; all macOS and Linux C++/TypeScript changes are implemented across all 3 repos on `v1-drafting`, Windows binaries and live GUI tests are built and verified here, and exact macOS/Linux rebuild and verification steps are documented in `docs/v1-macos-verification.md`.
