@@ -3,7 +3,7 @@
 Build-time helpers for shipping an app: the icon files a build uses, and the macOS `.app` bundle around the compiled binary. They run on any OS in any build script and load neither `bun:ffi` nor the webview library. This page also covers the `make-app.ts` command line and the `@n1h/sweetview/file-imports` types.
 
 ```ts
-import { makeMacApp, writeIconFiles, type MacAppOptions } from "@n1h/sweetview/build";
+import { defineAppIdentity, makeMacApp, writeIconFiles, type MacAppOptions } from "@n1h/sweetview/build";
 ```
 
 - [Reference](#reference)
@@ -20,13 +20,15 @@ import { makeMacApp, writeIconFiles, type MacAppOptions } from "@n1h/sweetview/b
 
 ```ts
 export type MacAppOptions = {
-  name: string;
-  bundleId: string;
+  identity?: AppIdentity;
+  name?: string;
+  bundleId?: string;
   binary: string;
   outDir: string;
   icns?: string;
   version?: string;
   minimumSystemVersion?: string;
+  urlSchemes?: readonly string[];
   plist?: Record<string, string | number | boolean>;
   sign?: string | false;
 };
@@ -36,12 +38,14 @@ The options of `makeMacApp`.
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
-| `name` | `string` | required | What Finder, the Dock and the menu bar show. The bundle is `<name>.app`. Written as `CFBundleName` and `CFBundleDisplayName`. |
-| `bundleId` | `string` | required | The reverse-DNS bundle id, such as `com.example.my-app`. Written as `CFBundleIdentifier`. macOS notifications need one, so a bare binary cannot send them. |
+| `identity` | `AppIdentity` | none | Defaults for name, bundle ID, version and schemes. Explicit options take precedence. |
+| `name` | `string` | `identity.appName` or required | What Finder, the Dock and the menu bar show. The bundle is `<name>.app`. Written as `CFBundleName` and `CFBundleDisplayName`. |
+| `bundleId` | `string` | `identity.appId` or required | The reverse-DNS bundle id, such as `com.example.my-app`. Written as `CFBundleIdentifier`. |
 | `binary` | `string` | required | The compiled macOS executable, from `bun build --compile --target=bun-darwin-arm64`. Copied in under its own file name. |
 | `outDir` | `string` | required | The folder the bundle is written into. Created when missing. An existing `<name>.app` there is deleted first. |
 | `icns` | `string` | none | The `.icns` file for Finder and the Dock, for example one written by `writeIconFiles`. Without it the bundle has no icon file and shows the stock icon. |
-| `version` | `string` | `"0.1.0"` | Written as `CFBundleVersion` and `CFBundleShortVersionString`. |
+| `version` | `string` | `identity.version` or `"0.1.0"` | Written as `CFBundleVersion` and `CFBundleShortVersionString`. |
+| `urlSchemes` | `readonly string[]` | `identity.urlSchemes` or empty | Registers the schemes in `CFBundleURLTypes`. An explicit empty array omits the declaration. |
 | `minimumSystemVersion` | `string` | `"11.0"` | Written as `LSMinimumSystemVersion`. |
 | `plist` | `Record<string, string \| number \| boolean>` | none | More `Info.plist` entries by key, such as `{ LSUIElement: true }` for a menu-bar app with no Dock tile. An entry with a new key is written after the defaults. An entry with the key of a default replaces that default's value in the default's position. |
 | `sign` | `string \| false` | `"-"` on macOS, `false` elsewhere | The `codesign` identity for the bundle: `"-"` for an ad-hoc signature, a certificate name such as `"Developer ID Application: Example (TEAMID)"`, or `false` to leave the bundle unsigned. A bundle that is not signed is refused by macOS's notification service and shows no notifications: Bun's compiled binary carries only a linker signature with the identifier `a.out`, and the bundle around it has no seal. |
@@ -83,6 +87,7 @@ It checks that `binary` exists, and `icns` when set. It then deletes any existin
 | `LSMinimumSystemVersion` | `minimumSystemVersion`, default `11.0` |
 | `NSHighResolutionCapable` | `true` |
 | `NSPrincipalClass` | `NSApplication` |
+| `CFBundleURLTypes` | When schemes are set, a dictionary naming the bundle ID and listing the normalized schemes. |
 
 A boolean value is written as `<true/>` or `<false/>`, an integer as `<integer>`, any other number as `<real>`, and a string as `<string>`. `NaN` and infinities throw, because a plist cannot hold them. `&`, `<` and `>` in keys and strings are escaped.
 
@@ -143,6 +148,7 @@ It calls `makeMacApp` and writes the same files. Importing the file runs nothing
 | `--icns` | path | none | `icns`: the `.icns` for Finder and the Dock. The stock icon without it. |
 | `--version` | text | `0.1.0` | `version`: `CFBundleVersion` and `CFBundleShortVersionString`. |
 | `--min-macos` | text | `11.0` | `minimumSystemVersion`: `LSMinimumSystemVersion`. |
+| `--url-scheme` | text | none | A scheme such as `example-notes`. Repeat to declare more schemes. |
 | `--plist` | `Key=value` | none | One extra `Info.plist` entry. Repeatable; a later entry with the same key wins. |
 | `--sign` | text | ad-hoc on macOS, none elsewhere | `sign`: the `codesign` identity. |
 | `--no-sign` | none | off | `sign: false`: leave the bundle unsigned. Excludes `--sign`. |
@@ -159,6 +165,13 @@ A `--plist` entry splits at its first `=`. The value may contain further `=` sig
 | `2` | One or more required flags missing. | `missing: --name, --bundle-id, ...` listing the missing ones, then the usage text, on stderr. |
 | `2` | A `--plist` entry with no `=` or an empty key. | `--plist wants Key=value, got "<entry>"` on stderr. |
 | `2` | Both `--sign` and `--no-sign`. | `--sign and --no-sign exclude each other` on stderr. |
+
+## Repository build scripts
+
+In this repository the CLI is `packages/sweetview-build/src/make-app.ts`.
+Run `bun packages/sweetview-build/src/refresh-icons.ts` on Windows after
+recompiling a demo to refresh Explorer's icon cache. The package also
+exports the same operation as `refreshWindowsIcons()`.
 
 ## File-import types
 

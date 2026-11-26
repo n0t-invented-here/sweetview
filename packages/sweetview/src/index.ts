@@ -23,6 +23,8 @@ export {
   type WindowChromeOptions,
 } from "./window-chrome";
 export { Ring } from "./ring";
+export { ASSET_ORIGIN, FRAMES_ORIGIN } from "./webview-lib";
+export type { NativeRequest, NativeResponse } from "./messages";
 export {
   pumpEvents,
   quitEventLoop,

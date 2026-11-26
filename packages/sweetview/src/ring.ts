@@ -4,7 +4,8 @@
 // webview_dispatch callback. Frames are length-prefixed. The producer blocks
 // (Atomics.wait) only when the ring is full; the consumer never blocks.
 //
-// Header (Int32, shared): [0] write cursor, [1] read cursor, [2] wakeup pending.
+// Header (Int32, shared): [0] write cursor, [1] read cursor, [2] wakeup pending,
+// [3] native dispatch in progress and shutdown flags.
 // Cursors grow monotonically and wrap in int32; all arithmetic is done with
 // `| 0` so the wrap is harmless.
 
@@ -12,6 +13,9 @@ const HEADER_BYTES = 16;
 const WRITE = 0;
 const READ = 1;
 const PENDING = 2;
+const DISPATCH_STATE = 3;
+const DISPATCHING = 1;
+const CLOSED = 2;
 
 export class Ring {
   readonly #hdr: Int32Array;
@@ -70,6 +74,23 @@ export class Ring {
   /** Consumer side. Call first thing in the wakeup, before draining. */
   acknowledgeWakeup(): void {
     Atomics.store(this.#hdr, PENDING, 0);
+  }
+
+  /** Producer side. Keep the native handle alive for the duration of dispatch. */
+  dispatch(wake: () => void): void {
+    if (Atomics.compareExchange(this.#hdr, DISPATCH_STATE, 0, DISPATCHING) !== 0) return;
+    try {
+      wake();
+    } finally {
+      Atomics.and(this.#hdr, DISPATCH_STATE, ~DISPATCHING);
+      Atomics.notify(this.#hdr, DISPATCH_STATE);
+    }
+  }
+
+  /** Consumer side. Prevent future dispatches and wait for the current native call to return. */
+  stopDispatch(): void {
+    const previous = Atomics.or(this.#hdr, DISPATCH_STATE, CLOSED);
+    if (previous & DISPATCHING) Atomics.wait(this.#hdr, DISPATCH_STATE, CLOSED | DISPATCHING);
   }
 
   /** Consumer side. Yields every complete frame currently in the ring. */

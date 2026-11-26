@@ -1,6 +1,10 @@
-# @n1h/sweetview v1 API Design
+# @n1h/sweetview 1.0.0 API and migration
 
-Target API for `@n1h/sweetview` `1.0.0`. Everything here lives inside `sweetview` (`src/`) over `bun:ffi` — no changes to `sweetview-webview` or `sweetview-webview-bun` are required.
+The 1.0.0 API comes from six packages under `packages/`. The desktop
+facade uses the patched C++ library from `n0t-invented-here/sweetview-webview`
+and the binaries shipped by `n0t-invented-here/sweetview-webview-bun`.
+[Workspace entry points](../README.md#documentation) and
+[library compatibility](webview-library.md).
 
 ---
 
@@ -283,6 +287,8 @@ export type Rect = { x: number; y: number; width: number; height: number };
 export type ResizeEdge = "left" | "right" | "top" | "bottom" | "top-left" | "top-right" | "bottom-left" | "bottom-right";
 
 export type WindowOptions = {
+  identity?: AppIdentity;
+  onFileDrop?: (paths: string[]) => void;
   title?: string;
   /** Outer frame bounds. Default: 320x240 centered on the primary work area. */
   bounds?: Rect;
@@ -358,6 +364,7 @@ export class Window {
   onResize(handler: (bounds: Rect) => void): () => void;
   onMove(handler: (bounds: Rect) => void): () => void;
   onClose(handler: () => void): () => void;
+  onFileDrop(handler: (paths: string[]) => void): () => void;
   onNewTab(handler: () => void): () => void;
   onTabSelect(handler: (tab: Tab) => void): () => void;
   onTabClose(handler: (tab: Tab) => void): () => void;
@@ -551,8 +558,16 @@ export type WebViewOptions<M extends MethodMap> = {
   assets?: Record<string, Asset>;
   index?: string;
   worker?: URL | string;
+  onRequest?: "worker" | ((request: NativeRequest) => NativeResponse);
+  allowExternalDrop?: boolean;
   debug?: boolean;
   uiMethods?: UiMethods<M>;
+  deferredUiMethods?: UiMethods<M>;
+  showOnReady?: boolean;
+  readyTimeoutMs?: number;
+  onReady?: () => void;
+  onReadyTimeout?: () => void;
+  readyFallbackHtml?: string;
   ringBytes?: number;
 };
 
@@ -583,10 +598,10 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
 
 export type TabOptions<M extends MethodMap> = WebViewOptions<M> & {
   /** Insert after this tab instead of the currently selected tab. */
-  after?: Tab;
+  after?: TabHandle;
 };
 
-export interface Tab<M extends MethodMap = MethodMap, E extends EventMap = EventMap> {
+export interface Tab<M extends MethodMap = MethodMap, E extends EventMap = EventMap> extends TabHandle {
   readonly webview: WebView<M, E>;
   readonly window: Window;
   readonly title: string;
@@ -629,6 +644,9 @@ export function createApp<M extends MethodMap, E extends EventMap>(
 * `indexHtml`, `indexHtmlText`, `assetMime`
 * `Ring`
 * `pumpEvents`, `quitEventLoop`, `runEventLoop`, `setActivationPolicy`
+* `ASSET_ORIGIN`, `FRAMES_ORIGIN`, `NativeRequest` and `NativeResponse` support [zero-TCP dynamic routes](app.md#dynamic-requests).
+* `defineAppIdentity`, `AppIdentity` and `AppIdentityInput` share settings and
+  packaging defaults. The root also re-exports the [activation APIs](native.md#url-schemes-and-single-instance).
 * `RawWebview` (re-export of `Webview` from `@n1h/sweetview-webview-bun`), `SizeHint`, `WEBVIEW_VERSION`
 
 ---
@@ -650,13 +668,23 @@ export function createSettingsStore<T extends object>(options: SettingsStoreOpti
 export function appDataDir(app: string): string;
 ```
 
+`SettingsStore({ identity, defaults })` uses the identity's slug as the
+default app-data directory name. [Settings and identity](settings-store.md).
+
 #### `@n1h/sweetview/ipc`, `/ipc-ws`, `/page`, `/worker`, `/window-chrome`, `/build`
 
 * `wsHost(service, options).dispose()` (renamed from `.close()`)
 * `wsTransport(url).dispose()` (renamed from `.close()`)
 * `memoryTransport(service, session).dispose()` (renamed from `.close()`)
 * `windowChromeMethods(window, { chrome, onClose })` (`onClose` renamed from `close`)
-* All other exports stay unchanged: `defineService`, `createBridge`, `wsUrl`, `isWebview`, `webviewTransport`, `hostService`, `windowChromeControls`, `resizeHandles`, `makeMacApp`, `writeIconFiles`, `refreshWindowsIcons`.
+* `signalReady()` in `/page` acknowledges [desktop startup](app.md#startup-and-deferred-ui).
+* `hostService(service, { onRequest })` and `hostRequestHandler(onRequest)`
+  in `/worker` serve [dynamic routes](worker.md#hostrequesthandler).
+* `makeMacApp({ identity, urlSchemes, binary, outDir })` uses identity defaults
+  and declares macOS URL schemes. [Build reference](build.md).
+* The native package adds `Window.visibleWindows()`, `closeToTrayOnLastWindow`,
+  native file drops, `Clipboard` and three tiers of file access.
+  [Native reference](native.md).
 
 ---
 
@@ -692,4 +720,7 @@ export function appDataDir(app: string): string;
 * **macOS `NSApp` init**: `Screen.*` and `new Window()` both call `sharedApp()` before touching `NSScreen` or `NSWindow`.
 * **macOS outer-frame `bounds`**: Convert requested outer frame to content rect via `[NSWindow contentRectForFrameRect:styleMask:]` during `initWithContentRect:styleMask:backing:defer:`, or apply `setFrame:display:` immediately while still hidden before returning.
 * **macOS resize/move observers**: Subscribe to `NSWindowDidResizeNotification` and `NSWindowDidMoveNotification` via `NSNotificationCenter.defaultCenter` scoped to the `NSWindow` object, removing observers on `win.dispose()`. Never replace `NSWindow.delegate`.
-* **Native tabs promotion**: Keep `@n1h/sweetview/native` strictly webview-free by moving webview-free primitives (`win-tab-window.ts`, `win-shortcuts.ts`, `strip-shared.ts` into `src/native/win32/`, and `NSWindow` tabbing primitives into `src/native/darwin/`, reusing `Menu.popup`, `Screen`, and window lifecycle hooks). Move webview-dependent tab pieces (`win-webview2.ts`, the embedded strip webview + assets, macOS `WKWebView` hooks, and the cross-platform `Tab` / `WebView.openTab` coordinator) into `src/tabs/`. On macOS, a tabbed `Window({ tabs: true })` acts as the tab-group controller coordinating per-tab `NSWindow`s so closing or tearing off the first tab never invalidates the controller. Rewrite `demos/native-tabs/app.ts` to demo the built-in tabs API.
+* Native window and tab primitives live under `packages/sweetview-native/`.
+  Webview-specific coordination lives in `packages/sweetview/src/tabs/`.
+  On macOS, a tabbed `Window({ tabs: true })` coordinates the per-tab
+  `NSWindow`s independently of the lifetime of the first tab.

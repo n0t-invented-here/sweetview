@@ -94,6 +94,9 @@ On Windows, all native entry points (`Window`, `Screen`, `Tray`, `Notifier`, `Me
 - [App icon](#app-icon)
 - [Event loop](#event-loop)
 - [App activation](#app-activation)
+- [URL schemes and single instance](#url-schemes-and-single-instance)
+- [Clipboard](#clipboard)
+- [File access](#file-access)
 - [Icons](#icons)
 - [Examples](#examples)
 
@@ -108,6 +111,7 @@ export class Window {
   readonly handle: WindowHandle;
   constructor(options?: WindowOptions);
   static fromHandle(handle: WindowHandle): Window;
+  static visibleWindows(): Window[];
 
   // Visibility
   isVisible(): boolean;
@@ -140,6 +144,7 @@ export class Window {
   onResize(handler: (bounds: Rect) => void): () => void;
   onMove(handler: (bounds: Rect) => void): () => void;
   onClose(handler: () => void): () => void;
+  onFileDrop(handler: (paths: string[]) => void): () => void;
   onNewTab(handler: () => void): () => void;
   onTabSelect(handler: (tab: TabHandle) => void): () => void;
   onTabClose(handler: (tab: TabHandle) => void): () => void;
@@ -148,9 +153,23 @@ export class Window {
 }
 
 export function createWindow(options?: WindowOptions): Window;
+export function closeToTrayOnLastWindow(win: Window, onHide?: (win: Window) => void): () => void;
 ```
 
 Windows are always created **hidden**. Call `win.show()` after positioning and wiring events or attaching a `WebView`.
+
+`Window.visibleWindows()` returns owned visible windows, including minimized
+ones. `closeToTrayOnLastWindow(win, onHide?)` installs a close listener. It
+disposes the window if another owned window is visible. Otherwise it hides
+the window and invokes `onHide(win)`. The returned function removes that
+listener. Create the tray and wire its reopen action separately.
+
+`win.onFileDrop(handler)` subscribes to native file drops and returns an
+unsubscribe function. Its callback receives file-system paths. Windows uses
+`WM_DROPFILES`. On macOS a Sweetview-managed `NSWindow` accepts Finder drops
+and resolves file-reference URLs to paths. A foreign macOS window wrapper
+throws when asked to subscribe. The webview's `allowExternalDrop` controls
+browser content drops separately.
 
 | Member | Meaning |
 |---|---|
@@ -185,6 +204,7 @@ Windows are always created **hidden**. Call `win.show()` after positioning and w
 ```ts
 export type WindowOptions = {
   title?: string;
+  identity?: AppIdentity;
   bounds?: Rect;
   minWidth?: number;
   minHeight?: number;
@@ -202,6 +222,7 @@ export type WindowOptions = {
   onResize?: (bounds: Rect) => void;
   onMove?: (bounds: Rect) => void;
   onClose?: () => void;
+  onFileDrop?: (paths: string[]) => void;
   onNewTab?: () => void;
   onTabSelect?: (tab: TabHandle) => void;
   onTabClose?: (tab: TabHandle) => void;
@@ -211,6 +232,8 @@ export type WindowOptions = {
 | Field | Type | Default | Meaning |
 |---|---|---|---|
 | `title` | `string` | `""` | Title bar text. |
+| `identity` | `AppIdentity` | none | Supplies the default window title and Windows icon. Explicit window options take precedence. |
+| `onFileDrop` | `(paths: string[]) => void` | none | Subscribes to native file drops at construction. |
 | `bounds` | `Rect` | `320x240` centered on primary work area | Initial outer frame rectangle on both Windows and macOS. |
 | `minWidth`, `minHeight` | `number` | none | Minimum outer frame size enforced during resize. |
 | `frame` | `boolean` | `true` | Normal OS window frame (`true`) or borderless/frameless (`false`). |
@@ -434,6 +457,61 @@ export function setActivationPolicy(policy: ActivationPolicy): void;
 ```
 
 Sets macOS `NSApplication.setActivationPolicy:`. No-op on Windows.
+
+## URL schemes and single instance
+
+Import these functions from `@n1h/sweetview/native` or the desktop facade.
+`defineAppIdentity` supplies a shared app ID, display name, URL schemes,
+version, data directory and optional icon. [Identity reference](settings-store.md#defineappidentity).
+
+```ts
+registerUrlScheme(scheme: string, options?: RegisterUrlSchemeOptions): void;
+unregisterUrlScheme(scheme: string): void;
+singleInstance(options: SingleInstanceOptions): Promise<SingleInstanceLock>;
+extractUrlFromArgs(args: readonly string[], schemes?: readonly string[]): string | undefined;
+onOpenUrl(handler: (url: string) => void): () => void;
+signalReady(): void;
+```
+
+- On Windows, `registerUrlScheme` writes the per-user protocol under
+  `HKCU\Software\Classes`. Options include `identity`, `appName`,
+  `executablePath`, `iconPath` and `command`. `unregisterUrlScheme` removes
+  the per-user entry. `singleInstance` uses a named mutex and hands arguments
+  off through `WM_COPYDATA`.
+- On macOS, declare schemes in the bundle with
+  `makeMacApp({ identity, urlSchemes })`. The registration functions validate
+  the scheme string. `NSAppleEventManager` delivers URL events.
+  `singleInstance` uses a Core Foundation `CFMessagePort` on the main loop.
+- Pass `identity` or `appId` to `singleInstance`. Optional `urlSchemes`
+  overrides the identity's schemes, and `args` overrides launch arguments.
+  The lock reports `isPrimary` and `handedOff`. A secondary should exit
+  after handoff. The primary can observe `{ args, cwd, url? }` through
+  `onSecondInstance` and releases native resources with `lock.dispose()`.
+- `onOpenUrl` subscribes to activation and returns an unsubscribe function.
+  URLs received during startup drain in order on `signalReady()`. The page
+  handshake calls this automatically when a webview is present.
+
+## Clipboard
+
+`Clipboard.readText(): string | null`, `Clipboard.writeText(text): void`,
+and `Clipboard.clear(): void` are synchronous on the UI thread. Windows
+uses Unicode clipboard text. macOS uses `NSPasteboard`. An absent text
+representation returns `null`.
+
+## File access
+
+The regular-file helpers use the file system on any Bun platform.
+
+| Use | API |
+|---|---|
+| Text | `readTextFile(path, { maxBytes?, encoding? })` returns a promise for a string. Defaults to UTF-8 and 4 MiB. |
+| Whole binary file | `readFileBytes(path, { maxBytes? })` returns a promise for a `Uint8Array`. Defaults to 32 MiB. |
+| Positional binary chunks | `openFileHandle(path)` returns `{ handleId, size }`. `readFileChunk(handleId, offset, length)` synchronously reads 1 byte to 16 MiB and returns `{ data, bytesRead, eof }`. |
+
+Whole-file reads reject files that exceed the limit. Close chunked readers
+with `closeFileHandle(handleId)` in a `finally` block, or close every handle
+from the current thread with `closeAllFileHandles()`. Opaque IDs belong to
+the thread that opened them.
 
 ## Icons
 

@@ -9,6 +9,7 @@ import { isWebview, webviewTransport } from "@n1h/sweetview/page";
 - [Reference](#reference)
   - [isWebview](#iswebview)
   - [webviewTransport](#webviewtransport)
+  - [signalReady](#signalready)
 - [Globals](#globals)
 - [Example](#example)
 
@@ -49,7 +50,20 @@ Outside a browser, where there is no global `window`, it throws the same `Error`
 
 Thread: the browser page.
 
+### signalReady
+
+```ts
+export function signalReady(): Promise<void>;
+```
+
+Import from `@n1h/sweetview/page` and call after initial render and listener
+registration. The promise resolves when the host acknowledges the signal.
+Inside Sweetview, it cancels the native startup watchdog, releases buffered
+URL activations and can reveal the window when `showOnReady` is enabled.
+In a regular browser it resolves immediately.
+
 ## Globals
+
 
 The module declares both globals as optional properties of `Window`.
 

@@ -13,6 +13,10 @@ import {
   type App,
   type AppOptions,
   type Asset,
+  ASSET_ORIGIN,
+  FRAMES_ORIGIN,
+  type NativeRequest,
+  type NativeResponse,
   type Tab,
   type TabOptions,
   type UiMethods,
@@ -63,6 +67,8 @@ import {
   - [Event loop re-exports](#event-loop-re-exports)
   - [SizeHint, WEBVIEW_VERSION, RawWebview](#sizehint-webview_version-rawwebview)
 - [Page loading](#page-loading)
+- [Startup and deferred UI](#startup-and-deferred-ui)
+- [Dynamic requests](#dynamic-requests)
 - [Transport](#transport)
 - [Examples](#examples)
 
@@ -219,8 +225,16 @@ export type WebViewOptions<M extends MethodMap = MethodMap> = {
   assets?: Record<string, Asset>;
   index?: string;
   worker?: URL | string;
+  onRequest?: "worker" | ((request: NativeRequest) => NativeResponse);
+  allowExternalDrop?: boolean;
   debug?: boolean;
   uiMethods?: UiMethods<M>;
+  deferredUiMethods?: UiMethods<M>;
+  showOnReady?: boolean;
+  readyTimeoutMs?: number;
+  onReady?: () => void;
+  onReadyTimeout?: () => void;
+  readyFallbackHtml?: string;
   ringBytes?: number;
 };
 ```
@@ -232,9 +246,16 @@ export type WebViewOptions<M extends MethodMap = MethodMap> = {
 | `title` | `string` | `window`'s title, else `<title>` of `page`, else `Bun.main` basename | Window / tab title. |
 | `assets` | `Record<string, Asset>` | `{}` | Extra files served at the page's origin by asset path. |
 | `index` | `string` | the page's HTML output, else `"index.html"` | Asset path to navigate to. Generated via `indexHtml` if missing. |
-| `worker` | `URL \| string` | none | Worker entry calling `hostService`. Relative strings resolve against `pathToFileURL(Bun.main)`. |
+| `worker` | `URL \| string` | none | Worker entry calling `hostService` or `hostRequestHandler`. Relative strings resolve against `pathToFileURL(Bun.main)`. |
+| `onRequest` | `"worker" \| ((request: NativeRequest) => NativeResponse)` | none | Handles dynamic requests through the worker or a synchronous UI handler. |
+| `allowExternalDrop` | `boolean` | engine default (allowed) | Controls external drops into WebView2. Accepted without an effect on macOS. An older library without the symbol logs a warning once per library path. |
 | `debug` | `boolean` | `false` | Enables devtools and the context menu. |
 | `uiMethods` | `UiMethods<M>` | `{}` | Synchronous handlers answered on the UI thread before consulting the worker. |
+| `deferredUiMethods` | `UiMethods<M>` | `{}` | Synchronous handlers invoked on a later native UI tick. |
+| `showOnReady` | `boolean` | `false` | Reveals the window when the page signals readiness or the watchdog fires. |
+| `readyTimeoutMs` | `number` | disabled | Positive values arm a native startup watchdog. |
+| `onReady`, `onReadyTimeout` | `() => void` | none | UI-thread hooks for the first ready handshake and for watchdog expiry. |
+| `readyFallbackHtml` | `string` | built-in error page | HTML shown on watchdog expiry. |
 | `ringBytes` | `number` | `1048576` | Capacity of the worker-to-UI shared-memory ring (power of two, `128..2^30`). |
 
 ### Tab and TabOptions
@@ -374,15 +395,24 @@ export class Ring {
   write(bytes: Uint8Array): void;
   claimWakeup(): boolean;
   acknowledgeWakeup(): void;
+  dispatch(wake: () => void): void;
+  stopDispatch(): void;
   *drain(): Generator<Uint8Array>;
 }
 ```
 
 Single-producer, single-consumer byte ring over a `SharedArrayBuffer` (16-byte header + power-of-two capacity `16..2^30`). Each frame has a 4-byte little-endian length prefix. `write` blocks with `Atomics.wait` while full; `drain` yields frames without blocking.
 
+`dispatch(wake)` guards the producer's native wake call. `stopDispatch()`
+blocks new calls and waits for an active native wake to return before the host
+can destroy the webview.
+
 ### Event loop re-exports
 
 `pumpEvents`, `quitEventLoop`, `runEventLoop`, `setActivationPolicy`, `ActivationPolicy`, and `EventLoopOptions` are re-exported from [`@n1h/sweetview/native`](native.md#event-loop).
+
+The root also re-exports `defineAppIdentity`, `AppIdentity`, `AppIdentityInput`
+and the native [activation functions and types](native.md#url-schemes-and-single-instance).
 
 ### SizeHint, WEBVIEW_VERSION, RawWebview
 
@@ -390,7 +420,9 @@ Re-exported from `@n1h/sweetview-webview-bun` (`Webview` is re-exported as `RawW
 
 ## Page loading
 
-`WebView.attach` registers every asset with `webview_set_asset` and navigates to the origin plus `/${index}`:
+`WebView.attach` registers every asset with `webview_set_asset` and navigates
+to `${ASSET_ORIGIN}/${index}`. To serve the initial page dynamically, set
+`` url: `${ASSET_ORIGIN}/dynamic` `` and leave `page` and `assets` unset.
 
 | OS | Origin | Served by |
 |---|---|---|
@@ -400,13 +432,56 @@ Re-exported from `@n1h/sweetview-webview-bun` (`Webview` is re-exported as `RawW
 
 The native library path comes from `WEBVIEW_PATH` or `@n1h/sweetview-webview-bun/build/`, and `dlopen` handles are cached per path so repeated windows/tabs never leak library handles. See [the webview library](webview-library.md).
 
+## Startup and deferred UI
+
+For a page-controlled reveal, set `showOnReady: true` and call
+`await signalReady()` from `@n1h/sweetview/page` after you install listeners
+and render the initial UI. The first signal cancels the watchdog, drains
+buffered URL activations through the native `signalReady()`, calls `onReady`,
+then shows the window. Duplicate signals resolve successfully.
+
+With a positive `readyTimeoutMs`, the watchdog uses a Win32 timer or a macOS
+`NSTimer`, so it also runs inside blocking `app.run()`. If it wins, it loads
+`readyFallbackHtml`, calls `onReadyTimeout`, and reveals the fallback when
+`showOnReady` is enabled. Disposal cancels the timer.
+
+Use `deferredUiMethods` for modal native UI that needs the current bridge
+callback to return first. These handlers still return synchronously from their
+own invocation. The native dispatch queue runs them in order and defers any
+calls received by a modal loop until the active handler returns. Duplicate
+method names across the two UI tables throw during attach.
+
+## Dynamic requests
+
+`ASSET_ORIGIN` and `FRAMES_ORIGIN` are exports from `@n1h/sweetview`. The
+frames origin is `http://frames.webview.localhost` on Windows and
+`webview-frames://localhost` on macOS. The browser applies its cross-origin
+DOM boundary to iframes loaded there. The native handler receives every
+request to that origin and any request at the asset origin that misses the
+static table. With no handler, those requests return 404.
+
+- Set `onRequest: "worker"` together with `worker`. Use an ordinary
+  `Request => Response | Promise<Response>` handler in that worker. See
+  [worker routes](worker.md#hostrequesthandler).
+- Pass a synchronous `onRequest(request)` for short UI-thread work.
+  `NativeRequest` contains `id: bigint`, `method`, `url`, ordered header pairs
+  and a copied `Uint8Array` body. An empty request has zero body bytes.
+  `NativeResponse` takes optional `status` (default 200), `headers` (object or
+  pairs, with repeated names supported), and `body` (UTF-8 string,
+  `Uint8Array`, `ArrayBuffer` or `null`). A throw returns 500. Returning a
+  Promise gives an immediate 500 with instructions for worker mode.
+
+Both modes use native interception and zero TCP. They require the request
+symbols shipped by `@n1h/sweetview-webview-bun` 2.8.0 or a compatible
+`WEBVIEW_PATH`. In tabbed apps, set these options on each `openTab()` call.
+
 ## Transport
 
 | Direction | Mechanism |
 |---|---|
 | page to UI thread | `__sweetview_rpc(method, params)` bound via `webview_bind` |
 | UI thread to worker | `worker.postMessage` (synchronous enqueue) |
-| worker to UI thread | JSON frames in shared `Ring` + `webview_dispatch` wakeup |
+| worker to UI thread | Chunkable JSON IPC and binary HTTP response frames in shared `Ring` + `webview_dispatch` wakeup |
 | UI thread to page (replies) | `webview_return(seq, status, json)` |
 | UI thread to page (events) | `webview_eval` of `__sweetview_emit(name, payload)` |
 

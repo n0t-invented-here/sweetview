@@ -4,16 +4,38 @@ A settings file for a small app: one JSON document in the user's per-app folder,
 
 ```ts
 import { appDataDir, createSettingsStore, SettingsStore, type SettingsStoreOptions } from "@n1h/sweetview/settings-store";
+import { defineAppIdentity } from "@n1h/sweetview-settings";
 ```
 
 - [Reference](#reference)
   - [appDataDir](#appdatadir)
+  - [defineAppIdentity](#defineappidentity)
   - [SettingsStoreOptions](#settingsstoreoptions)
   - [SettingsStore](#settingsstore)
   - [createSettingsStore](#createsettingsstore)
 - [Example](#example)
 
 ## Reference
+
+### defineAppIdentity
+
+`defineAppIdentity(input: AppIdentityInput): AppIdentity` is available from
+`@n1h/sweetview-settings`, the desktop facade root, and the build and native
+entry points. Supply
+a nonempty `appId` and `appName`. Optional `slug` defaults to a safe slug
+derived from the last segment of the app ID. Optional `version` defaults to
+`0.1.0`. `urlSchemes` are normalized and validated. An optional `icon`
+contains RGBA bytes, width and height. The result includes `dataDir` from
+`appDataDir(slug)`. Creating an identity leaves the filesystem untouched.
+
+```ts
+const identity = defineAppIdentity({
+  appId: "com.example.notes",
+  appName: "Notes",
+  urlSchemes: ["example-notes"],
+});
+const settings = new SettingsStore({ identity, defaults: { theme: "system" } });
+```
 
 ### appDataDir
 
@@ -43,7 +65,8 @@ Platforms: Windows / macOS / Linux: implemented, with the base folder from the t
 
 ```ts
 export type SettingsStoreOptions<T> = {
-  app: string;
+  app?: string;
+  identity?: AppIdentity;
   file?: string;
   dir?: string;
   defaults: T;
@@ -55,7 +78,8 @@ The options of `createSettingsStore`.
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
-| `app` | `string` | required | The folder name under `appDataDir`. Not used when `dir` is set. |
+| `app` | `string` | `identity.slug` | Explicit folder name under `appDataDir`. The constructor requires either `app` or `identity`, including when `dir` is set. |
+| `identity` | `AppIdentity` | none | Shared app identity supplying the default folder name. |
 | `file` | `string` | `"settings.json"` | The file name inside the folder. |
 | `dir` | `string` | `appDataDir(app)` | The folder itself, in place of the app-data folder. For tests, or an app that keeps settings elsewhere. |
 | `defaults` | `T` | required | The base of the default `sanitize`. `load()` returns a shallow copy of it when `sanitize` throws. |

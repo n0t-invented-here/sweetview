@@ -1,6 +1,6 @@
 # 🥐 Sweetview
 
-Desktop applications for **Bun**.
+Desktop applications for **Bun**. This documentation covers Sweetview 1.0.0.
 
 <img width="400" height="55" alt="DesktopPet-MacOS" src="https://github.com/user-attachments/assets/a77f1b5f-dd96-43cd-a01f-5d46cf5861cc" />
 
@@ -40,20 +40,29 @@ platform differences and thread rules.
 | Module | Contents |
 |---|---|
 | [`@n1h/sweetview`](docs/app.md) | `createApp`, `WebView` (`WebView.attach`, `WebView.openTab`), native tabs (`Tab`, `TabOptions`), `runEventLoop` and `quitEventLoop`, `windowChromeMethods`, `indexHtml`, `assetMime`, `Ring`, and `RawWebview` from the webview library |
-| [`@n1h/sweetview/worker`](docs/worker.md) | `hostService` |
-| [`@n1h/sweetview/page`](docs/page.md) | `isWebview`, `webviewTransport` |
+| [`@n1h/sweetview/worker`](docs/worker.md) | `hostService`, `hostRequestHandler` |
+| [`@n1h/sweetview/page`](docs/page.md) | `isWebview`, `webviewTransport`, `signalReady` |
 | [`@n1h/sweetview/ipc`](docs/ipc.md) | the contract: `defineService`, `createBridge`, `memoryTransport`, the wire frames |
 | [`@n1h/sweetview/ipc-ws`](docs/ipc-ws.md) | the contract over WebSockets: `wsHost` for `Bun.serve`, `wsTransport` and `wsUrl` for the browser; each side alone as `/ipc-ws/server` and `/ipc-ws/client` |
 | [`@n1h/sweetview/native`](docs/native.md) | unified `Window` / `createWindow` (`Window.fromHandle`, overlays, frames, tabs), `Screen`, `Menu.popup`, `Tray`, `Notifier`, `HitRelay` & hit regions, `pickFolder`, `setAppMenu`, `setAppIcon`, `runEventLoop` / `quitEventLoop`, icon encoders (`dotIco`, `dotPng`, `dotIcns`); the hit-region helpers alone, without FFI, as `/native/hit-regions` |
 | [`@n1h/sweetview/settings-store`](docs/settings-store.md) | a JSON settings file in the user's application data folder |
 | [`@n1h/sweetview/window-chrome`](docs/window-chrome.md) | a page-drawn title bar and resize handles backed by OS moves and resizes |
 | [`@n1h/sweetview/build`](docs/build.md) | `writeIconFiles` and `makeMacApp`; the page also covers the `make-app.ts` script and the `/file-imports` types |
-| [the webview library](docs/webview-library.md) | the two C API additions the package relies on, and how the library is loaded |
+| [the webview library](docs/webview-library.md) | native assets and dynamic requests, transparency, the frames origin, and external drop control |
 
-The compatibility subpaths above use five standalone packages.
-`@n1h/sweetview-ipc-ws` depends on `@n1h/sweetview-ipc`, and
-`@n1h/sweetview-native` and `@n1h/sweetview-build` depend on
-`@n1h/sweetview-settings`. The top-level `@n1h/sweetview` package depends on all five.
+The workspace publishes six packages. The facade includes the application,
+page and worker entry points and re-exports the standalone packages.
+
+| Workspace directory | Package | Facade entry points |
+|---|---|---|
+| `packages/sweetview` | `@n1h/sweetview` | root, `/page`, `/worker`, `/window-chrome`, `/file-imports` |
+| `packages/sweetview-ipc` | `@n1h/sweetview-ipc` | `/ipc` |
+| `packages/sweetview-ipc-ws` | `@n1h/sweetview-ipc-ws` | `/ipc-ws`, `/ipc-ws/client`, `/ipc-ws/server` |
+| `packages/sweetview-native` | `@n1h/sweetview-native` | `/native`, `/native/hit-regions` |
+| `packages/sweetview-settings` | `@n1h/sweetview-settings` | `/settings-store` |
+| `packages/sweetview-build` | `@n1h/sweetview-build` | `/build` |
+
+`@n1h/sweetview-ipc-ws` depends on IPC. Native and build helpers depend on settings.
 
 `page`, `window-chrome` and `native/hit-regions` import types only, so a
 page bundle contains no Bun code.
@@ -214,6 +223,20 @@ shared-memory ring; in a browser, the same call goes over a WebSocket.
 
 The contract is the same `Methods` and `Events` types on both sides. The
 mechanism is described under [Transport](docs/app.md#transport).
+
+Desktop assets and dynamic routes use the browser engine's native interception
+with zero TCP. Static files win at `ASSET_ORIGIN`. Set `onRequest: "worker"` on
+the webview and use `hostService(service, { onRequest })` or
+`hostRequestHandler(onRequest)` for asynchronous routes. Large IPC messages
+and binary responses cross the shared ring in chunks. Use `FRAMES_ORIGIN`
+for iframe content that needs a different origin from the app page.
+[Dynamic requests](docs/app.md#dynamic-requests).
+
+The shell can wait for the page's ready handshake, run modal UI commands on a
+later native tick, and hide the last window to the tray. A shared app identity
+ties settings, packaging and native URL activation together. The native package
+also provides clipboard, bounded and chunked file reads, and OS file drops.
+[Startup and deferred UI](docs/app.md#startup-and-deferred-ui), [native APIs](docs/native.md).
 
 The loop can instead be run from a Bun timer with `runEventLoop`, which keeps
 Bun's event loop alive on the UI thread, so an app needs no worker and a

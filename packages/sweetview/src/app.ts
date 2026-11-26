@@ -3,18 +3,19 @@
 // starts, this thread runs the OS event loop (or runEventLoop() for tabbed /
 // multi-window apps).
 
-import { FFIType, JSCallback, type Pointer } from "bun:ffi";
+import { CString, FFIType, JSCallback, toArrayBuffer, type Pointer } from "bun:ffi";
 import type { HTMLBundle } from "bun";
 import { basename, extname } from "node:path";
 import { pathToFileURL } from "node:url";
 import { SizeHint, Webview as RawWebview } from "@n1h/sweetview-webview-bun";
 import { assetMime, indexHtml } from "./html";
 import { createFrameAssembler, type AnyEvent, type EventMap, type MethodMap, type WireFrame } from "@n1h/sweetview-ipc";
-import type { InitMessage } from "./messages";
+import { HttpResponseAssembler, requestError, runNativeRequest, type HttpResponse } from "./http-response";
+import type { HttpRequestMessage, InitMessage, NativeRequest, NativeResponse } from "./messages";
 import { Window, quitEventLoop, runEventLoop, signalReady, type Rect, type TabHandle, type WindowOptions } from "@n1h/sweetview-native";
 import { discardQuit, getWindowMeta, isWindowDisposed, onWindowDispose, preserveWindowGeometry, scheduleNativeTimeout } from "@n1h/sweetview-native/internal";
 import { Ring } from "./ring";
-import { ASSET_ORIGIN, backgroundColorCall, openWebviewCore, setAssetCall, webviewLibPath } from "./webview-lib";
+import { ASSET_ORIGIN, allowExternalDropCall, backgroundColorCall, openWebviewCore, requestHandlerCalls, setAssetCall, webviewLibPath } from "./webview-lib";
 
 /** Methods that return synchronously on the UI thread. */
 export type UiMethods<M extends MethodMap> = { [K in keyof M & string]?: (params: M[K][0]) => M[K][1] };
@@ -38,8 +39,12 @@ export type WebViewOptions<M extends MethodMap = MethodMap> = {
   assets?: Record<string, Asset>;
   /** Asset path the webview opens. Default: the page's HTML, or "index.html". */
   index?: string;
-  /** Worker entry calling `hostService()`. Relative paths resolve against `Bun.main`. */
+  /** Worker entry calling `hostService()` or `hostRequestHandler()`. Relative paths resolve against `Bun.main`. */
   worker?: URL | string;
+  /** Handle dynamic requests on the UI thread, or forward them to the Worker. */
+  onRequest?: "worker" | ((request: NativeRequest) => NativeResponse);
+  /** Whether the webview accepts desktop drag-and-drop. Enabled by default. */
+  allowExternalDrop?: boolean;
   /** Devtools and context menu. */
   debug?: boolean;
   /** Synchronous UI-thread method handlers. */
@@ -158,25 +163,26 @@ type UiJob = { seq: string; method: string; fn: UiHandler; params: unknown };
 
 let nextDispatchId = 0n;
 const pendingUiDispatches = new Map<bigint, () => void>();
+const workerDrains = new Map<bigint, () => void>();
 // Cocoa may invoke an already-posted dispatch after the webview is gone. The
 // native trampoline stays valid while shutdown drops the per-view queue and
 // its dispatch token.
-let deferDrain: JSCallback | undefined;
-function deferredDrainPointer(): Pointer {
-  deferDrain ??= new JSCallback(
+let nativeDispatch: JSCallback | undefined;
+function nativeDispatchPointer(): Pointer {
+  nativeDispatch ??= new JSCallback(
     (_webview, id: bigint) => {
-      const run = pendingUiDispatches.get(id);
+      const run = pendingUiDispatches.get(id) ?? workerDrains.get(id);
       pendingUiDispatches.delete(id);
       try {
         run?.();
       } catch (err) {
-        console.error("sweetview: deferred UI dispatch failed:", err);
+        console.error("sweetview: UI dispatch failed:", err);
       }
     },
     { args: [FFIType.ptr, FFIType.u64], returns: FFIType.void },
   );
-  if (!deferDrain.ptr) throw new Error("sweetview: could not allocate the deferred UI dispatcher");
-  return deferDrain.ptr;
+  if (!nativeDispatch.ptr) throw new Error("sweetview: could not allocate the UI dispatcher");
+  return nativeDispatch.ptr;
 }
 
 export class WebView<M extends MethodMap = MethodMap, E extends EventMap = EventMap> {
@@ -226,7 +232,15 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
         throw new Error(`sweetview: ${name} is defined in both uiMethods and deferredUiMethods`);
       }
     }
+    const onRequest = options.onRequest;
+    if (onRequest === "worker" && options.worker === undefined) {
+      throw new Error('sweetview: onRequest: "worker" requires a worker entry point');
+    }
     const libPath = await webviewLibPath();
+    const requestCalls = onRequest === undefined ? undefined : requestHandlerCalls(libPath);
+    if (onRequest !== undefined && !requestCalls) {
+      throw new Error("sweetview: onRequest requires webview_set_request_handler and webview_complete_request from @n1h/sweetview-webview-bun >= 2.8.0 or a compatible WEBVIEW_PATH");
+    }
     const meta = getWindowMeta(window);
     const scale = window.scale() || 1;
     const winBounds: Rect = window.bounds();
@@ -303,6 +317,11 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
           console.warn("sweetview: this webview library has no webview_set_background_color; the page will not be transparent (see @n1h/sweetview-webview-bun)");
         }
       }
+      if (options.allowExternalDrop !== undefined) {
+        const set = allowExternalDropCall(libPath);
+        const error = set?.(handle(), options.allowExternalDrop ? 1 : 0);
+        if (error !== undefined && error !== 0) throw new Error(`sweetview: webview_set_allow_external_drop failed (${error})`);
+      }
 
       const sab = Ring.create(ringBytes);
       const ring = new Ring(sab);
@@ -314,25 +333,36 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
       };
 
       const assembler = createFrameAssembler();
-      const drain = new JSCallback(
-        () => {
-          ring.acknowledgeWakeup();
-          const decoder = new TextDecoder();
-          for (const bytes of ring.drain()) {
-            const wire = JSON.parse(decoder.decode(bytes)) as WireFrame;
-            const frame = assembler.push(wire);
-            if (!frame) continue;
-            if (frame.kind === "reply") {
-              if (frame.ok) raw.return(frame.seq, 0, JSON.stringify(frame.result ?? null));
-              else raw.return(frame.seq, 1, JSON.stringify({ message: frame.error }));
-            } else if (frame.kind === "event") {
-              for (const fn of taps) fn({ name: frame.name, payload: frame.payload });
-              emit(frame.name, frame.payload);
-            }
+      const httpResponses = new HttpResponseAssembler();
+      const decoder = new TextDecoder();
+      let down = false;
+      const isLive = () => !down && !isWindowDisposed(window) && raw.unsafeHandle !== null;
+      const completeRequest = ({ id, status, headers, body }: HttpResponse) => {
+        if (!isLive() || !requestCalls) return;
+        const error = requestCalls.completeRequest(handle(), BigInt(id), status, JSON.stringify(headers), body);
+        if (error !== 0) console.error(`sweetview: webview_complete_request failed (${error})`);
+      };
+      const drain = () => {
+        ring.acknowledgeWakeup();
+        for (const bytes of ring.drain()) {
+          if (!isLive()) break;
+          if (bytes[0] === 0) {
+            const response = httpResponses.push(bytes);
+            if (response) completeRequest(response);
+            continue;
           }
-        },
-        { args: [FFIType.ptr, FFIType.ptr], returns: FFIType.void },
-      );
+          const wire = JSON.parse(decoder.decode(bytes)) as WireFrame;
+          const frame = assembler.push(wire);
+          if (!frame) continue;
+          if (frame.kind === "reply") {
+            if (frame.ok) raw.return(frame.seq, 0, JSON.stringify(frame.result ?? null));
+            else raw.return(frame.seq, 1, JSON.stringify({ message: frame.error }));
+          } else if (frame.kind === "event") {
+            for (const fn of taps) fn({ name: frame.name, payload: frame.payload });
+            if (isLive()) emit(frame.name, frame.payload);
+          }
+        }
+      };
 
       const workerUrl =
         options.worker === undefined
@@ -343,16 +373,10 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
               : new URL(options.worker, pathToFileURL(Bun.main))
             : options.worker;
 
-      let worker: Worker | undefined;
-      try {
-        worker = workerUrl === undefined ? undefined : new Worker(workerUrl.href);
-      } catch (err) {
-        drain.close();
-        throw err;
-      }
-
-      const init: InitMessage = { kind: "init", ring: sab, webviewHandle: Number(raw.unsafeHandle), drainCallbackPtr: Number(drain.ptr), libPath };
-      let down = false;
+      const drainToken = ++nextDispatchId;
+      const drainCallbackPtr = workerUrl ? Number(nativeDispatchPointer()) : 0;
+      const worker = workerUrl === undefined ? undefined : new Worker(workerUrl.href);
+      let reqCb: JSCallback | undefined;
       let isReady = false;
       let cancelWatchdog: (() => void) | undefined;
       let deferScheduled = false;
@@ -378,12 +402,15 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
         cancelStartup();
         clearDispatches();
         assembler.clear();
+        httpResponses.clear();
+        if (reqCb && raw.unsafeHandle !== null) requestCalls?.setRequestHandler(handle(), null, null);
+        workerDrains.delete(drainToken);
+        ring.stopDispatch();
         worker?.terminate();
-        drain.close();
+        reqCb?.close();
         if (raw.unsafeHandle !== null) raw.destroy();
       };
 
-      const isLive = () => !down && !isWindowDisposed(window) && raw.unsafeHandle !== null;
       const respond = (seq: string, status: number, value: unknown) => {
         if (isLive()) raw.return(seq, status, JSON.stringify(value ?? null));
       };
@@ -424,7 +451,7 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
           }
         });
         try {
-          const error = core.webview_dispatch(handle(), deferredDrainPointer(), id);
+          const error = core.webview_dispatch(handle(), nativeDispatchPointer(), id);
           if (error !== 0) throw new Error(`sweetview: webview_dispatch failed (${error})`);
         } catch (err) {
           pendingUiDispatches.delete(id);
@@ -445,8 +472,48 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
       };
 
       try {
-        worker?.postMessage(init);
-        if (worker) worker.onerror = (e) => console.error("sweetview: the worker failed:", e.message ?? e);
+        if (worker) {
+          workerDrains.set(drainToken, drain);
+          const init: InitMessage = {
+            kind: "init", ring: sab, webviewHandle: Number(raw.unsafeHandle), drainCallbackPtr, drainToken, libPath,
+          };
+          worker.postMessage(init);
+          worker.onerror = (e) => console.error("sweetview: the worker failed:", e.message ?? e);
+        }
+        if (onRequest !== undefined && requestCalls) {
+          reqCb = new JSCallback(
+            (id: bigint, method: Pointer, url: Pointer, headers: Pointer | null, body: Pointer | null, length: bigint) => {
+              if (!isLive()) return;
+              try {
+                // The native strings and body belong to the callback. Copy
+                // them before the view returns control to the browser.
+                const request: NativeRequest = {
+                  id,
+                  method: new CString(method).toString(),
+                  url: new CString(url).toString(),
+                  headers: headers ? JSON.parse(new CString(headers).toString()) : [],
+                  body: body && length > 0n
+                    ? new Uint8Array(toArrayBuffer(body, 0, Number(length))).slice()
+                    : new Uint8Array(),
+                };
+                if (onRequest === "worker") {
+                  const msg: HttpRequestMessage = { kind: "http-request", ...request };
+                  worker!.postMessage(msg, request.body.byteLength ? [request.body.buffer] : []);
+                } else {
+                  completeRequest(runNativeRequest(onRequest, request));
+                }
+              } catch {
+                completeRequest(requestError(id, 500, "Internal Server Error"));
+              }
+            },
+            {
+              args: [FFIType.u64, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.u64, FFIType.ptr],
+              returns: FFIType.void,
+            },
+          );
+          const error = requestCalls.setRequestHandler(handle(), reqCb.ptr, null);
+          if (error !== 0) throw new Error(`sweetview: webview_set_request_handler failed (${error})`);
+        }
         raw.bindRaw("__sweetview_rpc", (seq, req) => {
           if (!isLive()) return;
           try {

@@ -2,110 +2,82 @@
 
 Audit of `@n1h/sweetview` (`v0.2.2`, commit `1246944`) plus architectural findings for v1, package layout, zero-TCP app porting, URL scheme / single-instance activation, and lessons carried over from `delightful-qt-web-shell`.
 
-For the proposed v1 API surface, see [`v1-api.md`](v1-api.md).
+For the final 1.0.0 API surface, see [`v1-api.md`](v1-api.md).
 
 ---
 
-## 1. Package Layout Discrepancy
+## 1. Package layout
 
-### Current State
+Sweetview 1.0.0 publishes six packages under `packages/`. The facade preserves
+the subpath entry points and owns the webview shell, page, and worker.
+IPC has no platform dependencies. The WebSocket transport depends on IPC,
+and native and build tools depend on settings. See the
+[workspace package table](../README.md#documentation).
 
-`package.json` publishes the entire repository as **one** npm package (`@n1h/sweetview`, described in `package.json:5` as *"One package with a module per part."*). There is no `packages/` directory; the only workspace entries are `demos/*` and `demos/web-app/packages/*`.
-
-All 12 entry points are subpath exports pointing into `src/`:
-
-| Subpath | Source | Internal Dependencies |
-|---|---|---|
-| `@n1h/sweetview/ipc` | `src/ipc/index.ts` | None (zero runtime APIs) |
-| `@n1h/sweetview/ipc-ws` (`/server`, `/client`) | `src/ipc-ws/*.ts` | `src/ipc` |
-| `@n1h/sweetview/page` | `src/page.ts` | `src/ipc` (types only) |
-| `@n1h/sweetview/worker` | `src/worker.ts` | `src/ipc`, `src/ring.ts`, `bun:ffi` |
-| `@n1h/sweetview/native` | `src/native/index.ts` | None (uses `bun:ffi`, never loads webview) |
-| `@n1h/sweetview/native/hit-regions` | `src/native/hit-regions.ts` | None (browser-safe) |
-| `@n1h/sweetview/settings-store` | `src/settings-store.ts` | None |
-| `@n1h/sweetview/window-chrome` | `src/window-chrome.ts` | Types only (browser-safe) |
-| `@n1h/sweetview/build` | `src/build.ts` | None |
-| `@n1h/sweetview` (root) | `src/index.ts` | `src/ipc`, `src/native`, `src/window-chrome`, `@n1h/sweetview-webview-bun` |
-
-External companion packages/repos:
-
-1. **`sweetview-webview`** — C++ fork of `webview/webview` adding `webview_set_background_color` and `webview_set_asset`.
-2. **`@n1h/sweetview-webview-bun`** — Optional peer dependency shipping prebuilt `libwebview.dll`, `libwebview.dylib`, and `libwebview-x64.so` plus `bun:ffi` bindings.
-
-Leftover `sweetnative:` error prefixes throughout `src/native/` indicate the native and IPC layers were originally conceived as separate packages and flattened into subpath exports of `@n1h/sweetview` prior to commit `f01e156`.
-
-### Splitting Into Real Workspace Packages
-
-Because the internal dependency graph is already strictly one-way, splitting `src/` into separate workspace packages under `packages/` requires no circular-dependency untangling:
-
-| Candidate Package | Contents | Runtime |
-|---|---|---|
-| `@n1h/sweetview-ipc` | `src/ipc/*` (`defineService`, `createBridge`, `memoryTransport`, frame types) | Any JS runtime (browser, Worker, Bun, Node) |
-| `@n1h/sweetview-ipc-ws` | `src/ipc-ws/*` (`wsHost`, `wsTransport`, `wsUrl`) | Bun (`server`), Browser (`client`) |
-| `@n1h/sweetview-native` | `src/native/*` (windows, screens, trays, menus, notifications, tabs, dialogs, event loop, icons, hit regions) | Bun (`bun:ffi`), zero webview dependency |
-| `@n1h/sweetview-settings` (optional) | `src/settings-store.ts` | Bun |
-| `@n1h/sweetview-build` (optional) | `src/build.ts`, `src/make-app.ts`, `src/refresh-icons.ts` | Bun |
-| `@n1h/sweetview` | Webview shell (`WebView`, `createApp`, `worker`, `page`, `ring`, `html`, `window-chrome`, `webview-lib`) | Bun + browser-safe `/page` & `/window-chrome` |
+The C++ library lives in `n0t-invented-here/sweetview-webview` and the Bun
+bindings and native binaries in `n0t-invented-here/sweetview-webview-bun`.
+Both carry the release work on `v1-drafting`.
+[Library additions and rebuild](webview-library.md).
 
 ---
 
 ## 2. Codebase Audit — Bugs, Leaks, and Broken Assumptions
 
-Twelve concrete defects verified in `src/` at commit `1246944`:
+These twelve findings describe the pre-v1 tree at commit `1246944`. File names and line numbers below refer to that revision.
 
 ### 2.1 Window Close Hides Instead of Closing; No `dispose()`; Destroying One Window Kills the Process
-- **Win32** (`src/native/win32/overlay.ts:245-253`): `WM_CLOSE` unconditionally calls `ShowWindow(hwnd, SW_HIDE)` and returns `0` — closing a window never destroys it. Worse, `WM_DESTROY` unconditionally calls `PostQuitMessage(0)`, so actually destroying *any single* overlay window terminates the entire application event loop.
-- **macOS** (`src/native/darwin/overlay.ts:194`): `setReleasedWhenClosed: false` keeps every closed `NSWindow` alive in memory forever.
-- **No `dispose()` on `Overlay` / `NativeWindow`**: Because windows cannot be cleanly torn down, every window leaks its OS handle, attached webview, and module-level map entries (`followsSystem`, `resizers`, `hits`, `ignoring`), plus Win32 `HICON` handles stored in `windowIcons` (`src/native/win32/icon.ts:70-85`). Opening 20 windows and closing 19 leaves all 19 alive in memory.
+- **Win32** (`win32/overlay.ts:245-253`): `WM_CLOSE` unconditionally calls `ShowWindow(hwnd, SW_HIDE)` and returns `0` — closing a window never destroys it. Worse, `WM_DESTROY` unconditionally calls `PostQuitMessage(0)`, so actually destroying *any single* overlay window terminates the entire application event loop.
+- **macOS** (`darwin/overlay.ts:194`): `setReleasedWhenClosed: false` keeps every closed `NSWindow` alive in memory forever.
+- **No `dispose()` on `Overlay` / `NativeWindow`**: Because windows cannot be cleanly torn down, every window leaks its OS handle, attached webview, and module-level map entries (`followsSystem`, `resizers`, `hits`, `ignoring`), plus Win32 `HICON` handles stored in `windowIcons` (`win32/icon.ts:70-85`). Opening 20 windows and closing 19 leaves all 19 alive in memory.
 - **Fix**: Give `Window` an explicit, idempotent `dispose()` that destroys the native handle and cleans every map/timer/observer/icon; default close action should actually close and dispose the window unless `onClose` intercepts it; only quit the event loop when the caller explicitly quits or (opt-in) when the last window closes; support close-to-tray only on the last visible window.
 
 ### 2.2 Win32 `toggleMaximize()` / `maximized()` Lies and Teleports Multi-Monitor Windows
-- `src/native/win32/overlay.ts:471-483`: `maximized()` only checks a JS closure variable `restoreBounds !== undefined`, never calling `IsZoomed(hwnd)`. If the user clicks the native OS maximize button or drags to top edge, `maximized()` returns `false`.
-- `toggleMaximize()` calls `self.setBounds(self.workArea())`, where `workArea()` (`src/native/win32/overlay.ts:503-505`) calls `SystemParametersInfoW(SPI_GETWORKAREA)` — which always returns the **primary** monitor's work area. Calling `toggleMaximize()` on Monitor 2 teleports the window onto Monitor 1.
+- `win32/overlay.ts:471-483`: `maximized()` only checks a JS closure variable `restoreBounds !== undefined`, never calling `IsZoomed(hwnd)`. If the user clicks the native OS maximize button or drags to top edge, `maximized()` returns `false`.
+- `toggleMaximize()` calls `self.setBounds(self.workArea())`, where `workArea()` (`win32/overlay.ts:503-505`) calls `SystemParametersInfoW(SPI_GETWORKAREA)` — which always returns the **primary** monitor's work area. Calling `toggleMaximize()` on Monitor 2 teleports the window onto Monitor 1.
 - **Fix**: For framed windows, use native `ShowWindow(SW_MAXIMIZE / SW_RESTORE)` and `IsZoomed(hwnd)`. For frameless windows, compute work area from the window's *own* monitor (`MonitorFromWindow` + `GetMonitorInfoW().rcWork`).
 
 ### 2.3 macOS Framed Window Bugs (`bounds` Growth, Ignored Flags, No-Op `startResize`)
-- **Outer vs. content rect mismatch** (`src/native/darwin/overlay.ts:183-192`): `createOverlayWindow({ frame: true, bounds })` passes `bounds` to `initWithContentRect:`, whereas `bounds()` and `setBounds()` operate on the outer `frame`. Saving and restoring bounds across restarts grows the window by one title-bar height every launch.
-- **Silently ignored flags** (`src/native/darwin/overlay.ts:217-235`): `if (!framed)` skips `topmost`, `opacity`, `transparent`, and `hideFromTaskbar` without error or warning whenever `frame: true`.
-- **Empty `startResize()`** (`src/native/darwin/overlay.ts:290-292`): `startResize()` is a complete no-op on macOS, breaking custom chrome resize handles on frameless macOS windows.
+- **Outer vs. content rect mismatch** (`darwin/overlay.ts:183-192`): `createOverlayWindow({ frame: true, bounds })` passes `bounds` to `initWithContentRect:`, whereas `bounds()` and `setBounds()` operate on the outer `frame`. Saving and restoring bounds across restarts grows the window by one title-bar height every launch.
+- **Silently ignored flags** (`darwin/overlay.ts:217-235`): `if (!framed)` skips `topmost`, `opacity`, `transparent`, and `hideFromTaskbar` without error or warning whenever `frame: true`.
+- **Empty `startResize()`** (`darwin/overlay.ts:290-292`): `startResize()` is a complete no-op on macOS, breaking custom chrome resize handles on frameless macOS windows.
 - **Fix**: Convert outer frame via `[NSWindow contentRectForFrameRect:styleMask:]` (or apply `setFrame:display:` while hidden); honor `topmost`/`opacity`/`hideFromTaskbar` regardless of `frame`; implement drag-resize loop on macOS matching Win32.
 
 ### 2.4 Repeated Uncached `dlopen()` Calls Never Closed
-- `src/app.ts:234-237` and `src/webview-lib.ts:34-56` call `dlopen(libPath, ...)` 2–3 times on every `createWebviewApp()` call (`webview_terminate`/`webview_run`, `webview_set_background_color`, `webview_set_asset`) and never cache or `.close()` the resulting handles.
-- **Fix**: Open the shared library once per `libPath` in a cached singleton wrapper in `src/webview-lib.ts`.
+- `app.ts:234-237` and `webview-lib.ts:34-56` call `dlopen(libPath, ...)` 2–3 times on every `createWebviewApp()` call (`webview_terminate`/`webview_run`, `webview_set_background_color`, `webview_set_asset`) and never cache or `.close()` the resulting handles.
+- **Fix**: Open the shared library once per `libPath` in a cached singleton wrapper in `webview-lib.ts`.
 
 ### 2.5 macOS Notifier Lazy Delegate & Unreleased ObjC Runtime Allocations
-- `src/native/darwin/notifier.ts:86-93`: `UNUserNotificationCenter.setDelegate:` is only called inside `ensureCenter()`, which runs lazily on the first `notify()` call — never inside `createNotifier()`. Clicking a notification that launches the app before the app sends a new notification drops the click (contradicting `docs/native.md`).
-- Repeated calls to `createNotifier()` or `installAppMenu()` do not collide on ObjC class names (because `makeTarget()` in `src/native/darwin/objc.ts` appends a monotonic counter), but every call permanently allocates and leaks a fresh ObjC class pair, an unreleased `+1` instance, `JSCallback`s, and global blocks. (Meanwhile, `demos/native-tabs/mac-window-tabs.ts` hardcodes `"SweetviewWindowTabs"` and `"SweetviewTabNavigation"`.)
+- `darwin/notifier.ts:86-93`: `UNUserNotificationCenter.setDelegate:` is only called inside `ensureCenter()`, which runs lazily on the first `notify()` call — never inside `createNotifier()`. Clicking a notification that launches the app before the app sends a new notification drops the click (contradicting `docs/native.md`).
+- Repeated calls to `createNotifier()` or `installAppMenu()` do not collide on ObjC class names (because `makeTarget()` in `darwin/objc.ts` appends a monotonic counter), but every call permanently allocates and leaks a fresh ObjC class pair, an unreleased `+1` instance, `JSCallback`s, and global blocks. (Meanwhile, `demos/native-tabs/mac-window-tabs.ts` hardcodes `"SweetviewWindowTabs"` and `"SweetviewTabNavigation"`.)
 - **Fix**: Register the delegate eagerly in `Notifier` construction; reuse or safely dispose ObjC targets/blocks instead of leaking per instance, and guard/uniquify ObjC classes in promoted macOS tabs.
 
 ### 2.6 Win32 Notifier Coupled to Tray, Legacy Balloons, and Wrong Click Payload
-- `src/native/win32/notifier.ts:12-13`: Throws if no tray has been created yet because it piggybacks on `Shell_NotifyIconW(NIF_INFO)` balloons.
-- `src/native/win32/tray.ts:149-151, 184-195`: Only one `lastBalloon` is tracked. Firing two notifications and clicking the first delivers the *second* notification's `id` and `data`.
+- `win32/notifier.ts:12-13`: Throws if no tray has been created yet because it piggybacks on `Shell_NotifyIconW(NIF_INFO)` balloons.
+- `win32/tray.ts:149-151, 184-195`: Only one `lastBalloon` is tracked. Firing two notifications and clicking the first delivers the *second* notification's `id` and `data`.
 - **Fix**: Either replace with proper Windows toast notifications (WinRT `ToastNotificationManager` with per-toast activation args) or clearly scope balloon notifications and guard multi-notification IDs.
 
 ### 2.7 macOS 10ms Hit-Region `NSTimer` Runs Forever
-- `src/native/darwin/overlay.ts:162-168`: `ensureTimer()` schedules a repeating 10ms (`0.01s`) `NSTimer` on the main run loop that is never invalidated even after `setHitRegions(null)` clears every tracked window, waking the main thread 100 times/second for the lifetime of the process.
+- `darwin/overlay.ts:162-168`: `ensureTimer()` schedules a repeating 10ms (`0.01s`) `NSTimer` on the main run loop that is never invalidated even after `setHitRegions(null)` clears every tracked window, waking the main thread 100 times/second for the lifetime of the process.
 - **Fix**: Invalidate and release the timer when `hits.size === 0` (and on `win.dispose()`).
 
 ### 2.8 Worker `send()` Outside `try/catch` Permanently Hangs RPC Promises
-- `src/worker.ts:24-47`: Inside `handle()`, `send()` calls `JSON.stringify(frame)` and `ring.write(...)` *both* inside the `try` and inside the `catch` reply path. If a return value exceeds the ring buffer size (`1 MB - 4` bytes by default) or contains unserializable values (`BigInt`, circular refs), `send()` throws uncaught and no `ReplyFrame` is ever written — hanging the page's `await bridge.call(...)` Promise forever.
+- `worker.ts:24-47`: Inside `handle()`, `send()` calls `JSON.stringify(frame)` and `ring.write(...)` *both* inside the `try` and inside the `catch` reply path. If a return value exceeds the ring buffer size (`1 MB - 4` bytes by default) or contains unserializable values (`BigInt`, circular refs), `send()` throws uncaught and no `ReplyFrame` is ever written — hanging the page's `await bridge.call(...)` Promise forever.
 - **Fix**: Wrap serialization and `ring.write` in error handling inside `send()` / `handle()` so oversized or unserializable replies always send a small `{ kind: "reply", seq, ok: false, error }` frame instead of dropping the request silently (and consider chunked framing for payloads larger than a single ring slot).
 
 ### 2.9 macOS `onCloseRequest` Misses `Cmd+W` and Throws on Frameless Windows
-- `src/native/darwin/window.ts:49-60`: `onCloseRequest` works by retargeting the red traffic-light `NSWindowCloseButton`. It misses `Cmd+W` / programmatic `performClose:` and throws `"window has no close button"` on any frameless window.
+- `darwin/window.ts:49-60`: `onCloseRequest` works by retargeting the red traffic-light `NSWindowCloseButton`. It misses `Cmd+W` / programmatic `performClose:` and throws `"window has no close button"` on any frameless window.
 - **Fix**: Intercept window closing via `NSWindowDelegate` (`windowShouldClose:`) or `NSWindowWillCloseNotification` / menu-action dispatch rather than only rewiring the traffic-light button.
 
 ### 2.10 `win.screen()` and `win.workArea()` Ignore `win`
-- Both `src/native/win32/overlay.ts:488-505` and `src/native/darwin/overlay.ts:305-328` return the **primary** monitor's rect and work area regardless of which monitor `win` is actually on.
+- Both `win32/overlay.ts:488-505` and `darwin/overlay.ts:305-328` return the **primary** monitor's rect and work area regardless of which monitor `win` is actually on.
 - **Fix**: Replace with `Screen.primary()`, `Screen.all()`, `Screen.at(pt)`, and `Screen.of(win)` (implemented via `MonitorFromWindow` on Windows and `[win screen]` on macOS).
 
 ### 2.11 Native Tabs (~1,500 LOC) Stranded in `demos/native-tabs/`
-- Complete macOS AppKit tabbing and Win32 custom tab-strip + multi-WebView2 implementations were built inside `demos/native-tabs/` instead of `src/` (`demos/native-tabs/README.md:177-178` explicitly notes it isn't exported).
+- Complete macOS AppKit tabbing and Win32 custom tab-strip + multi-WebView2 implementations were built inside `demos/native-tabs/` before workspace extraction (`demos/native-tabs/README.md:177-178` explicitly notes it isn't exported).
 - **Fix**: Promote into the native/webview library behind `Window({ tabs: true })`, `WebView.openTab`, and `createApp({ tabs: true })` (see `docs/v1-api.md`).
 
 ### 2.12 Win32 Windows 11 Topmost Anchor & DPI Init Only Run in `createOverlayWindow`
-- `src/native/win32/overlay.ts:270-281`: Works around a Windows 11 25H2 bug where the first top-level window in a process can never be made `HWND_TOPMOST` by creating a hidden message window first — and calls `SetProcessDpiAwarenessContext(PER_MONITOR_AWARE_V2)` — but only inside `createOverlayWindow`, not inside `createWebviewApp()`, `makeOverlay()`, or `createMessageWindow()` (`src/native/win32/message-window.ts:56-60`). Creating a tray before a window therefore locks the process into DPI-unaware mode.
+- `win32/overlay.ts:270-281`: Works around a Windows 11 25H2 bug where the first top-level window in a process can never be made `HWND_TOPMOST` by creating a hidden message window first — and calls `SetProcessDpiAwarenessContext(PER_MONITOR_AWARE_V2)` — but only inside `createOverlayWindow`, not inside `createWebviewApp()`, `makeOverlay()`, or `createMessageWindow()` (`win32/message-window.ts:56-60`). Creating a tray before a window therefore locks the process into DPI-unaware mode.
 - **Fix**: Run `ensureDpiAware()` and `ensureFirstWindowIsHidden()` from a single shared Win32 startup initializer called by `Screen`, `Window`, `createMessageWindow()`, and `WebView`.
 
 ---
@@ -119,7 +91,7 @@ Goal: run real Bun web apps as desktop Sweetview apps with **zero localhost TCP 
 | App | Repo | Backend ↔ Frontend Transport Today | Special Requirements | Refactor Cost (JSON-RPC Only) |
 |---|---|---|---|---|
 | **TracLite** | `Apps/TracLite` | 35 JSON REST routes (`web/api.ts`) + 1 SSE stream (`web/hooks/useLive.ts`), zero binary HTTP. `Bun.serve` + SQLite + HTTP MCP. | Clean API client boundary; SSE live refresh. | **Low (~1–2 hours)** |
-| **gitweb** | `Apps/gitweb` | 19 JSON routes + 1 SSE stream in `src/web/api/client.ts`. | Direct browser URL loads to `/api/repos/:id/raw` via `<img src>` (`BlobView.tsx`, `MarkdownView.tsx`) and `<a download>`. | **Medium-low (~½ day)** — JSON/SSE is easy, but `<img src>` and downloads need blob URLs or custom URL interception. |
+| **gitweb** | `Apps/gitweb` | 19 JSON routes and one SSE stream in its web API client. | Direct browser URL loads to `/api/repos/:id/raw` via image URLs (`BlobView.tsx`, `MarkdownView.tsx`) and `<a download>`. | **Medium-low (~½ day)** — JSON/SSE is easy, but `<img src>` and downloads need blob URLs or custom URL interception. |
 | **UntidyDiary** | `Apps/UntidyDiary` | 10 HTTP endpoints (`diaryClient.ts`) + `/~/live` WebSocket (`live.ts`, already DI'd via `SocketLike`). | 25 MB image uploads, arbitrary dynamic on-disk media (`<img>`, `<video>`, `<audio>`, PDFs), dynamic `themes.css`, **second-origin `Bun.serve` (`framesOrigin`)** for cross-origin sandboxed `<iframe src>` day apps, and `POST /~/backend/...`. | **High** with JSON-RPC alone — rewriting every dynamic media URL, 25 MB upload, and cross-origin iframe protocol into JSON-RPC + blob URLs is heavy and fragile. |
 
 ### 3.2 Two Ways to Dramatically Reduce Migration Cost
@@ -129,11 +101,11 @@ Add a lightweight `hostHttp(fetchHandler)` helper on the worker side and `webvie
 - Lets `TracLite` and all JSON/SSE routes in `gitweb` reuse their existing `(req: Request) => Promise<Response>` Bun handlers unchanged with zero TCP ports.
 - **Limitation**: Cannot intercept browser-initiated subresource loads (`<img src>`, `<video src>`, `<link href>`, `<iframe src>`, or `history.pushState` reloads) because WebView2 / WKWebView do not route those through JS `fetch()`.
 
-#### Option B — Dynamic Request Handler in `sweetview-webview` (1 C++ Addition)
+#### Option B — Native dynamic request handler (shipped in 1.0.0)
 Extend `sweetview-webview` (and `@n1h/sweetview-webview-bun`) with `webview_set_request_handler` (plus an optional second virtual origin, e.g. `http://frames.webview.localhost` on Windows / `webview-frames://localhost` on macOS):
 - Hooks `WebResourceRequested` (WebView2 on Windows) and `WKURLSchemeHandler` (WKWebView on macOS) into a Bun `(req: Request) => Promise<Response>` callback instead of only static pre-registered `webview_set_asset` entries.
 - **What this unlocks with zero TCP ports**:
-  1. Existing `fetch()` calls, SSE streams, and form/file uploads work unmodified against the same `Request -> Response` router used by `Bun.serve` in web mode.
+  1. Finite fetch responses and request bodies can reuse a Request-to-Response router. Worker responses are buffered. Keep long-lived streams such as SSE on their existing web transport or use Sweetview IPC events in desktop mode.
   2. `<img src>`, `<video src>`, `<audio src>`, `<a download>`, dynamic CSS (`themes.css`), and `history.pushState` hard reloads all work natively without blob-URL hacks.
   3. A second virtual origin (`frames.webview.localhost` / `webview-frames://localhost`) gives `UntidyDiary` real browser-enforced cross-origin isolation for sandboxed day-app `<iframe>`s with zero localhost ports.
 - **Note on WebSockets**: `UntidyDiary`'s `/~/live` already injects `SocketLike`, so desktop mode swaps in Sweetview IPC events while web mode keeps `WebSocket` (or `@n1h/sweetview/ipc-ws`).
@@ -156,7 +128,7 @@ To support `my-app://whatever/123` launching the app (or focusing and forwarding
 ### 4.2 macOS (`darwin`)
 1. **Protocol registration**: Declare `CFBundleURLTypes` (`CFBundleURLName`, `CFBundleURLSchemes: ["my-app"]`) inside `Info.plist` generated by `makeMacApp({ urlSchemes: ["my-app"] })`. Launch Services automatically registers the scheme when the signed `.app` bundle is opened/scanned.
 2. **Receiving URLs**: Register an Apple Event handler via `NSAppleEventManager.sharedAppleEventManager` for class `kInternetEventClass` (`'GURL'`) and event ID `kAEGetURL` (`'GURL'`), reading `keyDirectObject` (`'----'`) as an `NSString`. Register **before** `NSApp.run` / `webview.run()` so cold-launch URLs are buffered and delivered to `onOpenUrl` instead of dropped.
-3. **Single-instance lock & handoff**: macOS `.app` bundles launched via Launch Services / Finder are already single-instance by default, and `kAEGetURL` routes directly into the running process. For direct CLI / terminal launches of the binary, add a `CFMessagePort` (or Unix domain socket in `appDataDir`) guard that forwards args/URLs to the existing instance and exits.
+3. **Single-instance lock & handoff**: macOS `.app` bundles launched via Launch Services / Finder are already single-instance by default, and `kAEGetURL` routes directly into the running process. For direct CLI / terminal launches of the binary, Sweetview uses `CFMessagePort` to forward arguments and URLs to the existing instance.
 
 ### 4.3 Unified Activation API
 Unify cold-launch URLs, warm-launch URLs, CLI args, and OS file-open events behind one app-level pipeline:

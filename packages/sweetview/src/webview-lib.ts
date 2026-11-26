@@ -1,10 +1,7 @@
 // sweetview runs on the webview library that @n1h/sweetview-webview-bun ships:
-// upstream webview/webview plus `webview_set_background_color` and
-// `webview_set_asset` (see ../docs/webview-library.md). webview-bun loads it from
-// its own build/ folder; `bun build --compile` embeds that file. The two extra
-// symbols are probed here at run time rather than assumed: without
-// webview_set_background_color the page stays opaque with a warning; without
-// webview_set_asset createApp/WebView throws, because the page cannot load.
+// upstream webview/webview plus the Sweetview additions in docs/webview-library.md.
+// webview-bun loads it from its build/ folder; `bun build --compile` embeds
+// that file. Optional symbols are probed at first use.
 //
 // All dlopen() calls are cached per libPath so repeated window/tab creation
 // never leaks open shared-library handles.
@@ -44,6 +41,8 @@ type CachedLib = {
   core?: WebviewCoreSymbols;
   backgroundColor?: SetBackgroundColor | null;
   setAsset?: SetAsset | null;
+  requestHandler?: ReturnType<typeof openRequestHandler> | null;
+  allowExternalDrop?: ReturnType<typeof openExternalDrop> | null;
 };
 
 const cache = new Map<string, CachedLib>();
@@ -119,3 +118,59 @@ export function setAssetCall(libPath: string): SetAsset | undefined {
  * the page work the same on both.
  */
 export const ASSET_ORIGIN = process.platform === "darwin" ? "webview://localhost" : "http://webview.localhost";
+
+/** The second intercepted origin, for content isolated from the app page. */
+export const FRAMES_ORIGIN = process.platform === "darwin" ? "webview-frames://localhost" : "http://frames.webview.localhost";
+
+function openRequestHandler(libPath: string) {
+  const { webview_set_request_handler, webview_complete_request } = dlopen(libPath, {
+    webview_set_request_handler: {
+      args: [FFIType.ptr, FFIType.ptr, FFIType.ptr],
+      returns: FFIType.i32,
+    },
+    webview_complete_request: {
+      args: [FFIType.ptr, FFIType.u64, FFIType.i32, FFIType.cstring, FFIType.ptr, FFIType.u64],
+      returns: FFIType.i32,
+    },
+  }).symbols;
+  return {
+    setRequestHandler: webview_set_request_handler,
+    completeRequest(w: Pointer, id: bigint, status: number, headersJson: string, body: Uint8Array) {
+      return webview_complete_request(
+        w, id, status, Buffer.from(`${headersJson}\0`, "utf8"),
+        body.byteLength ? ptr(body) : null, BigInt(body.byteLength),
+      );
+    },
+  };
+}
+
+export function requestHandlerCalls(libPath: string) {
+  const c = entry(libPath);
+  if (c.requestHandler === undefined) {
+    try {
+      c.requestHandler = openRequestHandler(libPath);
+    } catch {
+      c.requestHandler = null;
+    }
+  }
+  return c.requestHandler ?? undefined;
+}
+
+function openExternalDrop(libPath: string) {
+  return dlopen(libPath, {
+    webview_set_allow_external_drop: { args: [FFIType.ptr, FFIType.i32], returns: FFIType.i32 },
+  }).symbols.webview_set_allow_external_drop;
+}
+
+export function allowExternalDropCall(libPath: string) {
+  const c = entry(libPath);
+  if (c.allowExternalDrop === undefined) {
+    try {
+      c.allowExternalDrop = openExternalDrop(libPath);
+    } catch {
+      console.warn("sweetview: allowExternalDrop requires webview_set_allow_external_drop from @n1h/sweetview-webview-bun >= 2.8.0 or a compatible WEBVIEW_PATH");
+      c.allowExternalDrop = null;
+    }
+  }
+  return c.allowExternalDrop ?? undefined;
+}

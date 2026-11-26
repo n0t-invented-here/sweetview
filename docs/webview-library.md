@@ -4,15 +4,17 @@ The library `@n1h/sweetview` runs on, and what differs from upstream webview.
 
 - Shipped by [`@n1h/sweetview-webview-bun`](https://github.com/n0t-invented-here/sweetview-webview-bun)
   in its `build/` folder for Windows x64, macOS (universal) and Linux x64.
-- Built from https://github.com/n0t-invented-here/sweetview-webview, branch
-  `sweetview`: [webview/webview](https://github.com/webview/webview) at
-  `f1a9d6b` plus the two C API calls below.
-- The Linux arm64 file in the same folder, `libwebview-arm64.so`, is the
-  upstream build and lacks the two calls.
+- The Bun bindings ship the patched library from their `webview` submodule.
+  The release work for these additions is on `v1-drafting` in both
+  companion repositories. The Linux arm64 build is outside Sweetview's
+  supported library targets.
 
 ```c
 webview_error_t webview_set_background_color(webview_t w, int r, int g, int b, int a);
 webview_error_t webview_set_asset(webview_t w, const char *path, const char *mime, const void *data, size_t len);
+webview_error_t webview_set_request_handler(webview_t w, webview_request_handler_t fn, void *arg);
+webview_error_t webview_complete_request(webview_t w, uint64_t request_id, int status, const char *headers_json, const void *body, size_t body_len);
+webview_error_t webview_set_allow_external_drop(webview_t w, int allow);
 ```
 
 `webview_set_background_color`:
@@ -51,7 +53,8 @@ and position.
 - `mime` is sent as the `Content-Type` header unchanged.
 - Calling again with the same path replaces the bytes. No call removes an
   asset.
-- A request for a path with no asset gets a 404 with an empty body.
+- A request for a path with no asset reaches the request handler, or gets a
+  404 with an empty body when no handler is registered.
 
 | Return | When |
 |---|---|
@@ -59,23 +62,50 @@ and position.
 | `WEBVIEW_ERROR_INVALID_ARGUMENT` (-2) | `path` or `mime` is null, or `data` is null while `len` is not 0. |
 
 - Windows: origin `http://webview.localhost`. A `WebResourceRequested` filter
-  for that origin answers every request from the table with
-  `CreateWebResourceResponse` (200 with the given Content-Type, or 404).
+  for that origin returns static matches with `CreateWebResourceResponse`.
 - macOS: origin `webview://localhost`. A `WKURLSchemeHandler` for the scheme
   `webview` is registered on the `WKWebViewConfiguration` before the
-  `WKWebView` is created. It answers every `webview:` request from the same
-  table with an HTTP response: 200 with the given Content-Type and the byte
-  length, or 404.
+  `WKWebView` is created. Static matches get status 200 with the given
+  content type and byte length.
 - Linux: accepted and stored, not served.
+
+### Dynamic interception and the second origin
+
+`webview_set_request_handler` registers a native callback for misses at
+`ASSET_ORIGIN` and all requests to `FRAMES_ORIGIN`. The second origin is
+`http://frames.webview.localhost` on Windows and `webview-frames://localhost`
+on macOS. A page at the first origin cannot read iframe DOM at the second.
+Requests to either origin use browser-engine interception and zero TCP.
+
+The callback runs on the UI thread. It receives a 64-bit request ID, method,
+URL, request headers as JSON pairs, body pointer, byte length and caller
+context. The pointers expire when the callback returns. WebView2 holds an
+`ICoreWebView2Deferral`. WebKit holds a `WKURLSchemeTask` and drops stopped
+tasks. The fork accepts registration on Linux without serving the requests.
+
+`webview_complete_request` copies response data and queues delivery. It
+accepts status 100–599, an object or list of header pairs (including repeated
+names), and raw body bytes. A repeat completion or a cancelled request is
+ignored. Sweetview invokes this API on the UI thread and forwards asynchronous
+worker responses through shared memory. [Application request API](app.md#dynamic-requests).
+
+### External drops
+
+`webview_set_allow_external_drop` sets WebView2's
+`ICoreWebView2Controller4::AllowExternalDrop`. A nonzero value enables
+external content drops and zero disables them. The default is enabled.
+macOS and Linux accept the call without changing behavior.
+
+### Library selection
 
 `@n1h/sweetview` loads the library file the way `@n1h/sweetview-webview-bun`
 does.
 
 - `WEBVIEW_PATH` when set; otherwise `libwebview.dll`, `libwebview.dylib` or
   `libwebview-<arch>.so` from `@n1h/sweetview-webview-bun/build/`.
-- The webview, the worker's `webview_dispatch` and the two extra calls use
+- The webview, the worker's `webview_dispatch` and the fork additions use
   that one file, and `bun build --compile` embeds it.
-- `WebView.attach` (and `createApp`) caches the opened library per path and looks the two symbols up at run time ([app.md](app.md)):
+- `WebView.attach` (and `createApp`) caches the opened library per path and probes optional symbols on use:
 
 | Situation | Behaviour |
 |---|---|
@@ -84,24 +114,27 @@ does.
 | No `webview_set_asset` | Throws; the page cannot load without it. |
 | `webview_set_asset` returns an error | Throws `sweetview: webview_set_asset(<path>) failed (<code>)`. |
 | Asset `mime` | From the path's extension; unknown extensions get `application/octet-stream`. |
+| `onRequest` with missing request symbols | Throws with the `2.8.0` library and `WEBVIEW_PATH` requirements. |
+| `allowExternalDrop` with a missing symbol | Warns once per library path and uses the browser default. |
 
 - [Source](#source)
 - [Rebuilding](#rebuilding)
 
 ## Source
 
-- Library: https://github.com/n0t-invented-here/sweetview-webview, default
-  branch `sweetview`.
-- Bindings: https://github.com/n0t-invented-here/sweetview-webview-bun,
-  default branch `sweetview`, with the library as its submodule; published as
-  `@n1h/sweetview-webview-bun`.
+- C++ library and browser integrations on the `v1-drafting` branch of
+  `n0t-invented-here/sweetview-webview`.
+- Bun bindings, native binaries and live tests on the `v1-drafting` branch of
+  `n0t-invented-here/sweetview-webview-bun`, published as `@n1h/sweetview-webview-bun`.
+- Desktop facade, worker integration and application docs in
+  `n0t-invented-here/sweetview`.
 - Files the change touches: `core/include/webview/api.h`, `c_api_impl.hh`,
   `detail/engine_base.hh`, `detail/backends/win32_edge.hh`,
   `detail/backends/cocoa_webkit.hh`, `detail/platform/windows/webview2/loader.hh`.
 
 ## Rebuilding
 
-The recipes that clone the forks and build the library from them live in
-[`webview/`](../webview/README.md) in this repository. A change to the library
-reaches this package through a new `@n1h/sweetview-webview-bun` release and a
-matching bump of the `@n1h/sweetview-webview-bun` peer dependency.
+Use the bindings repository's `just build` on the target OS, then
+`bun test test/request-handler.test.ts`. The `^2.7.0` peer range accepts
+2.8.0. To verify the new symbols before publication, set `WEBVIEW_PATH` to
+the rebuilt target binary. [Platform verification](v1-macos-verification.md).

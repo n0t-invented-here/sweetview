@@ -1,6 +1,56 @@
-# Sweetview v1.0 macOS Verification Guide
+# Sweetview 1.0.0 verification on macOS and Linux
 
-This guide lists the exact commands and runtime checks to run on an Apple Silicon macOS host for branch `v1-drafting`. All Windows-side unit tests, TypeScript checks, cross-platform builds, and Windows GUI probes have already passed; this guide verifies the macOS AppKit / WKWebView / `UNUserNotificationCenter` runtime paths.
+Use `v1-drafting` in `n0t-invented-here/sweetview` and
+`n0t-invented-here/sweetview-webview-bun`. The latter pins the matching C++
+revision from `n0t-invented-here/sweetview-webview` through its `webview`
+submodule. Place the two working repositories side by side for these commands.
+
+## 0. Build and test the native library
+
+Install Bun 1.4.2+, PowerShell 7 (`pwsh`), `just`, CMake and Ninja. On macOS
+also install Xcode Command Line Tools with `xcode-select --install`. On Linux
+x64 install Clang, `pkg-config`, GTK 4 and WebKitGTK 6.0 development headers
+(for example, `clang pkg-config libgtk-4-dev libwebkitgtk-6.0-dev` on Debian
+or Ubuntu).
+
+From the bindings repository:
+
+```bash
+git switch v1-drafting
+git pull --ff-only
+git submodule update --init --recursive
+bun install
+just build
+```
+
+Confirm the build reports the expected native binary, then export its path
+in the same shell before running the tests:
+
+```bash
+# macOS
+export WEBVIEW_PATH="$PWD/build/libwebview.dylib"
+test -f "$WEBVIEW_PATH"
+nm -gU "$WEBVIEW_PATH" | grep -E 'webview_(set_request_handler|complete_request|set_allow_external_drop)$'
+
+# Linux x64 (use these commands in place of the macOS commands)
+export WEBVIEW_PATH="$PWD/build/libwebview-x64.so"
+test -f "$WEBVIEW_PATH"
+nm -D --defined-only "$WEBVIEW_PATH" | grep -E 'webview_(set_request_handler|complete_request|set_allow_external_drop)$'
+```
+
+Check that all three symbols appear. Run the bindings tests from that same folder:
+
+```bash
+bun test
+bun test test/request-handler.test.ts
+cd ../sweetview
+```
+
+Run the macOS live tests from an interactive desktop session. Confirm the
+request test serves static assets, dynamic HTML, a POST body and an image,
+and that the frames origin is isolated. Linux verifies the library exports.
+The bindings' desktop request probe skips there because the GTK backend
+does not serve the custom origins.
 
 ## 1. Automated test suite and build
 
@@ -8,7 +58,7 @@ Run from the repository root:
 
 ```bash
 git fetch origin
-git checkout v1-drafting
+git switch v1-drafting
 git pull --ff-only
 bun install
 just check
@@ -16,20 +66,25 @@ just check
 
 Expected:
 
-- `tsc --noEmit` exits 0 across `src/` and `demos/`.
-- `bun test` passes **including** the 2 macOS codesigning tests in `src/build.test.ts` (which are skipped on Windows).
+- `tsc --noEmit` exits 0 across `packages/` and `demos/`.
+- On macOS, the codesigning tests in `packages/sweetview-build/src/build.test.ts`
+  and the `CFMessagePort` handoff test run. Linux skips desktop-only
+  cases and runs the portable tests.
 
 Then compile all demos and sign the `.app` bundles natively on macOS:
 
 ```bash
 just compile
+just pack
 ```
 
-Expected: `dist/` contains signed bundles `demos/web-app/dist/Web App.app`, `demos/desktop-pet/dist/Pet.app`, `demos/menubar-only/dist/Menubar Only.app`, and `demos/menubar-notify/dist/Menubar Notify.app`.
+On macOS, confirm the demo `.app` bundles are signed. Linux builds unsigned
+bundles for the target platform. Confirm dry-run packs for all six packages.
 
 ## 2. Automated native-tabs drive script
 
-Run the macOS UI driver against the migrated `demos/native-tabs/app.ts` (which now uses built-in `createApp({ tabs: true })`, `WebView.openTab`, and `src/tabs/darwin-tabs.ts`):
+Run this on macOS in a desktop session. Linux has no Sweetview native
+window backend and skips this GUI driver.
 
 ```bash
 just demos native-tabs drive
@@ -80,7 +135,7 @@ Also verify a frameless `Window({ frame: false })` stays borderless (`styleMask 
 bun -e '
 import { WebView } from "@n1h/sweetview";
 import { Window } from "@n1h/sweetview/native";
-import { sel, sendInt } from "./src/native/darwin/objc";
+import { sel, sendInt } from "./packages/sweetview-native/src/darwin/objc";
 
 const frameless = new Window({ frame: false, transparent: true, bounds: { x: 200, y: 200, width: 320, height: 240 } });
 const view = await WebView.attach(frameless, { url: "about:blank" });
@@ -185,3 +240,84 @@ Launch and exercise each compiled `.app` bundle on macOS:
 - `open "demos/web-app/dist/Web App.app"` — verify window renders, IPC counter/notes work, tray menu toggles visibility, and `Cmd+Q` / Quit menu exits cleanly.
 - `open "demos/menubar-only/dist/Menubar Only.app"` — verify status bar item appears with no Dock icon, tooltip updates every second, and Quit exits cleanly.
 - `open "demos/desktop-pet/dist/Pet.app"` — verify transparent 3D pet walks above the Dock, click-through works, Settings window opens/resizes, and Quit exits cleanly.
+
+## 4. macOS activation, startup and request routes
+
+With the rebuilt `WEBVIEW_PATH` still set, run:
+
+```bash
+bun test packages/sweetview-native/src/darwin/activation.test.ts
+bun test packages/sweetview/src/app.test.ts -t 'desktop startup & deferred RPC'
+bun test packages/sweetview/src/request-handler.test.ts
+```
+
+Confirm the child launch reaches the primary through `CFMessagePort`. The
+startup tests exercise the `NSTimer` watchdog under both event-loop modes,
+the page ready handshake and `deferredUiMethods` without RPC reentry. The
+request tests should load worker HTML and an image, echo a POST, verify a 20 KiB response
+with a 4 KiB ring, and block access to iframe DOM at
+`webview-frames://localhost`.
+
+For a Finder and Launch Services probe, save the following as
+`v1-native-probe.ts` in the Sweetview repository root:
+
+```ts
+import {
+  Clipboard, Window, closeToTrayOnLastWindow, defineAppIdentity, onOpenUrl,
+  runEventLoop, signalReady, singleInstance,
+} from "@n1h/sweetview/native";
+
+const identity = defineAppIdentity({
+  appId: "dev.sweetview.v1-native-probe",
+  appName: "Sweetview Native Probe",
+  urlSchemes: ["sweetview-v1-probe"],
+});
+onOpenUrl((url) => console.log("open URL", url));
+const lock = await singleInstance({ identity, onSecondInstance: (event) => console.log("handoff", event) });
+if (!lock.isPrimary) process.exit(lock.handedOff ? 0 : 1);
+
+const text = "Sweetview clipboard 🐈";
+Clipboard.writeText(text);
+if (Clipboard.readText() !== text) throw new Error("Clipboard round-trip failed");
+Clipboard.clear();
+if (Clipboard.readText() !== null) throw new Error("Clipboard clear failed");
+console.log("clipboard OK");
+
+const primary = new Window({ title: "Drop Finder files here", bounds: { x: 180, y: 180, width: 450, height: 320 } });
+const secondary = new Window({ title: "Close this first", bounds: { x: 650, y: 180, width: 300, height: 240 } });
+primary.onFileDrop((paths) => console.log("Finder paths", paths));
+closeToTrayOnLastWindow(primary, () => console.log("last window hidden", Window.visibleWindows().length));
+closeToTrayOnLastWindow(secondary);
+primary.show();
+secondary.show();
+signalReady();
+await runEventLoop();
+lock.dispose();
+```
+
+Compile and bundle it from the repository root. This probe replaces the
+clipboard contents while running.
+
+```bash
+mkdir -p v1-native-probe-build
+bun build --compile v1-native-probe.ts --outfile v1-native-probe-build/probe
+bun packages/sweetview-build/src/make-app.ts --name "Sweetview Native Probe" \
+  --bundle-id dev.sweetview.v1-native-probe --url-scheme sweetview-v1-probe \
+  --binary v1-native-probe-build/probe --out v1-native-probe-build
+app="v1-native-probe-build/Sweetview Native Probe.app"
+open "$app"
+```
+
+Quit the first instance after Launch Services registers the bundle. Run
+`"$app/Contents/MacOS/probe"` in one terminal to see its logs. In a second
+terminal call `open 'sweetview-v1-probe://verify/apple-event'` and confirm
+the primary prints `open URL`. Launch the bundle executable directly again
+with `'sweetview-v1-probe://verify/second-instance'` and confirm the primary
+logs both the handoff and the URL while the secondary exits.
+
+Drag multiple files with spaces or Unicode names from Finder onto the primary
+window. Confirm logged paths name real files, including when Finder supplies
+a file-reference URL. Close the secondary window first. It should disappear
+without a hide callback. Close the primary. It should hide and log
+`last window hidden 0`, with the process still running. Quit the probe after
+recording the results.

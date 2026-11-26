@@ -7,25 +7,14 @@
 //   import { createService } from "my-backend";
 //   hostService(createService());
 
-import { FFIType, dlopen, type Pointer } from "bun:ffi";
 import type { CallFrame, ChunkFrame, EventMap, Frame, MethodMap, ReplyFrame, Service } from "@n1h/sweetview-ipc";
-import { WEBVIEW_SESSION, type WorkerMessage } from "./messages";
+import type { Pointer } from "bun:ffi";
+import { requestError, writeHttpResponse } from "./http-response";
+import { WEBVIEW_SESSION, type HttpRequestMessage, type WorkerMessage } from "./messages";
 import { Ring } from "./ring";
+import { openWebviewCore } from "./webview-lib";
 
 declare const self: Worker;
-
-const dispatchLibs = new Map<string, (w: Pointer, fn: Pointer, arg: Pointer | null) => void>();
-
-function dispatchCall(libPath: string): (w: Pointer, fn: Pointer, arg: Pointer | null) => void {
-  const cached = dispatchLibs.get(libPath);
-  if (cached) return cached;
-  const lib = dlopen(libPath, {
-    webview_dispatch: { args: [FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.void },
-  });
-  const fn = lib.symbols.webview_dispatch as (w: Pointer, fn: Pointer, arg: Pointer | null) => void;
-  dispatchLibs.set(libPath, fn);
-  return fn;
-}
 
 /**
  * Encodes `{ kind: "reply", seq, ok: false, error }` clamped by exact UTF-8
@@ -140,12 +129,19 @@ export function writeWorkerFrame(
   }
 }
 
-export function hostService<M extends MethodMap, E extends EventMap>(service: Service<M, E>): void {
+export type RequestHandler = (request: Request) => Response | Promise<Response>;
+export type HostServiceOptions = { onRequest?: RequestHandler };
+
+function createWorkerHost() {
   let ring: Ring | undefined;
   let wake: (() => void) | undefined;
   let beforeInit: Frame[] = [];
   const encoder = new TextEncoder();
-  const ctx = { session: WEBVIEW_SESSION };
+  const host: {
+    send: (frame: Frame) => void;
+    onCall?: (frame: CallFrame) => Promise<void>;
+    onRequest?: RequestHandler;
+  } = { send };
 
   function send(frame: Frame) {
     if (!ring || !wake) {
@@ -155,19 +151,29 @@ export function hostService<M extends MethodMap, E extends EventMap>(service: Se
     writeWorkerFrame(ring, frame, wake, encoder);
   }
 
-  service.onEvent((name, payload, to) => {
-    if (to !== undefined && to !== WEBVIEW_SESSION.id) return;
-    send({ kind: "event", name, payload });
-  });
-
-  async function handle(frame: CallFrame) {
+  async function handleRequest(msg: HttpRequestMessage, ring: Ring, wake: () => void) {
+    const handler = host.onRequest;
+    if (!handler) {
+      writeHttpResponse(ring, requestError(msg.id, 404, "Not Found"), wake);
+      return;
+    }
     try {
-      const result = await service.call(frame.method as keyof M & string, frame.params as never, ctx);
-      if (frame.seq !== null) send({ kind: "reply", seq: frame.seq, ok: true, result });
-    } catch (err) {
-      const error = err instanceof Error ? err.message : String(err);
-      if (frame.seq !== null) send({ kind: "reply", seq: frame.seq, ok: false, error });
-      else console.error(`${frame.method} failed:`, error);
+      const { id, method, url, headers, body } = msg;
+      const request = new Request(url, {
+        method,
+        headers,
+        body: method === "GET" || method === "HEAD" || body.byteLength === 0 ? undefined : body,
+      });
+      const response = await handler(request);
+      if (response.status < 100 || response.status > 599) throw new RangeError("Invalid response status");
+      writeHttpResponse(ring, {
+        id: String(id),
+        status: response.status,
+        headers: [...response.headers.entries()],
+        body: new Uint8Array(await response.arrayBuffer()),
+      }, wake);
+    } catch {
+      writeHttpResponse(ring, requestError(msg.id, 500, "Internal Server Error"), wake);
     }
   }
 
@@ -175,15 +181,50 @@ export function hostService<M extends MethodMap, E extends EventMap>(service: Se
     const msg = event.data;
     if (msg.kind === "init") {
       ring = new Ring(msg.ring);
-      const dispatch = dispatchCall(msg.libPath);
+      const sharedRing = ring;
+      const { webview_dispatch: dispatch } = openWebviewCore(msg.libPath);
       const handlePtr = msg.webviewHandle as Pointer;
       const fn = msg.drainCallbackPtr as Pointer;
-      wake = () => dispatch(handlePtr, fn, null);
+      wake = () => sharedRing.dispatch(() => dispatch(handlePtr, fn, msg.drainToken));
       const queued = beforeInit;
       beforeInit = [];
       for (const frame of queued) send(frame);
       return;
     }
-    void handle(msg);
+    if (msg.kind === "http-request") {
+      if (ring && wake) void handleRequest(msg, ring, wake);
+    } else if (host.onCall) {
+      void host.onCall(msg);
+    } else if (msg.seq !== null) {
+      send({ kind: "reply", seq: msg.seq, ok: false, error: "This worker has no service" });
+    }
+  };
+  return host;
+}
+
+let workerHost: ReturnType<typeof createWorkerHost> | undefined;
+
+/** Register a dynamic request handler, with or without an IPC service. */
+export function hostRequestHandler(handler: RequestHandler): void {
+  (workerHost ??= createWorkerHost()).onRequest = handler;
+}
+
+export function hostService<M extends MethodMap, E extends EventMap>(service: Service<M, E>, options?: HostServiceOptions): void {
+  const host = workerHost ??= createWorkerHost();
+  if (options?.onRequest) host.onRequest = options.onRequest;
+  const ctx = { session: WEBVIEW_SESSION };
+  service.onEvent((name, payload, to) => {
+    if (to !== undefined && to !== WEBVIEW_SESSION.id) return;
+    host.send({ kind: "event", name, payload });
+  });
+  host.onCall = async (frame) => {
+    try {
+      const result = await service.call(frame.method as keyof M & string, frame.params as never, ctx);
+      if (frame.seq !== null) host.send({ kind: "reply", seq: frame.seq, ok: true, result });
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err);
+      if (frame.seq !== null) host.send({ kind: "reply", seq: frame.seq, ok: false, error });
+      else console.error(`${frame.method} failed:`, error);
+    }
   };
 }
