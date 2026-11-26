@@ -25,9 +25,11 @@ without a webview, a worker or a page.
 
 ## Windows start-up initialization
 
-Every Windows entry point (`Window`, `Screen`, `Tray`, `Notifier`, `Menu`,
-the hidden message windows) runs one shared, idempotent initialization on
-first use: `SetProcessDpiAwarenessContext(PER_MONITOR_AWARE_V2)`, COM in a
+The Windows entry points (`Window`, `Screen`, `Tray`, `Notifier`,
+`Clipboard`, the event loop, single-instance activation, and the hidden
+message windows) run one shared, idempotent initialization on first use.
+`Menu.popup` does not: it uses the owner `HWND` it is given directly, and a
+`Window` owner has already run the initialization. The initialization is `SetProcessDpiAwarenessContext(PER_MONITOR_AWARE_V2)`, COM in a
 single-threaded apartment, and the hidden first window Windows 11 needs as a
 z-order anchor. Creation order therefore does not matter: querying `Screen`
 or creating a `Tray` before the first `Window` does not lose DPI awareness or

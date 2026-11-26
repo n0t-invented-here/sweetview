@@ -28,17 +28,20 @@ the UI thread and the app needs no worker. The
 import { Tray, dotIco, quitEventLoop, runEventLoop, setActivationPolicy } from "@n1h/sweetview/native";
 
 setActivationPolicy("accessory");
-new Tray({
+const tray = new Tray({
+  tooltip: "Clock",
   icon: { windows: { ico: dotIco() }, macos: { symbol: "clock" } },
-  menu: [{ label: "Quit", click: quitEventLoop }],
+  menu: [{ label: "Quit", click: () => quitEventLoop() }],
 });
-await runEventLoop();
+const timer = setInterval(() => tray.setTooltip(new Date().toLocaleTimeString()), 1000);
+
+await runEventLoop(); // resolves after Quit
+clearInterval(timer); // a live timer or tray would keep Bun running
+tray.dispose();
 ```
 
-```ts
-runEventLoop(options?: { intervalMs?: number }): Promise<void>
-quitEventLoop(): void
-```
+`runEventLoop(options?: { intervalMs?: number }): Promise<void>` and
+`quitEventLoop(): void`.
 
 `runEventLoop` calls [`pumpEvents`](#pumpevents) every `intervalMs`
 (default 16) and resolves when `quitEventLoop()` is called or the OS ends the

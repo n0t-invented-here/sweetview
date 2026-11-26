@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { createFrameAssembler, type Frame, type WireFrame } from "@n1h/sweetview-ipc";
 import { Ring } from "./ring";
-import { writeWorkerFrame } from "./worker";
+import { writeWorkerCrash, writeWorkerFrame } from "./worker";
 
 function drainFrames(ring: Ring, assembler = createFrameAssembler()): Frame[] {
   const decoder = new TextDecoder();
@@ -98,5 +98,31 @@ describe("writeWorkerFrame", () => {
     writeWorkerFrame(ring, { kind: "event", name: "big", payload: largePayload }, wake);
     collected.push(...drainFrames(ring, assembler));
     expect(collected).toEqual([{ kind: "event", name: "big", payload: largePayload }]);
+  });
+});
+
+describe("writeWorkerCrash", () => {
+  const drainRaw = (ring: Ring) => {
+    const decoder = new TextDecoder();
+    ring.acknowledgeWakeup();
+    return [...ring.drain()].map((bytes) => JSON.parse(decoder.decode(bytes)) as unknown);
+  };
+
+  test("writes the workerError frame and wakes the consumer", () => {
+    const ring = new Ring(Ring.create(256));
+    let wakes = 0;
+    expect(writeWorkerCrash(ring, "boom", () => wakes++)).toBe(true);
+    expect(wakes).toBe(1);
+    expect(drainRaw(ring)).toEqual([{ kind: "workerError", message: "boom" }]);
+  });
+
+  test("clamps a message larger than the ring so the crash still gets through", () => {
+    const ring = new Ring(Ring.create(64));
+    let wakes = 0;
+    expect(writeWorkerCrash(ring, "x".repeat(400), () => wakes++)).toBe(true);
+    expect(wakes).toBe(1);
+    const [frame] = drainRaw(ring) as { kind: string; message: string }[];
+    expect(frame?.kind).toBe("workerError");
+    expect(frame?.message.endsWith("...")).toBe(true);
   });
 });

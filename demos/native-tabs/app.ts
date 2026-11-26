@@ -4,8 +4,8 @@
 //
 //   just demos native-tabs app
 
-import { createApp, indexHtml, type App, type Tab } from "@n1h/sweetview";
-import { dotIco, setAppMenu, type Icon } from "@n1h/sweetview/native";
+import { createApp, indexHtml, WebView, type App, type Tab, type TabOptions } from "@n1h/sweetview";
+import { dotIco, setAppMenu, type Icon, type Window } from "@n1h/sweetview/native";
 import pageCss from "./build/frontend/main.css" with { type: "file" };
 import pageJs from "./build/frontend/main.js" with { type: "file" };
 import type { Events, Methods, TabInfo } from "./shared";
@@ -29,7 +29,8 @@ const PAGE_BODY = tabPageBody({
 export type DemoTabsController = {
   readonly app: App<Methods, Events>;
   readonly openTabs: ReadonlyMap<number, Tab<Methods, Events>>;
-  openTab(address?: string, after?: Tab<Methods, Events>): Promise<Tab<Methods, Events>>;
+  /** Opens in `after`'s window when given, else in `into`, else in the app window. */
+  openTab(address?: string, after?: Tab<Methods, Events>, into?: Window): Promise<Tab<Methods, Events>>;
 };
 
 export async function startDemoTabs(): Promise<DemoTabsController> {
@@ -51,7 +52,8 @@ export async function startDemoTabs(): Promise<DemoTabsController> {
     title: APP_NAME,
     icon: APP_ICON,
     tabs: true,
-    onNewTab: () => void openTab().catch((err) => console.error("native-tabs:", err)),
+    // A torn-off window's + and Ctrl+T open the tab there, not in the first window.
+    onNewTab: (origin) => void openTab(undefined, undefined, origin).catch((err) => console.error("native-tabs:", err)),
     onTabClose: (closed) => {
       for (const [id, t] of openTabs) {
         if (t === closed) openTabs.delete(id);
@@ -62,18 +64,21 @@ export async function startDemoTabs(): Promise<DemoTabsController> {
     onClose: () => app.quit(),
   });
 
-  async function openTab(address?: string, after?: Tab<Methods, Events>): Promise<Tab<Methods, Events>> {
+  async function openTab(address?: string, after?: Tab<Methods, Events>, into?: Window): Promise<Tab<Methods, Events>> {
     const number = ++nextNum;
     const title = address ? displayHost(address) : `Tab ${number}`;
+    const target = after?.window ?? into ?? app.window;
+    const open = (options: TabOptions<Methods>) =>
+      target === app.window ? app.openTab<Methods, Events>(options) : WebView.openTab<Methods, Events>(target, options);
     if (address) {
-      const tab = await app.openTab({ title, url: address, after, debug: process.env.WEBVIEW_DEBUG === "1" });
+      const tab = await open({ title, url: address, after, debug: process.env.WEBVIEW_DEBUG === "1" });
       openTabs.set(number, tab);
       announce();
       return tab;
     }
 
     let created!: Tab<Methods, Events>;
-    created = await app.openTab<Methods, Events>({
+    created = await open({
       title,
       after,
       debug: process.env.WEBVIEW_DEBUG === "1",
@@ -103,12 +108,20 @@ if (import.meta.main) {
   }
   const demo = await startDemoTabs();
   const loop = demo.app.run();
-  const first = await demo.openTab();
-  await demo.openTab();
-  await demo.openTab("https://bun.sh");
-  first.select();
-  demo.app.window.show();
+  let code = 0;
+  try {
+    const first = await demo.openTab();
+    await demo.openTab();
+    await demo.openTab("https://bun.sh");
+    first.select();
+    demo.app.window.show();
+  } catch (err) {
+    // Without a window to close, the loop would never end.
+    console.error("native-tabs:", err);
+    code = 1;
+    demo.app.quit();
+  }
   await loop;
   demo.app.dispose();
-  process.exit(0);
+  process.exit(code);
 }

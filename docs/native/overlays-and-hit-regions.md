@@ -18,8 +18,11 @@ fall through to whatever is behind the window. Part of the
 
 ## A minimal overlay
 
+A frameless overlay has no close button and no taskbar entry, so this one
+gets a tray icon whose Quit ends the loop.
+
 ```ts
-import { Window } from "@n1h/sweetview/native";
+import { Tray, Window, quitEventLoop, runEventLoop } from "@n1h/sweetview/native";
 
 const overlay = new Window({
   frame: false,
@@ -33,6 +36,11 @@ overlay.setHitRegions([[
   { x: 50, y: 50 }, { x: 250, y: 50 }, { x: 250, y: 250 }, { x: 50, y: 250 },
 ]]);
 overlay.show();
+
+const tray = new Tray({ tooltip: "Overlay", menu: [{ label: "Quit", click: () => quitEventLoop() }] });
+await runEventLoop();
+tray.dispose();
+overlay.dispose();
 ```
 
 ## setClickThrough
@@ -127,11 +135,17 @@ The UI thread:
 ```ts
 // host.ts
 import { WebView } from "@n1h/sweetview";
-import { HitRelay, Window, unpackRegions } from "@n1h/sweetview/native";
+import { HitRelay, Tray, Window, unpackRegions } from "@n1h/sweetview/native";
 import type { Events, Methods } from "./protocol";
 import page from "./pet.html";
 
-const win = new Window({ frame: false, transparent: true, topmost: true });
+const win = new Window({
+  frame: false,
+  transparent: true,
+  topmost: true,
+  hideFromTaskbar: true,
+  bounds: { x: 100, y: 100, width: 200, height: 200 },
+});
 let view: WebView<Methods, Events> | undefined;
 const relay = new HitRelay(win, (probe) => view?.emit("hit.probe", probe));
 
@@ -143,8 +157,13 @@ view = await WebView.attach<Methods, Events>(win, {
     "hit.answer": relay.answer,
   },
 });
+
+// The overlay has no close button: Quit ends run().
+const tray = new Tray({ tooltip: "Pet", menu: [{ label: "Quit", click: () => view?.quit() }] });
 win.show();
-view.run();
+view.run(); // blocks until quit(), then tears the webview down
+tray.dispose();
+win.dispose();
 ```
 
 The page, `pet.html`, is minimal: a `#pet` element and the script.

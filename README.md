@@ -16,11 +16,55 @@ Written in TypeScript. Apps are shipped as one executable.
 
 ## Install
 
-Requires Bun 1.4.2 or later. A desktop application installs the package and
-its optional peer dependency, the native [webview library](docs/webview-library.md):
+Requires Bun 1.4.2 or later.
+
+> **1.0.0 is not on npm yet.** It lives on the `v1-drafting` branch of this
+> repository. npm's `latest` for `@n1h/sweetview` is `0.2.1`, which has no
+> `createApp` and little of what these pages document, and the five
+> standalone workspace packages (`@n1h/sweetview-ipc`, `-ipc-ws`, `-native`,
+> `-settings`, `-build`) are not published at all. A plain
+> `bun add @n1h/sweetview` installs 0.2.1. Until 1.0.0 is released, use it
+> from source.
+
+### From source
+
+Clone the repository on `v1-drafting` and install the workspace:
 
 ```bash
-bun add @n1h/sweetview @n1h/sweetview-webview-bun
+git clone https://github.com/n0t-invented-here/sweetview.git
+cd sweetview
+git checkout v1-drafting
+bun install
+just demos web-app app   # optional: a demo opens in a window
+```
+
+Every folder under `demos/` is a workspace member, so an app of your own
+goes in a new folder there and links the packages from the checkout. Create
+`demos/hello/package.json`:
+
+```json
+{
+  "name": "hello",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@n1h/sweetview": "workspace:*",
+    "@n1h/sweetview-webview-bun": "^2.7.0"
+  }
+}
+```
+
+Run `bun install` again at the repository root, then follow the
+[Quickstart](#quickstart) inside `demos/hello/`.
+
+### From npm, once 1.0.0 is published
+
+A desktop application installs the package and its optional peer
+dependency, the native [webview library](docs/webview-library.md). Name the
+major version, so the command cannot fall back to 0.2.1:
+
+```bash
+bun add @n1h/sweetview@^1.0.0 @n1h/sweetview-webview-bun
 ```
 
 Only the root module `@n1h/sweetview` loads the library, when it is
@@ -28,8 +72,10 @@ imported. Every other module works without it, so a browser page, a web
 server or a tray-only app installs the package alone:
 
 ```bash
-bun add @n1h/sweetview
+bun add @n1h/sweetview@^1.0.0
 ```
+
+### The webview library version
 
 The peer range is `^2.7.0`. A 2.7.0 library runs windows, bundled pages,
 assets, transparency, tabs and IPC. Four features need the additions that
@@ -84,7 +130,9 @@ page bundle contains no Bun code.
 
 An application has three parts, each importing its own module: the UI
 thread, which owns the window; a Worker, which hosts the backend; and the
-page. They share one typed contract. Six files and two commands:
+page. They share one typed contract. Six files and two commands. Until 1.0.0
+is published, create the files in `demos/hello/` of a source checkout
+([From source](#from-source)) and run the commands there:
 
 1. [Declare the contract in `protocol.ts`](#1-declare-the-contract-in-protocolts)
 2. [Write the backend in `service.ts`](#2-write-the-backend-in-servicets)
@@ -293,7 +341,7 @@ codesign --sign - --force --deep "App.app"
 |---|---|
 | `packages/` | the Sweetview facade, IPC, WebSocket transport, native helpers, settings and build packages |
 | `docs/` | the reference pages, indexed by the [reference index](docs/README.md) |
-| `demos/web-app/` | one backend and one React page run two ways: a desktop window with tray and notifications, or `Bun.serve` with WebSockets |
+| [`demos/web-app/`](demos/web-app/README.md) | one backend and one React page run two ways: a desktop window with tray and notifications, or `Bun.serve` with WebSockets |
 | [`demos/desktop-pet/`](demos/desktop-pet/README.md) | a transparent always-on-top pet rendered with Babylon.js, with click-through hit regions and a page-drawn settings window |
 | [`demos/menubar-only/`](demos/menubar-only/README.md) | a menu-bar app with no window, no webview and no worker: a status item, its menu and a tooltip clock on a plain `setInterval`, on `runEventLoop` |
 | [`demos/menubar-notify/`](demos/menubar-notify/README.md) | a menu-bar app whose menu sends a system notification now or five seconds later, with a window listing what was sent and clicked; a notification click opens it |

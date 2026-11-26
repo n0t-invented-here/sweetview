@@ -33,7 +33,7 @@ compile-win: frontend icons
 compile-mac: frontend
     bun build --compile --target=bun-darwin-arm64 --minify --sourcemap app.ts app-worker.ts --outfile dist/{{exe}}-macos-arm64
 
-mac-app: icons
+mac-app: compile-mac icons
     bun ../../packages/sweetview-build/src/make-app.ts --name Pet --bundle-id dev.mrowr.pet --binary dist/{{exe}}-macos-arm64 --icns build/AppIcon.icns --out dist
 
 # A missing path makes ri fail the recipe

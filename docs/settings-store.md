@@ -7,16 +7,48 @@ The settings store is `@n1h/sweetview/settings-store` in the facade, or
 names the settings folder and is shared with the native and build helpers,
 lives beside it in `@n1h/sweetview-settings`.
 
+- [Example](#example)
 - [App identity](#app-identity)
   - [defineAppIdentity](#defineappidentity)
   - [AppIdentityInput, AppIdentity and AppIdentityIcon](#appidentityinput-appidentity-and-appidentityicon)
   - [validateUrlScheme](#validateurlscheme)
 - [Reference](#reference)
+  - [SettingsStore and createSettingsStore](#settingsstore)
   - [appDataDir](#appdatadir)
-  - [SettingsStoreOptions](#settingsstoreoptions)
-  - [SettingsStore](#settingsstore)
-  - [createSettingsStore](#createsettingsstore)
-- [Example](#example)
+
+## Example
+
+The whole workflow: name the app, describe the settings and their defaults,
+load once at start, save the whole document on every change. `sanitize`
+turns whatever the file holds into a valid value, so a hand-edited or old
+file never breaks the app.
+
+```ts
+import { defineAppIdentity } from "@n1h/sweetview-settings";
+import { SettingsStore } from "@n1h/sweetview/settings-store";
+
+type Settings = { volume: number; muted: boolean };
+const DEFAULTS: Settings = { volume: 50, muted: false };
+
+const identity = defineAppIdentity({ appId: "com.example.player", appName: "Player" });
+
+const store = new SettingsStore<Settings>({
+  identity, // the file is <app data>/player/settings.json
+  defaults: DEFAULTS,
+  sanitize: (input) => {
+    const s = (typeof input === "object" && input !== null ? input : {}) as Partial<Settings>;
+    return {
+      volume: typeof s.volume === "number" ? Math.min(100, Math.max(0, s.volume)) : DEFAULTS.volume,
+      muted: s.muted === true,
+    };
+  },
+});
+
+let settings = store.load();                   // DEFAULTS on first run
+settings = { ...settings, muted: true };
+store.save(settings);
+console.log(store.path, settings);
+```
 
 ## App identity
 
@@ -52,11 +84,7 @@ identity.
 
 ### defineAppIdentity
 
-```ts
-defineAppIdentity(input: AppIdentityInput): AppIdentity
-```
-
-Normalizes the input into a frozen `AppIdentity`:
+`defineAppIdentity(input: AppIdentityInput): AppIdentity` normalizes the input into a frozen `AppIdentity`:
 
 | Field | Rule |
 |---|---|
@@ -105,7 +133,7 @@ when no `icon` option is given, centering a non-square image on a
 transparent square. macOS windows have no per-window icon. Trays,
 `writeIconFiles`, `setAppIcon` and `makeMacApp` do not read it; give each its
 icon explicitly, for example with `icnsFromRgba` for the bundle
-([build](build.md#macappoptions)).
+([build](build.md#makemacapp)).
 
 ### validateUrlScheme
 
@@ -115,11 +143,7 @@ import { validateUrlScheme } from "@n1h/sweetview-settings";
 validateUrlScheme(" Example-Notes "); // "example-notes"
 ```
 
-```ts
-validateUrlScheme(scheme: string): string
-```
-
-Trims and lowercases `scheme` and checks it against
+`validateUrlScheme(scheme: string): string` trims and lowercases `scheme` and checks it against
 `/^[a-z][a-z0-9+.-]*$/i`: a letter, then letters, digits, `+`, `.` or `-`.
 Returns the normalized scheme, or throws
 `sweetview: invalid URL scheme "<scheme>" (must match /^[a-z][a-z0-9+.-]*$/i)`.
@@ -134,44 +158,14 @@ The store, from `@n1h/sweetview/settings-store`:
 import { appDataDir, createSettingsStore, SettingsStore, type SettingsStoreOptions } from "@n1h/sweetview/settings-store";
 ```
 
-### appDataDir
+### SettingsStore
 
-```ts
-export function appDataDir(app: string): string
-```
+`new SettingsStore<T>(options: SettingsStoreOptions<T>)`, or the alias
+`createSettingsStore<T>(options)`, creates a store for one settings file. It
+touches no file at construction. The file is `<dir>/<file>`: `dir` defaults
+to `appDataDir(app)` and `file` to `settings.json`.
 
-Returns the per-user folder an app keeps its own files in. It does not create the folder.
-
-| Field | Type | Meaning |
-|---|---|---|
-| `app` | `string` | The app's folder name, joined onto the per-user base folder. |
-
-The base folder depends on `process.platform`:
-
-| Platform | Folder | When the variable is unset |
-|---|---|---|
-| Windows (`win32`) | `%APPDATA%\<app>` | `<home>\AppData\Roaming\<app>` |
-| macOS (`darwin`) | `~/Library/Application Support/<app>` | not applicable |
-| Linux and every other platform | `$XDG_CONFIG_HOME/<app>` | `~/.config/<app>` |
-
-Returns: the folder path. `<home>` and `~` are `os.homedir()`.
-
-Platforms: Windows / macOS / Linux: implemented, with the base folder from the table.
-
-### SettingsStoreOptions
-
-```ts
-export type SettingsStoreOptions<T> = {
-  app?: string;
-  identity?: AppIdentity;
-  file?: string;
-  dir?: string;
-  defaults: T;
-  sanitize?: (input: unknown) => T;
-};
-```
-
-The options of `createSettingsStore`.
+`SettingsStoreOptions<T>`:
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
@@ -184,24 +178,13 @@ The options of `createSettingsStore`.
 
 The default `sanitize` returns `{ ...defaults, ...input }` when `input` is a non-null object, and a shallow copy of `defaults` otherwise. The merge is one level deep: a nested object in the file replaces the default's nested object whole. Values are not type-checked. Keys that `defaults` lacks are kept. A JSON array is not an object here: it gives a copy of `defaults`.
 
-### SettingsStore
+The store has three members:
 
-```ts
-export class SettingsStore<T extends object> {
-  readonly path: string;
-  constructor(options: SettingsStoreOptions<T>);
-  load(): T;
-  save(settings: T): void;
-}
-```
-
-Construct directly with `new SettingsStore(options)` or via the `createSettingsStore(options)` alias. It touches no file at construction.
-
-| Field | Type | Meaning |
-|---|---|---|
-| `path` | `string` | The full path of the settings file. The file need not exist yet. |
-| `load` | `() => T` | Reads the file and returns the settings. |
-| `save` | `(settings: T) => void` | Writes the whole document. |
+| Member | Meaning |
+|---|---|
+| `path` | The full path of the settings file. The file need not exist yet. |
+| `load(): T` | Reads the file and returns the settings. |
+| `save(settings: T): void` | Writes the whole document. |
 
 `load()` handles each file state as follows. Logging goes to stderr through `console.error`, with `<message>` the error's message.
 
@@ -219,36 +202,15 @@ Neither `load()` nor `save()` throws. Failures are logged to stderr.
 
 Thread: any thread. Both calls block the calling thread on file I/O.
 
-### createSettingsStore
+### appDataDir
 
-```ts
-export function createSettingsStore<T extends object>(options: SettingsStoreOptions<T>): SettingsStore<T>
-```
+`appDataDir(app: string): string` returns the per-user folder an app keeps
+its own files in: `app` joined onto the per-user base folder. It does not
+create the folder. The base folder depends on `process.platform`; `<home>`
+and `~` are `os.homedir()`.
 
-Creates a store for one settings file. It touches no file at creation. The file path is `dir`, or `appDataDir(app)` when `dir` is unset, joined with `file`, or `settings.json` when `file` is unset.
-
-| Field | Type | Default | Meaning |
-|---|---|---|---|
-| `options` | `SettingsStoreOptions<T>` | required | See `SettingsStoreOptions`. |
-
-Returns: a `SettingsStore<T>` for that path.
-
-## Example
-
-```ts
-import { SettingsStore } from "@n1h/sweetview/settings-store";
-
-type Settings = { volume: number; muted: boolean };
-const DEFAULTS: Settings = { volume: 50, muted: false };
-
-const store = new SettingsStore<Settings>({
-  app: "my-app",
-  defaults: DEFAULTS,
-  sanitize: (input) => {
-    const s = (typeof input === "object" && input !== null ? input : {}) as Partial<Settings>;
-    return { volume: typeof s.volume === "number" ? Math.min(100, Math.max(0, s.volume)) : DEFAULTS.volume, muted: s.muted === true };
-  },
-});
-let settings = store.load();
-store.save((settings = { ...settings, muted: true }));
-```
+| Platform | Folder | When the variable is unset |
+|---|---|---|
+| Windows (`win32`) | `%APPDATA%\<app>` | `<home>\AppData\Roaming\<app>` |
+| macOS (`darwin`) | `~/Library/Application Support/<app>` | not applicable |
+| Linux and every other platform | `$XDG_CONFIG_HOME/<app>` | `~/.config/<app>` |

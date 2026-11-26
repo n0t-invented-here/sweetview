@@ -26,6 +26,14 @@ export type NativeResponse = {
   body?: Uint8Array | ArrayBuffer | string | null;
 };
 
+/**
+ * Worker -> UI, through the ring: the worker hit an uncaught error or an
+ * unhandled rejection and is going down. The UI thread drains the ring via
+ * webview_dispatch even while webview_run() blocks the main thread's event
+ * loop (where Worker.onerror cannot fire), so this is how a crash reaches it.
+ */
+export type WorkerCrashFrame = { kind: "workerError"; message: string };
+
 export type HttpRequestMessage = NativeRequest & { kind: "http-request" };
 export type WorkerMessage = InitMessage | CallFrame | HttpRequestMessage;
 

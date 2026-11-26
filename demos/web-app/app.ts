@@ -62,8 +62,11 @@ const app: App<Methods, Events> = await createApp<Methods, Events>({
   worker: new URL("./app-worker.ts", import.meta.url),
   debug: process.env.WEBVIEW_DEBUG === "1",
   onClose: () => app.window.hide(), // the X hides to the tray; Quit lives in the tray menu
-  uiMethods: {
+  // A modal dialog runs its own message loop, so it runs after the RPC callback returns.
+  deferredUiMethods: {
     "pick.folder": () => pickFolder(app.window, "Pick a folder to watch"),
+  },
+  uiMethods: {
     "ui.theme": ({ scheme }) => void (theme = scheme),
     "notify.status": notifyStatus,
     "notify.onChanges": ({ enabled }) => {

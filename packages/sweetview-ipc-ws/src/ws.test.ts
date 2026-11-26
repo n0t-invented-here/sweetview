@@ -133,4 +133,35 @@ describe("sweetipc-ws", () => {
     expect(ended).toContain(id);
     expect(host.sessions).toBe(0);
   });
+
+  test("a disposed host refuses upgrades and closes sockets that open late", async () => {
+    const own = wsHost(service);
+    const srv = Bun.serve({
+      port: 0,
+      fetch(req, s) {
+        if (new URL(req.url).pathname === "/ws") return own.upgrade(req, s) ? undefined : new Response("no", { status: 400 });
+        return new Response("not found", { status: 404 });
+      },
+      websocket: own.websocket,
+    });
+    try {
+      const bridge = createBridge<Methods, Events>(wsTransport(`ws://127.0.0.1:${srv.port}/ws`));
+      expect(await bridge.rpc("ping")).toBe("pong");
+      expect(own.sessions).toBe(1);
+      own.dispose();
+      own.dispose(); // idempotent
+      expect(own.sessions).toBe(0);
+      const res = await fetch(`http://127.0.0.1:${srv.port}/ws`, {
+        headers: { upgrade: "websocket", connection: "Upgrade", "sec-websocket-key": "dGhlIHNhbXBsZSBub25jZQ==", "sec-websocket-version": "13" },
+      });
+      expect(res.status).toBe(400);
+      // a socket that finishes opening after dispose (upgrade accepted just before) is closed, not tracked
+      let closed = false;
+      own.websocket.open?.({ data: { session: { id: "late", kind: "web" } }, close: () => void (closed = true) } as never);
+      expect(closed).toBe(true);
+      expect(own.sessions).toBe(0);
+    } finally {
+      srv.stop(true);
+    }
+  });
 });

@@ -11,6 +11,13 @@ webview library from the optional peer `@n1h/sweetview-webview-bun`
 ([the webview library](webview-library.md)); `WebView.attach` and
 `createApp` support Windows and macOS.
 
+Most apps need one call and one loop: `createApp` with a `page` and a
+`worker`, then `app.window.show()` and `app.run()`, as in the
+[Quickstart](../README.md#quickstart) and the
+[single-window example](#single-window-with-createapp). Read
+[the event loop](#the-event-loop) first: which loop an app runs decides where
+its logic lives. The [Reference](#reference) then covers each export once.
+
 - [The event loop](#the-event-loop)
   - [`run()`: the library's loop](#run-the-librarys-loop)
   - [`runEventLoop`: the loop on a Bun timer](#runeventloop-the-loop-on-a-bun-timer)
@@ -22,19 +29,19 @@ webview library from the optional peer `@n1h/sweetview-webview-bun`
   - [WebViewOptions](#webviewoptions)
   - [Tab and TabOptions](#tab-and-taboptions)
   - [createApp](#createapp)
+    - [Closing and quitting](#closing-and-quitting)
   - [App and AppOptions](#app-and-appoptions)
   - [Asset](#asset)
   - [UiMethods](#uimethods)
   - [assetMime](#assetmime)
-  - [indexHtml](#indexhtml)
-  - [indexHtmlText](#indexhtmltext)
-  - [IndexHtmlOptions](#indexhtmloptions)
+  - [indexHtml, indexHtmlText and IndexHtmlOptions](#indexhtml)
   - [windowChromeMethods](#windowchromemethods)
   - [Ring](#ring)
   - [Event loop re-exports](#event-loop-re-exports)
   - [Activation and identity re-exports](#activation-and-identity-re-exports)
   - [SizeHint, WEBVIEW_VERSION, RawWebview](#sizehint-webview_version-rawwebview)
 - [Page loading](#page-loading)
+  - [The RPC trust boundary](#the-rpc-trust-boundary)
 - [Startup and deferred UI](#startup-and-deferred-ui)
 - [Dynamic requests](#dynamic-requests)
 - [Transport](#transport)
@@ -46,7 +53,7 @@ One process has one OS event loop, on the UI thread, the main thread of the Bun 
 
 ### `run()`: the library's loop
 
-`webview.run()` (and `app.run()` on a non-tabbed app) calls the webview library's `webview_run`, which is the platform's own blocking loop: `[NSApp run]` on macOS, a `GetMessage` loop on Windows. It returns when `quit()` is called (`webview_terminate`). On `createApp(...)` without a custom `onClose`, closing the main window disposes the window and calls `quit()` automatically. When `run()` returns, it tears the webview down: the worker is terminated, the drain callback released, and the webview destroyed, in that order.
+`webview.run()` (and `app.run()` on a non-tabbed app) calls the webview library's `webview_run`, which is the platform's own blocking loop: `[NSApp run]` on macOS, a `GetMessage` loop on Windows. It returns when `quit()` is called (`webview_terminate`), or when the window the webview is attached to is disposed (closing a window with no `onClose` listener disposes it). When `run()` returns, it tears the webview down: the worker is terminated, the drain callback released, and the webview destroyed, in that order. How `createApp` decides when to quit is under [Closing and quitting](#closing-and-quitting).
 
 Calling `app.dispose()`, `view.dispose()` or `win.dispose()` while `run()` is active (from a `uiMethods` handler, a tray or menu click, or a window callback) never tears the native window or webview down re-entrantly inside `webview_run`. It stops the worker and the watchdogs and requests loop exit with `quit()`; the webview is destroyed and the native window released as `run()` unwinds.
 
@@ -60,13 +67,28 @@ A worker is therefore required for async work in a `run()` app, and optional und
 
 Tabbed apps (`createApp({ tabs: true })`) use `runEventLoop()` automatically so `openTab()` (which is async) and per-tab `dispose()` work while the app is running. Single-window apps can also host a `Window` + `WebView.attach` under `await runEventLoop()` and call `view.dispose()` and `win.dispose()` afterward.
 
+The page below is two in-memory assets: `index.html` from `indexHtml` (with
+`css: ""`, so it links no stylesheet) and the `main.js` it loads, which
+installs the `__sweetview_emit` receiver that `view.emit` calls. A bundled
+page gets the same receiver from `webviewTransport()` and `bridge.on`
+([page](page.md)).
+
 ```ts
 import { WebView, indexHtml, quitEventLoop, runEventLoop } from "@n1h/sweetview";
 import { Tray, Window } from "@n1h/sweetview/native";
 
+const mainJs = new Blob([
+  `window.__sweetview_emit = (name, payload) => {
+     if (name === "tick") document.getElementById("tick").textContent = new Date(payload).toLocaleTimeString();
+   };`,
+]);
+
 const win = new Window({ title: "Hello", bounds: { x: 200, y: 200, width: 640, height: 480 } });
 const view = await WebView.attach(win, {
-  assets: { "index.html": indexHtml({ title: "Hello", body: "<h1>Hello</h1>" }) },
+  assets: {
+    "index.html": indexHtml({ title: "Hello", css: "", body: '<h1>Hello</h1><p id="tick"></p>' }),
+    "main.js": mainJs,
+  },
 });
 const tray = new Tray({
   tooltip: "Hello",
@@ -117,29 +139,9 @@ win.show();
 view.run();
 ```
 
-```ts
-export class WebView<M extends MethodMap = MethodMap, E extends EventMap = EventMap> {
-  readonly raw: RawWebview;
-  readonly window: Window;
-
-  static attach<M extends MethodMap = MethodMap, E extends EventMap = EventMap>(
-    window: Window,
-    options: WebViewOptions<M>,
-  ): Promise<WebView<M, E>>;
-
-  static openTab<M extends MethodMap = MethodMap, E extends EventMap = EventMap>(
-    window: Window,
-    options: TabOptions<M>,
-  ): Promise<Tab<M, E>>;
-
-  emit<N extends keyof E & string>(name: N, payload: E[N]): void;
-  notify<K extends keyof M & string>(method: K, ...params: M[K][0] extends void ? [] : [M[K][0]]): void;
-  onEvent(fn: (event: AnyEvent<E>) => void): () => void;
-  run(): void;
-  quit(): void;
-  dispose(): void;
-}
-```
+`WebView<M, E>` is typed by the app's `Methods` and `Events` maps
+([the contract](ipc.md)). Its two static constructors are
+[`WebView.attach`](#webviewattach) and [`WebView.openTab`](#webviewopentab).
 
 | Member | Meaning |
 |---|---|
@@ -154,12 +156,7 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
 
 ### WebView.attach
 
-```ts
-static async attach<M extends MethodMap = MethodMap, E extends EventMap = EventMap>(
-  window: Window,
-  options: WebViewOptions<M>,
-): Promise<WebView<M, E>>
-```
+`WebView.attach(window, options: WebViewOptions<M>): Promise<WebView<M, E>>`
 
 Mounts a webview inside an existing `Window` created by `new Window(...)` or `Window.fromHandle(...)`. Geometry (in DIPs), DPI scale, `resizable`, `transparent`, and default `title` are read directly from `window`, so callers never duplicate window options. The window stays hidden; call `win.show()`, or set `showOnReady`.
 
@@ -175,7 +172,7 @@ What `WebView.attach` does, in order:
 8. Clears the browser background when `window` was created with `transparent: true`, and applies `allowExternalDrop` when it is set.
 9. Allocates the shared `Ring`, subscribes webview file drops to the window's `onFileDrop` listeners, and starts `worker` if configured.
 10. Registers the request handler when `onRequest` is set.
-11. Binds `__sweetview_rpc`: the reserved ready method first, then `uiMethods`, then `deferredUiMethods`, then the worker.
+11. Binds `__sweetview_rpc`: the reserved ready method first, then `uiMethods`, then `deferredUiMethods`, then the worker. The binding exists before the first navigation and dispatches by method name only; see [the trust boundary](#the-rpc-trust-boundary). A direct-URL webview with no UI methods, no worker and no ready options gets no binding.
 12. Registers every asset with `webview_set_asset` and navigates to `${ASSET_ORIGIN}/${index}`, or navigates to `url` in direct-URL mode.
 13. Arms the `readyTimeoutMs` watchdog when it is positive.
 
@@ -217,21 +214,28 @@ After the webview is created (it is destroyed before the error propagates):
 
 ### WebView.openTab
 
-```ts
-static openTab<M extends MethodMap = MethodMap, E extends EventMap = EventMap>(
-  window: Window,
-  options: TabOptions<M>,
-): Promise<Tab<M, E>>
-```
+`WebView.openTab(window, options: TabOptions<M>): Promise<Tab<M, E>>`
+
+Start the loop before opening tabs: a tab's webview finishes initializing
+while the loop turns. Closing the window ends the loop here, and disposing the
+tabbed window afterwards closes its tabs. A tab the user tore off lives in a
+window of its own, reached through `tab.window`, so it is disposed separately.
 
 ```ts
-import { WebView } from "@n1h/sweetview";
+import { WebView, quitEventLoop, runEventLoop, type Tab } from "@n1h/sweetview";
 import { Window } from "@n1h/sweetview/native";
 import tabPage from "./tab.html";
 
-const win = new Window({ title: "Browser", tabs: true });
-await WebView.openTab(win, { page: tabPage, title: "New Tab" });
+const win = new Window({ title: "Browser", bounds: { x: 100, y: 100, width: 1040, height: 760 }, tabs: true });
+win.onClose(() => quitEventLoop());
+
+const loop = runEventLoop();
+const tab: Tab = await WebView.openTab(win, { page: tabPage, title: "New Tab" });
 win.show();
+await loop;
+
+if (tab.window !== win) tab.window.dispose(); // the tab was torn off
+win.dispose(); // closes every tab still in this window
 ```
 
 Opens a new native tab hosting its own webview inside a tabbed `Window` created with `{ tabs: true }`:
@@ -250,32 +254,14 @@ Throws `sweetview: WebView.openTab requires a Window created with { tabs: true }
 
 ### WebViewOptions
 
-```ts
-export type WebViewOptions<M extends MethodMap = MethodMap> = {
-  page?: HTMLBundle;
-  url?: string;
-  title?: string;
-  assets?: Record<string, Asset>;
-  index?: string;
-  worker?: URL | string;
-  onRequest?: "worker" | ((request: NativeRequest) => NativeResponse);
-  allowExternalDrop?: boolean;
-  debug?: boolean;
-  uiMethods?: UiMethods<M>;
-  deferredUiMethods?: UiMethods<M>;
-  showOnReady?: boolean;
-  readyTimeoutMs?: number;
-  onReady?: () => void;
-  onReadyTimeout?: () => void;
-  readyFallbackHtml?: string;
-  ringBytes?: number;
-};
-```
+Every field is optional. `uiMethods` and `worker` grant the page native and
+backend access; give them only to a webview whose top-level document is
+trusted ([the RPC trust boundary](#the-rpc-trust-boundary)).
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
 | `page` | `HTMLBundle` | none | HTML import (`import index from "./index.html"`). Bundled with `Bun.build` under `bun run`, or read from embedded `files` in a compiled executable. |
-| `url` | `string` | none | Direct URL to navigate to (such as `https://example.com`). Used only when `page` and `assets` are both undefined; otherwise ignored. |
+| `url` | `string` | none | Direct URL to navigate to (such as `https://example.com`). Used only when `page` and `assets` are both undefined; otherwise ignored. An external site gets the RPC binding too; open it without `uiMethods`, `deferredUiMethods` or `worker`. |
 | `title` | `string` | `window`'s title, else `<title>` of `page`, else `Bun.main` basename | Window / tab title. |
 | `assets` | `Record<string, Asset>` | `{}` | Extra files served at the page's origin by asset path. |
 | `index` | `string` | the page's HTML output, else `"index.html"` | Asset path to navigate to. Generated via `indexHtml` if missing. |
@@ -301,26 +287,12 @@ Explorer or Finder. See [file drops](native/windows.md#file-drops).
 
 ### Tab and TabOptions
 
-```ts
-export type TabOptions<M extends MethodMap = MethodMap> = WebViewOptions<M> & {
-  after?: TabHandle;
-};
-
-export interface Tab<M extends MethodMap = MethodMap, E extends EventMap = EventMap> extends TabHandle {
-  readonly webview: WebView<M, E>;
-  readonly window: Window;
-  readonly title: string;
-  setTitle(title: string): void;
-  select(): void;
-  close(): void;
-  moveToNewWindow(): Promise<Window>;
-  dispose(): void;
-}
-```
+`TabOptions<M>` is `WebViewOptions<M>` plus `after`. `Tab<M, E>` is the
+`TabHandle` that `WebView.openTab` and `app.openTab` resolve with.
 
 | Member | Meaning |
 |---|---|
-| `after` | Optional `TabHandle` to insert the new tab after. Honored only when that tab is open in the same tabbed window the new tab opens in; otherwise, as when omitted, the tab opens after the selected tab. |
+| `after` (`TabOptions`) | Optional `TabHandle` to insert the new tab after. Honored only when that tab is open in the same tabbed window the new tab opens in; otherwise, as when omitted, the tab opens after the selected tab. |
 | `webview` | The `WebView` mounted inside this tab. |
 | `window` | The logical tabbed `Window` (`tabs: true`) currently hosting this tab. It changes when the tab is torn off into a new window or merged into another. Compare `tab.webview.window`, the borrowed child window the webview is attached to, which never changes and is rarely what app code wants. |
 | `title` | Current tab title. |
@@ -339,11 +311,7 @@ only.
 
 ### createApp
 
-```ts
-export async function createApp<M extends MethodMap = MethodMap, E extends EventMap = EventMap>(
-  options: AppOptions<M>,
-): Promise<App<M, E>>
-```
+`createApp<M, E>(options: AppOptions<M>): Promise<App<M, E>>`
 
 ```ts
 import { createApp } from "@n1h/sweetview";
@@ -357,41 +325,37 @@ app.run();
 Layer 2 declarative helper that combines `new Window(options)` with `WebView.attach` (or native tab setup when `options.tabs` is `true`). `options` is both `WindowOptions` and `WebViewOptions`.
 
 - The window is created hidden. Call `app.window.show()` once it is wired, or set `showOnReady: true`. In a tabbed app, opening a tab does not show the window either, unless that tab sets `showOnReady`.
-- Without an `onClose` option, closing the window disposes it, and when no other owned window is visible the app quits: `webview.quit()` ends `app.run()`, or `quitEventLoop()` in a tabbed app. With `onClose`, nothing quits automatically.
+- When the app quits on its own is under [Closing and quitting](#closing-and-quitting).
 - If `WebView.attach` throws during `createApp`, the newly created `Window` is disposed before rethrowing.
 - On a non-tabbed app, `app.openTab` throws `sweetview: openTab() requires createApp({ tabs: true })`.
 
-A tabbed app (`tabs: true`) has no single webview, and its `App` reflects that:
+#### Closing and quitting
 
-| Member | Tabbed app |
-|---|---|
-| `webview` | `undefined`. Each tab has its own `tab.webview`. |
-| `openTab(options)` | Opens a tab in `app.window`. |
-| `mergeAllWindows()` | Merges torn-off windows back into `app.window`. |
-| `emit`, `notify` | Send nothing; they log `sweetview: app.emit() is unavailable on a tabbed app; emit on a specific tab.webview instead` (or the `app.notify()` equivalent) with `console.error`. |
-| `onEvent(fn)` | Registers nothing and returns an inert unsubscribe function; subscribe on each `tab.webview` instead. |
-| `run()` | Returns the promise of `runEventLoop()`; `await` it. |
-| `quit()` | `quitEventLoop()`. |
-| `dispose()` | Closes the app's own host window (`app.window`) and the tabs in it. Torn-off windows created by `moveToNewWindow()` or tab tear-off have their own lifetime; dispose them (or their tabs) separately, or merge them back first with `mergeAllWindows()`. |
+The two kinds of app end differently.
+
+- **Single-window app, blocking `app.run()`.** Without an `onClose` option, closing the window disposes it. Disposing the window `app.webview` is attached to always ends `app.run()`: the webview's own window-dispose hook stops the worker and calls `quit()`, even when another owned window (a settings window, say) is still visible. To keep the process running after the main window closes, pass `onClose` (for example `onClose: () => app.window.hide()`) and call `app.quit()` yourself when the app should end. With `onClose`, nothing quits automatically.
+- **Tabbed app, `runEventLoop()`.** Without an `onClose` option, disposing `app.window` calls `quitEventLoop()` only when `Window.visibleWindows()` is empty afterwards, so a visible torn-off window or any other visible owned window keeps the loop running. With `onClose`, nothing quits automatically; the [multi-tab example](#multi-tab-app) quits from it.
 
 ### App and AppOptions
 
-```ts
-export type AppOptions<M extends MethodMap = MethodMap> = WindowOptions & WebViewOptions<M>;
+`AppOptions<M>` is [`WindowOptions`](native/windows.md#windowoptions) and
+[`WebViewOptions<M>`](#webviewoptions) in one object. On a tabbed app,
+`onNewTab` is `(origin: Window) => void`: `origin` is the window that asked
+for the tab (the main window or a torn-off one), so a multi-window handler can
+call `WebView.openTab(origin, ...)` to open the tab there
+([example](#multi-tab-app)). `App<M, E>`:
 
-export interface App<M extends MethodMap = MethodMap, E extends EventMap = EventMap> {
-  readonly window: Window;
-  readonly webview?: WebView<M, E>;
-  openTab<TM extends MethodMap = M, TE extends EventMap = E>(options: TabOptions<TM>): Promise<Tab<TM, TE>>;
-  mergeAllWindows(): void;
-  emit<N extends keyof E & string>(name: N, payload: E[N]): void;
-  notify<K extends keyof M & string>(method: K, ...params: M[K][0] extends void ? [] : [M[K][0]]): void;
-  onEvent(fn: (event: AnyEvent<E>) => void): () => void;
-  run(): void | Promise<void>;
-  quit(): void;
-  dispose(): void;
-}
-```
+| Member | Single-window app | Tabbed app (`tabs: true`) |
+|---|---|---|
+| `window` | The app's `Window`. | The tabbed host `Window`. |
+| `webview` | The attached `WebView<M, E>`. | `undefined`. Each tab has its own `tab.webview`. |
+| `openTab(options)` | Throws `sweetview: openTab() requires createApp({ tabs: true })`. | Opens a tab in `app.window`, resolving with a `Tab`. |
+| `mergeAllWindows()` | Nothing to merge. | Merges torn-off windows back into `app.window`. |
+| `emit(name, payload)`, `notify(method, ...params)` | `webview.emit` and `webview.notify`. | Send nothing; they log `sweetview: app.emit() is unavailable on a tabbed app; emit on a specific tab.webview instead` (or the `app.notify()` equivalent) with `console.error`. |
+| `onEvent(fn)` | `webview.onEvent(fn)`. | Registers nothing and returns an inert unsubscribe function; subscribe on each `tab.webview` instead. |
+| `run()` | Blocks in `webview.run()`; returns `void`. After a `dispose()` made inside the loop, it disposes the window once the loop unwinds. | Returns the promise of `runEventLoop()`; `await` it. |
+| `quit()` | `webview.quit()`. | `quitEventLoop()`. |
+| `dispose()` | Disposes the webview, then the window (inside `run()`, the window waits for `run()` to return). Idempotent. | Closes `app.window` and the tabs in it. Torn-off windows created by `moveToNewWindow()` or tab tear-off have their own lifetime; dispose them (or their tabs) separately, or merge them back first with `mergeAllWindows()`. Idempotent. |
 
 ### Asset
 
@@ -399,11 +363,9 @@ export interface App<M extends MethodMap = MethodMap, E extends EventMap = Event
 import type { Asset } from "@n1h/sweetview";
 ```
 
-```ts
-export type Asset = string | Uint8Array | Blob;
-```
-
-The bytes served at one path of the page's origin. The Content-Type comes from the path's extension through `assetMime`.
+The bytes served at one path of the page's origin: a `string`, a
+`Uint8Array` or a `Blob`. The Content-Type comes from the path's extension
+through `assetMime`.
 
 | Variant | Served as |
 |---|---|
@@ -417,10 +379,8 @@ The bytes served at one path of the page's origin. The Content-Type comes from t
 import type { UiMethods } from "@n1h/sweetview";
 ```
 
-```ts
-export type UiMethods<M extends MethodMap> = { [K in keyof M & string]?: (params: M[K][0]) => M[K][1] };
-```
-
+`UiMethods<M>` maps any subset of the contract's method names to a function
+from that method's params to its result: `{ [K in keyof M]?: (params: M[K][0]) => M[K][1] }`.
 Synchronous methods answered on the UI thread instead of by the worker. Returning a Promise is rejected with `<method>: a UI-thread method must return synchronously; this one returned a Promise`. Throwing rejects the page's call with the error's message.
 
 ### assetMime
@@ -429,39 +389,25 @@ Synchronous methods answered on the UI thread instead of by the worker. Returnin
 import { assetMime, indexHtml, indexHtmlText, type IndexHtmlOptions } from "@n1h/sweetview";
 ```
 
-```ts
-export const assetMime = (path: string): string
-```
-
-Returns the Content-Type for an asset path from its lowercased extension (`html`, `js`, `mjs`, `css`, `json`, `map`, `txt`, `svg`, `png`, `jpg`, `jpeg`, `gif`, `webp`, `ico`, `woff`, `woff2`, `ttf`, `wasm`, `glb`, `gltf`, `mp3`, `ogg`, `wav`; fallback `application/octet-stream`).
+`assetMime(path: string): string` returns the Content-Type for an asset path from its lowercased extension (`html`, `js`, `mjs`, `css`, `json`, `map`, `txt`, `svg`, `png`, `jpg`, `jpeg`, `gif`, `webp`, `ico`, `woff`, `woff2`, `ttf`, `wasm`, `glb`, `gltf`, `mp3`, `ogg`, `wav`; fallback `application/octet-stream`).
 
 ### indexHtml
 
-```ts
-export function indexHtml({ title, js = "main.js", css = "main.css", head = "", body = '<div id="root"></div>' }: IndexHtmlOptions): Blob
-```
+`indexHtml(options: IndexHtmlOptions): Blob` builds an HTML5 index document
+as a `Blob` (`text/html; charset=utf-8`). `indexHtmlText(options): string`
+returns the same document as a string.
 
-Builds an HTML5 index document as a `Blob` (`text/html; charset=utf-8`) linking `css` (when non-empty) and loading `js` as a module script. `title`, `js`, and `css` are HTML-escaped; `head` and `body` are inserted verbatim.
+The document always loads `js` as a module script, so register an asset at
+that path (or pass the path of one you do register). `title`, `js` and `css`
+are HTML-escaped; `head` and `body` are inserted verbatim.
 
-### indexHtmlText
-
-```ts
-export function indexHtmlText(options: IndexHtmlOptions): string
-```
-
-Same document as `indexHtml`, returned as a string.
-
-### IndexHtmlOptions
-
-```ts
-export type IndexHtmlOptions = {
-  title: string;
-  js?: string;
-  css?: string;
-  head?: string;
-  body?: string;
-};
-```
+| `IndexHtmlOptions` field | Default | Meaning |
+|---|---|---|
+| `title` | required | The `<title>`. |
+| `js` | `"main.js"` | Asset path of the module script. |
+| `css` | `"main.css"` | Asset path of the stylesheet; `""` links none. |
+| `head` | `""` | Extra markup inside `<head>`. |
+| `body` | `'<div id="root"></div>'` | The `<body>` content. |
 
 ### windowChromeMethods
 
@@ -544,6 +490,35 @@ dynamically, set `` url: `${ASSET_ORIGIN}/dynamic` `` together with
 | Linux | `http://webview.localhost` | Unsupported (`WebView.attach` throws before creating anything) |
 
 The native library path comes from `WEBVIEW_PATH` or `@n1h/sweetview-webview-bun/build/`, and `dlopen` handles are cached per path so repeated windows/tabs never leak library handles. See [the webview library](webview-library.md#library-selection-and-symbol-probing).
+
+### The RPC trust boundary
+
+When `WebView.attach` binds `__sweetview_rpc`, it does so before the first
+navigation, and the dispatcher checks only the method name: it answers the reserved ready method,
+then `uiMethods`, `deferredUiMethods` and the worker, whatever document is
+loaded at the top level. It does not check the document's origin. A page at
+`ASSET_ORIGIN`, a `url` you navigated to, and any top-level page a link or
+redirect leads to all get the same methods.
+
+The hardened native library (2.8.0, the `v1-drafting` branch) refuses RPC
+from subframes (`window !== window.top`, and on macOS a `WKScriptMessage` that
+is not from the main frame), so a cross-origin iframe on `FRAMES_ORIGIN` or any
+other foreign origin cannot call in ([dynamic requests](#dynamic-requests)).
+The published 2.7.0 library lacks these native subframe checks. Even on 2.8.0
+the isolation covers cross-origin frames only: a same-origin iframe can reach
+`window.top`'s globals under the browser's ordinary same-origin policy, so do
+not embed untrusted content at your own origin.
+
+- Give `uiMethods`, `deferredUiMethods` and `worker` only to a webview whose
+  top-level document is your own: bundled `page` or `assets`, or a `url` you
+  control.
+- Show external sites in a separate webview or tab created without those
+  options. A direct-URL webview (`url` with no `page` or `assets`) that also
+  sets none of `showOnReady`, `readyTimeoutMs` or `onReady` gets no
+  `__sweetview_rpc` binding at all. One that sets a ready option gets a
+  binding that answers only the ready method and rejects every other call
+  with `<method>: this window has no worker and no UI-thread method of that
+  name`.
 
 ## Startup and deferred UI
 
@@ -645,6 +620,55 @@ page). [WebView2 Feedback #3519](https://github.com/MicrosoftEdge/WebView2Feedba
 
 ### Single window with `createApp`
 
+Three files: the page, the worker entry and the app entry.
+
+`index.html` (loaded by `import index from "./index.html"`; it only needs a
+module script, which Bun bundles):
+
+```html
+<!doctype html>
+<html>
+  <head><title>Notes</title></head>
+  <body>
+    <ul id="notes"></ul>
+    <script type="module">
+      import { createBridge } from "@n1h/sweetview/ipc";
+      import { webviewTransport } from "@n1h/sweetview/page";
+
+      const bridge = createBridge(webviewTransport());
+      bridge.on("notes.changed", ({ count }) => console.log("notes:", count));
+      const notes = await bridge.rpc("notes.list");
+      document.getElementById("notes").innerHTML = notes.map((n) => `<li>${n}</li>`).join("");
+    </script>
+  </body>
+</html>
+```
+
+`app-worker.ts`:
+
+```ts
+import { defineService } from "@n1h/sweetview/ipc";
+import { hostService } from "@n1h/sweetview/worker";
+
+type Methods = { "notes.list": [void, string[]] };
+type Events = { "notes.changed": { count: number } };
+
+const notes = ["first note"];
+
+hostService(
+  defineService<Methods, Events>((emit) => ({
+    methods: {
+      "notes.list": () => {
+        emit("notes.changed", { count: notes.length });
+        return notes;
+      },
+    },
+  })),
+);
+```
+
+`app.ts`:
+
 ```ts
 import { createApp } from "@n1h/sweetview";
 import index from "./index.html";
@@ -668,22 +692,44 @@ app.run();
 
 ### Multi-tab app
 
+The app keeps every tab it opens, because a tab the user tears off moves to a
+window of its own (`tab.window`) that `app.dispose()` does not close. At
+shutdown it disposes each of those windows, which closes their tabs, then the
+app. The loop starts before the first tab opens, since a tab's webview
+finishes initializing while the loop turns.
+
 ```ts
-import { createApp } from "@n1h/sweetview";
+import { WebView, createApp, type Tab } from "@n1h/sweetview";
+import type { Window } from "@n1h/sweetview/native";
 import tabPage from "./tab.html";
+
+const tabs = new Set<Tab>();
 
 const app = await createApp({
   title: "Tabbed App",
   bounds: { x: 100, y: 100, width: 1040, height: 760 },
   tabs: true,
+  onNewTab: (origin) => void open(origin).catch(console.error),
+  onTabClose: (closed) => {
+    for (const tab of tabs) if (tab === closed) tabs.delete(tab);
+  },
+  onClose: () => app.quit(),
 });
 
-const open = () => app.openTab({ page: tabPage, title: "New Tab" });
-app.window.onNewTab(() => { void open(); });
-app.window.onClose(() => app.quit());
+async function open(origin?: Window): Promise<Tab> {
+  // origin is the window that asked for the tab (main or torn-off); without it, the main window
+  const tab = origin
+    ? await WebView.openTab(origin, { page: tabPage, title: "New Tab" })
+    : await app.openTab({ page: tabPage, title: "New Tab" });
+  tabs.add(tab);
+  return tab;
+}
 
+const loop = app.run();
 await open();
 app.window.show(); // opening a tab without showOnReady does not show the window
-await app.run();
-app.dispose();
+await loop;
+
+for (const tab of tabs) if (tab.window !== app.window) tab.window.dispose(); // torn-off windows
+app.dispose(); // app.window and its tabs
 ```

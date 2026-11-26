@@ -1,5 +1,5 @@
-# The webview-bun fork (branch sweetview) and its webview submodule (branch
-# sweetview), cloned into webview-bun/ here, for working on the library that
+# The webview-bun fork (branch v1-drafting) and its webview submodule (branch
+# v1-drafting), cloned into webview-bun/ here, for working on the library that
 # @n1h/sweetview-webview-bun ships. `just webview <recipe>` from the repo root,
 # or `just <recipe>` here. The apps do not need this: they load the library
 # from the npm package.
@@ -7,8 +7,9 @@
 set shell := ["pwsh", "-NoProfile", "-Command", "$ErrorActionPreference = 'Stop'; $PSNativeCommandUseErrorActionPreference = $true; trap { if ($_.Exception -is [System.Management.Automation.NativeCommandExitException]) { exit $_.Exception.ExitCode }; break };"]
 
 fork := "git@github.com:n0t-invented-here/sweetview-webview-bun.git"
-fork_branch := "sweetview"
-sub_branch := "sweetview"
+# SWEETVIEW_WEBVIEW_BRANCH (or SWEETVIEW_WEBVIEW_SUB_BRANCH for the submodule alone) picks other branches.
+fork_branch := env("SWEETVIEW_WEBVIEW_BRANCH", "v1-drafting")
+sub_branch := env("SWEETVIEW_WEBVIEW_SUB_BRANCH", fork_branch)
 upstream := "f1a9d6b"
 
 @_default:

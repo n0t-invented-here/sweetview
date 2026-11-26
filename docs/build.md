@@ -2,40 +2,60 @@
 
 Build-time helpers for shipping an app: the icon files a build uses, and the macOS `.app` bundle around the compiled binary. They run on any OS in any build script and load neither `bun:ffi` nor the webview library. This page also covers the `make-app.ts` command line and the `@n1h/sweetview/file-imports` types. The module is `@n1h/sweetview/build` in the facade and the standalone package `@n1h/sweetview-build`; it also re-exports [`defineAppIdentity`](settings-store.md#defineappidentity), so one identity can drive the build and the app.
 
+- [Workflow](#workflow)
 - [Reference](#reference)
-  - [MacAppOptions](#macappoptions)
-  - [makeMacApp](#makemacapp)
+  - [makeMacApp and MacAppOptions](#makemacapp)
   - [writeIconFiles](#writeiconfiles)
   - [refreshWindowsIcons](#refreshwindowsicons)
 - [make-app command line](#make-app-command-line)
+- [Repository build scripts](#repository-build-scripts)
 - [File-import types](#file-import-types)
-- [Example](#example)
+
+## Workflow
+
+A release build has three steps: write the icon files once, compile one
+executable per platform with `bun build --compile` (the app entry plus its
+worker entry), then wrap the macOS binary in a `.app` bundle. A build script
+`build.ts` that does the first and last steps:
+
+```ts
+import { makeMacApp, writeIconFiles } from "@n1h/sweetview/build";
+import { icnsFromPng, icoFromPng } from "@n1h/sweetview/native";
+
+const png = new Uint8Array(await Bun.file("art/icon.png").arrayBuffer());
+writeIconFiles("build", { ico: icoFromPng(png), icns: icnsFromPng(png) });
+
+// after: bun build --compile --target=bun-darwin-arm64 app.ts worker.ts --outfile dist/my-app-macos-arm64
+const app = makeMacApp({
+  name: "My App",
+  bundleId: "com.example.my-app",
+  binary: "dist/my-app-macos-arm64",
+  outDir: "dist",
+  icns: "build/AppIcon.icns",
+  plist: { LSUIElement: true },
+});
+console.log(app); // dist/My App.app
+```
+
+On Windows, compile with `--windows-icon=build/app.ico` and call
+[`refreshWindowsIcons`](#refreshwindowsicons) afterwards. The
+[make-app command line](#make-app-command-line) does the bundle step without
+a script.
 
 ## Reference
 
-### MacAppOptions
+### makeMacApp
 
 ```ts
 import { makeMacApp, type MacAppOptions } from "@n1h/sweetview/build";
 ```
 
-```ts
-export type MacAppOptions = {
-  identity?: AppIdentity;
-  name?: string;
-  bundleId?: string;
-  binary: string;
-  outDir: string;
-  icns?: string;
-  version?: string;
-  minimumSystemVersion?: string;
-  urlSchemes?: readonly string[];
-  plist?: Record<string, string | number | boolean>;
-  sign?: string | false;
-};
-```
+`makeMacApp(options: MacAppOptions): string` wraps the compiled macOS binary
+in a `.app` bundle at `<outDir>/<name>.app`, and on macOS signs it. Finder
+then launches it without a Terminal window, and notifications have the
+signed bundle they need. It returns the bundle's path.
 
-The options of `makeMacApp`.
+`MacAppOptions`:
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
@@ -51,17 +71,7 @@ The options of `makeMacApp`.
 | `plist` | `Record<string, string \| number \| boolean>` | none | More `Info.plist` entries by key, such as `{ LSUIElement: true }` for a menu-bar app with no Dock tile. An entry with a new key is written after the defaults. An entry with the key of a default replaces that default's value in the default's position. |
 | `sign` | `string \| false` | `"-"` on macOS, `false` elsewhere | The `codesign` identity for the bundle: `"-"` for an ad-hoc signature, a certificate name such as `"Developer ID Application: Example (TEAMID)"`, or `false` to leave the bundle unsigned. A bundle that is not signed is refused by macOS's notification service and shows no notifications: Bun's compiled binary carries only a linker signature with the identifier `a.out`, and the bundle around it has no seal. |
 
-### makeMacApp
-
-```ts
-export function makeMacApp(options: MacAppOptions): string
-```
-
-Wraps the compiled macOS binary in a `.app` bundle at `<outDir>/<name>.app`, and on macOS signs it. Finder then launches it without a Terminal window, and notifications have the signed bundle they need.
-
-| Field | Type | Default | Meaning |
-|---|---|---|---|
-| `options` | `MacAppOptions` | required | See `MacAppOptions`. |
+#### What it writes
 
 It first runs the preflight checks listed below (name, bundle ID, `binary`, `icns`, schemes, and the `CFBundleURLTypes` conflict). Only then does it delete any existing bundle at that path and write these files:
 
@@ -96,7 +106,7 @@ With `sign` set, or left at its macOS default, the files are then signed with `c
 
 On a Mac that calls a copied bundle damaged, `xattr -dr com.apple.quarantine "<name>.app"`, `chmod +x "<name>.app/Contents/MacOS/"*` and `codesign --sign - --force --deep "<name>.app"` remove the quarantine flag, restore the executable bit and sign it again.
 
-Returns: the bundle's path, `<outDir>/<name>.app`.
+#### Errors
 
 These preflight checks run before an existing `<name>.app` is deleted or anything is written, and throw:
 
@@ -130,11 +140,7 @@ Thread: blocks the calling thread on file I/O.
 import { writeIconFiles } from "@n1h/sweetview/build";
 ```
 
-```ts
-export function writeIconFiles(dir: string, files: { ico?: Uint8Array; icns?: Uint8Array }): string[]
-```
-
-Writes the icon files a build embeds into `dir`, creating the folder and any missing parents. Existing files of the same name are replaced. The encoders for both formats, such as `icoFromPng` and `icnsFromPng`, are pure TypeScript in `@n1h/sweetview/native`, see [icon encoders](native/event-loop-and-icons.md#icon-encoders-and-the-png-decoder).
+`writeIconFiles(dir, files): string[]` writes the icon files a build embeds into `dir`, creating the folder and any missing parents. Existing files of the same name are replaced. The encoders for both formats, such as `icoFromPng` and `icnsFromPng`, are pure TypeScript in `@n1h/sweetview/native`, see [icon encoders](native/event-loop-and-icons.md#icon-encoders-and-the-png-decoder).
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
@@ -156,11 +162,7 @@ import { refreshWindowsIcons } from "@n1h/sweetview/build";
 refreshWindowsIcons(); // after bun build --compile --windows-icon=build/app.ico
 ```
 
-```ts
-export function refreshWindowsIcons(): void
-```
-
-Tells the Windows shell that program icons changed. Explorer, the taskbar and
+`refreshWindowsIcons(): void` tells the Windows shell that program icons changed. Explorer, the taskbar and
 the Start menu cache icons by path, so after recompiling an executable with a
 new `--windows-icon` they keep drawing the icon of the file that was at that
 path before. `refreshWindowsIcons` makes the call an installer makes,
@@ -176,7 +178,21 @@ rebuilding the bundle is the whole update. Failures (no `shell32.dll`, no
 
 ## make-app command line
 
-`@n1h/sweetview-build/make-app` is `makeMacApp` as a command. With `@n1h/sweetview-build` installed, run it by path with Bun:
+`@n1h/sweetview-build/make-app` is `makeMacApp` as a command, run by path
+with Bun.
+
+`@n1h/sweetview-build` 1.0.0 is not on npm yet
+([Install](../README.md#install)), so run the script from a source checkout
+of the `v1-drafting` branch. From the repository root:
+
+```sh
+bun packages/sweetview-build/src/make-app.ts --name "My App" --bundle-id com.example.my-app --binary dist/my-app-macos-arm64 --out dist
+```
+
+From an app folder inside the checkout, such as `demos/hello/`, the path is
+`../../packages/sweetview-build/src/make-app.ts`, as the demos' justfiles
+use. Once 1.0.0 is published and `@n1h/sweetview-build` is installed, the
+script is in `node_modules`:
 
 ```sh
 bun node_modules/@n1h/sweetview-build/src/make-app.ts --name "My App" --bundle-id com.example.my-app --binary dist/my-app-macos-arm64 --out dist
@@ -228,22 +244,3 @@ recompiling a demo to refresh Explorer's icon cache; it calls
 | `*.js` | `string`, the file's path |
 
 An app references the module from a `.d.ts` file of its own with `/// <reference types="@n1h/sweetview/file-imports" />`. Other file kinds, such as `*.png` or `*.glb`, need their own `declare module` beside that line.
-
-## Example
-
-```ts
-import { makeMacApp, writeIconFiles } from "@n1h/sweetview/build";
-import { icnsFromPng, icoFromPng } from "@n1h/sweetview/native";
-
-const png = new Uint8Array(await Bun.file("art/icon.png").arrayBuffer());
-writeIconFiles("build", { ico: icoFromPng(png), icns: icnsFromPng(png) });
-const app = makeMacApp({
-  name: "My App",
-  bundleId: "com.example.my-app",
-  binary: "dist/my-app-macos-arm64",
-  outDir: "dist",
-  icns: "build/AppIcon.icns",
-  plist: { LSUIElement: true },
-});
-console.log(app);
-```

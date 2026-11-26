@@ -2,17 +2,103 @@
 
 The [`ipc`](ipc.md) contract over WebSockets, so a `Service` served by `Bun.serve` reaches a page in an ordinary browser. `@n1h/sweetview/ipc-ws/server` runs in Bun and hosts the service; `@n1h/sweetview/ipc-ws/client` runs in the browser page and provides its `Transport`. `@n1h/sweetview/ipc-ws` re-exports both, and the standalone package is `@n1h/sweetview-ipc-ws`. Neither module touches Bun or browser globals until one of its functions is called. Import each side from its own path so a page bundle never pulls in the server's types.
 
+- [Example](#example)
 - [Server: `@n1h/sweetview/ipc-ws/server`](#server-n1hsweetviewipc-wsserver)
   - [wsHost](#wshost)
-  - [WsData](#wsdata)
-  - [WsHost](#wshost-1)
-  - [WsHostOptions](#wshostoptions)
+  - [Origin checks](#origin-checks)
 - [Client: `@n1h/sweetview/ipc-ws/client`](#client-n1hsweetviewipc-wsclient)
   - [wsTransport](#wstransport)
   - [wsUrl](#wsurl)
-  - [WsTransport](#wstransport-1)
 - [Wire protocol](#wire-protocol)
-- [Example](#example)
+
+## Example
+
+A server and the browser page it serves, sharing one contract. Run
+`bun run server.ts` and open `http://127.0.0.1:3000`; the page shows the
+reply to `ping` and counts the server's `tick` events. Bun bundles the page's
+script because `index.html` is an HTML import in `routes`.
+
+```ts
+// protocol.ts
+export type Methods = { ping: [void, "pong"] };
+export type Events = { tick: { count: number } };
+```
+
+```ts
+// server.ts
+import { defineService } from "@n1h/sweetview/ipc";
+import { wsHost } from "@n1h/sweetview/ipc-ws/server";
+import index from "./index.html";
+import type { Events, Methods } from "./protocol";
+
+const service = defineService<Methods, Events>((emit) => {
+  let count = 0;
+  const timer = setInterval(() => emit("tick", { count: ++count }), 1000);
+  return {
+    methods: { ping: () => "pong" },
+    dispose: () => clearInterval(timer),
+  };
+});
+const host = wsHost(service);
+
+const server = Bun.serve({
+  hostname: "127.0.0.1", // loopback only: keeps the service off the network
+  port: 3000,
+  routes: { "/": index },
+  fetch(req, server) {
+    if (new URL(req.url).pathname !== "/ws") return new Response("not found", { status: 404 });
+    return host.upgrade(req, server) ? undefined : new Response("expected a websocket", { status: 400 });
+  },
+  websocket: host.websocket,
+});
+console.log(`http://127.0.0.1:${server.port}`);
+
+process.on("SIGINT", async () => {
+  host.dispose();          // closes every socket; each ends its session
+  await service.dispose(); // the host never disposes the service
+  server.stop(true);
+  process.exit(0);
+});
+```
+
+```html
+<!-- index.html -->
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Ping</title>
+  </head>
+  <body>
+    <p id="pong"></p>
+    <p id="tick"></p>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>
+```
+
+```ts
+// main.ts, the browser client
+import { createBridge } from "@n1h/sweetview/ipc";
+import { wsTransport } from "@n1h/sweetview/ipc-ws/client";
+import type { Events, Methods } from "./protocol";
+
+const transport = wsTransport(); // ws://<this page's host>/ws
+const bridge = createBridge<Methods, Events>(transport);
+
+bridge.on("tick", ({ count }) => {
+  document.getElementById("tick")!.textContent = `tick ${count}`;
+});
+transport.onClose(() => {
+  document.getElementById("tick")!.textContent = "disconnected";
+});
+
+document.getElementById("pong")!.textContent = await bridge.rpc("ping"); // queued until the socket opens
+```
+
+A page that also runs in a Sweetview window picks `webviewTransport()` when
+`isWebview()` is true ([page](page.md#connecting-to-the-host)); the rest of
+`main.ts` is unchanged.
 
 ## Server: `@n1h/sweetview/ipc-ws/server`
 
@@ -24,72 +110,39 @@ import { wsHost, type WsData, type WsHost, type WsHostOptions } from "@n1h/sweet
 
 ### wsHost
 
-```ts
-export function wsHost<M extends MethodMap, E extends EventMap>(service: Service<M, E>, options: WsHostOptions = {}): WsHost;
-```
+`wsHost<M, E>(service: Service<M, E>, options?: WsHostOptions): WsHost`
 
-Hosts a `Service` behind a `Bun.serve` WebSocket handler. Each socket is one session. The host subscribes to the service's events when `wsHost` is called and forwards them until `dispose()`.
-
-| Parameter | Type | Default | Meaning |
-|---|---|---|---|
-| `service` | `Service<M, E>` | required | The service to host. |
-| `options` | `WsHostOptions` | `{}` | Origin policy. |
-
-Returns: a `WsHost`. Pass its `websocket` to `Bun.serve` and call its `upgrade` from `fetch`.
-
-The host never calls `service.dispose()`. The application disposes the service after `dispose()`.
-
-### WsData
+Hosts a `Service` behind a `Bun.serve` WebSocket handler. Each socket is one session. The host subscribes to the service's events when `wsHost` is called and forwards them until `dispose()`. Pass the returned `websocket` to `Bun.serve` and call `upgrade` from `fetch`. The host never calls `service.dispose()`; the application disposes the service after `host.dispose()`.
 
 ```ts
-export type WsData = { session: Session };
-```
+type WsData = { session: Session }; // what Bun attaches to each upgraded socket
 
-The data Bun attaches to each socket the host upgrades. It is the type parameter of the `Server` and `WebSocketHandler` the host works with.
-
-| Field | Type | Meaning |
-|---|---|---|
-| `session` | `Session` | The socket's session. `id` is `ws-<n>`, where `<n>` counts from 1 per host. An upgrade that Bun refuses still uses a number. `kind` is always `"web"`. |
-
-### WsHost
-
-```ts
-export type WsHost = {
+type WsHost = {
   upgrade(req: Request, server: Server<WsData>): boolean;
   websocket: WebSocketHandler<WsData>;
   readonly sessions: number;
   dispose(): void;
 };
-```
 
-What `wsHost` returns.
-
-| Field | Type | Meaning |
-|---|---|---|
-| `upgrade` | `(req: Request, server: Server<WsData>) => boolean` | Checks the request's `Origin`, assigns a new session, and upgrades the request. Returns `false` when the `Origin` is refused or Bun did not upgrade the request. On `false`, `fetch` must return its own error response. |
-| `websocket` | `WebSocketHandler<WsData>` | The `websocket` option for `Bun.serve`. |
-| `sessions` | `number` | Number of open sockets. |
-| `dispose` | `() => void` | Stops forwarding events and closes every socket. Each closed socket still ends its session on the service. It does not dispose the service. |
-
-Throws: `upgrade` throws whatever an `allowOrigin` predicate throws.
-
-`dispose()` does not stop the host from accepting new sockets. Sockets opened after `dispose()` can call the service but receive no events. Stop the `Bun.serve` server, or stop calling `upgrade`, to refuse them.
-
-### WsHostOptions
-
-```ts
-export type WsHostOptions = {
+type WsHostOptions = {
   allowOrigin?: string[] | ((origin: string, req: Request) => boolean);
 };
 ```
 
-Which browser pages may connect. Browsers do not apply the same-origin policy to WebSockets, so without a check any page the user has open could call the service.
+| Member | Meaning |
+|---|---|
+| `WsData.session` | The socket's session. `id` is `ws-<n>`, where `<n>` counts from 1 per host; an upgrade that Bun refuses still uses a number. `kind` is always `"web"`. |
+| `upgrade(req, server)` | Checks the request's `Origin` ([origin checks](#origin-checks)), assigns a new session, and upgrades the request. Returns `false` when the host is disposed, the `Origin` is refused, or Bun did not upgrade the request; `fetch` must then return its own error response. Throws whatever an `allowOrigin` predicate throws. |
+| `websocket` | The `websocket` option for `Bun.serve`. |
+| `sessions` | Number of open sockets. |
+| `dispose()` | Stops forwarding events, closes every socket, and refuses further upgrades. Each closed socket still ends its session on the service. It does not dispose the service. Safe to call twice. |
+| `allowOrigin` (option) | A list of allowed `Origin` values, compared as exact strings, or a predicate that decides. Default: the `Origin` host equals the `Host` header. |
 
-| Field | Type | Default | Meaning |
-|---|---|---|---|
-| `allowOrigin` | `string[] \| ((origin: string, req: Request) => boolean)` | `Origin` host equals `Host` | A list of allowed `Origin` values, compared as exact strings, or a predicate that decides. |
+After `dispose()`, `upgrade` returns `false`, and a socket whose upgrade was accepted just before `dispose()` is closed as soon as it opens instead of being served. Stop the `Bun.serve` server as well to stop answering HTTP.
 
-The check, in order:
+### Origin checks
+
+`allowOrigin` decides which browser pages may connect. Browsers do not apply the same-origin policy to WebSockets, so without a check any page the user has open could call the service. The check, in order:
 
 1. A request without an `Origin` header is accepted, whatever `allowOrigin` says: a predicate is not even called. Browsers always send `Origin` on a WebSocket upgrade, so a request without one comes from a non-browser client (a script, `curl`, another server), which the same-origin concern does not apply to. If those clients must be refused too, authenticate them in `fetch` before calling `upgrade`.
 2. With a predicate, its return value decides.
@@ -108,66 +161,37 @@ import { wsTransport, wsUrl, type WsTransport } from "@n1h/sweetview/ipc-ws/clie
 
 ### wsTransport
 
-```ts
-export function wsTransport(url: string = wsUrl()): WsTransport;
-```
+`wsTransport(url: string = wsUrl()): WsTransport`
 
-Opens one WebSocket and returns a `Transport` over it. Calls made before the socket opens are queued and sent on open. When the socket closes, every pending call rejects and the transport stays closed; it never reconnects.
+Opens one WebSocket to `url` (the `ws://` or `wss://` URL of the host's upgrade path) and returns a `Transport` over it, with `kind` set to `"web"`. Calls made before the socket opens are queued and sent on open. When the socket closes, every pending call rejects and the transport stays closed; it never reconnects.
 
-| Field | Type | Default | Meaning |
-|---|---|---|---|
-| `url` | `string` | `wsUrl()` | The `ws://` or `wss://` URL of the host's upgrade path. |
+`WsTransport` is the [`Transport`](ipc.md#transport) plus the socket's lifecycle:
 
-Returns: a `WsTransport` with `kind` set to `"web"`.
+| Member | Meaning |
+|---|---|
+| `ready` | `Promise<void>`. Resolves when the socket opens. Rejects with `Error("websocket closed")` when it closes first. Leaving the rejection unhandled is safe. |
+| `onClose(fn)` | Runs `fn` once, when the socket closes for any reason. If the socket is already closed, runs `fn` synchronously and returns a no-op unsubscribe function. Otherwise returns an unsubscribe function. |
+| `dispose()` | Closes the socket. The transport cannot be reopened; a new `wsTransport` is a new session. |
 
-Throws: the `WebSocket` constructor's error when `url` is not a valid WebSocket URL.
-
-Throws: a `ReferenceError` when `url` is omitted and no global `location` exists.
+Throws the `WebSocket` constructor's error when `url` is not a valid WebSocket URL, and a `ReferenceError` when `url` is omitted and no global `location` exists.
 
 - `call` rejects with `Error("websocket closed")` when the socket is closing or closed, and when it closes before the reply arrives.
 - `call` rejects with an `Error` carrying the backend's message when the reply has `ok: false`.
 - `call` rejects with the `JSON.stringify` error when `params` cannot be serialised as JSON.
-- `notify` never throws. When the socket is closing or closed, or `params` cannot be serialised as JSON, it logs `<method> not sent: <message>` to the console instead.
+- `call` sends `params` as given. Called directly with `undefined`, the frame has no `params` key; a [`Bridge`](ipc.md#createbridge) always sends `null` instead.
+- `notify` sends `seq: null`: wire-level fire and forget, with no reply. It never throws. When the socket is closing or closed, or `params` cannot be serialised as JSON, it logs `<method> not sent: <message>` to the console instead.
 - A `notify` queued before the socket opens is dropped without a log when the socket closes before opening.
 - Events received while no `onEvent` listener is subscribed are dropped.
 
 ### wsUrl
 
-```ts
-export function wsUrl(path = "/ws"): string;
-```
+`wsUrl(path = "/ws"): string`
 
-Builds the WebSocket URL for the page's own origin: `wss:` when the page was loaded over `https:`, `ws:` otherwise.
-
-| Parameter | Type | Default | Meaning |
-|---|---|---|---|
-| `path` | `string` | `"/ws"` | Path on the page's host, starting with `/`. |
-
-Returns: `<ws: or wss:>//<location.host><path>`.
-
-Throws: a `ReferenceError` where no global `location` exists, as in Bun.
-
-### WsTransport
-
-```ts
-export type WsTransport = Transport & {
-  readonly ready: Promise<void>;
-  onClose(fn: () => void): () => void;
-  dispose(): void;
-};
-```
-
-The `Transport` from `wsTransport`, plus the socket's lifecycle.
-
-| Field | Type | Meaning |
-|---|---|---|
-| `ready` | `Promise<void>` | Resolves when the socket opens. Rejects with `Error("websocket closed")` when it closes first. Leaving the rejection unhandled is safe. |
-| `onClose` | `(fn: () => void) => () => void` | Runs `fn` once, when the socket closes for any reason. If the socket is already closed, runs `fn` synchronously and returns a no-op unsubscribe function. Otherwise returns an unsubscribe function. |
-| `dispose` | `() => void` | Closes the socket. The transport cannot be reopened; a new `wsTransport` is a new session. |
+Builds the WebSocket URL for the page's own origin, `<ws: or wss:>//<location.host><path>`: `wss:` when the page was loaded over `https:`, `ws:` otherwise. `path` starts with `/`. Throws a `ReferenceError` where no global `location` exists, as in Bun.
 
 ## Wire protocol
 
-Each socket carries the `Frame` types documented in [`ipc.md`](ipc.md), one JSON text message per frame.
+Each socket carries the `Frame` types documented in [`ipc.md`](ipc.md#wire-format), one JSON text message per frame.
 
 | Direction | Frames | Notes |
 |---|---|---|
@@ -205,21 +229,3 @@ Close behaviour:
 - On the client, a close rejects every pending call with `Error("websocket closed")` and runs the `onClose` listeners.
 - Neither side reconnects.
 - The protocol defines no heartbeat of its own. The `websocket` handler sets no idle timeout or ping options, so Bun's defaults apply.
-
-## Example
-
-```ts
-import { defineService } from "@n1h/sweetview/ipc";
-import { wsHost } from "@n1h/sweetview/ipc-ws/server";
-
-const service = defineService<{ ping: [void, "pong"] }, {}>(() => ({ methods: { ping: () => "pong" } }));
-const host = wsHost(service);
-Bun.serve({
-  hostname: "127.0.0.1",
-  fetch(req, server) {
-    if (new URL(req.url).pathname !== "/ws") return new Response("not found", { status: 404 });
-    return host.upgrade(req, server) ? undefined : new Response("expected a websocket", { status: 400 });
-  },
-  websocket: host.websocket,
-});
-```

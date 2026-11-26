@@ -66,7 +66,10 @@ Makes the browser's own background transparent (or any color), which
 
 - Windows: sets `ICoreWebView2Controller2::DefaultBackgroundColor`. For the
   desktop to show through, the host window also needs composition that
-  honours alpha, which `transparent: true` sets up.
+  honours alpha, which `transparent: true` sets up. WebView2 accepts only a
+  fully transparent (`a` = 0) or fully opaque (`a` = 255) background; it
+  refuses any alpha in between, and the call returns
+  `WEBVIEW_ERROR_UNSPECIFIED`. Sweetview passes 0.
 - macOS: makes the `WKWebView` layer-backed and paints the RGBA color on its
   backing layer, behind the page, with WebKit's own background
   (`drawsBackground`) turned off for every color. When `a` is below 255 the
@@ -86,7 +89,7 @@ Makes the browser's own background transparent (or any color), which
 | `WEBVIEW_ERROR_OK` (0) | Success. |
 | `WEBVIEW_ERROR_INVALID_ARGUMENT` (-2) | A component outside 0 to 255. |
 | `WEBVIEW_ERROR_INVALID_STATE` (-3) | Windows: the browser controller does not exist yet. macOS: there is no `WKWebView`. |
-| `WEBVIEW_ERROR_UNSPECIFIED` (-1) | Windows: `ICoreWebView2Controller2` is unavailable or refuses the color. |
+| `WEBVIEW_ERROR_UNSPECIFIED` (-1) | Windows: `ICoreWebView2Controller2` is unavailable or refuses the color, including any `a` other than 0 or 255. |
 
 ### webview_set_asset
 
@@ -102,7 +105,13 @@ nothing reaches the network.
 - `path` is the URL path without the leading `/`; leading slashes are
   stripped. A path that needs percent-encoding is not supported.
 - A request's query string and fragment are ignored when matching.
-- `mime` is sent as the `Content-Type` header unchanged.
+- `mime` is sent as the `Content-Type` header unchanged, so it must be a
+  valid header value: printable ASCII and horizontal tabs are allowed; one
+  holding CR, LF, NUL or another control character is refused. This
+  validation, and the `UINT32_MAX` limit below, are enforced by the 2.8.0 /
+  `v1-drafting` library; the published 2.7.0 library does not check them.
+- `len` is at most `UINT32_MAX` (4 GiB - 1), because WebView2 and WebKit take
+  body sizes as 32-bit lengths on some paths.
 - The bytes are copied into the library. Calling again with the same path
   replaces them. No call removes an asset.
 - A request for a path with no asset goes to the request handler, or gets a
@@ -111,7 +120,7 @@ nothing reaches the network.
 | Return | When |
 |---|---|
 | `WEBVIEW_ERROR_OK` (0) | Success. |
-| `WEBVIEW_ERROR_INVALID_ARGUMENT` (-2) | `path` or `mime` is null, or `data` is null while `len` is not 0. |
+| `WEBVIEW_ERROR_INVALID_ARGUMENT` (-2) | `path` or `mime` is null, `data` is null while `len` is not 0, `mime` is not a valid header value, or `len` is above `UINT32_MAX`. |
 
 | OS | Origin (`ASSET_ORIGIN`) | Served by |
 |---|---|---|
@@ -296,11 +305,21 @@ the page is running.
 
 ## Rebuilding
 
-The `webview/` folder of this repository has recipes that clone the bindings
-repository (with the library as its submodule) and build it. In the bindings
-repository, `just build` on the target OS builds the library and
-`bun test test/request-handler.test.ts` runs its live interception tests.
+Sweetview 1.0.0 needs the library from the `v1-drafting` branch of both
+repositories. The `webview/` recipes of this repository (`just webview ...`,
+[webview/README.md](../webview/README.md)) default to `v1-drafting` for both
+the bindings checkout and its `webview` submodule, so `just webview clone`
+needs no manual checkout step. `just webview status` reports `expected branch
+v1-drafting` only when a checkout is on another branch, for example after
+setting `SWEETVIEW_WEBVIEW_BRANCH=sweetview` to build the published 2.7.0
+line. A separate clone of each repository on `v1-drafting` works the same way,
+as long as the bindings' `webview` submodule is on `v1-drafting` too.
 
-To run Sweetview's own tests against a rebuilt library, set `WEBVIEW_PATH`
-to the built file and run `bun test packages/sweetview/src/request-handler.test.ts`
-from this repository's root.
+Then, on the target OS:
+
+1. In the bindings checkout, `just build` builds the library and
+   `bun test test/request-handler.test.ts` runs its live interception tests.
+2. Set `WEBVIEW_PATH` to the built file (`webview.dll` on Windows,
+   `libwebview.dylib` on macOS) and, from this repository's root, run
+   `bun test packages/sweetview/src/request-handler.test.ts`, or run an app
+   uncompiled.

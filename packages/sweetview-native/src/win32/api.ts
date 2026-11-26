@@ -140,6 +140,8 @@ export const comctl32 = dlopen("comctl32.dll", {
 export const ole32 = dlopen("ole32.dll", {
   // (LPVOID reserved, DWORD coinit) -> HRESULT (S_OK, S_FALSE if already initialised, RPC_E_CHANGED_MODE if the other model)
   CoInitializeEx: { args: [FFIType.ptr, FFIType.u32], returns: FFIType.i32 },
+  // releases one successful (S_OK or S_FALSE) CoInitializeEx on this thread
+  CoUninitialize: { args: [], returns: FFIType.void },
   CoCreateInstance: { args: [FFIType.ptr, FFIType.ptr, FFIType.u32, FFIType.ptr, FFIType.ptr], returns: FFIType.i32 },
   CoTaskMemFree: { args: [FFIType.ptr], returns: FFIType.void },
 }).symbols;

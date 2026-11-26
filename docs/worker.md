@@ -37,13 +37,8 @@ const service = defineService<Methods, Events>((emit) => ({
 hostService(service);
 ```
 
-```ts
-type RequestHandler = (request: Request) => Response | Promise<Response>;
-type HostServiceOptions = { onRequest?: RequestHandler };
-hostService<M, E>(service: Service<M, E>, options?: HostServiceOptions): void
-```
-
-Connects `service` to the window that started this worker: page calls not
+`hostService(service, options?: { onRequest?: RequestHandler }): void`
+connects `service` to the window that started this worker: page calls not
 answered by a UI-thread method run `service.call(method, params, ctx)`, and
 the Service's events go to the page. `Service`, `MethodMap` and `EventMap`
 are in [ipc.md](ipc.md). `options.onRequest` registers a route handler, the
@@ -57,22 +52,44 @@ disposed, or when `WebView.attach` fails after starting it.
 
 ## hostRequestHandler
 
+A worker entry that serves a JSON route and a streamed export. The notes live
+in memory; `exportStream` yields one `Uint8Array` per line.
+
 ```ts
 import { hostRequestHandler } from "@n1h/sweetview/worker";
+
+const notes = ["Buy milk", "Ship v1"];
+
+const loadNotes = async (): Promise<string[]> => notes;
+
+const exportStream = (): ReadableStream<Uint8Array> => {
+  const encoder = new TextEncoder();
+  let i = 0;
+  return new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (i < notes.length) controller.enqueue(encoder.encode(`${notes[i++]}\n`));
+      else controller.close();
+    },
+  });
+};
 
 hostRequestHandler(async (request) => {
   const { pathname } = new URL(request.url);
   if (pathname === "/api/notes") return Response.json({ notes: await loadNotes() });
-  if (pathname === "/api/export") return new Response(exportStream()); // ReadableStream<Uint8Array>
+  if (pathname === "/api/export") {
+    return new Response(exportStream(), { headers: { "content-type": "text/plain; charset=utf-8" } });
+  }
   return new Response("Not Found", { status: 404 });
 });
 ```
 
-```ts
-hostRequestHandler(handler: RequestHandler): void
-```
+The page fetches these at its own origin, for example
+`await (await fetch("/api/notes")).json()`, when its webview sets
+`onRequest: "worker"`.
 
-Registers the worker's route handler, with or without a Service. The webview
+`hostRequestHandler(handler: RequestHandler): void`, where `RequestHandler`
+is `(request: Request) => Response | Promise<Response>`, registers the
+worker's route handler, with or without a Service. The webview
 must opt in with `onRequest: "worker"` together with `worker`
 ([dynamic requests](app.md#dynamic-requests)); otherwise no requests reach
 the worker.
@@ -105,11 +122,24 @@ ring exists. Requests cannot arrive before `init`.
 The worker writes replies, events and response bytes into a shared-memory
 ring of `ringBytes` (default 1 MiB) that the UI thread drains. Writing is
 synchronous: when the ring is full, the worker thread blocks with
-`Atomics.wait` until the UI thread drains it. Nothing is dropped and memory
-does not grow, but a slow UI thread slows the worker. This applies between
-reads of a streaming response too: the worker reads the next chunk from your
-stream only after the previous one is in the ring, so a fast producer is
-throttled to the speed of the UI thread.
+`Atomics.wait` until the UI thread drains it. Nothing is dropped and the ring
+never holds more than its capacity in flight, but a slow UI thread slows the
+worker. This applies between reads of a streaming response too: the worker
+reads the next chunk from your stream only after the previous one is in the
+ring, so a fast producer is throttled to the speed of the UI thread.
+
+The ring capacity bounds only the bytes in flight between the two threads.
+Two buffers sit outside it:
+
+- **Before `init`.** Frames the Service emits before the UI thread's `init`
+  message arrives wait in an in-memory queue with no size limit (see
+  [Initialization order](#initialization-order)). Emitting a flood of events
+  at the top level of the worker grows that queue.
+- **Without streaming symbols.** A library that has request interception but
+  not the streaming symbols makes the UI thread collect a streamed response's
+  chunks in memory and complete the request once, at the end
+  ([Response frames](#response-frames)). The worker is still throttled by the
+  ring, but the UI thread holds the whole body.
 
 A JSON frame larger than `ringBytes - 4` is split into ordered
 [chunk envelopes](ipc.md#chunkframe) with base64 payloads and reassembled on

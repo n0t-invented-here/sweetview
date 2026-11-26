@@ -18,8 +18,21 @@ All of these are exported from `@n1h/sweetview/native`, and the root
 
 ## The whole flow
 
+A tray app that handles `notes://open/note/42`, run once per user. It has no
+page, so it calls `signalReady()` itself once its handler is installed; a
+webview page's handshake does that for an app with a page.
+
 ```ts
-import { defineAppIdentity, onOpenUrl, registerUrlScheme, signalReady, singleInstance } from "@n1h/sweetview/native";
+import {
+  Tray,
+  defineAppIdentity,
+  onOpenUrl,
+  quitEventLoop,
+  registerUrlScheme,
+  runEventLoop,
+  signalReady,
+  singleInstance,
+} from "@n1h/sweetview/native";
 
 const identity = defineAppIdentity({ appId: "com.example.notes", appName: "Notes", urlSchemes: ["notes"] });
 
@@ -35,11 +48,32 @@ if (!lock.isPrimary) {
   process.exit(1);
 }
 
-registerUrlScheme("notes", { identity }); // Windows: per-user registry; macOS: validation only
-onOpenUrl((url) => openNote(url));        // buffered until signalReady()
+const tray = new Tray({ tooltip: "Notes", menu: [{ label: "Quit", click: () => quitEventLoop() }] });
 
-// ... create windows, tray, etc. ...
-signalReady(); // a webview page's handshake does this for you
+// notes://open/note/42 -> "42"
+const openNote = (url: string) => {
+  const id = new URL(url).pathname.split("/").filter(Boolean).pop() ?? "(none)";
+  tray.setTooltip(`Notes: note ${id}`);
+  console.log(`open note ${id}`);
+};
+
+// Windows: per-user registry; macOS: validation only. Compiled, the default
+// command launches the app. Under `bun run`, process.execPath is bun.exe, so
+// pass the whole command line to launch your script instead.
+const compiled = !process.execPath.toLowerCase().endsWith("bun.exe");
+registerUrlScheme(
+  "notes",
+  compiled ? { identity } : { identity, command: `"${process.execPath}" "${Bun.main}" "%1"` },
+);
+onOpenUrl(openNote); // buffered until signalReady()
+signalReady();       // this app has no page, so it signals ready itself
+
+try {
+  await runEventLoop();
+} finally {
+  tray.dispose();
+  lock.dispose(); // a later launch becomes the primary
+}
 ```
 
 A shared [`AppIdentity`](../settings-store.md#defineappidentity) supplies
@@ -48,12 +82,8 @@ the app ID, name and schemes to every call, and to
 
 ## registerUrlScheme and unregisterUrlScheme
 
-```ts
-registerUrlScheme(scheme: string, options?: RegisterUrlSchemeOptions): void
-unregisterUrlScheme(scheme: string): void
-```
-
-The scheme is trimmed, lowercased and validated against
+`registerUrlScheme(scheme, options?)` and `unregisterUrlScheme(scheme)`
+return nothing. The scheme is trimmed, lowercased and validated against
 `/^[a-z][a-z0-9+.-]*$/i`; an invalid one throws
 `sweetview: invalid URL scheme "<scheme>" (must match /^[a-z][a-z0-9+.-]*$/i)`
 on both platforms.
@@ -85,6 +115,19 @@ why these calls do real work on Windows and almost none on macOS:
 | `executablePath` | `process.execPath` | The program launched for the URL. |
 | `iconPath` | `"<executablePath>,0"` | `DefaultIcon` value. |
 | `command` | `"<executablePath>" "%1"` | Full command line; `%1` is the URL. |
+
+`executablePath` defaults to `process.execPath`, the running program. In a
+compiled executable that is the app. Under `bun run` it is `bun.exe`, so a
+URL would launch Bun with the URL as its only argument rather than your
+script. When testing from source on Windows, pass the whole command line:
+
+```ts
+import { registerUrlScheme } from "@n1h/sweetview/native";
+
+registerUrlScheme("notes", {
+  command: `"${process.execPath}" "${Bun.main}" "%1"`, // bun.exe <your entry script> <url>
+});
+```
 
 Registry failures throw `sweetview: RegCreateKeyExW(...) failed (<code>)`,
 `RegSetValueExW(...)` or `RegDeleteTreeW(...)` with the Win32 status.

@@ -79,4 +79,25 @@ describe("sweetipc", () => {
     expect(ended).toEqual(["s1"]);
     expect(disposed).toBe(true);
   });
+
+  test("a disposed memory transport rejects calls and drops notifications", async () => {
+    let shouts = 0;
+    const service = defineService<Methods, Events>(() => ({
+      methods: {
+        ping: () => "pong",
+        add: ({ a, b }) => a + b,
+        shout: () => void shouts++,
+        fail: () => {
+          throw new Error("x");
+        },
+      },
+    }));
+    const t = memoryTransport(service, { id: "s2", kind: "web" });
+    expect(await t.call("ping", undefined)).toBe("pong");
+    t.dispose();
+    await expect(t.call("ping", undefined)).rejects.toThrow("transport disposed");
+    t.notify("shout", { text: "late" });
+    await Bun.sleep(5);
+    expect(shouts).toBe(0);
+  });
 });

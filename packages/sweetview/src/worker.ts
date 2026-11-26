@@ -10,19 +10,18 @@
 import type { CallFrame, ChunkFrame, EventMap, Frame, MethodMap, ReplyFrame, Service } from "@n1h/sweetview-ipc";
 import type { Pointer } from "bun:ffi";
 import { requestError, writeRequestResponse, writeStreamingResponse } from "./request-response";
-import { WEBVIEW_SESSION, type HttpRequestMessage, type WorkerMessage } from "./messages";
+import { WEBVIEW_SESSION, type HttpRequestMessage, type WorkerCrashFrame, type WorkerMessage } from "./messages";
 import { Ring } from "./ring";
 import { openWebviewCore } from "./webview-lib";
 
 declare const self: Worker;
 
 /**
- * Encodes `{ kind: "reply", seq, ok: false, error }` clamped by exact UTF-8
- * JSON byte length (accounting for JSON escaping such as quotes, NUL bytes,
- * and multibyte UTF-8 characters) so it always fits within `maxBytes`.
+ * Encodes `make(message)` with `message` clamped by exact UTF-8 JSON byte
+ * length (accounting for JSON escaping such as quotes, NUL bytes, and
+ * multibyte UTF-8 characters) so it always fits within `maxBytes`.
  */
-function encodeClampedErrorReply(seq: string, message: string, maxBytes: number, encoder: TextEncoder): Uint8Array | null {
-  const make = (error: string) => encoder.encode(JSON.stringify({ kind: "reply", seq, ok: false, error } satisfies ReplyFrame));
+function encodeClamped(make: (message: string) => Uint8Array, message: string, maxBytes: number): Uint8Array | null {
   const full = make(message);
   if (full.length <= maxBytes) return full;
 
@@ -54,6 +53,45 @@ function encodeClampedErrorReply(seq: string, message: string, maxBytes: number,
     }
   }
   return best;
+}
+
+/** `{ kind: "reply", seq, ok: false, error }`, clamped to `maxBytes` (see encodeClamped). */
+function encodeClampedErrorReply(seq: string, message: string, maxBytes: number, encoder: TextEncoder): Uint8Array | null {
+  return encodeClamped(
+    (error) => encoder.encode(JSON.stringify({ kind: "reply", seq, ok: false, error } satisfies ReplyFrame)),
+    message,
+    maxBytes,
+  );
+}
+
+/**
+ * Writes the fatal `{ kind: "workerError", message }` frame and wakes the UI
+ * thread. The UI thread fails every pending RPC and native request when it
+ * drains this frame, which works even while webview_run() blocks its event
+ * loop. Returns false when the frame could not be written.
+ */
+export function writeWorkerCrash(ring: Ring, message: string, wake: () => void, encoder: TextEncoder = new TextEncoder()): boolean {
+  const encoded = encodeClamped(
+    (m) => encoder.encode(JSON.stringify({ kind: "workerError", message: m } satisfies WorkerCrashFrame)),
+    message,
+    Math.max(0, ring.capacity - 4),
+  );
+  if (!encoded) return false;
+  try {
+    ring.write(encoded);
+    if (ring.claimWakeup()) wake();
+    return true;
+  } catch (err) {
+    console.error("sweetview worker: the crash report could not be written:", err instanceof Error ? err.message : String(err));
+    return false;
+  }
+}
+
+/** A readable message for an uncaught error or a rejection reason. */
+function crashMessage(value: unknown, fallback?: string): string {
+  if (value instanceof Error) return value.message || value.name;
+  if (value !== undefined && value !== null) return String(value);
+  return fallback || "unknown error";
 }
 
 let nextChunkId = 1;
@@ -182,6 +220,26 @@ function createWorkerHost() {
     }
   }
 
+  // Worker.onerror on the UI side cannot fire while webview_run() blocks the
+  // main thread's event loop, so a crash is also reported through the ring,
+  // whose drain runs on the UI thread via webview_dispatch. Before init the
+  // UI side's Worker.onerror / onmessageerror remain the fallback.
+  let crashReported = false;
+  function installCrashReporting(ring: Ring, wake: () => void) {
+    const report = (message: string) => {
+      if (crashReported) return;
+      crashReported = true;
+      writeWorkerCrash(ring, message, wake, encoder);
+    };
+    self.addEventListener("error", (event) => {
+      const e = event as ErrorEvent;
+      report(crashMessage(e.error, e.message));
+    });
+    self.addEventListener("unhandledrejection", (event) => {
+      report(`unhandled rejection: ${crashMessage((event as PromiseRejectionEvent).reason)}`);
+    });
+  }
+
   self.onmessage = (event: MessageEvent<WorkerMessage>) => {
     const msg = event.data;
     if (msg.kind === "init") {
@@ -191,6 +249,7 @@ function createWorkerHost() {
       const handlePtr = msg.webviewHandle as Pointer;
       const fn = msg.drainCallbackPtr as Pointer;
       wake = () => sharedRing.dispatch(() => dispatch(handlePtr, fn, msg.drainToken));
+      installCrashReporting(sharedRing, wake);
       const queued = beforeInit;
       beforeInit = [];
       for (const frame of queued) send(frame);

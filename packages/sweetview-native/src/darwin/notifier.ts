@@ -7,7 +7,10 @@
 // process so repeated Notifier creation never leaks runtime classes or blocks.
 // Routes clicks strictly by notification ID to the notifier that sent it, using
 // bounded tombstones so disposed or handler-less notifiers never leak clicks
-// into unrelated notifiers and the map never grows without bound.
+// into unrelated notifiers and the map never grows without bound. Every
+// notification also carries a per-process tag in its userInfo, so a click on
+// one whose ID aged out of the map is still recognised as this process's and
+// dropped, never misrouted as a cold-launch click.
 
 import { FFIType } from "bun:ffi";
 import { type NotificationClick, type NotifierBackend, type NotifierOptions, notificationId } from "../notifications";
@@ -39,14 +42,20 @@ const PRESENT_BANNER_LIST_SOUND = 8n | 16n | 2n;
 
 // userInfo key under which `data` travels, as JSON text.
 const DATA_KEY = "sweetview.data";
+// userInfo key carrying the tag of the process that sent the notification, so a click on a
+// notification this process sent is never taken for a cold-launch click, even after its ID
+// was evicted from the bounded map below.
+const PROCESS_KEY = "sweetview.process";
+const PROCESS_TAG = `${process.pid}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 const MAX_TRACKED_IDS = 256;
 
-function readClick(response: Id): NotificationClick {
+function readClick(response: Id): NotificationClick & { fromThisProcess: boolean } {
   const request = asId(send(asId(send(response, sel("notification"))), sel("request")));
   const id = jsString(asId(send(request, sel("identifier"))));
   const userInfo = asId(send(asId(send(request, sel("content"))), sel("userInfo")));
   const json = userInfo === NIL ? NIL : asId(sendPtr(userInfo, sel("objectForKey:"), nsString(DATA_KEY)));
-  return { id, data: json === NIL ? undefined : JSON.parse(jsString(json)) };
+  const tag = userInfo === NIL ? NIL : asId(sendPtr(userInfo, sel("objectForKey:"), nsString(PROCESS_KEY)));
+  return { id, data: json === NIL ? undefined : JSON.parse(jsString(json)), fromThisProcess: tag !== NIL && jsString(tag) === PROCESS_TAG };
 }
 
 const bundled = (): boolean => asId(send(asId(send(cls("NSBundle"), sel("mainBundle"))), sel("bundleIdentifier"))) !== NIL;
@@ -77,7 +86,7 @@ function recordSent(id: string, entry: NotifierEntry): void {
   }
 }
 
-function deliverClick(click: NotificationClick): void {
+function deliverClick({ fromThisProcess, ...click }: NotificationClick & { fromThisProcess: boolean }): void {
   if (sentByThisProcess.has(click.id)) {
     const owner = sentByThisProcess.get(click.id);
     sentByThisProcess.delete(click.id);
@@ -92,6 +101,9 @@ function deliverClick(click: NotificationClick): void {
     }
     return;
   }
+  // Sent by this process but its ID was evicted from the bounded map: the owner is unknown, so
+  // drop it rather than hand it to an unrelated notifier as if it were a cold-launch click.
+  if (fromThisProcess) return;
   // True cold-launch click from a previous process: deliver to the first live notifier with a handler.
   for (const entry of liveNotifiers) {
     if (entry.onClick) {
@@ -198,10 +210,10 @@ export function createNotifier(options: NotifierOptions = {}): NotifierBackend {
       sendPtr(content, sel("setTitle:"), nsString(n.title));
       if (n.body) sendPtr(content, sel("setBody:"), nsString(n.body));
       if (!n.silent) sendPtr(content, sel("setSound:"), asId(send(cls("UNNotificationSound"), sel("defaultSound"))));
-      if (n.data !== undefined) {
-        const userInfo = asId(sendPtrPtr(cls("NSDictionary"), sel("dictionaryWithObject:forKey:"), nsString(JSON.stringify(n.data)), nsString(DATA_KEY)));
-        sendPtr(content, sel("setUserInfo:"), userInfo);
-      }
+      const userInfo = asId(send(cls("NSMutableDictionary"), sel("dictionary")));
+      sendPtrPtr(userInfo, sel("setObject:forKey:"), nsString(PROCESS_TAG), nsString(PROCESS_KEY));
+      if (n.data !== undefined) sendPtrPtr(userInfo, sel("setObject:forKey:"), nsString(JSON.stringify(n.data)), nsString(DATA_KEY));
+      sendPtr(content, sel("setUserInfo:"), userInfo);
       const request = asId(sendPtrPtrPtr(cls("UNNotificationRequest"), sel("requestWithIdentifier:content:trigger:"), nsString(id), content, NIL));
       sendPtrPtr(center, sel("addNotificationRequest:withCompletionHandler:"), request, req);
       release(content); // the request retains it

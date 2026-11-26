@@ -12,6 +12,9 @@ files. Part of the [native module](../native.md).
 
 ## pickFolder
 
+A page button that opens the folder dialog, in four files: the contract, the
+host, the page and its script. Run it with `bun run host.ts`.
+
 ```ts
 // shared.ts
 export type Methods = { "library.choose": [void, string | null] };
@@ -25,13 +28,32 @@ import { Window, pickFolder } from "@n1h/sweetview/native";
 import type { Methods } from "./shared";
 import page from "./index.html";
 
-const win = new Window({ title: "Library" });
+const win = new Window({ title: "Library", bounds: { x: 200, y: 200, width: 480, height: 240 } });
 const view = await WebView.attach<Methods>(win, {
   page,
   deferredUiMethods: {
     "library.choose": () => pickFolder(win, "Choose a library folder"),
   },
 });
+win.show();
+view.run();   // blocks until the window closes, then tears the webview down
+win.dispose(); // already disposed when closing ended the loop; safe to repeat
+```
+
+```html
+<!-- index.html -->
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Library</title>
+  </head>
+  <body>
+    <button id="choose">Choose a folder</button>
+    <p id="folder"></p>
+    <script type="module" src="./page.ts"></script>
+  </body>
+</html>
 ```
 
 ```ts
@@ -41,15 +63,16 @@ import { webviewTransport } from "@n1h/sweetview/page";
 import type { Events, Methods } from "./shared";
 
 const bridge = createBridge<Methods, Events>(webviewTransport());
-const folder = await bridge.rpc("library.choose"); // pending until the user picks or cancels
-if (folder !== null) console.log("library:", folder);
+
+document.getElementById("choose")!.addEventListener("click", async () => {
+  const folder = await bridge.rpc("library.choose"); // pending until the user picks or cancels
+  document.getElementById("folder")!.textContent = folder ?? "(cancelled)";
+});
 ```
 
-```ts
-pickFolder(owner: { readonly handle: WindowHandle } | WindowHandle | null, title: string): string | null
-```
-
-Opens the OS folder dialog and blocks until the user chooses a folder
+`pickFolder(owner, title: string): string | null`, where `owner` is a
+`Window` (anything with a `handle`), a raw `WindowHandle`, or `null`, opens
+the OS folder dialog and blocks until the user chooses a folder
 (returns its absolute path) or cancels (returns `null`). `title` is the
 dialog's title on Windows and its message line on macOS.
 
@@ -121,11 +144,20 @@ and each enforces a byte limit.
 
 ### Whole files
 
+A script that takes a text file and an image on the command line
+(`bun run read.ts notes.txt photo.png`):
+
 ```ts
 import { readFileBytes, readTextFile } from "@n1h/sweetview/native";
 
-const notes = await readTextFile(path);                                 // UTF-8, at most 4 MiB
+const [notesPath = "notes.txt", imagePath = "photo.png"] = process.argv.slice(2);
+
+const notes = await readTextFile(notesPath);                                // UTF-8, at most 4 MiB
+console.log(`${notesPath}: ${notes.split("\n").length} lines`);
+
 const image = await readFileBytes(imagePath, { maxBytes: 64 * 1024 ** 2 }); // at most 64 MiB
+await Bun.write(`${imagePath}.copy`, image);
+console.log(`${imagePath}: copied ${image.byteLength} bytes`);
 ```
 
 | Function | Returns | Default limit |
@@ -138,20 +170,27 @@ reading, so a file that grows after the check is still refused.
 
 ### Chunked reads
 
+A script that hashes a large file 1 MiB at a time without loading it whole
+(`bun run hash.ts video.mp4`):
+
 ```ts
 import { closeFileHandle, openFileHandle, readFileChunk } from "@n1h/sweetview/native";
+
+const videoPath = process.argv[2] ?? "video.mp4";
+const hasher = new Bun.CryptoHasher("sha256");
 
 const { handleId, size } = openFileHandle(videoPath);
 try {
   for (let offset = 0; offset < size; ) {
     const { data, bytesRead, eof } = readFileChunk(handleId, offset, 1024 * 1024);
-    upload(data);
+    hasher.update(data);
     offset += bytesRead;
-    if (eof) break;
+    if (eof || bytesRead === 0) break;
   }
 } finally {
   closeFileHandle(handleId);
 }
+console.log(`${videoPath}: ${size} bytes, sha256 ${hasher.digest("hex")}`);
 ```
 
 | Function | Meaning |

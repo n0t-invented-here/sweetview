@@ -24,4 +24,9 @@ appended to `~/Library/Logs/menubar-notify.log` on macOS and
 `%LOCALAPPDATA%\menubar-notify.log` on Windows, because a launched app has
 no console.
 
-Windows: the menu opens on right click, and notifications use standalone hidden notification channels so each clicked toast delivers its exact `id` and `data`. macOS: any click opens the menu.
+Windows: the menu opens on right click. Notifications are WinRT toasts from
+`ToastNotificationManager` first. When WinRT is unavailable or a toast fails,
+the notification falls back to a balloon from a hidden notification-area icon,
+which Windows 10 and 11 also render as a toast. Either way each clicked
+notification delivers its exact `id` and `data`. macOS: any click opens the
+menu. Details: [notifications](../../docs/native/notifications.md#windows).

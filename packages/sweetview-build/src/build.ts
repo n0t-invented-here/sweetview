@@ -9,8 +9,9 @@
 // in this repo, the `@n1h/sweetview-build/make-app` export when installed.
 
 import { spawnSync } from "node:child_process";
-import { chmodSync, cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { basename, join } from "node:path";
+import { randomBytes } from "node:crypto";
+import { chmodSync, cpSync, existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
 import { defineAppIdentity, validateUrlScheme, type AppIdentity, type AppIdentityInput } from "@n1h/sweetview-settings";
 
 export { defineAppIdentity, type AppIdentity, type AppIdentityInput };
@@ -24,7 +25,7 @@ export type MacAppOptions = {
   bundleId?: string;
   /** The compiled macOS executable (`bun build --compile --target=bun-darwin-arm64 …`). Copied in under its own file name. */
   binary: string;
-  /** Where `<name>.app` goes; one already there is replaced. */
+  /** Where `<name>.app` goes; one already there is replaced, only once the new bundle is fully built (and signed). */
   outDir: string;
   /** The `.icns` for Finder and the Dock (written by `writeIconFiles`). Without it the bundle shows the stock icon. */
   icns?: string;
@@ -69,6 +70,7 @@ export function makeMacApp(options: MacAppOptions): string {
   const name = options.name ?? options.identity?.appName;
   const bundleId = options.bundleId ?? options.identity?.appId;
   if (!name) throw new Error("makeMacApp: name (or identity.appName) is required");
+  if (name.includes("/") || name.includes("\\") || name.includes("..") || name.includes(String.fromCharCode(0))) throw new Error(`makeMacApp: name ${JSON.stringify(name)} must not contain path separators or ".."`);
   if (!bundleId) throw new Error("makeMacApp: bundleId (or identity.appId) is required");
   if (!existsSync(options.binary)) throw new Error(`makeMacApp: ${options.binary} not found (compile the macOS binary first)`);
   if (options.icns !== undefined && !existsSync(options.icns)) throw new Error(`makeMacApp: ${options.icns} not found (write the .icns first)`);
@@ -78,17 +80,11 @@ export function makeMacApp(options: MacAppOptions): string {
     throw new Error("makeMacApp: plist.CFBundleURLTypes conflicts with urlSchemes, which writes CFBundleURLTypes; pass the schemes in urlSchemes only");
   }
   const executable = basename(options.binary);
-  const app = join(options.outDir, `${name}.app`);
-  const macos = join(app, "Contents", "MacOS");
-  const resources = join(app, "Contents", "Resources");
-  rmSync(app, { recursive: true, force: true });
-  mkdirSync(macos, { recursive: true });
-  mkdirSync(resources, { recursive: true });
+  const outDir = resolve(options.outDir);
+  const app = join(outDir, `${name}.app`);
+  if (dirname(app) !== outDir || basename(app) !== `${name}.app`) throw new Error(`makeMacApp: name ${JSON.stringify(name)} resolves outside outDir`);
 
-  cpSync(options.binary, join(macos, executable));
-  chmodSync(join(macos, executable), 0o755); // kept by tar/zip, lost by some SMB copies
-  if (options.icns !== undefined) cpSync(options.icns, join(resources, "AppIcon.icns"));
-
+  // Everything that can fail on bad input (a plist value Info.plist cannot hold) is worked out before touching disk.
   const version = options.version ?? options.identity?.version ?? "0.1.0";
   const entries: Record<string, string | number | boolean> = {
     CFBundleName: name,
@@ -123,23 +119,60 @@ export function makeMacApp(options: MacAppOptions): string {
       ].join("\n"),
     );
   }
-  const dict = dictLines.join("\n");
-  writeFileSync(
-    join(app, "Contents", "Info.plist"),
-    `<?xml version="1.0" encoding="UTF-8"?>
+  const infoPlist = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-${dict}
+${dictLines.join("\n")}
 </dict>
 </plist>
-`,
-  );
-  writeFileSync(join(app, "Contents", "PkgInfo"), "APPL????");
-
+`;
   const sign = options.sign ?? (process.platform === "darwin" ? "-" : false);
-  if (sign !== false) signMacApp(app, sign);
-  return app;
+
+  // The bundle is built and signed in a sibling staging folder and only swapped in once every step has
+  // succeeded, so a failed copy or codesign never costs the working bundle already at `<name>.app`.
+  mkdirSync(outDir, { recursive: true });
+  const staging = join(outDir, `.staging-${name}-${process.pid}-${randomBytes(4).toString("hex")}.app`);
+  try {
+    const macos = join(staging, "Contents", "MacOS");
+    const resources = join(staging, "Contents", "Resources");
+    mkdirSync(macos, { recursive: true });
+    mkdirSync(resources, { recursive: true });
+    cpSync(options.binary, join(macos, executable));
+    chmodSync(join(macos, executable), 0o755); // kept by tar/zip, lost by some SMB copies
+    if (options.icns !== undefined) cpSync(options.icns, join(resources, "AppIcon.icns"));
+    writeFileSync(join(staging, "Contents", "Info.plist"), infoPlist);
+    writeFileSync(join(staging, "Contents", "PkgInfo"), "APPL????");
+    if (sign !== false) signMacApp(staging, sign);
+    // The old bundle is moved aside, not deleted, until the new one is in place: if the swap
+    // fails it is moved back, so a failed rename never leaves `<name>.app` missing.
+    let backup: string | undefined;
+    if (existsSync(app)) {
+      backup = join(outDir, `.backup-${name}-${process.pid}-${randomBytes(4).toString("hex")}.app`);
+      renameSync(app, backup);
+    }
+    try {
+      renameSync(staging, app);
+    } catch (err) {
+      if (backup !== undefined) {
+        try {
+          renameSync(backup, app);
+        } catch (restoreErr) {
+          const why = (e: unknown) => (e instanceof Error ? e.message : String(e));
+          throw new Error(
+            `makeMacApp: replacing ${app} failed (${why(err)}) and the previous bundle could not be moved back (${why(restoreErr)}); it is at ${backup}`,
+            { cause: err },
+          );
+        }
+      }
+      throw err;
+    }
+    if (backup !== undefined) rmSync(backup, { recursive: true, force: true });
+  } catch (err) {
+    rmSync(staging, { recursive: true, force: true });
+    throw err;
+  }
+  return join(options.outDir, `${name}.app`);
 }
 
 function signMacApp(app: string, identity: string): void {

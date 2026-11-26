@@ -3,9 +3,10 @@
 // bundle whose executable is a text file, so its failure path is not provoked
 // here.
 
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import * as fs from "node:fs";
+import { cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { defineAppIdentity } from "@n1h/sweetview-settings";
@@ -68,6 +69,61 @@ describe("makeMacApp", () => {
   test("a missing binary throws before anything is written", () => {
     expect(() => makeMacApp({ name: "My App", bundleId: "dev.example.my-app", binary: join(dir, "missing"), outDir: join(dir, "dist"), sign: false })).toThrow(/not found/);
     expect(existsSync(join(dir, "dist"))).toBe(false);
+  });
+
+  test("a name with path separators or .. is rejected before anything is written", () => {
+    const binary = join(dir, "my-app-macos-arm64");
+    writeFileSync(binary, "not a Mach-O");
+    for (const name of ["../escape", "sub/My App", "sub\\My App", "..", "a..b"]) {
+      expect(() => makeMacApp({ name, bundleId: "dev.example.my-app", binary, outDir: join(dir, "dist"), sign: false })).toThrow(/path separators/);
+    }
+    expect(existsSync(join(dir, "dist"))).toBe(false);
+    expect(existsSync(join(dir, "escape.app"))).toBe(false);
+  });
+
+  test("a failed rebuild leaves the existing bundle intact and no staging folder behind", () => {
+    const binary = join(dir, "my-app-macos-arm64");
+    writeFileSync(binary, "first build");
+    const outDir = join(dir, "dist");
+    const app = makeMacApp({ name: "My App", bundleId: "dev.example.my-app", binary, outDir, sign: false });
+    const plistBefore = readFileSync(join(app, "Contents", "Info.plist"), "utf8");
+    writeFileSync(binary, "second build");
+    expect(() => makeMacApp({ name: "My App", bundleId: "dev.example.my-app", binary, outDir, plist: { Broken: Number.NaN }, sign: false })).toThrow(/Info.plist cannot hold NaN/);
+    expect(readFileSync(join(app, "Contents", "MacOS", "my-app-macos-arm64"), "utf8")).toBe("first build");
+    expect(readFileSync(join(app, "Contents", "Info.plist"), "utf8")).toBe(plistBefore);
+    expect(readdirSync(outDir)).toEqual(["My App.app"]);
+  });
+
+  test("a failed swap restores the existing bundle and leaves no staging or backup folder behind", () => {
+    const binary = join(dir, "my-app-macos-arm64");
+    writeFileSync(binary, "first build");
+    const outDir = join(dir, "dist");
+    const app = makeMacApp({ name: "My App", bundleId: "dev.example.my-app", binary, outDir, sign: false });
+    writeFileSync(binary, "second build");
+    const realRename = fs.renameSync;
+    const rename = spyOn(fs, "renameSync").mockImplementation((from, to) => {
+      // Only the staging -> bundle swap fails; moving the old bundle aside and back still works.
+      if (String(from).includes(".staging-")) throw new Error("rename refused");
+      realRename(from, to);
+    });
+    try {
+      expect(() => makeMacApp({ name: "My App", bundleId: "dev.example.my-app", binary, outDir, sign: false })).toThrow("rename refused");
+    } finally {
+      rename.mockRestore();
+    }
+    expect(readFileSync(join(app, "Contents", "MacOS", "my-app-macos-arm64"), "utf8")).toBe("first build");
+    expect(readdirSync(outDir)).toEqual(["My App.app"]);
+  });
+
+  test("a rebuild replaces the existing bundle", () => {
+    const binary = join(dir, "my-app-macos-arm64");
+    const outDir = join(dir, "dist");
+    writeFileSync(binary, "first build");
+    makeMacApp({ name: "My App", bundleId: "dev.example.my-app", binary, outDir, sign: false });
+    writeFileSync(binary, "second build");
+    const app = makeMacApp({ name: "My App", bundleId: "dev.example.my-app", binary, outDir, sign: false });
+    expect(readFileSync(join(app, "Contents", "MacOS", "my-app-macos-arm64"), "utf8")).toBe("second build");
+    expect(readdirSync(outDir)).toEqual(["My App.app"]);
   });
 
   test.if(process.platform === "darwin")("signs the bundle ad-hoc by default, with the bundle id as the identifier", () => {

@@ -16,12 +16,18 @@ export function memoryTransport<M extends MethodMap, E extends EventMap>(
     if (to !== undefined && to !== session.id) return;
     for (const fn of listeners) fn(name, payload);
   });
-  const call = (method: string, params: unknown) => service.call(method as keyof M & string, params as never, ctx);
   let disposed = false;
+  const call = (method: string, params: unknown): Promise<unknown> => {
+    if (disposed) return Promise.reject(new Error(`${method}: transport disposed`));
+    return service.call(method as keyof M & string, params as never, ctx);
+  };
   return {
     kind: session.kind,
     call,
-    notify: (method, params) => void call(method, params).catch(() => {}),
+    notify: (method, params) => {
+      if (disposed) return;
+      void call(method, params).catch(() => {});
+    },
     onEvent(fn) {
       listeners.add(fn);
       return () => listeners.delete(fn);

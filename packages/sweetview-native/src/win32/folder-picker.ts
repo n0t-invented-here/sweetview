@@ -64,9 +64,18 @@ function check(hr: number, what: string) {
 /** Opens the native folder dialog owned by `owner`. Returns the path, or null if cancelled. */
 export function pickFolder(owner: WindowHandle, title: string): string | null {
   const hwnd = toPointer(owner);
-  // S_OK or S_FALSE (already initialised on this thread by WebView2).
-  check(ole32.CoInitializeEx(null, COINIT_APARTMENTTHREADED), "CoInitializeEx");
+  // S_OK or S_FALSE (already initialised on this thread by WebView2). Both add a
+  // reference to this thread's COM initialisation, which CoUninitialize releases.
+  const coHr = ole32.CoInitializeEx(null, COINIT_APARTMENTTHREADED);
+  check(coHr, "CoInitializeEx");
+  try {
+    return showFolderDialog(hwnd, title);
+  } finally {
+    if (coHr === 0 || coHr === 1) ole32.CoUninitialize();
+  }
+}
 
+function showFolderDialog(hwnd: Pointer | null, title: string): string | null {
   const out = new BigUint64Array(1);
   check(
     ole32.CoCreateInstance(ptr(CLSID_FileOpenDialog), null, CLSCTX_INPROC_SERVER, ptr(IID_IFileOpenDialog), ptr(out)),

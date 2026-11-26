@@ -102,7 +102,8 @@ export type WindowOptions = {
   onMove?: (bounds: Rect) => void;
   onClose?: () => void;
   onFileDrop?: (paths: string[]) => void;
-  onNewTab?: () => void;
+  /** A new tab was asked for (the strip's +, Ctrl+T / Cmd+T, the tab menu); `origin` is the window it was asked for in, a torn-off one included. */
+  onNewTab?: (origin: Window) => void;
   onTabSelect?: (tab: TabHandle) => void;
   onTabClose?: (tab: TabHandle) => void;
 };
@@ -174,7 +175,7 @@ const impl = backend<Backend>(
 );
 
 type TabListeners = {
-  newTab: Set<() => void>;
+  newTab: Set<(origin: Window) => void>;
   tabSelect: Set<(tab: TabHandle) => void>;
   tabClose: Set<(tab: TabHandle) => void>;
 };
@@ -299,12 +300,12 @@ export function preserveWindowGeometry(win: Window): () => void {
 }
 
 /** Internal emitter used by the tabs coordinator to dispatch Window tab events. */
-export function emitWindowNewTab(win: Window): void {
+export function emitWindowNewTab(win: Window, origin: Window = win): void {
   const listeners = windowTabListeners.get(win);
   if (!listeners) return;
   for (const fn of [...listeners.newTab]) {
     try {
-      fn();
+      fn(origin);
     } catch (err) {
       console.error("sweetview: onNewTab handler threw:", err);
     }
@@ -337,7 +338,7 @@ export function emitWindowTabClose(win: Window, tab: TabHandle): void {
 
 /** Forwards tab events emitted on a torn-off window to its parent window's listeners as well. */
 export function forwardWindowTabEvents(from: Window, to: Window): void {
-  from.onNewTab(() => emitWindowNewTab(to));
+  from.onNewTab((origin) => emitWindowNewTab(to, origin));
   from.onTabSelect((tab) => emitWindowTabSelect(to, tab));
   from.onTabClose((tab) => emitWindowTabClose(to, tab));
 }
@@ -521,7 +522,7 @@ export class Window {
       notifyFileDropChange(this, false);
     };
   }
-  onNewTab(handler: () => void): () => void {
+  onNewTab(handler: (origin: Window) => void): () => void {
     this.#tabListeners.newTab.add(handler);
     return () => this.#tabListeners.newTab.delete(handler);
   }

@@ -30,14 +30,14 @@ compile: frontend compile-win compile-mac mac-app
 icons:
     bun scripts/write-icons.ts
 
-compile-win: icons
+compile-win: frontend icons
     bun build --compile --target=bun-windows-x64 --windows-hide-console {{win_icon}} --minify --sourcemap app.ts app-worker.ts --outfile dist/{{exe}}-windows-x64.exe
     bun ../../packages/sweetview-build/src/refresh-icons.ts
 
-compile-mac:
+compile-mac: frontend
     bun build --compile --target=bun-darwin-arm64 --minify --sourcemap app.ts app-worker.ts --outfile dist/{{exe}}-macos-arm64
 
-mac-app: icons
+mac-app: compile-mac icons
     bun ../../packages/sweetview-build/src/make-app.ts --name "Web App" --bundle-id dev.mrowr.web-app --binary dist/{{exe}}-macos-arm64 --icns build/AppIcon.icns --out dist
 
 # A missing path makes ri fail the recipe

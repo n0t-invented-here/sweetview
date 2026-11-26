@@ -25,8 +25,11 @@ method on this page runs on the UI thread. Part of the
 
 ## Creating a window
 
+A native window on its own, with no webview: created hidden, shown, kept
+alive by the event loop, and disposed when the user closes it.
+
 ```ts
-import { Window } from "@n1h/sweetview/native";
+import { Window, quitEventLoop, runEventLoop } from "@n1h/sweetview/native";
 
 const win = new Window({
   title: "Settings",
@@ -34,9 +37,14 @@ const win = new Window({
   minWidth: 320,
   minHeight: 240,
 });
-win.onClose(() => win.hide());
+win.onClose(() => quitEventLoop()); // a listener keeps the window open; this one ends the app
 win.show();
+
+await runEventLoop();
+win.dispose();
 ```
+
+Attach a page to it with [`WebView.attach`](../app.md#webviewattach).
 
 `createWindow(options)` is the same as `new Window(options)`.
 
@@ -146,10 +154,13 @@ tab, or its recorded bounds before any tab exists.
 OS-framed chrome; an overlay is a separate non-tabbed `Window`.
 [Why](overlays-and-hit-regions.md#tabbed-windows).
 
-`onNewTab`, `onTabSelect(tab)` and `onTabClose(tab)` fire on the tabbed
+`onNewTab(origin)`, `onTabSelect(tab)` and `onTabClose(tab)` fire on the tabbed
 window for the "+" button / Ctrl+T / Cmd+T, a tab becoming active, and a tab
 closing. Events on a torn-off window are also forwarded to the window it tore
-off from.
+off from. `onNewTab` receives the originating `Window`
+(`(origin: Window) => void`), the main window or whichever torn-off window
+requested the tab, so a handler in a multi-window tabbed app can call
+`WebView.openTab(origin, ...)` to open the tab in the window that asked.
 
 ### Stacking, focus and the taskbar
 
@@ -185,7 +196,7 @@ the menu bar. See [`setActivationPolicy`](menus-and-tray.md#setactivationpolicy)
 | `setClickThrough(on)`, `setHitRegions(polygons, refine?)` | See [overlays](overlays-and-hit-regions.md). |
 | `onResize(fn)`, `onMove(fn)` | Called with the new outer `Rect`. |
 | `onClose(fn)`, `onFileDrop(fn)` | See [Closing](#closing) and [File drops](#file-drops). |
-| `onNewTab(fn)`, `onTabSelect(fn)`, `onTabClose(fn)` | Tab events; see [Tabbed](#tabbed). |
+| `onNewTab(fn: (origin: Window) => void)`, `onTabSelect(fn)`, `onTabClose(fn)` | Tab events; see [Tabbed](#tabbed). |
 | `dispose()` | Destroys an owned window, or detaches a wrapper's hooks. Releases timers, subclass hooks, observers and icons. A webview attached to an owned window is torn down with it ([lifecycle](../app.md#lifecycle)). Safe to call twice. |
 
 Every `on*` method accepts any number of listeners and returns a function
@@ -195,11 +206,14 @@ that removes that one subscription. A listener that throws is logged with
 ## Window.fromHandle
 
 ```ts
-import { Window } from "@n1h/sweetview/native";
+import { Window, type WindowHandle } from "@n1h/sweetview/native";
 
-const wrapped = Window.fromHandle(hwndOrNsWindow);
-console.log(wrapped.bounds());
-wrapped.dispose(); // detaches hooks; the foreign window stays open
+// hwndOrNsWindow: an HWND (Windows) or NSWindow* (macOS) from a plugin or another library.
+export function logForeignBounds(hwndOrNsWindow: WindowHandle): void {
+  const wrapped = Window.fromHandle(hwndOrNsWindow);
+  console.log(wrapped.bounds());
+  wrapped.dispose(); // detaches hooks; the foreign window stays open
+}
 ```
 
 `Window.fromHandle(handle)` wraps a window something else created, such as
@@ -256,14 +270,23 @@ owned window destroys and disposes it. Closing a window never ends the event
 loop by itself; `createApp` adds that behaviour for its main window.
 
 ```ts
-import { Tray, Window, closeToTrayOnLastWindow, dotIco } from "@n1h/sweetview/native";
+import { Tray, Window, closeToTrayOnLastWindow, dotIco, quitEventLoop, runEventLoop } from "@n1h/sweetview/native";
 
-const win = new Window({ title: "Notes" });
+const win = new Window({ title: "Notes", bounds: { x: 200, y: 200, width: 640, height: 480 } });
 const tray = new Tray({
+  tooltip: "Notes",
   icon: { windows: { ico: dotIco() }, macos: { symbol: "note.text" } },
-  menu: [{ label: "Show Notes", click: () => win.show() }],
+  menu: [
+    { label: "Show Notes", click: () => win.show() },
+    { label: "Quit", click: () => quitEventLoop() },
+  ],
 });
 closeToTrayOnLastWindow(win, () => tray.setTooltip("Notes (hidden)"));
+win.show();
+
+await runEventLoop(); // closing the window hides it; Quit ends the loop
+tray.dispose();
+win.dispose();
 ```
 
 `closeToTrayOnLastWindow(win, onHide?)` installs an `onClose` listener that
@@ -275,10 +298,18 @@ yourself.
 ## File drops
 
 ```ts
-import { Window } from "@n1h/sweetview/native";
+import { Window, quitEventLoop, runEventLoop } from "@n1h/sweetview/native";
 
-const win = new Window({ title: "Drop files here" });
-const stop = win.onFileDrop((paths) => console.log("dropped", paths));
+const win = new Window({ title: "Drop files here", bounds: { x: 200, y: 200, width: 480, height: 320 } });
+const stop = win.onFileDrop((paths) => {
+  for (const path of paths) console.log("dropped", path);
+});
+win.onClose(() => quitEventLoop()); // closing a window does not end the loop by itself
+win.show();
+
+await runEventLoop();
+stop();
+win.dispose();
 ```
 
 `onFileDrop(fn)` receives absolute file-system paths of files dropped from

@@ -16,16 +16,20 @@ the [native module](../native.md).
 ## Menu templates
 
 ```ts
-import { type MenuTemplate } from "@n1h/sweetview/native";
+import { quitEventLoop, type MenuTemplate } from "@n1h/sweetview/native";
 
 let paused = false;
+const exportPng = () => console.log("exporting as PNG");
+
 const menu = (): MenuTemplate => [
   { label: "Pause", checked: paused, click: () => { paused = !paused; } },
   { label: "Export", submenu: [{ label: "As PNG", click: exportPng }, { label: "As SVG", enabled: false }] },
   { type: "separator" },
-  { label: "Quit", click: quit },
+  { label: "Quit", click: () => quitEventLoop() },
 ];
 ```
+
+The [tray example](#tray) runs a template like this one end to end.
 
 | Item | Fields |
 |---|---|
@@ -51,20 +55,24 @@ turning, so a handler cannot await anything; defer work to the worker or to a
 ## Menu.popup
 
 ```ts
-import { Menu, Window } from "@n1h/sweetview/native";
+import { Clipboard, Menu, type MenuTemplate, type Window } from "@n1h/sweetview/native";
 
-const win = new Window({ title: "Canvas" });
-const chosen = Menu.popup(win, [
+let selection = "Hello";
+const copy = () => Clipboard.writeText(selection);
+const paste = () => { selection = Clipboard.readText() ?? selection; };
+
+const contextMenu = (): MenuTemplate => [
   { label: "Copy", click: copy },
-  { label: "Paste", click: paste },
-]);
+  { label: "Paste", enabled: Clipboard.readText() !== null, click: paste },
+];
+
+// Call from a UI-thread callback: a deferredUiMethods handler, a tray click, a window callback.
+export const showContextMenu = (win: Window): boolean => Menu.popup(win, contextMenu);
 ```
 
-```ts
-Menu.popup(owner: { readonly handle: WindowHandle } | WindowHandle, menu: MenuSource, at?: Point): boolean
-```
-
-Opens a context menu at screen point `at`, or at the cursor when `at` is
+`Menu.popup(owner, menu: MenuSource, at?: Point): boolean`, where `owner` is
+a `Window`, any object with a `handle`, or a raw `WindowHandle`, opens a
+context menu at screen point `at`, or at the cursor when `at` is
 omitted, blocks until it closes, runs the chosen item's `click`, and returns
 `true` if an item was chosen. An empty template returns `false` without
 showing anything.
@@ -82,18 +90,49 @@ another library), or a raw handle. The platforms use it differently:
 
 ## Tray
 
+A complete tray app, runnable as `bun run tray.ts`: a status item with a
+menu, a settings window it opens, and a Quit that ends the loop and cleans
+up. The settings window is a bare native window here; attach a page to it
+with [`WebView.attach`](../app.md#webviewattach) for real content.
+
 ```ts
-import { Tray, dotIco } from "@n1h/sweetview/native";
+// tray.ts
+import { Tray, Window, dotIco, quitEventLoop, runEventLoop, setActivationPolicy, type MenuTemplate } from "@n1h/sweetview/native";
+
+setActivationPolicy("accessory"); // macOS: no Dock icon; a no-op on Windows
+
+const settings = new Window({ title: "Settings", bounds: { x: 200, y: 200, width: 420, height: 300 } });
+settings.onClose(() => settings.hide()); // keep it for the next Open Settings
+const openSettings = () => settings.show();
+
+let paused = false;
+const menu = (): MenuTemplate => [
+  { label: "Open Settings", click: openSettings },
+  {
+    label: "Pause",
+    checked: paused,
+    click: () => {
+      paused = !paused;
+      tray.setTooltip(paused ? "My app (paused)" : "My app");
+    },
+  },
+  { type: "separator" },
+  { label: "Quit", click: () => quitEventLoop() },
+];
 
 const tray = new Tray({
   tooltip: "My app",
-  icon: { windows: { ico: dotIco() }, macos: { symbol: "circle.fill" } },
-  menu: () => [
-    { label: "Open Settings", click: openSettings },
-    { type: "separator" },
-    { label: "Quit", click: quit },
-  ],
+  icon: { windows: { ico: dotIco() }, macos: { symbol: "gearshape" } },
+  menu,
+  onDoubleClick: openSettings, // Windows only: macOS opens the menu instead
 });
+
+try {
+  await runEventLoop();
+} finally {
+  tray.dispose();
+  settings.dispose();
+}
 ```
 
 A `Tray` is an icon in the Windows notification area, or a status item in the
@@ -136,25 +175,8 @@ when a tray has a menu, macOS opens it on left and right click alike and
 
 A tray that should behave the same on both platforms puts its primary action
 in the menu, as the first item, and uses `onClick` / `onDoubleClick` only as
-a Windows shortcut for it:
-
-```ts
-import { Tray, Window, dotIco } from "@n1h/sweetview/native";
-
-const settings = new Window({ title: "Settings" });
-const openSettings = () => settings.show();
-
-new Tray({
-  tooltip: "My app",
-  icon: { windows: { ico: dotIco() }, macos: { symbol: "gearshape" } },
-  menu: [
-    { label: "Open Settings", click: openSettings },
-    { type: "separator" },
-    { label: "Quit", click: () => process.exit(0) },
-  ],
-  onDoubleClick: openSettings, // Windows only: macOS opens the menu instead
-});
-```
+a Windows shortcut for it, as the [tray example](#tray) does with Open
+Settings.
 
 A macOS tray with no menu receives left clicks in `onClick` and
 `onDoubleClick`, which suits a status item that toggles a popover window.

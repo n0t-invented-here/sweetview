@@ -36,17 +36,18 @@ export type WsHostOptions = {
 };
 
 export type WsHost = {
-  /** Upgrade a request to a session; returns false when it was not a websocket request or its Origin is not allowed. */
+  /** Upgrade a request to a session; returns false when it was not a websocket request, its Origin is not allowed, or the host is disposed. */
   upgrade(req: Request, server: Server<WsData>): boolean;
   websocket: WebSocketHandler<WsData>;
   readonly sessions: number;
-  /** Close every socket and stop forwarding events. Does not dispose the service. Safe to call twice. */
+  /** Close every socket, stop forwarding events, and refuse further upgrades. Does not dispose the service. Safe to call twice. */
   dispose(): void;
 };
 
 export function wsHost<M extends MethodMap, E extends EventMap>(service: Service<M, E>, options: WsHostOptions = {}): WsHost {
   const sockets = new Map<string, ServerWebSocket<WsData>>();
   let nextId = 1;
+  let disposed = false;
 
   const originAllowed = (req: Request): boolean => {
     const origin = req.headers.get("origin");
@@ -88,6 +89,11 @@ export function wsHost<M extends MethodMap, E extends EventMap>(service: Service
 
   const websocket: WebSocketHandler<WsData> = {
     open(ws) {
+      // a socket whose upgrade was accepted just before dispose() finishes opening afterwards: close it rather than serve it
+      if (disposed) {
+        ws.close();
+        return;
+      }
       sockets.set(ws.data.session.id, ws);
     },
     async message(ws, raw) {
@@ -99,6 +105,7 @@ export function wsHost<M extends MethodMap, E extends EventMap>(service: Service
       }
       // anything that is not a call frame is ignored, including `null` and other non-objects
       if (typeof frame !== "object" || frame === null || (frame as Frame).kind !== "call") return;
+      if (disposed) return;
       const reply = await handle(frame as CallFrame, ws.data.session);
       if (reply && sockets.get(ws.data.session.id) === ws) send(ws, reply);
     },
@@ -125,7 +132,7 @@ export function wsHost<M extends MethodMap, E extends EventMap>(service: Service
 
   return {
     upgrade(req, server) {
-      if (!originAllowed(req)) return false;
+      if (disposed || !originAllowed(req)) return false;
       const session: Session = { id: `ws-${nextId++}`, kind: "web" };
       return server.upgrade(req, { data: { session } });
     },
@@ -134,6 +141,8 @@ export function wsHost<M extends MethodMap, E extends EventMap>(service: Service
       return sockets.size;
     },
     dispose() {
+      if (disposed) return;
+      disposed = true;
       off();
       for (const ws of sockets.values()) ws.close();
       sockets.clear();

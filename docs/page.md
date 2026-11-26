@@ -37,8 +37,12 @@ transport once; everything after that is the same typed `bridge`.
 isWebview(): boolean
 ```
 
-`true` when `window.__sweetview_rpc` is a function, which the host installs
-in every Sweetview window. `false` in a plain browser and outside a browser.
+`true` when `window.__sweetview_rpc` is a function. The host installs that
+binding when `WebView.attach` is given `uiMethods`, `deferredUiMethods`, a
+`worker`, or a ready option (`showOnReady`, `readyTimeoutMs`, `onReady`); a
+direct-URL Sweetview window with none of those has no binding, so
+`isWebview()` returns `false` there, as it does in a plain browser and outside
+a browser ([RPC trust boundary](app.md#the-rpc-trust-boundary)).
 
 ### webviewTransport
 
@@ -71,14 +75,28 @@ it rejects with `<method>: this window has no worker and no UI-thread method of 
 
 ## The ready handshake
 
+The same contract as [Connecting to the host](#connecting-to-the-host). The
+event payload (`{ count: number }`) and the RPC result (`string[]`) have
+different types, so each gets its own render function.
+
 ```ts
 import { createBridge } from "@n1h/sweetview/ipc";
 import { signalReady, webviewTransport } from "@n1h/sweetview/page";
 
+type Methods = { "notes.list": [void, string[]] };
+type Events = { "notes.changed": { count: number } };
+
+const renderNotes = (notes: string[]) => {
+  document.getElementById("notes")!.textContent = notes.join("\n");
+};
+const renderCount = ({ count }: Events["notes.changed"]) => {
+  document.getElementById("count")!.textContent = `${count} notes`;
+};
+
 const bridge = createBridge<Methods, Events>(webviewTransport());
-bridge.on("notes.changed", render);  // 1. install listeners
-render(await bridge.rpc("notes.list")); // 2. draw the first screen
-await signalReady();                     // 3. tell the host
+bridge.on("notes.changed", renderCount);       // 1. install listeners
+renderNotes(await bridge.rpc("notes.list"));   // 2. draw the first screen
+await signalReady();                           // 3. tell the host
 ```
 
 A window created with `showOnReady: true` stays hidden until the page says it

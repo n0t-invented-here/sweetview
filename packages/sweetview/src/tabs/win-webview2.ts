@@ -335,13 +335,25 @@ export type NavigationFailure = {
  * an initial navigation that fails at once. The returned function removes
  * both handlers; call it before the webview is destroyed.
  */
-export function onNavigationFailed(controller: Controller, onFailed: (failure: NavigationFailure) => void): () => void {
+export function onNavigationFailed(
+  controller: Controller,
+  onFailed: (failure: NavigationFailure) => void,
+  /**
+   * The host's navigation intent: a counter the host bumps before each `navigate`/`setHTML`
+   * it issues. A failed navigation is current only while no host navigation was issued after
+   * it started, which also covers one issued but whose NavigationStarting has not fired yet.
+   */
+  hostNavEpoch?: () => number,
+): () => void {
   navigationStartingHandlers ??= handlerKind(IID_NAVIGATION_STARTING_HANDLER);
   navigationCompletedHandlers ??= handlerKind(IID_NAVIGATION_COMPLETED_HANDLER);
   const startingKind = navigationStartingHandlers;
   const completedKind = navigationCompletedHandlers;
   // Started navigations' addresses by NavigationId; a completed navigation's entry is removed.
   const navUrls = new Map<bigint, string>();
+  // The host navigation epoch each started navigation belongs to.
+  const navEpochs = new Map<bigint, number>();
+  const registeredEpoch = hostNavEpoch?.() ?? 0;
   let latestNavId: bigint | undefined;
   const id = new BigUint64Array(1);
   const success = new Int32Array(1);
@@ -353,6 +365,7 @@ export function onNavigationFailed(controller: Controller, onFailed: (failure: N
       latestNavId = navId;
       // A redirect starts again under the same id: keep its latest address.
       navUrls.set(navId, stringProperty(args, STARTING_GET_URI) ?? "");
+      if (hostNavEpoch) navEpochs.set(navId, hostNavEpoch());
     }, "add_NavigationStarting");
     let stopCompleted: () => void;
     try {
@@ -361,8 +374,11 @@ export function onNavigationFailed(controller: Controller, onFailed: (failure: N
         const navId = id[0]!;
         const started = navUrls.get(navId);
         navUrls.delete(navId);
-        // A navigation that started before this handler was added is current until a newer one starts.
-        const isCurrent = () => (latestNavId ?? navId) === navId;
+        const epoch = navEpochs.get(navId) ?? registeredEpoch;
+        navEpochs.delete(navId);
+        // A navigation that started before this handler was added is current until a newer one
+        // starts, and only while the host has not asked for another navigation since it started.
+        const isCurrent = () => (latestNavId ?? navId) === navId && (hostNavEpoch === undefined || hostNavEpoch() === epoch);
         if (!isCurrent()) return;
         if (call(args, GET_IS_SUCCESS, [FFIType.ptr], success) !== S_OK || success[0] !== 0) return;
         if (call(args, GET_WEB_ERROR_STATUS, [FFIType.ptr], errorStatus) !== S_OK) return;
@@ -381,6 +397,7 @@ export function onNavigationFailed(controller: Controller, onFailed: (failure: N
       stopCompleted();
       stopStarting();
       navUrls.clear();
+      navEpochs.clear();
     };
   });
 }

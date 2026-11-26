@@ -8,9 +8,22 @@
 
 import { FFIType, dlopen, ptr, type Pointer } from "bun:ffi";
 
-/** The path webview-bun loads its native library from, resolved the same way it does, so the worker can dlopen the same file (it needs webview_dispatch). */
-export async function webviewLibPath(): Promise<string> {
-  if (process.env.WEBVIEW_PATH) return process.env.WEBVIEW_PATH;
+// webview-bun reads WEBVIEW_PATH once, when it is imported; read it at the same moment so a later
+// change to process.env cannot point sweetview's handles at a different library than webview-bun's.
+const envLibPath = process.env.WEBVIEW_PATH || undefined;
+let resolvedLibPath: Promise<string> | undefined;
+
+/**
+ * The path webview-bun loads its native library from, resolved the same way it does, so the worker can dlopen the same file (it needs webview_dispatch).
+ * Resolved once per process: every window, tab and worker uses the same library file.
+ */
+export function webviewLibPath(): Promise<string> {
+  resolvedLibPath ??= resolveWebviewLibPath();
+  return resolvedLibPath;
+}
+
+async function resolveWebviewLibPath(): Promise<string> {
+  if (envLibPath) return envLibPath;
   switch (process.platform) {
     case "win32":
       //@ts-expect-error file import

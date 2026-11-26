@@ -11,7 +11,7 @@ import { SizeHint, Webview as RawWebview } from "@n1h/sweetview-webview-bun";
 import { assetMime, indexHtml } from "./html";
 import { createFrameAssembler, type AnyEvent, type EventMap, type MethodMap, type WireFrame } from "@n1h/sweetview-ipc";
 import { RequestResponseAssembler, requestError, runNativeRequest, type NativeRequestResponse, type StreamingResponseFrame } from "./request-response";
-import type { HttpRequestMessage, InitMessage, NativeRequest, NativeResponse } from "./messages";
+import type { HttpRequestMessage, InitMessage, NativeRequest, NativeResponse, WorkerCrashFrame } from "./messages";
 import { Window, quitEventLoop, runEventLoop, signalReady, type Rect, type TabHandle, type WindowOptions } from "@n1h/sweetview-native";
 import { discardQuit, emitWindowFileDrop, getWindowMeta, holdWindowNativeDispose, isWindowDisposed, onWindowDispose, onWindowFileDropListenersChange, preserveWindowGeometry, scheduleNativeTimeout, windowFileDropCount } from "@n1h/sweetview-native/internal";
 import { Ring } from "./ring";
@@ -356,17 +356,33 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
     // Frameless windows resize via Window.startResize(), not WS_THICKFRAME.
     const hint = meta.frame && meta.resizable ? SizeHint.NONE : SizeHint.FIXED;
     const restoreGeometry = preserveWindowGeometry(window);
-    const raw = new RawWebview(options.debug ?? false, { width: widthDips, height: heightDips, hint }, Number(host) as Pointer);
-    if (raw.unsafeHandle === null || Number(raw.unsafeHandle) === 0) {
-      throw new Error(
-        process.platform === "win32"
-          ? "sweetview: webview_create failed for the given window (is the WebView2 runtime installed?)"
-          : "sweetview: webview_create failed for the given window",
-      );
-    }
-
-    // Restore exact styles and outer bounds if webview_set_size mutated them (Windows).
-    restoreGeometry();
+    const createRaw = (): RawWebview => {
+      // webview_create pumps messages while WebView2 initializes, so the window can be
+      // closed under it. Hold the owned window's native dispose until the new view is
+      // either kept or destroyed, so it is never created on, or left bound to, a dead HWND.
+      const releaseCreateHold = meta.owned ? holdWindowNativeDispose(window) : undefined;
+      try {
+        const created = new RawWebview(options.debug ?? false, { width: widthDips, height: heightDips, hint }, Number(host) as Pointer);
+        if (created.unsafeHandle === null || Number(created.unsafeHandle) === 0) {
+          throw new Error(
+            process.platform === "win32"
+              ? "sweetview: webview_create failed for the given window (is the WebView2 runtime installed?)"
+              : "sweetview: webview_create failed for the given window",
+          );
+        }
+        if (isWindowDisposed(window) || tabHooks?.isCancelled?.()) {
+          created.destroy();
+          discardQuit();
+          throw new Error("sweetview: the window was disposed during WebView.attach");
+        }
+        // Restore exact styles and outer bounds if webview_set_size mutated them (Windows).
+        restoreGeometry();
+        return created;
+      } finally {
+        releaseCreateHold?.();
+      }
+    };
+    const raw = createRaw();
 
     try {
       raw.title = title;
@@ -406,10 +422,16 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
       const streamCalls = onRequest === "worker" ? streamingResponseCalls(libPath) : undefined;
       const requestResponses = new RequestResponseAssembler(!streamCalls);
       const activeStreams = new Set<string>();
+      // Work handed to the worker and not answered yet: page RPC seqs and native request ids.
+      // If the worker dies, each is failed so neither a page RPC nor a fetch() hangs forever.
+      const pendingWorkerCalls = new Set<string>();
+      const pendingWorkerRequests = new Set<bigint>();
+      let workerFailure: string | undefined;
       const decoder = new TextDecoder();
       let down = false;
       const isLive = () => !down && !isWindowDisposed(window) && raw.unsafeHandle !== null;
       const completeRequest = ({ id, status, headers, body }: NativeRequestResponse) => {
+        pendingWorkerRequests.delete(BigInt(id));
         if (!isLive() || !requestCalls) return;
         const error = requestCalls.completeRequest(handle(), BigInt(id), status, JSON.stringify(headers), body);
         if (error !== 0) console.error(`sweetview: webview_complete_request failed (${error})`);
@@ -435,11 +457,13 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
         }
         // The native API can end an already-started response, including after a reader error.
         activeStreams.delete(id);
+        pendingWorkerRequests.delete(requestId);
         const error = streamCalls.endResponse(handle(), requestId);
         if (error !== 0) console.error(`sweetview: webview_end_response failed (${error})`);
       };
       const drain = () => {
         ring.acknowledgeWakeup();
+        let crashed: string | undefined;
         for (const bytes of ring.drain()) {
           if (!isLive()) break;
           if (bytes[0] === 0) {
@@ -450,16 +474,28 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
             }
             continue;
           }
-          const wire = JSON.parse(decoder.decode(bytes)) as WireFrame;
+          const wire = JSON.parse(decoder.decode(bytes)) as WireFrame | WorkerCrashFrame;
+          if (wire.kind === "workerError") {
+            // The worker's own error/unhandledrejection handler wrote this as it went down.
+            // Worker.onerror cannot fire while webview_run() blocks this thread; this drain can.
+            crashed = wire.message;
+            break;
+          }
           const frame = assembler.push(wire);
           if (!frame) continue;
           if (frame.kind === "reply") {
+            // A reply for a call already failed (the worker was declared dead) is not answered twice.
+            if (!pendingWorkerCalls.delete(frame.seq)) continue;
             if (frame.ok) raw.return(frame.seq, 0, JSON.stringify(frame.result ?? null));
             else raw.return(frame.seq, 1, JSON.stringify({ message: frame.error }));
           } else if (frame.kind === "event") {
             for (const fn of taps) fn({ name: frame.name, payload: frame.payload });
             if (isLive()) emit(frame.name, frame.payload);
           }
+        }
+        if (crashed !== undefined) {
+          console.error("sweetview: the worker failed:", crashed);
+          failWorker(`worker crashed: ${crashed}`);
         }
       };
 
@@ -512,8 +548,9 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
           }, { args: [FFIType.ptr, FFIType.ptr], returns: FFIType.void });
         }
         const error = set(handle(), enabled ? dropCallback!.ptr : null, null);
-        dropRegistered = enabled;
-        if (error !== 0) console.error(`sweetview: webview_set_file_drop_handler failed (${error})`);
+        // On failure native keeps whatever it had, so the state stays as it was.
+        if (error === 0) dropRegistered = enabled;
+        else console.error(`sweetview: webview_set_file_drop_handler failed (${error})`);
       };
       let unsubscribeFileDrop: (() => void) | undefined;
       // Subscribes file-drop demand to the logical host (the window itself,
@@ -534,6 +571,9 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
         unsubscribeFileDrop?.();
         unsubscribeFileDrop = undefined;
         setFileDrop(false);
+        // A failed unregister leaves native holding the trampoline: keep it alive
+        // (shutdown closes it once webview_destroy has run) rather than free it under native.
+        if (dropRegistered) return;
         dropCallback?.close();
         dropCallback = undefined;
       };
@@ -592,13 +632,50 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
           }
           raw.destroy();
         }
+        // Only now can a file-drop trampoline native failed to unregister be freed.
+        dropRegistered = false;
+        dropCallback?.close();
+        dropCallback = undefined;
       };
 
-      const respond = (seq: string, status: number, value: unknown) => {
+      const respond =(seq: string, status: number, value: unknown) => {
         if (isLive()) raw.return(seq, status, JSON.stringify(value ?? null));
       };
       const replyError = (seq: string, error: unknown) => {
         respond(seq, 1, { message: error instanceof Error ? error.message : String(error) });
+      };
+      // The worker is gone (an uncaught error, or a message it sent could not be read): fail
+      // everything waiting on it, then refuse new work for it instead of letting it hang.
+      const failWorker = (reason: string) => {
+        if (workerFailure !== undefined || down) return;
+        // Set first: the drain below can meet the worker's own crash frame and re-enter.
+        workerFailure = reason;
+        // Whatever the worker finished before it died is still delivered.
+        try {
+          if (isLive()) drain();
+        } catch (err) {
+          console.error("sweetview: draining the failed worker's replies threw:", err);
+        }
+        workerDrains.delete(drainToken);
+        worker?.terminate();
+        for (const seq of [...pendingWorkerCalls]) replyError(seq, reason);
+        pendingWorkerCalls.clear();
+        for (const id of [...pendingWorkerRequests]) {
+          const key = String(id);
+          if (activeStreams.has(key)) {
+            // The status line already went out; end the body so the reader is not left waiting.
+            activeStreams.delete(key);
+            if (isLive() && streamCalls) {
+              const error = streamCalls.endResponse(handle(), id);
+              if (error !== 0) console.error(`sweetview: webview_end_response failed (${error})`);
+            }
+          } else {
+            completeRequest(requestError(id, 500, "Internal Server Error"));
+          }
+        }
+        pendingWorkerRequests.clear();
+        assembler.clear();
+        requestResponses.clear();
       };
       const invoke = ({ seq, method, fn, params }: UiJob) => {
         try {
@@ -665,7 +742,14 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
             kind: "init", ring: sab, webviewHandle: Number(raw.unsafeHandle), drainCallbackPtr, drainToken, libPath,
           };
           worker.postMessage(init);
-          worker.onerror = (e) => console.error("sweetview: the worker failed:", e.message ?? e);
+          worker.onerror = (e) => {
+            console.error("sweetview: the worker failed:", e.message ?? e);
+            failWorker(`worker crashed: ${e.message ?? String(e)}`);
+          };
+          worker.onmessageerror = () => {
+            console.error("sweetview: the worker sent a message that could not be deserialized");
+            failWorker("worker crashed: a message from the worker could not be deserialized");
+          };
         }
         if (onRequest !== undefined && requestCalls) {
           reqCb = new JSCallback(
@@ -684,7 +768,12 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
                     : new Uint8Array(),
                 };
                 if (onRequest === "worker") {
+                  if (workerFailure !== undefined) {
+                    completeRequest(requestError(id, 500, "Internal Server Error"));
+                    return;
+                  }
                   const msg: HttpRequestMessage = { kind: "http-request", ...request };
+                  pendingWorkerRequests.add(id);
                   worker!.postMessage(msg, request.body.byteLength ? [request.body.buffer] : []);
                 } else {
                   completeRequest(runNativeRequest(onRequest, request));
@@ -701,7 +790,17 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
           const error = requestCalls.setRequestHandler(handle(), reqCb.ptr, null);
           if (error !== 0) throw new Error(`sweetview: webview_set_request_handler failed (${error})`);
         }
-        raw.bindRaw("__sweetview_rpc", (seq, req) => {
+        // A plain external page (a URL, no bundled page or assets) with nothing that answers
+        // RPCs or waits for readiness gets no __sweetview_rpc binding: zero native surface.
+        const needsRpc =
+          !useDirectUrl ||
+          options.uiMethods !== undefined ||
+          options.deferredUiMethods !== undefined ||
+          options.worker !== undefined ||
+          options.showOnReady === true ||
+          options.readyTimeoutMs !== undefined ||
+          options.onReady !== undefined;
+        if (needsRpc) raw.bindRaw("__sweetview_rpc", (seq, req) => {
           if (!isLive()) return;
           try {
             const [method, params] = JSON.parse(req) as [string, unknown];
@@ -722,8 +821,14 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
             else if (deferred) {
               queue.push({ seq, method, fn: deferred, params });
               scheduleDeferred();
-            } else if (worker) worker.postMessage({ kind: "call", seq, method, params });
-            else replyError(seq, `${method}: this window has no worker and no UI-thread method of that name`);
+            } else if (worker) {
+              if (workerFailure !== undefined) {
+                replyError(seq, workerFailure);
+                return;
+              }
+              pendingWorkerCalls.add(seq);
+              worker.postMessage({ kind: "call", seq, method, params });
+            } else replyError(seq,`${method}: this window has no worker and no UI-thread method of that name`);
           } catch (err) {
             replyError(seq, err);
           }
@@ -767,7 +872,8 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
         window,
         emit,
         notify(method, params) {
-          if (worker) worker.postMessage({ kind: "call", seq: null, method, params: params ?? null });
+          if (worker && workerFailure !== undefined) console.error(`sweetview: ${method}: ${workerFailure}`);
+          else if (worker) worker.postMessage({ kind: "call", seq: null, method, params: params ?? null });
           else console.error(`sweetview: ${method}: this window has no worker`);
         },
         onEvent(fn) {

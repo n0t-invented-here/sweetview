@@ -13,20 +13,46 @@ clicked. On Windows 10 and 11 they are WinRT toasts; on macOS they come from
 
 ## Sending a notification
 
+A click is delivered by the OS event loop, so the app keeps the loop running
+after it sends. This one sends a notification at startup and from its tray
+menu, logs clicks, and cleans up on Quit. On macOS, run it from a bundled
+`.app` ([macOS](#macos)).
+
 ```ts
-import { Notifier } from "@n1h/sweetview/native";
+import { Notifier, Tray, quitEventLoop, runEventLoop } from "@n1h/sweetview/native";
 
 const notifier = new Notifier({
   onClick: ({ id, data }) => console.log("clicked", id, data),
 });
 
-notifier.notify({ title: "Export finished", body: "notes.pdf is ready", id: "export", data: { path: "notes.pdf" } });
+const sendExportDone = () => {
+  const sent = notifier.notify({ title: "Export finished", body: "notes.pdf is ready", id: "export", data: { path: "notes.pdf" } });
+  if (!sent) console.error("the notification could not be submitted");
+};
+
+const tray = new Tray({
+  tooltip: "Exporter",
+  menu: [
+    { label: "Notify Again", click: sendExportDone },
+    { type: "separator" },
+    { label: "Quit", click: () => quitEventLoop() },
+  ],
+});
+
+sendExportDone();
+try {
+  await runEventLoop(); // clicks arrive while the loop runs
+} finally {
+  tray.dispose();
+  notifier.dispose();
+}
 ```
 
 `createNotifier(options)` is the same as `new Notifier(options)`.
 `dispose()` releases the notifier's native resources and is safe to call
 twice. Clicks route to the notifier that sent the notification, so several
-notifiers in one process stay independent.
+notifiers in one process stay independent. The one exception is a click on a
+notification a previous process sent, covered under [macOS](#macos).
 
 ## Options
 
@@ -57,7 +83,10 @@ can relaunch the app; on Windows it is cloned through JSON to match.
 
 `true` means the notification was handed to the OS: submitted to the toast
 notifier or the shell on Windows, scheduled with the notification center on
-macOS. It does not mean the user saw it. Focus Assist or Do Not Disturb,
+macOS. It does not mean the user saw it. On Windows, `true` is returned as
+soon as WinRT accepts the toast; if WinRT reports a failure later,
+asynchronously, Sweetview shows the balloon fallback then, and `notify()` has
+already returned `true` either way ([Windows](#windows)). Focus Assist or Do Not Disturb,
 notification settings, a denied macOS permission (which arrives later and
 asynchronously) or the OS's own rate limits can still keep it off the screen.
 
@@ -86,6 +115,11 @@ The primary path is a WinRT `ToastNotificationManager` toast.
   balloon from a hidden notification-area icon. Windows 10 and 11 render
   balloons as toasts too. Each balloon carries its own click payload, and it
   uses the current `Tray` icon when one exists.
+- Submission versus delivery. A toast that fails synchronously falls back
+  inside `notify()`, which returns the balloon's result. A toast WinRT
+  accepts makes `notify()` return `true` at once; if WinRT later raises its
+  `Failed` event, the balloon is shown from that event, and its own success
+  or failure is not reported back.
 
 ## macOS
 
@@ -104,6 +138,13 @@ real application bundle:
   `notify()`. When a click on a notification launches the app, create the
   `Notifier` with its `onClick` at startup and the click arrives as soon as
   the event loop runs.
+- Cold-launch routing. A click on a notification this process sent goes only
+  to the notifier that sent it; if that notifier was disposed or has no
+  `onClick`, the click is dropped. A click whose `id` this process never sent
+  (a notification from an earlier run, which launched or reached this one)
+  goes to the first live `Notifier`, in creation order, that has an
+  `onClick`. An app with several notifiers creates the one that handles
+  relaunch clicks first.
 - A new notification with the `id` of one still on screen replaces it, which
   suits progress or status updates.
 - Notifications show as banners even while the app is in front.
