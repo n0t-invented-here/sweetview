@@ -3,8 +3,10 @@ import { hostRequestHandler, hostService, type RequestHandler } from "@n1h/sweet
 
 const seen: string[] = [];
 let pending = () => {};
-const service = defineService<{ paths: [null, string[]] }, { pending: null }>((emit) => {
+let streamEof = () => {};
+const service = defineService<{ paths: [null, string[]] }, { pending: null; streamEof: null }>((emit) => {
   pending = () => emit("pending", null);
+  streamEof = () => emit("streamEof", null);
   return { methods: { paths: () => seen } };
 });
 
@@ -29,6 +31,21 @@ const onRequest: RequestHandler = async (request) => {
       return new Response(Uint8Array.from({ length: 20_480 }, (_, i) => i % 251), {
         headers: { "Content-Type": "application/octet-stream" },
       });
+    case "/stream": {
+      const chunks = ["one:", "x".repeat(8192), ":three"];
+      const encoder = new TextEncoder();
+      return new Response(new ReadableStream<Uint8Array>({
+        async pull(controller) {
+          await Bun.sleep(30);
+          const chunk = chunks.shift();
+          if (chunk !== undefined) controller.enqueue(encoder.encode(chunk));
+          else {
+            streamEof();
+            controller.close();
+          }
+        },
+      }), { headers: { "Content-Type": "text/plain" } });
+    }
     case "/pixel.gif":
       return new Response(Buffer.from("R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==", "base64"), {
         headers: { "Content-Type": "image/gif" },
@@ -70,9 +87,20 @@ const onRequest: RequestHandler = async (request) => {
       break;
     case "/throws":
       throw new Error("Private handler error");
-    case "/pending":
-      pending();
-      return new Promise<Response>(() => {});
+    case "/pending": {
+      let started = false;
+      return new Response(new ReadableStream<Uint8Array>({
+        pull(controller) {
+          if (!started) {
+            started = true;
+            controller.enqueue(Uint8Array.of(1));
+            return;
+          }
+          pending();
+          return new Promise<void>(() => {});
+        },
+      }, { highWaterMark: 0 }));
+    }
   }
   return new Response("Not Found", { status: 404 });
 };

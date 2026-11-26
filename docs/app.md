@@ -258,13 +258,12 @@ export type WebViewOptions<M extends MethodMap = MethodMap> = {
 | `readyFallbackHtml` | `string` | built-in error page | HTML shown on watchdog expiry. |
 | `ringBytes` | `number` | `1048576` | Capacity of the worker-to-UI shared-memory ring (power of two, `128..2^30`). |
 
-`Window.onFileDrop` receives OS drops routed to the containing native window
-through `WM_DROPFILES` on Windows or the `NSWindow` drag destination on macOS.
-When the webview fills the client area, WebView2 or WKWebView can handle
-drops over the page as its own drop target. On Windows,
-`allowExternalDrop: false` disables WebView2's built-in drop handling.
-Delivery to `Window.onFileDrop` still depends on native routing. On macOS,
-WKWebView's drop handling is unaffected by `allowExternalDrop`.
+`Window.onFileDrop` receives OS drops on the native window and on an
+attached WebView that exports `webview_set_file_drop_handler`. Subscribe before
+or after attaching. The first listener activates WebView drop handling and
+removing the last listener restores the engine's default handling. On
+Windows, delivery over the WebView requires external drops to be enabled.
+See [native file drops](native.md#window).
 
 ### Tab and TabOptions
 
@@ -464,7 +463,9 @@ method names across the two UI tables throw during attach.
 `ASSET_ORIGIN` and `FRAMES_ORIGIN` are exports from `@n1h/sweetview`. The
 frames origin is `http://frames.webview.localhost` on Windows and
 `webview-frames://localhost` on macOS. The browser applies its cross-origin
-DOM boundary to iframes loaded there. The native handler receives every
+DOM boundary to iframes loaded there. The native library exposes RPC only
+when `window === window.top`. On macOS it also checks
+`WKScriptMessage.frameInfo.isMainFrame` before dispatching. The native handler receives every
 request to that origin and any request at the asset origin that misses the
 static table. With no handler, those requests return 404.
 
@@ -480,8 +481,19 @@ static table. With no handler, those requests return 404.
   Promise gives an immediate 500 with instructions for worker mode.
 
 Both modes use native interception and zero TCP. They require the request
-symbols shipped by `@n1h/sweetview-webview-bun` 2.8.0 or a compatible
-`WEBVIEW_PATH`. In tabbed apps, set these options on each `openTab()` call.
+symbols from the companion library's `v1-drafting` build. Before the 2.8.0
+publication, set `WEBVIEW_PATH` to a compatible rebuilt library. In tabbed
+apps, set these options on each `openTab()` call.
+
+A worker can return a `Response` with a `ReadableStream<Uint8Array>` body.
+With the streaming symbols, Sweetview forwards each chunk through the shared
+ring without collecting the whole body in the worker or UI thread. A library
+with request interception but without streaming symbols buffers on the UI
+thread and completes the request once. WKWebView can deliver bytes
+incrementally. WebView2 buffers intercepted responses until EOF, as observed
+in the live Windows test. For real-time SSE-style updates and other desktop
+push, use Sweetview IPC events (`emit` and `onEvent`, or `bridge.on` in the
+page). [WebView2 Feedback #3519](https://github.com/MicrosoftEdge/WebView2Feedback/issues/3519).
 
 ## Transport
 

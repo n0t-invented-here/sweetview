@@ -108,7 +108,18 @@ Source: `docs/audit-and-v1-plan.md`, `docs/v1-api.md`, and the user's v1.0 direc
 - [x] **AC13: Updated docs and macOS/Linux verification instructions**
   - [x] Update `README.md`, `docs/README.md`, `docs/app.md`, `docs/native.md`, `docs/page.md`, `docs/build.md`, `docs/settings-store.md`, `docs/worker.md`, `docs/webview-library.md`, and `docs/v1-macos-verification.md` (including macOS `libwebview.dylib` and Linux `libwebview-x64.so` rebuild steps for `sweetview-webview-bun` on `v1-drafting`)
 
+- [x] **AC14: Native streaming and WebView surface drops work through the Sweetview facade on Windows**
+  - [x] Worker routes send chunks through native interception with zero TCP and without buffering the whole body on either Sweetview thread when the DLL supports streaming.
+  - [x] The frame tests verify ordering, oversized chunk splitting, and reader failure. A live WebView2 receives all three chunks, first reads the response after EOF, and shuts down with a separate stream still open.
+  - [x] The previous Windows DLL, which exports request completion but lacks the streaming and surface-drop symbols, passes the live worker routes using the completion fallback.
+  - [x] Live WebView2 verifies subscriptions before and after attachment, removal of the last listener, a Unicode file path delivered by `ICoreWebView2File`, and disposal with a listener still installed.
+  - [x] The references describe the WebView2 EOF limit, IPC push, WKWebView streaming and drop paths, iframe RPC guards, and WinRT AUMID registration and balloon fallback.
+  - [x] verify: `just check` passes with 163 passed, 4 skipped, and 0 failed, including the Windows notification tests. `bun build packages/sweetview/src/page.ts --target=browser`, `just compile`, `just pack`, and `just demos native-tabs drive` also pass.
+  - [ ] Verify live WKWebView streaming and Finder drops on the rebuilt library. See [macOS verification](v1-macos-verification.md#4-macos-activation-startup-and-request-routes).
+
 ## Review passes
+
+- [x] Native streaming and drops verified against both Windows DLLs. The current DLL exercised chunk delivery, EOF timing, active-stream shutdown, and the real WebView2 drop callback. The previous DLL exercised the UI-thread buffering fallback. Typecheck caught an overly narrow typed-array parameter in the frame writer, which was corrected before the final gates.
 
 - [x] Adversarial review pass 1 against real built artifacts, test outputs, GUI probe outputs, and diff against `main` (pass 1)
   - Finding 1 (AC1): `writeWorkerFrame` clamped by UTF-16 length rather than JSON-escaped UTF-8 byte length (overflowing on quotes/NUL/multibyte) and `WebView.attach` allowed tiny `ringBytes` (e.g. `32`) too small for a JSON error reply. Fixed: exact byte-length binary search clamping in `packages/sweetview/src/worker.ts` + minimum `ringBytes >= 128` validation in `packages/sweetview/src/app.ts` + regression tests in `packages/sweetview/src/worker.test.ts` and `packages/sweetview/src/app.test.ts`.

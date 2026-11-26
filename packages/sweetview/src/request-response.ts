@@ -10,6 +10,34 @@ export type NativeRequestResponse = {
 
 const PREFIX_BYTES = 6;
 const encoder = new TextEncoder();
+const empty = new Uint8Array();
+
+const enum ResponseFrameKind {
+  Complete = 1,
+  Part,
+  Begin,
+  Chunk,
+  End,
+  Abort,
+}
+
+type ResponseMeta = Omit<NativeRequestResponse, "body">;
+export type StreamingResponseFrame =
+  | ({ kind: "begin" } & ResponseMeta)
+  | { kind: "chunk"; id: string; body: Uint8Array }
+  | { kind: "end" | "abort"; id: string };
+
+function responseFrameWriter(ring: Ring, wake: () => void) {
+  return (kind: ResponseFrameKind, meta: Uint8Array, chunk: Uint8Array = empty) => {
+    const frame = new Uint8Array(PREFIX_BYTES + meta.length + chunk.length);
+    frame[1] = kind;
+    new DataView(frame.buffer).setUint32(2, meta.length, true);
+    frame.set(meta, PREFIX_BYTES);
+    frame.set(chunk, PREFIX_BYTES + meta.length);
+    ring.write(frame);
+    if (ring.claimWakeup()) wake();
+  };
+}
 
 export function runNativeRequest(
   handler: (request: NativeRequest) => NativeResponse,
@@ -51,19 +79,11 @@ export function requestError(id: bigint, status: number, message: string): Nativ
 export function writeRequestResponse(ring: Ring, response: NativeRequestResponse, wake: () => void): void {
   const { id, status, headers, body } = response;
   const maxBytes = ring.capacity - 4 - PREFIX_BYTES;
-  function write(kind: number, meta: Uint8Array, chunk: Uint8Array) {
-    const frame = new Uint8Array(PREFIX_BYTES + meta.length + chunk.length);
-    frame[1] = kind;
-    new DataView(frame.buffer).setUint32(2, meta.length, true);
-    frame.set(meta, PREFIX_BYTES);
-    frame.set(chunk, PREFIX_BYTES + meta.length);
-    ring.write(frame);
-    if (ring.claimWakeup()) wake();
-  }
+  const write = responseFrameWriter(ring, wake);
 
   const meta = encoder.encode(JSON.stringify({ id, status, headers }));
   if (meta.length + body.length <= maxBytes) {
-    write(1, meta, body);
+    write(ResponseFrameKind.Complete, meta, body);
     return;
   }
 
@@ -75,49 +95,121 @@ export function writeRequestResponse(ring: Ring, response: NativeRequestResponse
   const total = 1 + Math.ceil(body.length / chunkBytes);
   const first = encoder.encode(JSON.stringify({ id, seq: 0, total, status, headers }));
   if (first.length > maxBytes) throw new RangeError("Response headers exceed the ring capacity");
-  write(2, first, body.subarray(0, 0));
+  write(ResponseFrameKind.Part, first);
   for (let seq = 1, offset = 0; seq < total; seq++, offset += chunkBytes) {
     const part = encoder.encode(JSON.stringify({ id, seq, total }));
-    write(2, part, body.subarray(offset, offset + chunkBytes));
+    write(ResponseFrameKind.Part, part, body.subarray(offset, offset + chunkBytes));
   }
 }
 
-type ResponseMeta = Omit<NativeRequestResponse, "body">;
-type PendingResponse = { meta: ResponseMeta; total: number; chunks: Uint8Array[]; length: number };
+/** Owns the reader until EOF or failure. A failure after begin must terminate that stream. */
+export async function writeStreamingResponse(
+  ring: Ring,
+  head: ResponseMeta,
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  wake: () => void,
+): Promise<void> {
+  const write = responseFrameWriter(ring, wake);
+  const maxBytes = ring.capacity - 4 - PREFIX_BYTES;
+  const meta = encoder.encode(JSON.stringify(head));
+  const idMeta = encoder.encode(JSON.stringify({ id: head.id }));
+  const chunkBytes = maxBytes - idMeta.length;
+  let started = false;
+  try {
+    if (meta.length > maxBytes || chunkBytes < 1) throw new RangeError("Response headers exceed the ring capacity");
+    write(ResponseFrameKind.Begin, meta);
+    started = true;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!(value instanceof Uint8Array)) throw new TypeError("Response stream must yield Uint8Array chunks");
+      for (let offset = 0; offset < value.byteLength; offset += chunkBytes) {
+        write(ResponseFrameKind.Chunk, idMeta, value.subarray(offset, offset + chunkBytes));
+      }
+    }
+    write(ResponseFrameKind.End, idMeta);
+  } catch (err) {
+    void reader.cancel(err).catch(() => {});
+    if (!started) throw err;
+    write(ResponseFrameKind.Abort, idMeta);
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+type BufferedResponse = { meta: ResponseMeta; chunks: Uint8Array[] };
+type PendingResponse = BufferedResponse & { total: number };
+
+function joinResponse({ meta, chunks }: BufferedResponse): NativeRequestResponse {
+  const body = new Uint8Array(chunks.reduce((length, chunk) => length + chunk.byteLength, 0));
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return { ...meta, body };
+}
 
 export class RequestResponseAssembler {
   readonly #pending = new Map<string, PendingResponse>();
+  readonly #streams = new Map<string, BufferedResponse>();
   readonly #decoder = new TextDecoder();
 
-  push(bytes: Uint8Array): NativeRequestResponse | undefined {
+  constructor(private readonly bufferStreams = false) {}
+
+  push(bytes: Uint8Array): NativeRequestResponse | StreamingResponseFrame | undefined {
     const size = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getUint32(2, true);
     const meta = JSON.parse(this.#decoder.decode(bytes.subarray(PREFIX_BYTES, PREFIX_BYTES + size))) as
       ResponseMeta & { seq: number; total: number };
     const { id, status, headers, seq, total } = meta;
     const chunk = bytes.subarray(PREFIX_BYTES + size);
-    if (bytes[1] === 1) return { id, status, headers, body: chunk };
+    const kind = bytes[1];
+    if (kind === ResponseFrameKind.Complete) return { id, status, headers, body: chunk };
+    if (kind !== ResponseFrameKind.Part) {
+      let frame: StreamingResponseFrame;
+      switch (kind) {
+        case ResponseFrameKind.Begin: frame = { kind: "begin", id, status, headers }; break;
+        case ResponseFrameKind.Chunk: frame = { kind: "chunk", id, body: chunk }; break;
+        case ResponseFrameKind.End: frame = { kind: "end", id }; break;
+        case ResponseFrameKind.Abort: frame = { kind: "abort", id }; break;
+        default: return;
+      }
+      return this.bufferStreams ? this.#bufferStream(frame) : frame;
+    }
 
-    if (seq === 0) this.#pending.set(id, { meta: { id, status, headers }, total, chunks: [], length: 0 });
+    if (seq === 0) this.#pending.set(id, { meta: { id, status, headers }, total, chunks: [] });
     const pending = this.#pending.get(id);
     if (!pending || pending.total !== total || pending.chunks.length !== seq) {
       this.#pending.delete(id);
       return;
     }
     pending.chunks.push(chunk);
-    pending.length += chunk.length;
     if (pending.chunks.length !== total) return;
 
     this.#pending.delete(id);
-    const body = new Uint8Array(pending.length);
-    let offset = 0;
-    for (const part of pending.chunks) {
-      body.set(part, offset);
-      offset += part.length;
+    return joinResponse(pending);
+  }
+
+  #bufferStream(frame: StreamingResponseFrame): NativeRequestResponse | undefined {
+    const { id } = frame;
+    if (frame.kind === "begin") {
+      this.#streams.set(id, { meta: { id, status: frame.status, headers: frame.headers }, chunks: [] });
+      return;
     }
-    return { ...pending.meta, body };
+    const pending = this.#streams.get(id);
+    if (!pending) return;
+    if (frame.kind === "chunk") {
+      pending.chunks.push(frame.body);
+      return;
+    }
+    this.#streams.delete(id);
+    return frame.kind === "abort"
+      ? requestError(BigInt(id), 500, "Internal Server Error")
+      : joinResponse(pending);
   }
 
   clear(): void {
     this.#pending.clear();
+    this.#streams.clear();
   }
 }

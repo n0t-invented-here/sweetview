@@ -26,6 +26,18 @@ const script = isWorkerCase ? `
       report.echo = { status: echo.status, multi: echo.headers.get("X-Multi"), payload: await echo.json() };
       const bytes = new Uint8Array(await (await fetch("/binary")).arrayBuffer());
       report.binary = { length: bytes.length, correct: bytes.every((byte, i) => byte === i % 251) };
+      const streamed = await fetch("/stream");
+      const reader = streamed.body.pipeThrough(new TextDecoderStream()).getReader();
+      let streamBody = "";
+      const first = await reader.read();
+      report.streamFirstReadAfterEof = await window.__sweetview_rpc("streamFirstReadAfterEof", null);
+      if (!first.done) streamBody += first.value;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        streamBody += value;
+      }
+      report.stream = { status: streamed.status, body: streamBody };
       const image = new Image();
       image.src = "/pixel.gif";
       await image.decode();
@@ -59,12 +71,14 @@ const script = isWorkerCase ? `
 
 let report: Record<string, unknown> | undefined;
 let pending = false;
+let streamEof = false;
 let timedOut = false;
 let escaped = false;
 const app = await createApp<{
   report: [Record<string, unknown>, void];
   iframeEscaped: [null, void];
-}, { pending: null }>({
+  streamFirstReadAfterEof: [null, boolean];
+}, { pending: null; streamEof: null }>({
   assets: { "index.html": new Blob([`<!doctype html><body><script>${script}</script>`]), "asset.txt": new Blob(["static asset"]) },
   worker: mode === "sync" ? undefined : "./request-handler.worker.ts",
   onRequest: mode === "sync" ? () => Promise.reject(new Error("Async handler")) as unknown as NativeResponse : "worker",
@@ -77,6 +91,7 @@ const app = await createApp<{
   },
   uiMethods: {
     iframeEscaped: () => { escaped = true; },
+    streamFirstReadAfterEof: () => streamEof,
     report: (value: Record<string, unknown>) => {
       report = value;
       if (!isWorkerCase || pending || value.error) app.quit();
@@ -84,6 +99,7 @@ const app = await createApp<{
   },
 });
 app.onEvent(({ name }) => {
+  if (name === "streamEof") streamEof = true;
   if (name === "pending") {
     pending = true;
     if (report) app.quit();

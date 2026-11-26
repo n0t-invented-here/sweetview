@@ -9,7 +9,7 @@
 
 import type { CallFrame, ChunkFrame, EventMap, Frame, MethodMap, ReplyFrame, Service } from "@n1h/sweetview-ipc";
 import type { Pointer } from "bun:ffi";
-import { requestError, writeRequestResponse } from "./request-response";
+import { requestError, writeRequestResponse, writeStreamingResponse } from "./request-response";
 import { WEBVIEW_SESSION, type HttpRequestMessage, type WorkerMessage } from "./messages";
 import { Ring } from "./ring";
 import { openWebviewCore } from "./webview-lib";
@@ -166,12 +166,17 @@ function createWorkerHost() {
       });
       const response = await handler(request);
       if (response.status < 100 || response.status > 599) throw new RangeError("Invalid response status");
-      writeRequestResponse(ring, {
+      const head = {
         id: String(id),
         status: response.status,
         headers: [...response.headers.entries()],
-        body: new Uint8Array(await response.arrayBuffer()),
-      }, wake);
+      };
+      if (response.body) {
+        const reader = response.body.getReader();
+        await writeStreamingResponse(ring, head, reader, wake);
+      } else {
+        writeRequestResponse(ring, { ...head, body: new Uint8Array() }, wake);
+      }
     } catch {
       writeRequestResponse(ring, requestError(msg.id, 500, "Internal Server Error"), wake);
     }

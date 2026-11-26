@@ -10,12 +10,12 @@ import { pathToFileURL } from "node:url";
 import { SizeHint, Webview as RawWebview } from "@n1h/sweetview-webview-bun";
 import { assetMime, indexHtml } from "./html";
 import { createFrameAssembler, type AnyEvent, type EventMap, type MethodMap, type WireFrame } from "@n1h/sweetview-ipc";
-import { RequestResponseAssembler, requestError, runNativeRequest, type NativeRequestResponse } from "./request-response";
+import { RequestResponseAssembler, requestError, runNativeRequest, type NativeRequestResponse, type StreamingResponseFrame } from "./request-response";
 import type { HttpRequestMessage, InitMessage, NativeRequest, NativeResponse } from "./messages";
 import { Window, quitEventLoop, runEventLoop, signalReady, type Rect, type TabHandle, type WindowOptions } from "@n1h/sweetview-native";
-import { discardQuit, getWindowMeta, isWindowDisposed, onWindowDispose, preserveWindowGeometry, scheduleNativeTimeout } from "@n1h/sweetview-native/internal";
+import { discardQuit, emitWindowFileDrop, getWindowMeta, isWindowDisposed, onWindowDispose, onWindowFileDropListenersChange, preserveWindowGeometry, scheduleNativeTimeout, windowFileDropCount } from "@n1h/sweetview-native/internal";
 import { Ring } from "./ring";
-import { ASSET_ORIGIN, allowExternalDropCall, backgroundColorCall, openWebviewCore, requestHandlerCalls, setAssetCall, webviewLibPath } from "./webview-lib";
+import { ASSET_ORIGIN, allowExternalDropCall, backgroundColorCall, fileDropHandlerCall, openWebviewCore, requestHandlerCalls, setAssetCall, streamingResponseCalls, webviewLibPath } from "./webview-lib";
 
 /** Methods that return synchronously on the UI thread. */
 export type UiMethods<M extends MethodMap> = { [K in keyof M & string]?: (params: M[K][0]) => M[K][1] };
@@ -333,7 +333,9 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
       };
 
       const assembler = createFrameAssembler();
-      const requestResponses = new RequestResponseAssembler();
+      const streamCalls = onRequest === "worker" ? streamingResponseCalls(libPath) : undefined;
+      const requestResponses = new RequestResponseAssembler(!streamCalls);
+      const activeStreams = new Set<string>();
       const decoder = new TextDecoder();
       let down = false;
       const isLive = () => !down && !isWindowDisposed(window) && raw.unsafeHandle !== null;
@@ -342,13 +344,40 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
         const error = requestCalls.completeRequest(handle(), BigInt(id), status, JSON.stringify(headers), body);
         if (error !== 0) console.error(`sweetview: webview_complete_request failed (${error})`);
       };
+      const streamResponse = (frame: StreamingResponseFrame) => {
+        if (!isLive() || !streamCalls) return;
+        const { id } = frame;
+        const requestId = BigInt(id);
+        if (frame.kind === "begin") {
+          const error = streamCalls.beginResponse(handle(), requestId, frame.status, JSON.stringify(frame.headers));
+          if (error === 0) activeStreams.add(id);
+          else {
+            console.error(`sweetview: webview_begin_response failed (${error})`);
+            completeRequest(requestError(requestId, 500, "Internal Server Error"));
+          }
+          return;
+        }
+        if (!activeStreams.has(id)) return;
+        if (frame.kind === "chunk") {
+          const error = streamCalls.writeResponseChunk(handle(), requestId, frame.body);
+          if (error === 0) return;
+          console.error(`sweetview: webview_write_response_chunk failed (${error})`);
+        }
+        // The native API can end an already-started response, including after a reader error.
+        activeStreams.delete(id);
+        const error = streamCalls.endResponse(handle(), requestId);
+        if (error !== 0) console.error(`sweetview: webview_end_response failed (${error})`);
+      };
       const drain = () => {
         ring.acknowledgeWakeup();
         for (const bytes of ring.drain()) {
           if (!isLive()) break;
           if (bytes[0] === 0) {
             const response = requestResponses.push(bytes);
-            if (response) completeRequest(response);
+            if (response) {
+              if ("kind" in response) streamResponse(response);
+              else completeRequest(response);
+            }
             continue;
           }
           const wire = JSON.parse(decoder.decode(bytes)) as WireFrame;
@@ -391,9 +420,42 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
         if (dispatchId !== undefined) pendingUiDispatches.delete(dispatchId);
         dispatchId = undefined;
       };
+      let dropCallback: JSCallback | undefined;
+      let dropRegistered = false;
+      const setFileDrop = (enabled: boolean) => {
+        if (enabled === dropRegistered || raw.unsafeHandle === null || (enabled && !isLive())) return;
+        const set = fileDropHandlerCall(libPath);
+        if (!set) return;
+        if (enabled) {
+          dropCallback ??= new JSCallback((json: Pointer | null) => {
+            if (!isLive() || !dropRegistered || !json) return;
+            let paths: unknown;
+            try {
+              paths = JSON.parse(new CString(json).toString());
+            } catch {
+              return;
+            }
+            if (Array.isArray(paths) && paths.every((path) => typeof path === "string")) {
+              emitWindowFileDrop(window, paths);
+            }
+          }, { args: [FFIType.ptr, FFIType.ptr], returns: FFIType.void });
+        }
+        const error = set(handle(), enabled ? dropCallback!.ptr : null, null);
+        dropRegistered = enabled;
+        if (error !== 0) console.error(`sweetview: webview_set_file_drop_handler failed (${error})`);
+      };
+      let unsubscribeFileDrop: (() => void) | undefined;
+      const detachFileDrop = () => {
+        unsubscribeFileDrop?.();
+        unsubscribeFileDrop = undefined;
+        setFileDrop(false);
+        dropCallback?.close();
+        dropCallback = undefined;
+      };
       const unsubscribeWindowDispose = onWindowDispose(window, () => {
         cancelStartup();
         clearDispatches();
+        detachFileDrop();
       });
       const shutdown = () => {
         if (down) return;
@@ -403,6 +465,9 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
         clearDispatches();
         assembler.clear();
         requestResponses.clear();
+        // Destroying the webview aborts native streams, including any waiting for their next chunk.
+        activeStreams.clear();
+        detachFileDrop();
         if (reqCb && raw.unsafeHandle !== null) requestCalls?.setRequestHandler(handle(), null, null);
         workerDrains.delete(drainToken);
         ring.stopDispatch();
@@ -472,6 +537,8 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
       };
 
       try {
+        unsubscribeFileDrop = onWindowFileDropListenersChange(window, setFileDrop);
+        setFileDrop(windowFileDropCount(window) > 0);
         if (worker) {
           workerDrains.set(drainToken, drain);
           const init: InitMessage = {

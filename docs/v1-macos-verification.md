@@ -30,12 +30,12 @@ in the same shell before running the tests:
 # macOS
 export WEBVIEW_PATH="$PWD/build/libwebview.dylib"
 test -f "$WEBVIEW_PATH"
-nm -gU "$WEBVIEW_PATH" | grep -E 'webview_(set_request_handler|complete_request|set_allow_external_drop)$'
+nm -gU "$WEBVIEW_PATH" | grep -E 'webview_(set_request_handler|complete_request|begin_response|write_response_chunk|end_response|set_allow_external_drop|set_file_drop_handler)$'
 
 # Linux x64 (use these commands in place of the macOS commands)
 export WEBVIEW_PATH="$PWD/build/libwebview-x64.so"
 test -f "$WEBVIEW_PATH"
-nm -D --defined-only "$WEBVIEW_PATH" | grep -E 'webview_(set_request_handler|complete_request|set_allow_external_drop)$'
+nm -D --defined-only "$WEBVIEW_PATH" | grep -E 'webview_(set_request_handler|complete_request|begin_response|write_response_chunk|end_response|set_allow_external_drop|set_file_drop_handler)$'
 ```
 
 Check that all three symbols appear. Run the bindings tests from that same folder:
@@ -255,8 +255,16 @@ Confirm the child launch reaches the primary through `CFMessagePort`. The
 startup tests exercise the `NSTimer` watchdog under both event-loop modes,
 the page ready handshake and `deferredUiMethods` without RPC reentry. The
 request tests should load worker HTML and an image, echo a POST, verify a 20 KiB response
-with a 4 KiB ring, and block access to iframe DOM at
-`webview-frames://localhost`.
+with a 4 KiB ring, receive all three chunks from `/stream`, and shut down
+with a stream still open. To inspect the timing report, run
+`SWEETVIEW_REQUEST_TEST=worker bun run packages/sweetview/test/fixtures/request-handler.ts`
+and check that `streamFirstReadAfterEof` is `false` on WKWebView. On Windows
+the same probe observes
+`true` because WebView2 buffers the intercepted response until EOF. The
+iframe at `webview-frames://localhost` should be unable to access the parent
+DOM or invoke RPC through a direct `WKScriptMessage`. The binding is
+installed only when `window === window.top`, and the native message
+handler checks `frameInfo.isMainFrame`.
 
 For a Finder and Launch Services probe, save the following as
 `v1-native-probe.ts` in the Sweetview repository root:
@@ -348,15 +356,17 @@ const app = await createApp({
   },
 });
 
-app.window.onFileDrop((paths) => console.log("Native window drop", paths));
+const off = app.window.onFileDrop((paths) => console.log("Native window drop", paths));
+app.webview!.raw.bind("usePageDrop", () => { off(); });
 app.window.show();
 await app.run();
 ```
 
 Drag the same files from Finder onto the middle of the rendered page, where
-WKWebView covers the window. Record whether the page shows `Page drop`,
-the terminal prints `Native window drop`, both occur, or neither occurs.
-Check any native paths against the baseline. `Window.onFileDrop` observes
-the `NSWindow` drag destination, and WKWebView has its own drop target.
-`allowExternalDrop: false` controls WebView2 on Windows and has no effect
-on this macOS probe.
+WKWebView covers the window. Expect one `Native window drop` entry with
+absolute paths matching the baseline. `SweetviewWKWebView` handles these
+file URLs through `webview_set_file_drop_handler`. Invoke `usePageDrop()`
+from the page and drop the files again to confirm control returns to the
+page's `drop` handler. Repeat with the listener registered before
+`WebView.attach`, and quit with a live listener to exercise teardown.
+These are live macOS verification steps for the rebuilt library.

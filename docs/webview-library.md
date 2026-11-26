@@ -14,7 +14,11 @@ webview_error_t webview_set_background_color(webview_t w, int r, int g, int b, i
 webview_error_t webview_set_asset(webview_t w, const char *path, const char *mime, const void *data, size_t len);
 webview_error_t webview_set_request_handler(webview_t w, webview_request_handler_t fn, void *arg);
 webview_error_t webview_complete_request(webview_t w, uint64_t request_id, int status, const char *headers_json, const void *body, size_t body_len);
+webview_error_t webview_begin_response(webview_t w, uint64_t request_id, int status, const char *headers_json);
+webview_error_t webview_write_response_chunk(webview_t w, uint64_t request_id, const void *chunk, size_t chunk_len);
+webview_error_t webview_end_response(webview_t w, uint64_t request_id);
 webview_error_t webview_set_allow_external_drop(webview_t w, int allow);
+webview_error_t webview_set_file_drop_handler(webview_t w, webview_file_drop_handler_t fn, void *arg);
 ```
 
 `webview_set_background_color`:
@@ -75,6 +79,8 @@ and position.
 `ASSET_ORIGIN` and all requests to `FRAMES_ORIGIN`. The second origin is
 `http://frames.webview.localhost` on Windows and `webview-frames://localhost`
 on macOS. A page at the first origin cannot read iframe DOM at the second.
+The binding is installed only when `window === window.top`. macOS also
+rejects subframe messages using `WKScriptMessage.frameInfo.isMainFrame`.
 Requests to either origin use browser-engine interception and zero TCP.
 
 The callback runs on the UI thread. It receives a 64-bit request ID, method,
@@ -89,12 +95,38 @@ names), and raw body bytes. A repeat completion or a cancelled request is
 ignored. Sweetview invokes this API on the UI thread and forwards asynchronous
 worker responses through shared memory. [Application request API](app.md#dynamic-requests).
 
+`webview_begin_response` sends the status and headers for a streamed reply.
+`webview_write_response_chunk` copies each chunk before returning.
+`webview_end_response` marks EOF. Sweetview forwards these frames from the
+worker's body reader on the UI thread and falls back to
+`webview_complete_request` when any streaming symbol is missing.
+
+- Windows passes an `IStream` to WebView2 and retains unread bytes in the
+  native stream. WebView2 buffers the intercepted response until EOF before
+  delivering it to the page. Use IPC events for real-time desktop push.
+  [WebView2 Feedback #3519](https://github.com/MicrosoftEdge/WebView2Feedback/issues/3519).
+- macOS calls `WKURLSchemeTask` with the response head, successive
+  `didReceiveData:` calls, and `didFinish`, enabling incremental delivery.
+  Stopped tasks discard later frames.
+
 ### External drops
 
 `webview_set_allow_external_drop` sets WebView2's
 `ICoreWebView2Controller4::AllowExternalDrop`. A nonzero value enables
 external content drops and zero disables them. The default is enabled.
 macOS and Linux accept the call without changing behavior.
+
+`webview_set_file_drop_handler` installs a UI-thread callback taking
+`(const char *paths_json, void *arg)`. The JSON array is valid for the
+duration of the callback. Sweetview registers it when the attached
+`Window` has `onFileDrop` listeners and passes a null callback when the
+last listener unsubscribes or the attachment is torn down.
+
+- Windows uses WebView2's `ICoreWebView2File` to read the real paths of
+  dropped files. External drops must be allowed and the Runtime must be
+  version 113 or newer.
+- macOS uses the `SweetviewWKWebView` drag destination for Finder file URLs.
+- Linux accepts the call without changing behavior.
 
 ### Library selection
 
@@ -114,7 +146,9 @@ does.
 | No `webview_set_asset` | Throws; the page cannot load without it. |
 | `webview_set_asset` returns an error | Throws `sweetview: webview_set_asset(<path>) failed (<code>)`. |
 | Asset `mime` | From the path's extension; unknown extensions get `application/octet-stream`. |
-| `onRequest` with missing request symbols | Throws with the `2.8.0` library and `WEBVIEW_PATH` requirements. |
+| `onRequest` with missing request symbols | Throws with guidance to load a compatible library through `WEBVIEW_PATH`. |
+| Worker responses with missing streaming symbols | Buffers response bodies on the UI thread and completes them in one native call. |
+| `Window.onFileDrop` with a missing WebView drop symbol | Delivers drops routed directly to the native window. |
 | `allowExternalDrop` with a missing symbol | Warns once per library path and uses the browser default. |
 
 - [Source](#source)

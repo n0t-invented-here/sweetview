@@ -171,11 +171,14 @@ Sweetview-managed `NSWindow` acts as a drag destination and resolves Finder
 file-reference URLs to paths. A foreign macOS window wrapper throws when
 asked to subscribe.
 
-WebView2 and WKWebView have their own drop targets. When a `WebView` fills
-the client area, the engine may consume a drop before the native window
-receives it. On Windows, `allowExternalDrop: false` disables WebView2's
-built-in drop handling. Native delivery still depends on where the OS
-routes the drop. The setting has no effect on WKWebView.
+An attached `WebView` uses `webview_set_file_drop_handler` when the native
+library exports it. Subscribe before or after attaching. The first listener
+enables WebView surface drops and removing the last listener restores the
+browser's default handling. On Windows, WebView2 obtains the paths through
+`ICoreWebView2File`, which requires WebView2 Runtime 113 or later and
+external drops enabled. On macOS, `SweetviewWKWebView` handles Finder file
+URLs. `allowExternalDrop` affects WebView2 only. Older libraries continue
+to support drops routed directly to the native window.
 
 | Member | Meaning |
 |---|---|
@@ -383,13 +386,22 @@ export class Notifier {
 export function createNotifier(options?: NotifierOptions): Notifier;
 ```
 
-`NotifierOptions = { onClick?: (click: NotificationClick) => void }`  
-`NotificationOptions = { title: string; body?: string; silent?: boolean; id?: string; data?: unknown }`  
-`NotificationClick = { id: string; data: unknown }`
+```ts
+type NotifierOptions = { onClick?: (click: NotificationClick) => void; appId?: string; identity?: AppIdentity };
+type NotificationOptions = { title: string; body?: string; silent?: boolean; id?: string; data?: unknown };
+type NotificationClick = { id: string; data: unknown };
+```
 
 Platform behavior:
 
-- **Windows**: works standalone **with or without a `Tray`**. Uses per-notification hidden `Shell_NotifyIconW` (`NIS_HIDDEN | NIF_INFO`) channels on a dedicated message window so each notification carries its own UID and clicking an earlier toast delivers that toast's exact `{ id, data }`. Default generated IDs are `sweetview-<n>`.
+- **Windows 10/11** uses native WinRT `ToastNotificationManager` with or without
+  a `Tray`. It registers the AUMID under `HKCU\Software\Classes\AppUserModelId`
+  automatically and preserves any existing display name. The AUMID defaults
+  to `options.appId`, then `options.identity.appId`, then
+  `Sweetview.DesktopApp`. If WinRT initialization or toast delivery fails,
+  `Shell_NotifyIconW` supplies a per-notification balloon fallback. Both paths
+  associate a click with the individual notification's `{ id, data }`.
+  Default generated IDs are `sweetview-<n>`.
 - **macOS**: uses `UNUserNotificationCenter` and registers its delegate **eagerly in the constructor** (before the first `notify()`), so cold-launch notification clicks are delivered as soon as the event loop pumps. Uses a shared delegate class and shared ObjC blocks so repeated instances do not leak, routes in-process clicks by notification `id` to the notifier that sent them (so multiple `Notifier` instances stay independent), and only clears the center delegate when the last live notifier is disposed. Requires a signed `.app` bundle with a bundle ID outside temporary folders.
 
 ## Hit regions

@@ -145,6 +145,42 @@ const windowDisposeHooks = new WeakMap<Window, Set<() => void>>();
 const windowDisposed = new WeakSet<Window>();
 const ownedWindows = new Set<Window>();
 
+type FileDropListener = (paths: string[]) => void;
+type FileDropChange = (hasListeners: boolean) => void;
+const windowFileDropListeners = new WeakMap<Window, Set<FileDropListener>>();
+const windowFileDropHooks = new WeakMap<Window, Set<FileDropChange>>();
+
+export function windowFileDropCount(win: Window): number {
+  return windowFileDropListeners.get(win)?.size ?? 0;
+}
+
+export function emitWindowFileDrop(win: Window, paths: string[]): void {
+  const listeners = windowFileDropListeners.get(win);
+  if (!listeners || isWindowDisposed(win)) return;
+  for (const handler of [...listeners]) {
+    try {
+      handler(paths);
+    } catch (err) {
+      console.error("sweetview: onFileDrop handler threw:", err);
+    }
+  }
+}
+
+export function onWindowFileDropListenersChange(win: Window, fn: FileDropChange): () => void {
+  let hooks = windowFileDropHooks.get(win);
+  if (!hooks) {
+    hooks = new Set();
+    windowFileDropHooks.set(win, hooks);
+  }
+  hooks.add(fn);
+  return () => hooks.delete(fn);
+}
+
+function notifyFileDropChange(win: Window, hasListeners: boolean): void {
+  const hooks = windowFileDropHooks.get(win);
+  if (hooks) for (const fn of [...hooks]) fn(hasListeners);
+}
+
 function windowIcon(icon: AppIdentityIcon | undefined): Icon | undefined {
   if (!icon || process.platform !== "win32") return undefined;
   const { rgba, width, height } = icon;
@@ -243,6 +279,8 @@ export class Window {
   readonly handle: WindowHandle;
   readonly #inner: WindowBackend;
   readonly #meta: WindowMeta;
+  readonly #fileDropListeners = new Set<FileDropListener>();
+  #unsubscribeNativeDrop?: () => void;
   readonly #tabListeners: TabListeners = {
     newTab: new Set(),
     tabSelect: new Set(),
@@ -392,7 +430,22 @@ export class Window {
   }
   onFileDrop(handler: (paths: string[]) => void): () => void {
     if (windowDisposed.has(this)) return () => {};
-    return this.#inner.onFileDrop(handler);
+    const listeners = this.#fileDropListeners;
+    const first = listeners.size === 0;
+    if (first) {
+      this.#unsubscribeNativeDrop = this.#inner.onFileDrop((paths) => emitWindowFileDrop(this, paths));
+      windowFileDropListeners.set(this, listeners);
+    }
+    // Each subscription can be removed independently, even for the same handler.
+    const listener: FileDropListener = (paths) => handler(paths);
+    listeners.add(listener);
+    if (first) notifyFileDropChange(this, true);
+    return () => {
+      if (!listeners.delete(listener) || listeners.size !== 0) return;
+      this.#unsubscribeNativeDrop?.();
+      this.#unsubscribeNativeDrop = undefined;
+      notifyFileDropChange(this, false);
+    };
   }
   onNewTab(handler: () => void): () => void {
     this.#tabListeners.newTab.add(handler);
@@ -426,6 +479,11 @@ export class Window {
     this.#tabListeners.newTab.clear();
     this.#tabListeners.tabSelect.clear();
     this.#tabListeners.tabClose.clear();
+    this.#unsubscribeNativeDrop?.();
+    this.#unsubscribeNativeDrop = undefined;
+    this.#fileDropListeners.clear();
+    windowFileDropListeners.delete(this);
+    windowFileDropHooks.delete(this);
     this.#inner.dispose();
   }
 }

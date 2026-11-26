@@ -78,18 +78,29 @@ The webview must select `onRequest: "worker"`.
 The handler receives a standard `Request` with URL, method and headers.
 GET, HEAD and requests with zero bytes have no body. Return a `Response`
 or a promise for one. Exceptions and rejected promises become a plain 500
-response. A worker with no registered handler returns 404. The response body
-is buffered with `response.arrayBuffer()` before forwarding.
+response. A worker with no registered handler returns 404. The worker reads
+a response body with `getReader()` and forwards its chunks as they arrive.
+A bodyless response can travel in one frame.
 
 The ring carries response bytes directly. A leading `0x00` distinguishes an
-HTTP response from JSON IPC. The next byte is `0x01` for a whole response or
-`0x02` for a chunk, followed by the little-endian 32-bit metadata length,
-UTF-8 JSON metadata and raw body bytes. Whole frames carry `id`, `status`
-and `headers`. Chunk metadata includes `id`, `seq` and `total`. The first
-chunk also carries status and headers. IDs are serialized as decimal strings
-to preserve all 64 bits. The UI thread assembles chunks by ID and clears
-partial responses on disposal. If the header table alone cannot fit, the
-worker returns 500. Increase `ringBytes` to support unusually large headers.
+HTTP response from JSON IPC. A frame type byte, little-endian 32-bit metadata
+length, UTF-8 JSON metadata, and raw body bytes follow. Whole responses use
+`0x01`, or `0x02` for numbered parts. Streams use `0x03` (begin), `0x04`
+(chunk), `0x05` (end), and `0x06` (reader failure). Every frame carries the
+request ID as a decimal string to preserve all 64 bits. The begin frame
+carries status and headers. Oversized chunks are split to fit `ringBytes`.
+If the headers alone cannot fit, the worker returns 500.
+
+With the streaming symbols, the UI thread forwards each frame to the native
+library without accumulating response bytes. A reader failure after begin
+ends the native response with any bytes already sent. With a library that
+only supports `webview_complete_request`, the UI thread buffers the body and
+returns 500 on reader failure. Disposal clears partial responses.
+
+WKWebView can deliver response bytes incrementally. Windows WebView2 makes
+the intercepted response available to the page at EOF. Use IPC `emit` and
+`onEvent` (or `bridge.on` in the page) for real-time desktop push.
+[WebView2 Feedback #3519](https://github.com/MicrosoftEdge/WebView2Feedback/issues/3519).
 
 ## Example
 

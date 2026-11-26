@@ -43,6 +43,8 @@ type CachedLib = {
   setAsset?: SetAsset | null;
   requestHandler?: ReturnType<typeof openRequestHandler> | null;
   allowExternalDrop?: ReturnType<typeof openExternalDrop> | null;
+  streamingResponse?: ReturnType<typeof openStreamingResponse> | null;
+  fileDropHandler?: ReturnType<typeof openFileDropHandler> | null;
 };
 
 const cache = new Map<string, CachedLib>();
@@ -138,7 +140,7 @@ function openRequestHandler(libPath: string) {
     completeRequest(w: Pointer, id: bigint, status: number, headersJson: string, body: Uint8Array) {
       return webview_complete_request(
         w, id, status, Buffer.from(`${headersJson}\0`, "utf8"),
-        body.byteLength ? ptr(body) : null, BigInt(body.byteLength),
+        body.byteLength ? body : null, BigInt(body.byteLength),
       );
     },
   };
@@ -154,6 +156,67 @@ export function requestHandlerCalls(libPath: string) {
     }
   }
   return c.requestHandler ?? undefined;
+}
+
+function openStreamingResponse(libPath: string) {
+  const symbols = dlopen(libPath, {
+    webview_begin_response: {
+      args: [FFIType.ptr, FFIType.u64, FFIType.i32, FFIType.ptr],
+      returns: FFIType.i32,
+    },
+    webview_write_response_chunk: {
+      args: [FFIType.ptr, FFIType.u64, FFIType.ptr, FFIType.u64],
+      returns: FFIType.i32,
+    },
+    webview_end_response: {
+      args: [FFIType.ptr, FFIType.u64],
+      returns: FFIType.i32,
+    },
+  }).symbols;
+  return {
+    beginResponse(w: Pointer, id: bigint, status: number, headersJson: string) {
+      return symbols.webview_begin_response(w, id, status, Buffer.from(`${headersJson}\0`, "utf8"));
+    },
+    writeResponseChunk(w: Pointer, id: bigint, chunk: Uint8Array) {
+      // Passing the view itself keeps its buffer rooted until the native copy completes.
+      return symbols.webview_write_response_chunk(w, id, chunk, BigInt(chunk.byteLength));
+    },
+    endResponse: symbols.webview_end_response,
+  };
+}
+
+/** Probe all three streaming symbols together so older libraries can buffer instead. */
+export function streamingResponseCalls(libPath: string) {
+  const c = entry(libPath);
+  if (c.streamingResponse === undefined) {
+    try {
+      c.streamingResponse = openStreamingResponse(libPath);
+    } catch {
+      c.streamingResponse = null;
+    }
+  }
+  return c.streamingResponse ?? undefined;
+}
+
+function openFileDropHandler(libPath: string) {
+  return dlopen(libPath, {
+    webview_set_file_drop_handler: {
+      args: [FFIType.ptr, FFIType.ptr, FFIType.ptr],
+      returns: FFIType.i32,
+    },
+  }).symbols.webview_set_file_drop_handler;
+}
+
+export function fileDropHandlerCall(libPath: string) {
+  const c = entry(libPath);
+  if (c.fileDropHandler === undefined) {
+    try {
+      c.fileDropHandler = openFileDropHandler(libPath);
+    } catch {
+      c.fileDropHandler = null;
+    }
+  }
+  return c.fileDropHandler ?? undefined;
 }
 
 function openExternalDrop(libPath: string) {
