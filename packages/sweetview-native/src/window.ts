@@ -7,7 +7,8 @@
 // frame coordinates on both Windows and macOS.
 
 import type { HitPolygon } from "./hit-regions";
-import type { Icon } from "./icon";
+import type { AppIdentity, AppIdentityIcon } from "@n1h/sweetview-settings";
+import { icoFromRgba, type Icon } from "./icon";
 import { backend } from "./platform";
 import type { Point, Rect, WindowHandle } from "./types";
 
@@ -36,6 +37,8 @@ export interface TabHandle {
 }
 
 export type WindowOptions = {
+  /** Supplies the default title and window icon. */
+  identity?: AppIdentity;
   title?: string;
   /** Outer frame bounds. Default: 320x240 centered on the primary work area. */
   bounds?: Rect;
@@ -68,6 +71,7 @@ export type WindowOptions = {
   onResize?: (bounds: Rect) => void;
   onMove?: (bounds: Rect) => void;
   onClose?: () => void;
+  onFileDrop?: (paths: string[]) => void;
   onNewTab?: () => void;
   onTabSelect?: (tab: TabHandle) => void;
   onTabClose?: (tab: TabHandle) => void;
@@ -110,6 +114,7 @@ export interface WindowBackend {
   onResize(handler: (bounds: Rect) => void): () => void;
   onMove(handler: (bounds: Rect) => void): () => void;
   onClose(handler: () => void): () => void;
+  onFileDrop(handler: (paths: string[]) => void): () => void;
   /** Internal: lets Window wire default native close -> outer Window.dispose(). */
   setOwnerDispose?(fn: () => void): void;
   /** Internal: snapshots native window styles and outer bounds before WebView attach and returns a restore thunk. */
@@ -138,6 +143,24 @@ const windowBackendMap = new WeakMap<Window, WindowBackend>();
 const windowTabListeners = new WeakMap<Window, TabListeners>();
 const windowDisposeHooks = new WeakMap<Window, Set<() => void>>();
 const windowDisposed = new WeakSet<Window>();
+const ownedWindows = new Set<Window>();
+
+function windowIcon(icon: AppIdentityIcon | undefined): Icon | undefined {
+  if (!icon || process.platform !== "win32") return undefined;
+  const { rgba, width, height } = icon;
+  if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width < 1 || height < 1 || rgba.length !== width * height * 4) {
+    throw new RangeError("sweetview: identity icon dimensions do not match its RGBA data");
+  }
+  const size = Math.max(width, height);
+  if (width === height) return { windows: { ico: icoFromRgba(size, rgba) } };
+  const square = new Uint8Array(size * size * 4);
+  const x = Math.floor((size - width) / 2);
+  const y = Math.floor((size - height) / 2);
+  for (let row = 0; row < height; row++) {
+    square.set(rgba.subarray(row * width * 4, (row + 1) * width * 4), ((y + row) * size + x) * 4);
+  }
+  return { windows: { ico: icoFromRgba(size, square) } };
+}
 
 /** Internal metadata read by WebView.attach / tabs coordinator. */
 export function getWindowMeta(win: Window): WindowMeta {
@@ -239,26 +262,32 @@ export class Window {
       const tabs = options.tabs ?? false;
       const appearance = options.appearance ?? "system";
       this.#meta = {
-        title: options.title ?? "",
+        title: options.title ?? options.identity?.appName ?? "",
         frame,
         resizable,
         transparent,
         tabs,
         appearance,
-        icon: options.icon,
+        icon: options.icon ?? windowIcon(options.identity?.icon),
         minWidth: options.minWidth,
         minHeight: options.minHeight,
         owned: true,
       };
-      this.#inner = impl().createWindow({ ...options, frame, resizable, transparent, tabs, appearance });
+      this.#inner = impl().createWindow({
+        ...options, frame, resizable, transparent, tabs, appearance,
+        title: this.#meta.title,
+        icon: this.#meta.icon,
+      });
       this.#inner.setOwnerDispose?.(() => this.dispose());
       this.handle = this.#inner.handle;
       if (options.onResize) this.onResize(options.onResize);
       if (options.onMove) this.onMove(options.onMove);
       if (options.onClose) this.onClose(options.onClose);
+      if (options.onFileDrop) this.onFileDrop(options.onFileDrop);
       if (options.onNewTab) this.onNewTab(options.onNewTab);
       if (options.onTabSelect) this.onTabSelect(options.onTabSelect);
       if (options.onTabClose) this.onTabClose(options.onTabClose);
+      ownedWindows.add(this);
     }
     windowMetaMap.set(this, this.#meta);
     windowBackendMap.set(this, this.#inner);
@@ -278,6 +307,11 @@ export class Window {
       owned: false,
     };
     return new Window({ [INTERNAL_CONSTRUCT]: { inner, meta } } as unknown as WindowOptions);
+  }
+
+  /** Visible owned windows, including minimized windows. */
+  static visibleWindows(): Window[] {
+    return [...ownedWindows].filter((win) => win.isVisible());
   }
 
   // Visibility
@@ -356,6 +390,10 @@ export class Window {
   onClose(handler: () => void): () => void {
     return this.#inner.onClose(handler);
   }
+  onFileDrop(handler: (paths: string[]) => void): () => void {
+    if (windowDisposed.has(this)) return () => {};
+    return this.#inner.onFileDrop(handler);
+  }
   onNewTab(handler: () => void): () => void {
     this.#tabListeners.newTab.add(handler);
     return () => this.#tabListeners.newTab.delete(handler);
@@ -373,6 +411,7 @@ export class Window {
   dispose(): void {
     if (windowDisposed.has(this)) return;
     windowDisposed.add(this);
+    ownedWindows.delete(this);
     const hooks = windowDisposeHooks.get(this);
     if (hooks) {
       windowDisposeHooks.delete(this);
@@ -393,4 +432,16 @@ export class Window {
 
 export function createWindow(options?: WindowOptions): Window {
   return new Window(options);
+}
+
+/** Closes secondary windows normally and hides the last visible window. */
+export function closeToTrayOnLastWindow(win: Window, onHide?: (win: Window) => void): () => void {
+  return win.onClose(() => {
+    if (Window.visibleWindows().some((other) => other !== win)) {
+      win.dispose();
+    } else {
+      win.hide();
+      onHide?.(win);
+    }
+  });
 }

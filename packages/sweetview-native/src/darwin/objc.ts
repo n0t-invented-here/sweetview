@@ -18,6 +18,7 @@ const objc = dlopen("/usr/lib/libobjc.A.dylib", {
   objc_getClass: { args: [FFIType.ptr], returns: FFIType.u64 },
   sel_registerName: { args: [FFIType.ptr], returns: FFIType.u64 },
   objc_msgSend: { args: [FFIType.u64, FFIType.u64], returns: FFIType.u64 },
+  objc_msgSendSuper: { args: [FFIType.ptr, FFIType.u64, FFIType.u64], returns: FFIType.void },
   objc_allocateClassPair: { args: [FFIType.u64, FFIType.ptr, FFIType.u64], returns: FFIType.u64 },
   objc_registerClassPair: { args: [FFIType.u64], returns: FFIType.void },
   class_addMethod: { args: [FFIType.u64, FFIType.u64, FFIType.ptr, FFIType.ptr], returns: FFIType.bool },
@@ -26,6 +27,11 @@ const objc = dlopen("/usr/lib/libobjc.A.dylib", {
 export type Id = bigint;
 export const NIL: Id = 0n;
 export const asId = (v: bigint | number | null): Id => (v === null ? NIL : BigInt(v));
+
+/** Calls a superclass implementation of a void method with one object argument. */
+export function sendSuperPtr(receiver: Id, superclass: Id, selector: Id, arg: Id): void {
+  objc.symbols.objc_msgSendSuper(new BigUint64Array([receiver, superclass]), selector, arg);
+}
 
 // objc_msgSend is effectively variadic; one CFunction per signature we need.
 const msgSendPtr = (objc.symbols.objc_msgSend as unknown as { ptr: Pointer }).ptr;
@@ -44,6 +50,8 @@ export const sendBool = fn([ID, ID, FFIType.bool], FFIType.void);
 export const sendIntRetBool = fn([ID, ID, FFIType.i64], FFIType.bool);
 /** [obj sel:id] -> id */
 export const sendPtr = fn([ID, ID, ID], ID);
+/** [obj sel:id :id] -> BOOL */
+export const sendPtrPtrRetBool = fn([ID, ID, ID, ID], FFIType.bool);
 /** [obj sel:id :SEL :id] -> id  (initWithTitle:action:keyEquivalent:) */
 export const sendPtrSelPtr = fn([ID, ID, ID, ID, ID], ID);
 

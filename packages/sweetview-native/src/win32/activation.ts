@@ -76,7 +76,7 @@ let ipcWndProc: JSCallback | undefined;
 
 function ensureIpcClass(): void {
   if (ipcWndProc !== undefined) return;
-  ipcWndProc = new JSCallback(
+  const callback = new JSCallback(
     (hwnd: bigint, message: number, _wParam: bigint, lParam: bigint): bigint => {
       if (message === WM_COPYDATA && lParam !== 0n) {
         try {
@@ -101,18 +101,21 @@ function ensureIpcClass(): void {
     },
     { args: [FFIType.u64, FFIType.u32, FFIType.u64, FFIType.i64], returns: FFIType.i64 },
   );
-  if (ipcWndProc.ptr === null) throw new Error("sweetview: could not allocate singleInstance window procedure");
+  if (callback.ptr === null) throw new Error("sweetview: could not allocate singleInstance window procedure");
 
   const wc = new Uint8Array(WNDCLASSEXW_SIZE);
   const dv = new DataView(wc.buffer);
   const className = wstr(IPC_CLASS_NAME);
   dv.setUint32(0, WNDCLASSEXW_SIZE, true);
-  dv.setBigUint64(8, BigInt(ipcWndProc.ptr), true);
+  dv.setBigUint64(8, BigInt(callback.ptr), true);
   dv.setBigUint64(24, hInstance(), true);
   dv.setBigUint64(64, BigInt(ptr(className)), true);
   if (user32.RegisterClassExW(ptr(wc)) === 0) {
-    throw new Error(`sweetview: RegisterClassExW(${IPC_CLASS_NAME}) failed (${lastError()})`);
+    const error = lastError();
+    callback.close();
+    throw new Error(`sweetview: RegisterClassExW(${IPC_CLASS_NAME}) failed (${error})`);
   }
+  ipcWndProc = callback;
 }
 
 function safeId(appId: string): string {
@@ -162,9 +165,15 @@ export async function acquireSingleInstance(params: {
   if (lastError() === ERROR_ALREADY_EXISTS) {
     let handedOff = false;
     try {
-      const target = user32.FindWindowExW(HWND_MESSAGE, 0n, wstr(IPC_CLASS_NAME), wstr(windowTitle));
-      if (target !== 0n) {
-        handedOff = sendCopyData(target, params.payload);
+      const cls = wstr(IPC_CLASS_NAME);
+      const title = wstr(windowTitle);
+      for (let attempt = 0; attempt < 10; attempt++) {
+        if (attempt > 0) await Bun.sleep(25);
+        const target = user32.FindWindowExW(HWND_MESSAGE, 0n, cls, title);
+        if (target !== 0n) {
+          handedOff = sendCopyData(target, params.payload);
+          break;
+        }
       }
     } finally {
       kernel32.CloseHandle(mutex);
@@ -176,7 +185,12 @@ export async function acquireSingleInstance(params: {
     };
   }
 
-  ensureIpcClass();
+  try {
+    ensureIpcClass();
+  } catch (err) {
+    kernel32.CloseHandle(mutex);
+    throw err;
+  }
   const hwnd = user32.CreateWindowExW(
     0,
     wstr(IPC_CLASS_NAME),
@@ -192,8 +206,9 @@ export async function acquireSingleInstance(params: {
     null,
   );
   if (hwnd === 0n) {
+    const error = lastError();
     kernel32.CloseHandle(mutex);
-    throw new Error(`sweetview: CreateWindowExW(${IPC_CLASS_NAME}) failed (${lastError()})`);
+    throw new Error(`sweetview: CreateWindowExW(${IPC_CLASS_NAME}) failed (${error})`);
   }
 
   handlersByHwnd.set(hwnd, params.onSecondInstance);

@@ -3,6 +3,7 @@ export { createTray, Tray, type TrayIcon, type TrayOptions } from "./tray";
 export { createNotifier, Notifier, type NotificationClick, type NotificationOptions, type NotifierOptions } from "./notifications";
 export { Screen, type ScreenInfo } from "./screen";
 export {
+  closeToTrayOnLastWindow,
   createWindow,
   Window,
   type Appearance,
@@ -18,6 +19,8 @@ export { convexHull, createHitRelay, flattenRegions, hitRegions, HitRelay, packR
 export { pickFolder } from "./folder-picker";
 export { setAppMenu, type AppMenuOptions } from "./app-menu";
 export { setAppIcon } from "./app-icon";
+export { Clipboard } from "./clipboard";
+export { readTextFile, readFileBytes, openFileHandle, readFileChunk, closeFileHandle, closeAllFileHandles } from "./fs";
 export { Menu, resolveMenu, type MenuItem, type MenuSource, type MenuTemplate } from "./menu";
 export {
   decodePng,

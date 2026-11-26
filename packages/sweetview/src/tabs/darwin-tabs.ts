@@ -7,7 +7,7 @@ import type { EventMap, MethodMap } from "@n1h/sweetview-ipc";
 import { NIL, type Id, sel, sendPtr, sendRectBool, sendRetBool } from "@n1h/sweetview-native/darwin/objc";
 import { fromCocoa, rectOf, toCocoa } from "@n1h/sweetview-native/darwin/screen";
 import { createWindowTabs, installTabMenus, pooled, type WindowTabs } from "@n1h/sweetview-native/darwin/tabs";
-import { bindDarwinTabGroup } from "@n1h/sweetview-native/darwin/window";
+import { bindDarwinTabGroup, subscribeDarwinFileDrop } from "@n1h/sweetview-native/darwin/window";
 import { Window, type Rect } from "@n1h/sweetview-native";
 import {
   emitWindowNewTab,
@@ -52,6 +52,7 @@ type MacTabRecord = {
   shown: boolean;
   closed: boolean;
   api: Tab<any, any>;
+  stopFileDrop?: () => void;
 };
 
 type PendingShow = {
@@ -71,6 +72,8 @@ type MacTabHost = {
   fireResize: (bounds: Rect) => void;
   fireMove: (bounds: Rect) => void;
   fireClose: () => boolean;
+  fireFileDrop: (paths: string[]) => void;
+  fileDropEnabled: boolean;
 };
 
 const hosts = new Map<Window, MacTabHost>();
@@ -78,6 +81,15 @@ const recordByNsWin = new Map<Id, MacTabRecord>();
 const tabRecordByApi = new WeakMap<object, MacTabRecord>();
 let nextGroupId = 1;
 let nextTabId = 1;
+
+function syncFileDrop(record: MacTabRecord): void {
+  if (record.host.fileDropEnabled && !record.closed) {
+    record.stopFileDrop ??= subscribeDarwinFileDrop(record.nsWin, (paths) => record.host.fireFileDrop(paths));
+  } else {
+    record.stopFileDrop?.();
+    record.stopFileDrop = undefined;
+  }
+}
 
 function disposeMacHost(host: MacTabHost): void {
   if (host.closed) return;
@@ -89,6 +101,7 @@ function disposeMacHost(host: MacTabHost): void {
     recordByNsWin.delete(nsWin);
     if (!rec.closed) {
       rec.closed = true;
+      syncFileDrop(rec);
       detachPage(nsWin);
       rec.webview.dispose();
     }
@@ -115,6 +128,7 @@ function flushPendingShow(host: MacTabHost): void {
 
 function bindHostToWindow(window: Window, group: WindowTabs, ownsGroup: boolean, initialBounds: Rect): MacTabHost {
   const tabs = new Map<Id, MacTabRecord>();
+  let fileDropEnabled = false;
   let host!: MacTabHost;
   const activeWin = (): Id | undefined => {
     const cur = group.current();
@@ -173,6 +187,11 @@ function bindHostToWindow(window: Window, group: WindowTabs, ownsGroup: boolean,
     dispose() {
       disposeMacHost(host);
     },
+    setFileDropEnabled(enabled) {
+      fileDropEnabled = enabled;
+      if (host) host.fileDropEnabled = enabled;
+      for (const record of tabs.values()) syncFileDrop(record);
+    },
   });
 
   host = {
@@ -186,6 +205,8 @@ function bindHostToWindow(window: Window, group: WindowTabs, ownsGroup: boolean,
     fireResize: hooks.fireResize,
     fireMove: hooks.fireMove,
     fireClose: hooks.fireClose,
+    fireFileDrop: hooks.fireFileDrop,
+    fileDropEnabled,
   };
   hosts.set(window, host);
   onWindowDispose(window, () => disposeMacHost(host));
@@ -230,6 +251,10 @@ function ensureHost(window: Window): MacTabHost {
       const rec = recordByNsWin.get(nsWin);
       if (rec && !rec.host.closed) rec.host.fireMove(pooled(() => fromCocoa(rectOf(nsWin, "frame"))));
     },
+    onCloseRequest: (nsWin) => {
+      const host = recordByNsWin.get(nsWin)?.host;
+      return Boolean(host && host.tabs.size === 1 && host.fireClose());
+    },
     onClosed: (nsWin) => {
       const rec = recordByNsWin.get(nsWin);
       recordByNsWin.delete(nsWin);
@@ -239,6 +264,7 @@ function ensureHost(window: Window): MacTabHost {
       tabHost.tabs.delete(nsWin);
       if (!rec.closed) {
         rec.closed = true;
+        syncFileDrop(rec);
         rec.webview.dispose();
         emitWindowTabClose(tabHost.window, rec.api);
       }
@@ -304,6 +330,7 @@ export const darwinTabsDriver: TabsDriver = {
           tabHost.group.close(nsWin);
         } else {
           record.closed = true;
+          syncFileDrop(record);
           tabHost.tabs.delete(nsWin);
           recordByNsWin.delete(nsWin);
           const idx = tabHost.pendingShow.findIndex((p) => p.nsWin === nsWin);
@@ -336,6 +363,7 @@ export const darwinTabsDriver: TabsDriver = {
         fromHost.tabs.delete(nsWin);
         detachedHost.tabs.set(nsWin, record);
         record.host = detachedHost;
+        syncFileDrop(record);
         return detachedWin;
       },
       dispose() {
@@ -346,6 +374,7 @@ export const darwinTabsDriver: TabsDriver = {
     tabRecordByApi.set(api, record);
     recordByNsWin.set(nsWin, record);
     host.tabs.set(nsWin, record);
+    syncFileDrop(record);
 
     if (options.url) {
       webview.raw.bind("__sweetviewTabTitle", (t: unknown) => {
@@ -381,6 +410,7 @@ export const darwinTabsDriver: TabsDriver = {
         h.tabs.delete(nsWin);
         target.tabs.set(nsWin, rec);
         rec.host = target;
+        syncFileDrop(rec);
       }
       h.closed = true;
       hosts.delete(win);

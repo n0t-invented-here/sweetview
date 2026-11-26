@@ -12,6 +12,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import type { AppIdentity } from "./app-identity";
 
 /**
  * The per-user folder an app keeps its own files in: `%APPDATA%\<app>` on
@@ -30,7 +31,9 @@ export function appDataDir(app: string): string {
 
 export type SettingsStoreOptions<T> = {
   /** The app's folder name under the app-data folder (`appDataDir`). */
-  app: string;
+  app?: string;
+  /** Identity whose slug supplies the app's folder name when app is omitted. */
+  identity?: AppIdentity;
   /** The file inside it. Default `settings.json`. */
   file?: string;
   /** The folder itself, instead of `appDataDir(app)`; for tests, or an app that keeps settings elsewhere. */
@@ -54,7 +57,9 @@ export class SettingsStore<T extends object> {
   readonly #sanitize: (input: unknown) => T;
 
   constructor(options: SettingsStoreOptions<T>) {
-    this.path = join(options.dir ?? appDataDir(options.app), options.file ?? "settings.json");
+    const app = options.app ?? options.identity?.slug;
+    if (app === undefined) throw new Error("sweetview: SettingsStore requires app or identity");
+    this.path = join(options.dir ?? appDataDir(app), options.file ?? "settings.json");
     this.#defaults = options.defaults;
     const isPlainObject = (input: unknown): input is Partial<T> => typeof input === "object" && input !== null && !Array.isArray(input);
     this.#sanitize = options.sanitize ?? ((input: unknown): T => ({ ...options.defaults, ...(isPlainObject(input) ? input : {}) }));

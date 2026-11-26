@@ -86,6 +86,30 @@ describe.if(onWindows)("win32 URL schemes & single-instance", () => {
     expect(() => registerUrlScheme("123bad scheme!")).toThrow(/invalid URL scheme/);
   });
 
+  test("singleInstance retries when the mutex exists before its message window is discoverable", async () => {
+    const { HWND_MESSAGE, user32, wstr } = await import("./api");
+    const appId = `dev.sweetview.test.race-${process.pid}-${Date.now()}`;
+    const title = wstr(`sweetview.instance.${appId}`);
+    const windowClass = wstr("SweetviewSingleInstanceWindow");
+    const received: SecondInstanceEvent[] = [];
+    const primary = await singleInstance({ appId, args: [], onSecondInstance: (event) => received.push(event) });
+    try {
+      const hwnd = user32.FindWindowExW(HWND_MESSAGE, 0n, windowClass, title);
+      expect(hwnd).not.toBe(0n);
+      user32.SetWindowTextW(hwnd, wstr("not yet discoverable"));
+      expect(user32.FindWindowExW(HWND_MESSAGE, 0n, windowClass, title)).toBe(0n);
+      const pending = singleInstance({ appId, args: ["--raced"] });
+      user32.SetWindowTextW(hwnd, title);
+      const secondary = await pending;
+      secondary.dispose();
+      expect(secondary.isPrimary).toBe(false);
+      expect(secondary.handedOff).toBe(true);
+      expect(received[0]?.args).toEqual(["--raced"]);
+    } finally {
+      primary.dispose();
+    }
+  });
+
   test("singleInstance hands off args and URL from a real secondary process via WM_COPYDATA", async () => {
     const appId = `dev.sweetview.test.single-${process.pid}-${Date.now()}`;
     const received: SecondInstanceEvent[] = [];

@@ -1,4 +1,4 @@
-export { discardQuit } from "./event-loop";
+export { discardQuit, scheduleNativeTimeout } from "./event-loop";
 export { emitActivationUrl } from "./activation";
 export {
   emitWindowNewTab,

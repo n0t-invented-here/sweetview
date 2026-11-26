@@ -19,6 +19,7 @@ type Backend = {
   pumpEvents(): boolean;
   discardQuit(): void;
   setActivationPolicy(policy: ActivationPolicy): void;
+  scheduleNativeTimeout(ms: number, fn: () => void): () => void;
 };
 const impl = backend<Backend>(
   () => require("./win32/event-loop"),
@@ -32,6 +33,14 @@ const impl = backend<Backend>(
  */
 export function pumpEvents(): boolean {
   return impl().pumpEvents();
+}
+
+/** Runs once on the native UI loop. The returned cancellation function is idempotent. */
+export function scheduleNativeTimeout(ms: number, fn: () => void): () => void {
+  if (!Number.isFinite(ms) || ms <= 0 || ms > 0x7fff_ffff) {
+    throw new RangeError(`sweetview: native timeout must be greater than 0 and at most 2147483647 ms, got ${ms}`);
+  }
+  return impl().scheduleNativeTimeout(ms, fn);
 }
 
 /**

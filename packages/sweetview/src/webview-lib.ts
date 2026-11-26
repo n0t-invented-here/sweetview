@@ -36,6 +36,7 @@ export type SetAsset = (w: Pointer, path: string, mime: string, data: Uint8Array
 export type WebviewCoreSymbols = {
   webview_terminate: (w: Pointer) => number;
   webview_run: (w: Pointer) => number;
+  webview_dispatch: (w: Pointer, fn: Pointer, arg: bigint) => number;
   webview_get_native_handle: (w: Pointer, kind: number) => Pointer | null;
 };
 
@@ -56,18 +57,21 @@ function entry(libPath: string): CachedLib {
   return c;
 }
 
-/** Cached core webview C symbols (`webview_terminate`, `webview_run`, `webview_get_native_handle`). */
+/** Cached core webview C symbols. */
 export function openWebviewCore(libPath: string): WebviewCoreSymbols {
   const c = entry(libPath);
   if (c.core) return c.core;
   const lib = dlopen(libPath, {
     webview_terminate: { args: [FFIType.ptr], returns: FFIType.i32 },
     webview_run: { args: [FFIType.ptr], returns: FFIType.i32 },
+    // The opaque void* argument carries an integer token and is never dereferenced.
+    webview_dispatch: { args: [FFIType.ptr, FFIType.ptr, FFIType.u64], returns: FFIType.i32 },
     webview_get_native_handle: { args: [FFIType.ptr, FFIType.i32], returns: FFIType.ptr },
   });
   c.core = {
     webview_terminate: lib.symbols.webview_terminate as (w: Pointer) => number,
     webview_run: lib.symbols.webview_run as (w: Pointer) => number,
+    webview_dispatch: lib.symbols.webview_dispatch as WebviewCoreSymbols["webview_dispatch"],
     webview_get_native_handle: lib.symbols.webview_get_native_handle as (w: Pointer, kind: number) => Pointer | null,
   };
   return c.core;

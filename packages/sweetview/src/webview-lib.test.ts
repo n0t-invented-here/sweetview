@@ -8,6 +8,7 @@ describe("webview-lib caching", () => {
     const core2 = openWebviewCore(libPath);
     expect(core1).toBe(core2);
     expect(typeof core1.webview_run).toBe("function");
+    expect(typeof core1.webview_dispatch).toBe("function");
     expect(typeof core1.webview_terminate).toBe("function");
     expect(typeof core1.webview_get_native_handle).toBe("function");
 

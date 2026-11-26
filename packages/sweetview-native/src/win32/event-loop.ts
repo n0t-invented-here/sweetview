@@ -4,7 +4,9 @@
 // keep working on the UI thread. The tray's hidden message window, SetTimer
 // and TrackPopupMenu all run from here.
 
-import { PM_REMOVE, WM_QUIT, user32 } from "./api";
+import { PM_REMOVE, WM_QUIT, WM_TIMER, lastError, user32 } from "./api";
+import { ensureWin32Init } from "./init";
+import { createMessageWindowRaw } from "./message-window";
 
 // MSG, x64: hwnd 8, message 4 (+4 padding), wParam 8, lParam 8, time 4, pt 8 (+4 padding)
 const MSG_SIZE = 48;
@@ -41,3 +43,29 @@ export function discardQuit(): void {
 
 // Windows has no Dock: a process with no visible window has no taskbar presence already.
 export function setActivationPolicy(): void {}
+
+let nextTimerId = 0n;
+
+export function scheduleNativeTimeout(ms: number, fn: () => void): () => void {
+  ensureWin32Init();
+  const id = ++nextTimerId;
+  const window = createMessageWindowRaw((message, wParam) => {
+    if (active && message === WM_TIMER && wParam === id) {
+      cancel();
+      fn();
+    }
+  });
+  let active = true;
+  function cancel(): void {
+    if (!active) return;
+    active = false;
+    user32.KillTimer(window.hwnd, id);
+    window.destroy();
+  }
+  if (user32.SetTimer(window.hwnd, id, Math.ceil(ms), null) === 0n) {
+    const error = lastError();
+    cancel();
+    throw new Error(`sweetview: SetTimer failed (${error})`);
+  }
+  return cancel;
+}

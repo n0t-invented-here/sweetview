@@ -22,6 +22,7 @@ import {
   SW_RESTORE,
   SW_SHOW,
   WM_CLOSE,
+  WM_DROPFILES,
   WM_GETMINMAXINFO,
   WM_MOVE,
   WM_NCDESTROY,
@@ -96,6 +97,7 @@ export type FrameWindowOptions = {
   onCloseRequest(): void;
   onActivate(active: boolean): void;
   onResized(): void;
+  onFileDrop?(drop: bigint): void;
   onMoved(): void;
 };
 
@@ -218,6 +220,10 @@ function frameProc(hwnd: bigint, message: number, wParam: bigint, lParam: bigint
       break;
     case WM_CLOSE:
       if (frame.live) frame.options.onCloseRequest();
+      return 0n;
+    case WM_DROPFILES:
+      if (!frame.options.onFileDrop) break;
+      frame.options.onFileDrop(wParam);
       return 0n;
     case WM_NCDESTROY:
       frames.delete(hwnd);

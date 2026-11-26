@@ -151,7 +151,7 @@ export function _resetActivationForTest(): void {
 
 /**
  * Acquires the single-instance lock for `appId` (or `identity.appId`).
- * - Primary instance: installs the native handoff listener (Windows `WM_COPYDATA`, macOS Unix socket) and ingests any cold-launch URL in argv into the `onOpenUrl` pipeline.
+ * - Primary instance: installs the native handoff listener (Windows `WM_COPYDATA`, macOS `CFMessagePort`) and ingests any cold-launch URL in argv into the `onOpenUrl` pipeline.
  * - Secondary instance: forwards `{ args, cwd, url }` to the primary instance and returns `{ isPrimary: false, handedOff }`.
  */
 export async function singleInstance(options: SingleInstanceOptions): Promise<SingleInstanceLock> {

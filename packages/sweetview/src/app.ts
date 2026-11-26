@@ -11,12 +11,12 @@ import { SizeHint, Webview as RawWebview } from "@n1h/sweetview-webview-bun";
 import { assetMime, indexHtml } from "./html";
 import { createFrameAssembler, type AnyEvent, type EventMap, type MethodMap, type WireFrame } from "@n1h/sweetview-ipc";
 import type { InitMessage } from "./messages";
-import { Window, quitEventLoop, runEventLoop, type Rect, type TabHandle, type WindowOptions } from "@n1h/sweetview-native";
-import { discardQuit, getWindowMeta, preserveWindowGeometry } from "@n1h/sweetview-native/internal";
+import { Window, quitEventLoop, runEventLoop, signalReady, type Rect, type TabHandle, type WindowOptions } from "@n1h/sweetview-native";
+import { discardQuit, getWindowMeta, isWindowDisposed, onWindowDispose, preserveWindowGeometry, scheduleNativeTimeout } from "@n1h/sweetview-native/internal";
 import { Ring } from "./ring";
 import { ASSET_ORIGIN, backgroundColorCall, openWebviewCore, setAssetCall, webviewLibPath } from "./webview-lib";
 
-/** Methods answered synchronously on the UI thread instead of by the worker (native dialogs, window state). */
+/** Methods that return synchronously on the UI thread. */
 export type UiMethods<M extends MethodMap> = { [K in keyof M & string]?: (params: M[K][0]) => M[K][1] };
 
 /**
@@ -44,6 +44,16 @@ export type WebViewOptions<M extends MethodMap = MethodMap> = {
   debug?: boolean;
   /** Synchronous UI-thread method handlers. */
   uiMethods?: UiMethods<M>;
+  /** Synchronous handlers run on the next native UI tick, for operations such as modal dialogs. */
+  deferredUiMethods?: UiMethods<M>;
+  /** Show the window on the ready handshake or on startup timeout. Defaults to false. */
+  showOnReady?: boolean;
+  /** Opt-in native startup watchdog. A positive value enables it. */
+  readyTimeoutMs?: number;
+  onReady?: () => void;
+  onReadyTimeout?: () => void;
+  /** Replaces the page on startup timeout. Defaults to a built-in error page. */
+  readyFallbackHtml?: string;
   /** Ring capacity in bytes for worker -> UI frames. Default 1 MiB. */
   ringBytes?: number;
 };
@@ -138,6 +148,37 @@ const LS = String.fromCharCode(0x2028);
 const PS = String.fromCharCode(0x2029);
 const asJsLiteral = (json: string) => json.replaceAll(LS, "\\u2028").replaceAll(PS, "\\u2029");
 
+const startupErrorHtml = `<!doctype html>
+<html lang="en"><meta charset="utf-8"><title>Startup timed out</title>
+<style>body{color-scheme:light dark;font:1rem system-ui;margin:3rem;max-width:36rem}</style>
+<h1>The app took too long to start</h1><p>Close this window and reopen the app to try again.</p></html>`;
+
+type UiHandler = (params: unknown) => unknown;
+type UiJob = { seq: string; method: string; fn: UiHandler; params: unknown };
+
+let nextDispatchId = 0n;
+const pendingUiDispatches = new Map<bigint, () => void>();
+// Cocoa may invoke an already-posted dispatch after the webview is gone. The
+// native trampoline stays valid while shutdown drops the per-view queue and
+// its dispatch token.
+let deferDrain: JSCallback | undefined;
+function deferredDrainPointer(): Pointer {
+  deferDrain ??= new JSCallback(
+    (_webview, id: bigint) => {
+      const run = pendingUiDispatches.get(id);
+      pendingUiDispatches.delete(id);
+      try {
+        run?.();
+      } catch (err) {
+        console.error("sweetview: deferred UI dispatch failed:", err);
+      }
+    },
+    { args: [FFIType.ptr, FFIType.u64], returns: FFIType.void },
+  );
+  if (!deferDrain.ptr) throw new Error("sweetview: could not allocate the deferred UI dispatcher");
+  return deferDrain.ptr;
+}
+
 export class WebView<M extends MethodMap = MethodMap, E extends EventMap = EventMap> {
   readonly raw: RawWebview;
   readonly window: Window;
@@ -178,6 +219,13 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
         `sweetview: ${process.platform} is not supported (win32 and darwin are): the native module has no backend for it and the webview library does not serve assets there`,
       );
     }
+    const uiMethods = (options.uiMethods ?? {}) as Record<string, UiHandler | undefined>;
+    const deferredUiMethods = (options.deferredUiMethods ?? {}) as Record<string, UiHandler | undefined>;
+    for (const name of Object.keys(deferredUiMethods)) {
+      if (Object.hasOwn(uiMethods, name)) {
+        throw new Error(`sweetview: ${name} is defined in both uiMethods and deferredUiMethods`);
+      }
+    }
     const libPath = await webviewLibPath();
     const meta = getWindowMeta(window);
     const scale = window.scale() || 1;
@@ -208,6 +256,7 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
     }
 
     const host = window.handle;
+    if (isWindowDisposed(window)) throw new Error("sweetview: cannot attach WebView to a disposed window");
     if (host === null || host === 0 || host === 0n) {
       throw new Error("sweetview: cannot attach WebView to a window with a NULL handle");
     }
@@ -303,37 +352,126 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
       }
 
       const init: InitMessage = { kind: "init", ring: sab, webviewHandle: Number(raw.unsafeHandle), drainCallbackPtr: Number(drain.ptr), libPath };
-      worker?.postMessage(init);
-      if (worker) worker.onerror = (e) => console.error("sweetview: the worker failed:", e.message ?? e);
-
       let down = false;
+      let isReady = false;
+      let cancelWatchdog: (() => void) | undefined;
+      let deferScheduled = false;
+      let dispatchId: bigint | undefined;
+      const queue: UiJob[] = [];
+      const cancelStartup = () => {
+        cancelWatchdog?.();
+        cancelWatchdog = undefined;
+      };
+      const clearDispatches = () => {
+        queue.length = 0;
+        if (dispatchId !== undefined) pendingUiDispatches.delete(dispatchId);
+        dispatchId = undefined;
+      };
+      const unsubscribeWindowDispose = onWindowDispose(window, () => {
+        cancelStartup();
+        clearDispatches();
+      });
       const shutdown = () => {
         if (down) return;
         down = true;
+        unsubscribeWindowDispose();
+        cancelStartup();
+        clearDispatches();
         assembler.clear();
         worker?.terminate();
         drain.close();
         if (raw.unsafeHandle !== null) raw.destroy();
       };
 
-      try {
-        const uiMethods = (options.uiMethods ?? {}) as Record<string, ((params: unknown) => unknown) | undefined>;
-        raw.bindRaw("__sweetview_rpc", (seq, req) => {
-          const [method, params] = JSON.parse(req) as [string, unknown];
-          const local = Object.hasOwn(uiMethods, method) ? uiMethods[method] : undefined;
-          if (!local) {
-            if (worker) worker.postMessage({ kind: "call", seq, method, params });
-            else raw.return(seq, 1, JSON.stringify({ message: `${method}: this window has no worker and no UI-thread method of that name` }));
-            return;
+      const isLive = () => !down && !isWindowDisposed(window) && raw.unsafeHandle !== null;
+      const respond = (seq: string, status: number, value: unknown) => {
+        if (isLive()) raw.return(seq, status, JSON.stringify(value ?? null));
+      };
+      const replyError = (seq: string, error: unknown) => {
+        respond(seq, 1, { message: error instanceof Error ? error.message : String(error) });
+      };
+      const invoke = ({ seq, method, fn, params }: UiJob) => {
+        try {
+          const result = fn(params);
+          if ((typeof result === "object" && result !== null || typeof result === "function")
+            && typeof (result as { then?: unknown }).then === "function") {
+            // A rejected async handler must not become an unhandled rejection.
+            void Promise.resolve(result).catch(() => {});
+            throw new Error(`${method}: a UI-thread method must return synchronously; this one returned a Promise`);
           }
+          respond(seq, 0, result);
+        } catch (err) {
+          replyError(seq, err);
+        }
+      };
+      const scheduleDeferred = () => {
+        if (!isLive() || deferScheduled || queue.length === 0) return;
+        deferScheduled = true;
+        const id = ++nextDispatchId;
+        dispatchId = id;
+        pendingUiDispatches.set(id, () => {
+          dispatchId = undefined;
           try {
-            const result = local(params);
-            if (result !== null && typeof result === "object" && typeof (result as { then?: unknown }).then === "function") {
-              throw new Error(`${method}: a UI-thread method must return synchronously; this one returned a Promise`);
+            // Keep the scheduled flag set during handlers. A modal loop may
+            // pump more RPC messages while the current dialog is open.
+            for (const job of queue.splice(0)) {
+              if (!isLive()) break;
+              invoke(job);
             }
-            raw.return(seq, 0, JSON.stringify(result ?? null));
+          } finally {
+            deferScheduled = false;
+            scheduleDeferred();
+          }
+        });
+        try {
+          const error = core.webview_dispatch(handle(), deferredDrainPointer(), id);
+          if (error !== 0) throw new Error(`sweetview: webview_dispatch failed (${error})`);
+        } catch (err) {
+          pendingUiDispatches.delete(id);
+          dispatchId = undefined;
+          deferScheduled = false;
+          for (const { seq } of queue.splice(0)) replyError(seq, err);
+        }
+      };
+      const showWhenReady = () => {
+        if (isLive() && options.showOnReady && !window.isVisible()) window.show();
+      };
+      const callReadyHook = (name: string, hook: (() => void) | undefined) => {
+        try {
+          hook?.();
+        } catch (err) {
+          console.error(`sweetview: ${name} handler threw:`, err);
+        }
+      };
+
+      try {
+        worker?.postMessage(init);
+        if (worker) worker.onerror = (e) => console.error("sweetview: the worker failed:", e.message ?? e);
+        raw.bindRaw("__sweetview_rpc", (seq, req) => {
+          if (!isLive()) return;
+          try {
+            const [method, params] = JSON.parse(req) as [string, unknown];
+            if (method === "__sweetview.ready") {
+              if (!isReady) {
+                isReady = true;
+                cancelStartup();
+                signalReady();
+                callReadyHook("onReady", options.onReady);
+                showWhenReady();
+              }
+              respond(seq, 0, null);
+              return;
+            }
+            const local = Object.hasOwn(uiMethods, method) ? uiMethods[method] : undefined;
+            const deferred = Object.hasOwn(deferredUiMethods, method) ? deferredUiMethods[method] : undefined;
+            if (local) invoke({ seq, method, fn: local, params });
+            else if (deferred) {
+              queue.push({ seq, method, fn: deferred, params });
+              scheduleDeferred();
+            } else if (worker) worker.postMessage({ kind: "call", seq, method, params });
+            else replyError(seq, `${method}: this window has no worker and no UI-thread method of that name`);
           } catch (err) {
-            raw.return(seq, 1, JSON.stringify({ message: err instanceof Error ? err.message : String(err) }));
+            replyError(seq, err);
           }
         });
 
@@ -345,14 +483,25 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
             throw new Error("sweetview: this webview library has no webview_set_asset; it needs the library @n1h/sweetview-webview-bun ships (is WEBVIEW_PATH pointing at a stock one?)");
           }
           for (const [path, source] of Object.entries(assets)) {
-            const err = setAsset(handle(), path, assetMime(path), await assetBytes(source));
+            const bytes = await assetBytes(source);
+            if (!isLive()) throw new Error("sweetview: the window was disposed during WebView.attach");
+            const err = setAsset(handle(), path, assetMime(path), bytes);
             if (err !== 0) throw new Error(`sweetview: webview_set_asset(${path}) failed (${err})`);
           }
           raw.navigate(`${ASSET_ORIGIN}/${index}`);
         }
+        if (isLive() && !isReady && options.readyTimeoutMs !== undefined && options.readyTimeoutMs > 0) {
+          cancelWatchdog = scheduleNativeTimeout(options.readyTimeoutMs, () => {
+            cancelWatchdog = undefined;
+            if (!isLive() || isReady) return;
+            raw.setHTML(options.readyFallbackHtml ?? startupErrorHtml);
+            callReadyHook("onReadyTimeout", options.onReadyTimeout);
+            showWhenReady();
+          });
+        }
       } catch (err) {
-        worker?.terminate();
-        drain.close();
+        shutdown();
+        discardQuit();
         throw err;
       }
 
@@ -370,8 +519,12 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
           return () => taps.delete(tap);
         },
         run() {
-          core.webview_run(handle());
-          shutdown();
+          try {
+            core.webview_run(handle());
+          } finally {
+            shutdown();
+            discardQuit();
+          }
         },
         quit,
         dispose() {
@@ -433,13 +586,9 @@ export async function createApp<M extends MethodMap = MethodMap, E extends Event
   const window = new Window(options);
 
   if (options.tabs) {
-    let unsubAutoQuit: (() => void) | undefined;
-    if (!options.onClose) {
-      unsubAutoQuit = window.onClose(() => {
-        window.dispose();
-        quitEventLoop();
-      });
-    }
+    const unsubAutoQuit = options.onClose ? undefined : onWindowDispose(window, () => {
+      if (Window.visibleWindows().length === 0) quitEventLoop();
+    });
     let disposed = false;
     return {
       window,
@@ -477,14 +626,10 @@ export async function createApp<M extends MethodMap = MethodMap, E extends Event
 
   try {
     const webview = await WebView.attach<M, E>(window, options);
-    // If the user did not intercept onClose, closing the main window exits app.run() cleanly.
-    let unsubAutoQuit: (() => void) | undefined;
-    if (!options.onClose) {
-      unsubAutoQuit = window.onClose(() => {
-        window.dispose();
-        webview.quit();
-      });
-    }
+    // Quit after disposal so a close handler can still hide the window.
+    const unsubAutoQuit = options.onClose ? undefined : onWindowDispose(window, () => {
+      if (Window.visibleWindows().length === 0) webview.quit();
+    });
     let disposed = false;
     return {
       window,

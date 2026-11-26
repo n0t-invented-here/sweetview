@@ -31,6 +31,7 @@ import {
   sharedApp,
 } from "./objc";
 import { toCocoa } from "./screen";
+import { darwinTabWindowClass, setDarwinTabCloseRequest } from "./window";
 
 const NSWindowStyleMaskTitled = 1n;
 const NSWindowStyleMaskClosable = 2n;
@@ -52,6 +53,7 @@ export type WindowTabsOptions = {
   onSelected?(window: Id): void;
   onResized?(window: Id): void;
   onMoved?(window: Id): void;
+  onCloseRequest?(window: Id): boolean;
   onClosed(window: Id): void;
 };
 
@@ -152,6 +154,7 @@ export function createWindowTabs(options: WindowTabsOptions): WindowTabs {
 
   const stopObserving = (window: Id) => {
     hooksByWindow.delete(window);
+    setDarwinTabCloseRequest(window, undefined);
     for (const [name] of OBSERVED) {
       sendPtrPtrPtrVoid(notifications(), sel("removeObserver:name:object:"), responder, nsString(name), window);
     }
@@ -194,6 +197,7 @@ export function createWindowTabs(options: WindowTabsOptions): WindowTabs {
 
   const observe = (window: Id) => {
     hooksByWindow.set(window, hooks);
+    if (options.onCloseRequest) setDarwinTabCloseRequest(window, () => options.onCloseRequest!(window));
     for (const [name, selector] of OBSERVED) {
       sendPtrSelPtrPtrVoid(notifications(), sel("addObserver:selector:name:object:"), responder, sel(selector), nsString(name), window);
     }
@@ -211,7 +215,7 @@ export function createWindowTabs(options: WindowTabsOptions): WindowTabs {
         const style = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable;
         const c = options.bounds ? toCocoa(options.bounds) : { x: 0, y: 0, w: options.width, h: options.height };
         const window = asId(
-          sendRectUIntUIntBool(allocRaw("NSWindow"), sel("initWithContentRect:styleMask:backing:defer:"), c.x, c.y, c.w, c.h, style, NSBackingStoreBuffered, false),
+          sendRectUIntUIntBool(asId(send(darwinTabWindowClass(), sel("alloc"))), sel("initWithContentRect:styleMask:backing:defer:"), c.x, c.y, c.w, c.h, style, NSBackingStoreBuffered, false),
         );
         if (window === NIL) throw new Error("sweetview: NSWindow init failed");
         sendBool(window, sel("setReleasedWhenClosed:"), false);

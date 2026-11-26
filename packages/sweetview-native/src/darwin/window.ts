@@ -23,6 +23,7 @@ import {
   class_addMethod,
   cls,
   cstr,
+  jsString,
   makeTarget,
   nsString,
   objc_allocateClassPair,
@@ -37,6 +38,7 @@ import {
   sendF64PtrSelPtrBool,
   sendF64Void,
   sendInt,
+  sendIntRetBool,
   sendIntArg,
   sendPoint,
   sendPtr,
@@ -46,6 +48,7 @@ import {
   sendRectUIntUIntBool,
   sendRetBool,
   sendSize,
+  sendSuperPtr,
   sendUIntArg,
   sendUIntRetPtr,
   sharedApp,
@@ -81,6 +84,7 @@ type EventBucket = {
   resize: Set<(bounds: Rect) => void>;
   move: Set<(bounds: Rect) => void>;
   close: Set<() => void>;
+  fileDrop: Set<(paths: string[]) => void>;
 };
 
 const eventsByWin = new Map<Id, EventBucket>();
@@ -90,10 +94,60 @@ const ignoring = new Map<Id, boolean>();
 function bucketFor(win: Id): EventBucket {
   let b = eventsByWin.get(win);
   if (!b) {
-    b = { resize: new Set(), move: new Set(), close: new Set() };
+    b = { resize: new Set(), move: new Set(), close: new Set(), fileDrop: new Set() };
     eventsByWin.set(win, b);
   }
   return b;
+}
+
+const fileUrlType = () => nsString("public.file-url");
+
+function deliverFileDrop(listeners: Set<(paths: string[]) => void>, paths: string[]): void {
+  for (const handler of [...listeners]) {
+    try {
+      handler(paths);
+    } catch (err) {
+      console.error("sweetview: onFileDrop handler threw:", err);
+    }
+  }
+}
+
+function performFileDrop(win: Id, sender: Id): boolean {
+  const listeners = eventsByWin.get(win)?.fileDrop;
+  if (!listeners?.size) return false;
+  const pasteboard = asId(send(sender, sel("draggingPasteboard")));
+  const items = asId(send(pasteboard, sel("pasteboardItems")));
+  const count = asId(send(items, sel("count")));
+  const type = fileUrlType();
+  const paths: string[] = [];
+  for (let index = 0n; index < count; index++) {
+    const item = asId(sendUIntRetPtr(items, sel("objectAtIndex:"), index));
+    const urlString = asId(sendPtr(item, sel("stringForType:"), type));
+    if (urlString === NIL) continue;
+    const url = asId(sendPtr(cls("NSURL"), sel("URLWithString:"), urlString));
+    if (!sendRetBool(url, sel("isFileURL"))) continue;
+    const fileUrl = asId(send(url, sel("filePathURL")));
+    const path = jsString(asId(send(fileUrl, sel("path"))));
+    if (path) paths.push(path);
+  }
+  if (paths.length === 0) return false;
+  deliverFileDrop(listeners, paths);
+  return true;
+}
+
+export function subscribeDarwinFileDrop(win: Id, handler: (paths: string[]) => void): () => void {
+  const b = bucketFor(win);
+  if (b.fileDrop.size === 0) {
+    const types = asId(sendPtr(cls("NSArray"), sel("arrayWithObject:"), fileUrlType()));
+    sendPtr(win, sel("registerForDraggedTypes:"), types);
+  }
+  const listener = (paths: string[]) => handler(paths);
+  b.fileDrop.add(listener);
+  return () => {
+    if (!b.fileDrop.delete(listener) || b.fileDrop.size > 0 || eventsByWin.get(win) !== b) return;
+    send(win, sel("unregisterDraggedTypes"));
+    if (b.resize.size === 0 && b.move.size === 0 && b.close.size === 0) eventsByWin.delete(win);
+  };
 }
 
 function fireResize(win: Id): void {
@@ -185,19 +239,32 @@ function externalCloseTarget(): Id {
 
 const OWNED_WINDOW_CLASS = "SweetviewWindow";
 const OWNED_KEY_WINDOW_CLASS = "SweetviewKeyWindow";
+const TAB_WINDOW_CLASS = "SweetviewTabWindow";
+const tabCloseRequests = new Map<Id, () => boolean>();
 
-function ensureWindowSubclass(className: string, allowKeyWhenBorderless: boolean): void {
-  if (asId(objc_getClass(cstr(className))) !== NIL) return;
-  const klass = asId(objc_allocateClassPair(cls("NSWindow"), cstr(className), 0n));
+export function setDarwinTabCloseRequest(win: Id, request: (() => boolean) | undefined): void {
+  if (request) tabCloseRequests.set(win, request);
+  else tabCloseRequests.delete(win);
+}
+
+function ensureWindowSubclass(className: string, allowKeyWhenBorderless: boolean): Id {
+  const existing = asId(objc_getClass(cstr(className)));
+  if (existing !== NIL) return existing;
+  const superclass = cls("NSWindow");
+  const klass = asId(objc_allocateClassPair(superclass, cstr(className), 0n));
   if (klass === NIL) throw new Error(`sweetview: objc_allocateClassPair(${className}) failed`);
 
   const performCloseCb = new JSCallback(
-    (selfWin: bigint, _cmd: bigint, _sender: bigint) => {
+    (selfWin: bigint, selector: bigint, sender: bigint) => {
       try {
-        if (fireClose(selfWin)) return;
-        const onDispose = disposeByWin.get(selfWin);
-        if (onDispose) onDispose();
-        else send(selfWin, sel("close"));
+        if (className === TAB_WINDOW_CLASS) {
+          if (!tabCloseRequests.get(selfWin)?.()) sendSuperPtr(selfWin, superclass, selector, sender);
+        } else {
+          if (fireClose(selfWin)) return;
+          const onDispose = disposeByWin.get(selfWin);
+          if (onDispose) onDispose();
+          else send(selfWin, sel("close"));
+        }
       } catch (err) {
         console.error("sweetview: performClose: threw:", err);
       }
@@ -207,6 +274,35 @@ function ensureWindowSubclass(className: string, allowKeyWhenBorderless: boolean
   retainCallback(performCloseCb);
   if (!class_addMethod(klass, sel("performClose:"), performCloseCb.ptr, cstr("v@:@"))) {
     throw new Error(`sweetview: class_addMethod(${className}, performClose:) failed`);
+  }
+
+  const enter = new JSCallback(
+    (win: bigint) => eventsByWin.get(win)?.fileDrop.size ? 1n : 0n,
+    { args: [ID, ID, ID], returns: FFIType.u64 },
+  );
+  const drop = new JSCallback(
+    (win: bigint, _cmd: bigint, sender: bigint) => {
+      try {
+        return performFileDrop(win, sender);
+      } catch (err) {
+        console.error("sweetview: could not read dropped files:", err);
+        return false;
+      }
+    },
+    { args: [ID, ID, ID], returns: FFIType.bool },
+  );
+  const prepare = new JSCallback(
+    (win: bigint) => Boolean(eventsByWin.get(win)?.fileDrop.size),
+    { args: [ID, ID, ID], returns: FFIType.bool },
+  );
+  retainCallback(enter);
+  retainCallback(drop);
+  retainCallback(prepare);
+  if (!class_addMethod(klass, sel("draggingEntered:"), enter.ptr, cstr("Q@:@"))
+    || !class_addMethod(klass, sel("draggingUpdated:"), enter.ptr, cstr("Q@:@"))
+    || !class_addMethod(klass, sel("prepareForDragOperation:"), prepare.ptr, cstr("B@:@"))
+    || !class_addMethod(klass, sel("performDragOperation:"), drop.ptr, cstr("B@:@"))) {
+    throw new Error(`sweetview: could not install drag methods on ${className}`);
   }
 
   if (allowKeyWhenBorderless) {
@@ -220,6 +316,11 @@ function ensureWindowSubclass(className: string, allowKeyWhenBorderless: boolean
   }
 
   objc_registerClassPair(klass);
+  return klass;
+}
+
+export function darwinTabWindowClass(): Id {
+  return ensureWindowSubclass(TAB_WINDOW_CLASS, false);
 }
 
 // ---- hit-region polling timer (invalidated when hits.size === 0) ----------------
@@ -403,6 +504,7 @@ export type DarwinTabGroupController = {
   toggleMaximize(): void;
   isMaximized(): boolean;
   dispose(): void;
+  setFileDropEnabled(enabled: boolean): void;
 };
 
 const darwinTabControllers = new Map<WindowBackend, DarwinTabGroupController>();
@@ -412,8 +514,10 @@ export function bindDarwinTabGroup(backend: WindowBackend, controller: DarwinTab
   fireResize(bounds: Rect): void;
   fireMove(bounds: Rect): void;
   fireClose(): boolean;
+  fireFileDrop(paths: string[]): void;
 } {
   darwinTabControllers.set(backend, controller);
+  if (darwinTabEvents.get(backend)?.fileDrop.size) controller.setFileDropEnabled(true);
   return {
     fireResize(bounds) {
       const b = darwinTabEvents.get(backend);
@@ -449,13 +553,17 @@ export function bindDarwinTabGroup(backend: WindowBackend, controller: DarwinTab
       }
       return true;
     },
+    fireFileDrop(paths) {
+      const listeners = darwinTabEvents.get(backend)?.fileDrop;
+      if (listeners) deliverFileDrop(listeners, paths);
+    },
   };
 }
 
 function createVirtualTabbedWindow(options: WindowOptions): WindowBackend {
   let storedBounds: Rect = options.bounds ?? { x: 100, y: 100, width: 1040, height: 720 };
   let disposed = false;
-  const bucket: EventBucket = { resize: new Set(), move: new Set(), close: new Set() };
+  const bucket: EventBucket = { resize: new Set(), move: new Set(), close: new Set(), fileDrop: new Set() };
 
   const self: WindowBackend = {
     handle: null,
@@ -512,6 +620,14 @@ function createVirtualTabbedWindow(options: WindowOptions): WindowBackend {
       bucket.close.add(handler);
       return () => bucket.close.delete(handler);
     },
+    onFileDrop(handler) {
+      const listener = (paths: string[]) => handler(paths);
+      bucket.fileDrop.add(listener);
+      if (bucket.fileDrop.size === 1) darwinTabControllers.get(self)?.setFileDropEnabled(true);
+      return () => {
+        if (bucket.fileDrop.delete(listener) && bucket.fileDrop.size === 0) darwinTabControllers.get(self)?.setFileDropEnabled(false);
+      };
+    },
     dispose() {
       if (disposed) return;
       disposed = true;
@@ -521,6 +637,7 @@ function createVirtualTabbedWindow(options: WindowOptions): WindowBackend {
       bucket.resize.clear();
       bucket.move.clear();
       bucket.close.clear();
+      bucket.fileDrop.clear();
     },
   };
   darwinTabEvents.set(self, bucket);
@@ -575,6 +692,7 @@ function buildWindow(win: Id, options: WindowOptions, framed: boolean, owned: bo
   }
 
   let disposed = false;
+  let hidden = false;
   const localUnsubs = new Set<() => void>();
   let ownsHitState = false;
 
@@ -582,11 +700,12 @@ function buildWindow(win: Id, options: WindowOptions, framed: boolean, owned: bo
     handle: win,
 
     isVisible() {
-      return !disposed && Boolean(sendRetBool(win, sel("isVisible")));
+      return !disposed && (Boolean(sendRetBool(win, sel("isVisible"))) || (!hidden && Boolean(sendRetBool(win, sel("isMiniaturized")))));
     },
 
     show() {
       if (disposed) return;
+      hidden = false;
       if (noActivate) {
         send(win, sel("orderFrontRegardless"));
       } else {
@@ -597,6 +716,7 @@ function buildWindow(win: Id, options: WindowOptions, framed: boolean, owned: bo
 
     hide() {
       if (disposed) return;
+      hidden = true;
       sendPtr(win, sel("orderOut:"), NIL);
     },
 
@@ -776,6 +896,22 @@ function buildWindow(win: Id, options: WindowOptions, framed: boolean, owned: bo
       return unsub;
     },
 
+    onFileDrop(handler) {
+      const canDrop = [OWNED_WINDOW_CLASS, OWNED_KEY_WINDOW_CLASS, TAB_WINDOW_CLASS].some((name) => {
+        const klass = asId(objc_getClass(cstr(name)));
+        return klass !== NIL && sendIntRetBool(win, sel("isKindOfClass:"), klass);
+      });
+      if (!canDrop) {
+        throw new Error("sweetview: file drops require a Sweetview-managed NSWindow");
+      }
+      const unsubscribe = subscribeDarwinFileDrop(win, handler);
+      const unsub = () => {
+        if (localUnsubs.delete(unsub)) unsubscribe();
+      };
+      localUnsubs.add(unsub);
+      return unsub;
+    },
+
     setOwnerDispose(fn) {
       if (owned) disposeByWin.set(win, fn);
     },
@@ -799,6 +935,11 @@ function buildWindow(win: Id, options: WindowOptions, framed: boolean, owned: bo
       resizers.delete(win);
       stopResizeTimerIfIdle();
       ignoring.delete(win);
+      const fileDrop = eventsByWin.get(win)?.fileDrop;
+      if (fileDrop?.size) {
+        send(win, sel("unregisterDraggedTypes"));
+        fileDrop.clear();
+      }
       eventsByWin.delete(win);
       disposeByWin.delete(win);
       sendPtr(win, sel("orderOut:"), NIL);

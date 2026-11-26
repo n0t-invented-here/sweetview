@@ -122,6 +122,8 @@ export const kernel32 = dlopen("kernel32.dll", {
   CreateMutexW: { args: [FFIType.ptr, FFIType.i32, FFIType.ptr], returns: FFIType.u64 },
   CloseHandle: { args: [FFIType.u64], returns: FFIType.i32 },
   GlobalAlloc: { args: [FFIType.u32, FFIType.u64], returns: FFIType.u64 },
+  GlobalSize: { args: [FFIType.u64], returns: FFIType.u64 },
+  Sleep: { args: [FFIType.u32], returns: FFIType.void },
   GlobalLock: { args: [FFIType.u64], returns: FFIType.ptr },
   GlobalUnlock: { args: [FFIType.u64], returns: FFIType.i32 },
   GlobalFree: { args: [FFIType.u64], returns: FFIType.u64 },

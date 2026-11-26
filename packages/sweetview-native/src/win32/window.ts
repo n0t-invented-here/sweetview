@@ -39,6 +39,7 @@ import {
   SW_SHOWNOACTIVATE,
   WM_CLOSE,
   WM_DESTROY,
+  WM_DROPFILES,
   WM_GETMINMAXINFO,
   WM_MOVE,
   WM_NCDESTROY,
@@ -61,6 +62,7 @@ import {
   gdi32,
   hInstance,
   lastError,
+  shell32,
   user32,
   wstr,
 } from "./api";
@@ -69,7 +71,7 @@ import { clearWindowIcon, setWindowIcon } from "./icon";
 import { ensureWin32Init } from "./init";
 import { of as screenOf, primary as primaryScreen } from "./screen";
 import { STRIP_HEIGHT } from "./strip-shared";
-import { createFrameWindow, setDarkWindows } from "./tab-window";
+import { createFrameWindow, getTabFrame, setDarkWindows } from "./tab-window";
 
 export { colorRef };
 
@@ -97,6 +99,7 @@ type EventBucket = {
   resize: Set<(bounds: Rect) => void>;
   move: Set<(bounds: Rect) => void>;
   close: Set<() => void>;
+  fileDrop: Set<(paths: string[]) => void>;
 };
 
 const eventsByHwnd = new Map<bigint, EventBucket>();
@@ -118,14 +121,53 @@ const hits = new Map<bigint, HitState>();
 function bucketFor(hwnd: bigint): EventBucket {
   let b = eventsByHwnd.get(hwnd);
   if (!b) {
-    b = { resize: new Set(), move: new Set(), close: new Set() };
+    b = { resize: new Set(), move: new Set(), close: new Set(), fileDrop: new Set() };
     eventsByHwnd.set(hwnd, b);
   }
   return b;
 }
 
 function hasAnyListeners(b: EventBucket | undefined): boolean {
-  return b !== undefined && (b.resize.size > 0 || b.move.size > 0 || b.close.size > 0);
+  return b !== undefined && (b.resize.size > 0 || b.move.size > 0 || b.close.size > 0 || b.fileDrop.size > 0);
+}
+
+function subscribeFileDrop(hwnd: bigint, handler: (paths: string[]) => void): () => void {
+  const bucket = bucketFor(hwnd);
+  if (bucket.fileDrop.size === 0) shell32.DragAcceptFiles(hwnd, 1);
+  const listener = (paths: string[]) => handler(paths);
+  bucket.fileDrop.add(listener);
+  return () => {
+    if (!bucket.fileDrop.delete(listener) || bucket.fileDrop.size > 0 || eventsByHwnd.get(hwnd) !== bucket) return;
+    shell32.DragAcceptFiles(hwnd, 0);
+    if (!hasAnyListeners(bucket)) eventsByHwnd.delete(hwnd);
+  };
+}
+
+function fireFileDrop(hwnd: bigint, drop: bigint): void {
+  const listeners = eventsByHwnd.get(hwnd)?.fileDrop;
+  const paths: string[] = [];
+  try {
+    if (!listeners?.size) return;
+    const count = shell32.DragQueryFileW(drop, 0xffff_ffff, null, 0);
+    for (let index = 0; index < count; index++) {
+      const length = shell32.DragQueryFileW(drop, index, null, 0);
+      const buffer = Buffer.alloc((length + 1) * 2);
+      const copied = shell32.DragQueryFileW(drop, index, buffer, length + 1);
+      if (copied > 0) paths.push(buffer.toString("utf16le", 0, copied * 2));
+    }
+  } catch (err) {
+    console.error("sweetview: could not read dropped files:", err);
+  } finally {
+    shell32.DragFinish(drop);
+  }
+  if (!paths.length) return;
+  for (const handler of [...(listeners ?? [])]) {
+    try {
+      handler(paths);
+    } catch (err) {
+      console.error("sweetview: onFileDrop handler threw:", err);
+    }
+  }
 }
 
 function fireResize(hwnd: bigint): void {
@@ -168,6 +210,11 @@ function fireClose(hwnd: bigint): boolean {
 }
 
 function cleanupHwnd(hwnd: bigint): void {
+  const fileDrop = eventsByHwnd.get(hwnd)?.fileDrop;
+  if (fileDrop?.size) {
+    shell32.DragAcceptFiles(hwnd, 0);
+    fileDrop.clear();
+  }
   user32.KillTimer(hwnd, HIT_TIMER_ID);
   user32.KillTimer(hwnd, RESIZE_TIMER_ID);
   hits.delete(hwnd);
@@ -366,6 +413,10 @@ function registerClass() {
         cleanupHwnd(hwnd);
         return 0n;
       }
+      if (message === WM_DROPFILES) {
+        fireFileDrop(hwnd, wParam);
+        return 0n;
+      }
       return user32.DefWindowProcW(hwnd, message, wParam, lParam);
     },
     { args: [FFIType.u64, FFIType.u32, FFIType.u64, FFIType.i64], returns: FFIType.i64 },
@@ -397,6 +448,9 @@ function ensureSubclassProc(): JSCallback {
         if (wParam !== SIZE_MINIMIZED) fireResize(hwnd);
       } else if (message === WM_MOVE) {
         if (user32.IsIconic(hwnd) === 0) fireMove(hwnd);
+      } else if (message === WM_DROPFILES && eventsByHwnd.get(hwnd)?.fileDrop.size) {
+        fireFileDrop(hwnd, wParam);
+        return 0n;
       } else if (message === WM_NCDESTROY) {
         subclassedHwnds.delete(hwnd);
         cleanupHwnd(hwnd);
@@ -502,6 +556,9 @@ function createTabbedWindow(options: WindowOptions): WindowBackend {
     onMoved() {
       fireMove(frame.hwnd);
     },
+    onFileDrop(drop) {
+      fireFileDrop(frame.hwnd, drop);
+    },
   });
 
   if (options.icon?.windows) setWindowIcon(frame.hwnd, options.icon.windows.ico);
@@ -572,6 +629,9 @@ function createTabbedWindow(options: WindowOptions): WindowBackend {
       const b = bucketFor(frame.hwnd);
       b.close.add(handler);
       return () => b.close.delete(handler);
+    },
+    onFileDrop(handler) {
+      return subscribeFileDrop(frame.hwnd, handler);
     },
     setOwnerDispose(fn) {
       ownerDispose = fn;
@@ -875,6 +935,19 @@ function buildWindow(hwnd: bigint, options: WindowOptions, framed: boolean, owne
         localUnsubs.delete(unsub);
         b.close.delete(handler);
         if (!owned && !disposeCallbacks.has(hwnd)) detachSubclassIfUnused(hwnd);
+      };
+      localUnsubs.add(unsub);
+      return unsub;
+    },
+
+    onFileDrop(handler) {
+      const needsSubclass = !owned && !disposeCallbacks.has(hwnd) && !getTabFrame(hwnd);
+      if (needsSubclass) attachSubclass(hwnd);
+      const unsubscribe = subscribeFileDrop(hwnd, handler);
+      const unsub = () => {
+        if (!localUnsubs.delete(unsub)) return;
+        unsubscribe();
+        if (needsSubclass) detachSubclassIfUnused(hwnd);
       };
       localUnsubs.add(unsub);
       return unsub;

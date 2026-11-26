@@ -3,12 +3,118 @@
 // Windows only; creates hidden windows so nothing flashes on screen.
 
 import { describe, expect, test } from "bun:test";
+import { toArrayBuffer } from "bun:ffi";
+import { defineAppIdentity } from "@n1h/sweetview-settings";
 import { Screen } from "../screen";
-import { createWindow, Window } from "../window";
+import { closeToTrayOnLastWindow, createWindow, getWindowMeta, Window } from "../window";
 
 const onWindows = process.platform === "win32";
 
 describe.if(onWindows)("win32 Window", () => {
+  test("close-to-tray destroys the secondary window and hides the last visible owned window", async () => {
+    const { WM_CLOSE, user32 } = await import("./api");
+    const main = new Window({ title: "Main", noActivate: true });
+    const secondary = new Window({ title: "Secondary", noActivate: true });
+    const hidden = new Window();
+    const borrowed = Window.fromHandle(main.handle);
+    let hiddenWindow: Window | undefined;
+    const offMain = closeToTrayOnLastWindow(main, (win) => { hiddenWindow = win; });
+    const offSecondary = closeToTrayOnLastWindow(secondary, (win) => { hiddenWindow = win; });
+    try {
+      expect(Window.visibleWindows()).not.toContain(hidden);
+      main.show();
+      main.minimize();
+      secondary.show();
+      expect(Window.visibleWindows()).toContain(main);
+      expect(Window.visibleWindows()).toContain(secondary);
+      expect(Window.visibleWindows()).not.toContain(borrowed);
+      user32.SendMessageW(BigInt(secondary.handle!), WM_CLOSE, 0n, 0n);
+      expect(user32.IsWindow(BigInt(secondary.handle!))).toBe(0);
+      expect(Window.visibleWindows()).not.toContain(secondary);
+      expect(hiddenWindow).toBeUndefined();
+      user32.SendMessageW(BigInt(main.handle!), WM_CLOSE, 0n, 0n);
+      expect(user32.IsWindow(BigInt(main.handle!))).not.toBe(0);
+      expect(hiddenWindow).toBe(main);
+      expect(Window.visibleWindows()).not.toContain(main);
+    } finally {
+      offMain();
+      offSecondary();
+      borrowed.dispose();
+      hidden.dispose();
+      secondary.dispose();
+      main.dispose();
+    }
+  });
+
+  test("identity sets a window's title and icon, and explicit options win", async () => {
+    const { user32 } = await import("./api");
+    const identity = defineAppIdentity({
+      appId: "com.example.shell",
+      appName: "Example Shell",
+      icon: { width: 2, height: 1, rgba: new Uint8Array([0, 0, 255, 255, 255, 0, 0, 255]) },
+    });
+    const win = new Window({ identity });
+    const override = new Window({ identity, title: "Override", icon: {} });
+    try {
+      expect(getWindowMeta(win).title).toBe("Example Shell");
+      expect(user32.SendMessageW(BigInt(win.handle!), 0x007f, 1n, 0n)).not.toBe(0n); // WM_GETICON, ICON_BIG
+      expect(getWindowMeta(override).title).toBe("Override");
+      expect(getWindowMeta(override).icon).toEqual({});
+    } finally {
+      win.dispose();
+      override.dispose();
+    }
+  });
+
+  test("delivers Unicode file drops and cleans up owned, tabbed and borrowed listeners", async () => {
+    const { GWL_EXSTYLE, GMEM_MOVEABLE, WM_DROPFILES, kernel32, user32 } = await import("./api");
+    const { createMessageWindow } = await import("./message-window");
+    const { _debugTrackedCount } = await import("./window");
+    const paths = ["C:\\example\\日本語 🥐.txt", "C:\\example\\second.bin"];
+    const native = createMessageWindow(() => {});
+    const owned = new Window();
+    const tabs = new Window({ tabs: true });
+    const borrowed = Window.fromHandle(native.hwnd);
+    try {
+      for (const win of [owned, tabs, borrowed]) {
+        const hwnd = BigInt(win.handle!);
+        const tracked = _debugTrackedCount(hwnd);
+        const delivered: string[][] = [];
+        const off = win.onFileDrop((files) => delivered.push(files));
+        expect(user32.GetWindowLongPtrW(hwnd, GWL_EXSTYLE) & 0x10n).toBe(0x10n); // WS_EX_ACCEPTFILES
+        const body = Buffer.from(paths.join("\0") + "\0\0", "utf16le");
+        const dropFiles = Buffer.alloc(20 + body.length);
+        dropFiles.writeUInt32LE(20, 0); // pFiles offset
+        dropFiles.writeInt32LE(1, 16); // fWide
+        body.copy(dropFiles, 20);
+        const drop = kernel32.GlobalAlloc(GMEM_MOVEABLE, BigInt(dropFiles.length));
+        const memory = kernel32.GlobalLock(drop);
+        if (!memory) {
+          if (drop) kernel32.GlobalFree(drop);
+          throw new Error("could not allocate DROPFILES");
+        }
+        new Uint8Array(toArrayBuffer(memory, 0, dropFiles.length)).set(dropFiles);
+        kernel32.GlobalUnlock(drop);
+        user32.SendMessageW(hwnd, WM_DROPFILES, drop, 0n);
+        expect(delivered).toEqual([paths]);
+        expect(kernel32.GlobalSize(drop)).toBe(0n);
+        off();
+        off();
+        expect(user32.GetWindowLongPtrW(hwnd, GWL_EXSTYLE) & 0x10n).toBe(0n);
+        expect(_debugTrackedCount(hwnd)).toBe(tracked);
+        win.onFileDrop(() => {});
+        win.dispose();
+        expect(_debugTrackedCount(hwnd)).toBe(0);
+      }
+      expect(user32.IsWindow(native.hwnd)).not.toBe(0);
+      expect(user32.GetWindowLongPtrW(native.hwnd, GWL_EXSTYLE) & 0x10n).toBe(0n);
+    } finally {
+      owned.dispose();
+      tabs.dispose();
+      borrowed.dispose();
+      native.destroy();
+    }
+  });
   test("creates hidden framed and frameless windows and disposes cleanly & idempotently", async () => {
     const { user32 } = await import("./api");
     const { _debugTrackedCount, asHwnd } = await import("./window");

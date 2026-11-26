@@ -8,11 +8,18 @@
 // handlers autorelease are freed per tick rather than piling up for the
 // process.
 
+import { FFIType, dlopen } from "bun:ffi";
 import type { ActivationPolicy } from "../event-loop";
-import { NIL, type Id, allocRaw, asId, cls, nsString, retain, sel, send, sendIntRetBool, sendPtr, sendUIntPtrPtrBool, sharedApp } from "./objc";
+import { commonRunLoopModes, coreFoundationPath } from "./core-foundation";
+import { NIL, type Id, allocRaw, asId, cls, makeTarget, nsString, release, retain, sel, send, sendF64PtrSelPtrBool, sendIntRetBool, sendPtr, sendUIntPtrPtrBool, sharedApp } from "./objc";
 
 const NSEventMaskAny = 0xffff_ffff_ffff_ffffn;
 const NSApplicationActivationPolicy: Record<ActivationPolicy, bigint> = { regular: 0n, accessory: 1n, prohibited: 2n };
+const cf = dlopen(coreFoundationPath, {
+  CFRunLoopRunInMode: { args: [FFIType.u64, FFIType.f64, FFIType.bool], returns: FFIType.i32 },
+  CFRunLoopGetMain: { args: [], returns: FFIType.ptr },
+  CFRunLoopAddTimer: { args: [FFIType.ptr, FFIType.u64, FFIType.ptr], returns: FFIType.void },
+}).symbols;
 
 let launched = false;
 let defaultMode: Id = NIL; // NSDefaultRunLoopMode, retained for the process
@@ -28,6 +35,9 @@ export function pumpEvents(): boolean {
   }
   const pool = asId(send(allocRaw("NSAutoreleasePool"), sel("init")));
   try {
+    // The nonblocking NSEvent fetch can return before driving timers, Mach
+    // messages or WebKit's main-queue dispatches. Give those sources a pass.
+    cf.CFRunLoopRunInMode(defaultMode, 0, false);
     for (;;) {
       const event = asId(sendUIntPtrPtrBool(app, sel("nextEventMatchingMask:untilDate:inMode:dequeue:"), NSEventMaskAny, distantPast, defaultMode, true));
       if (event === NIL) break;
@@ -45,4 +55,50 @@ export function discardQuit(): void {}
 
 export function setActivationPolicy(policy: ActivationPolicy): void {
   sendIntRetBool(sharedApp(), sel("setActivationPolicy:"), NSApplicationActivationPolicy[policy]);
+}
+
+const timers = new Map<Id, () => void>();
+let timerTarget: Id = NIL;
+let timerTargetClass: Id = NIL;
+
+export function scheduleNativeTimeout(ms: number, fn: () => void): () => void {
+  sharedApp();
+  const commonModes = commonRunLoopModes();
+  if (timerTarget === NIL) {
+    if (timerTargetClass === NIL) {
+      timerTarget = makeTarget("SweetviewNativeTimeout", { "fire:": (timer) => timers.get(timer)?.() });
+      timerTargetClass = asId(send(timerTarget, sel("class")));
+    } else {
+      timerTarget = asId(send(asId(send(timerTargetClass, sel("alloc"))), sel("init")));
+    }
+  }
+  const timer = retain(asId(sendF64PtrSelPtrBool(
+    cls("NSTimer"), sel("scheduledTimerWithTimeInterval:target:selector:userInfo:repeats:"),
+    ms / 1000, timerTarget, sel("fire:"), NIL, false,
+  )));
+  if (timer === NIL) {
+    if (!timers.size) {
+      release(timerTarget);
+      timerTarget = NIL;
+    }
+    throw new Error("sweetview: could not schedule NSTimer");
+  }
+  let active = true;
+  const cancel = () => {
+    if (!active) return;
+    active = false;
+    timers.delete(timer);
+    send(timer, sel("invalidate"));
+    release(timer);
+    if (timers.size === 0) {
+      release(timerTarget);
+      timerTarget = NIL;
+    }
+  };
+  timers.set(timer, () => {
+    cancel();
+    fn();
+  });
+  cf.CFRunLoopAddTimer(cf.CFRunLoopGetMain(), timer, commonModes);
+  return cancel;
 }

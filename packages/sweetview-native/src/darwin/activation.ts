@@ -1,13 +1,12 @@
-// macOS custom URL scheme handler (NSAppleEventManager kInternetEventClass /
-// kAEGetURL) and CLI single-instance handoff via a Unix domain socket in
-// appDataDir (zero TCP ports). Scheme registration on macOS is declared in
-// Info.plist (`CFBundleURLTypes`) via `makeMacApp({ urlSchemes })`.
+// macOS custom URL scheme handler (NSAppleEventManager) and single-instance
+// handoff via a CoreFoundation message port on AppKit's main run loop.
 
-import { mkdirSync, rmSync } from "node:fs";
-import { createConnection, createServer, type Server } from "node:net";
-import { join } from "node:path";
-import { appDataDir, validateUrlScheme } from "@n1h/sweetview-settings";
+import { FFIType, JSCallback, dlopen, toArrayBuffer, type Pointer } from "bun:ffi";
+import { createHash } from "node:crypto";
+import { validateUrlScheme } from "@n1h/sweetview-settings";
 import type { RegisterUrlSchemeOptions, SecondInstanceEvent, SingleInstanceLock } from "../activation";
+import { commonRunLoopModes, coreFoundationPath } from "./core-foundation";
+import { scheduleNativeTimeout } from "./event-loop";
 import {
   NIL,
   type Id,
@@ -70,60 +69,40 @@ export function unregisterUrlScheme(scheme: string): void {
   validateUrlScheme(scheme);
 }
 
-function safeId(appId: string): string {
-  return appId.replace(/[^a-zA-Z0-9._-]/g, "_");
-}
+const P = FFIType.ptr;
+const V = FFIType.void;
+const I = FFIType.i64; // CFIndex on arm64
+const D = FFIType.f64; // CFTimeInterval
+const cf = dlopen(coreFoundationPath, {
+  CFMessagePortCreateLocal: { args: [P, P, P, P, P], returns: P },
+  CFMessagePortCreateRemote: { args: [P, P], returns: P },
+  CFMessagePortCreateRunLoopSource: { args: [P, P, I], returns: P },
+  CFMessagePortSendRequest: { args: [P, FFIType.i32, P, D, D, P, P], returns: FFIType.i32 },
+  CFMessagePortInvalidate: { args: [P], returns: V },
+  CFRunLoopSourceInvalidate: { args: [P], returns: V },
+  CFRunLoopGetMain: { args: [], returns: P },
+  CFRunLoopAddSource: { args: [P, P, P], returns: V },
+  CFDataCreate: { args: [P, P, I], returns: P },
+  CFDataGetBytePtr: { args: [P], returns: P },
+  CFDataGetLength: { args: [P], returns: I },
+  CFStringCreateWithCString: { args: [P, P, FFIType.u32], returns: P },
+  CFRelease: { args: [P], returns: V },
+}).symbols;
 
-function trySendToSocket(socketPath: string, payload: SecondInstanceEvent): Promise<boolean> {
-  return new Promise((resolve) => {
-    const client = createConnection(socketPath);
-    let settled = false;
-    const finish = (ok: boolean) => {
-      if (settled) return;
-      settled = true;
-      client.destroy();
-      resolve(ok);
-    };
-    const timer = setTimeout(() => finish(false), 1500);
-    client.once("connect", () => {
-      client.end(`${JSON.stringify(payload)}\n`, "utf8", () => {
-        clearTimeout(timer);
-        finish(true);
-      });
-    });
-    client.once("error", () => {
-      clearTimeout(timer);
-      finish(false);
-    });
-  });
-}
+const utf8 = 0x08000100; // kCFStringEncodingUTF8
+const localHandlers = new Map<string, (event: SecondInstanceEvent) => void>();
 
-function listenSocket(socketPath: string, onPayload: (event: SecondInstanceEvent) => void): Promise<Server> {
-  return new Promise((resolve, reject) => {
-    const server = createServer((socket) => {
-      let buf = "";
-      socket.setEncoding("utf8");
-      socket.on("data", (chunk: string) => {
-        buf += chunk;
-        let nl: number;
-        while ((nl = buf.indexOf("\n")) !== -1) {
-          const line = buf.slice(0, nl).trim();
-          buf = buf.slice(nl + 1);
-          if (!line) continue;
-          try {
-            onPayload(JSON.parse(line) as SecondInstanceEvent);
-          } catch (err) {
-            console.error("sweetview: singleInstance socket payload invalid:", err);
-          }
-        }
-      });
-    });
-    server.once("error", reject);
-    server.listen(socketPath, () => {
-      server.removeListener("error", reject);
-      resolve(server);
-    });
-  });
+function sendActivation(remote: Pointer, payload: SecondInstanceEvent): boolean {
+  const bytes = new TextEncoder().encode(JSON.stringify(payload));
+  const data = cf.CFDataCreate(null, bytes, BigInt(bytes.byteLength));
+  if (!data) throw new Error("sweetview: could not allocate activation payload");
+  try {
+    // No reply mode: return as soon as Mach accepts the message, even if
+    // the primary is still starting and hasn't begun pumping its run loop.
+    return cf.CFMessagePortSendRequest(remote, 1, data, 1.5, 0, null, null) === 0;
+  } finally {
+    cf.CFRelease(data);
+  }
 }
 
 export async function acquireSingleInstance(params: {
@@ -131,41 +110,95 @@ export async function acquireSingleInstance(params: {
   payload: SecondInstanceEvent;
   onSecondInstance: (event: SecondInstanceEvent) => void;
 }): Promise<SingleInstanceLock> {
-  const dir = appDataDir(safeId(params.appId));
-  mkdirSync(dir, { recursive: true });
-  const socketPath = join(dir, "instance.sock");
-
-  if (await trySendToSocket(socketPath, params.payload)) {
+  // A fixed-length name fits the Mach bootstrap namespace regardless of app ID length.
+  const id = createHash("sha256").update(params.appId).digest("hex");
+  const localHandler = localHandlers.get(id);
+  if (localHandler) {
+    localHandler(params.payload);
     return { isPrimary: false, handedOff: true, dispose() {} };
   }
 
-  // Remove any stale socket left behind by a crashed previous process.
+  const name = cf.CFStringCreateWithCString(null, Buffer.from("sweetview." + id + "\0"), utf8);
+  if (!name) throw new Error("sweetview: could not allocate activation port name");
   try {
-    rmSync(socketPath, { force: true });
-  } catch {}
-
-  let server: Server;
-  try {
-    server = await listenSocket(socketPath, params.onSecondInstance);
-  } catch {
-    // Race: another instance bound the socket first; hand off to it.
-    const handedOff = await trySendToSocket(socketPath, params.payload);
-    return { isPrimary: false, handedOff, dispose() {} };
+    const commonModes = commonRunLoopModes();
+    let callbackDepth = 0;
+    const callback = new JSCallback(
+      (_port, messageId, data: Pointer | null) => {
+        callbackDepth++;
+        try {
+          if (messageId === 1 && data) {
+            const length = Number(cf.CFDataGetLength(data));
+            const bytes = cf.CFDataGetBytePtr(data);
+            if (bytes && length > 0) {
+              const payload: unknown = JSON.parse(new TextDecoder().decode(toArrayBuffer(bytes, 0, length)));
+              if (payload && typeof payload === "object" && "args" in payload && Array.isArray(payload.args)
+                && payload.args.every((arg: unknown) => typeof arg === "string")
+                && "cwd" in payload && typeof payload.cwd === "string"
+                && (!("url" in payload) || typeof payload.url === "string")) {
+                params.onSecondInstance(payload as SecondInstanceEvent);
+              }
+            }
+          }
+        } catch (err) {
+          console.error("sweetview: singleInstance CFMessagePort handler threw:", err);
+        } finally {
+          callbackDepth--;
+        }
+        return null;
+      },
+      { args: [P, FFIType.i32, P, P], returns: P },
+    );
+    // shouldFreeInfo also tells us if CF returned a cached local object
+    // whose installed callback belongs to a different acquisition.
+    const existing = new Uint8Array(1);
+    const port = cf.CFMessagePortCreateLocal(null, name, callback.ptr, null, existing);
+    if (!port || existing[0]) {
+      callback.close();
+      if (port) cf.CFRelease(port);
+      for (let attempt = 0; attempt < 10; attempt++) {
+        if (attempt > 0) await Bun.sleep(25);
+        const remote = cf.CFMessagePortCreateRemote(null, name);
+        if (!remote) continue;
+        try {
+          return { isPrimary: false, handedOff: sendActivation(Number(remote) as Pointer, params.payload), dispose() {} };
+        } finally {
+          cf.CFRelease(remote);
+        }
+      }
+      return { isPrimary: false, handedOff: false, dispose() {} };
+    }
+    const source = cf.CFMessagePortCreateRunLoopSource(null, port, 0n);
+    if (!source) {
+      cf.CFMessagePortInvalidate(port);
+      cf.CFRelease(port);
+      callback.close();
+      throw new Error("sweetview: could not create activation run-loop source");
+    }
+    cf.CFRunLoopAddSource(cf.CFRunLoopGetMain(), source, commonModes);
+    localHandlers.set(id, params.onSecondInstance);
+    let disposed = false;
+    return {
+      isPrimary: true,
+      handedOff: false,
+      dispose() {
+        if (disposed) return;
+        disposed = true;
+        localHandlers.delete(id);
+        cf.CFMessagePortInvalidate(port);
+        cf.CFRunLoopSourceInvalidate(source);
+        cf.CFRelease(source);
+        cf.CFRelease(port);
+        // A handler is allowed to release the lock. Keep the native trampoline
+        // alive until the outermost CFMessagePort callback has returned.
+        const closeCallback = () => {
+          if (callbackDepth === 0) callback.close();
+          else scheduleNativeTimeout(1, closeCallback);
+        };
+        closeCallback();
+      },
+    };
+  } finally {
+    cf.CFRelease(name);
   }
-
-  let disposed = false;
-  return {
-    isPrimary: true,
-    handedOff: false,
-    dispose() {
-      if (disposed) return;
-      disposed = true;
-      try {
-        server.close();
-      } catch {}
-      try {
-        rmSync(socketPath, { force: true });
-      } catch {}
-    },
-  };
 }
