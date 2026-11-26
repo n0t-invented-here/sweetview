@@ -2,39 +2,136 @@
 
 A settings file for a small app: one JSON document in the user's per-app folder, read once at start and written whole on every change. Every call is synchronous, so the UI thread can use it after `run()` has blocked it in the OS loop, and it runs on any thread and in any build or test script. It imports only `node:fs`, `node:os` and `node:path`, and loads neither `bun:ffi` nor the webview library.
 
-```ts
-import { appDataDir, createSettingsStore, SettingsStore, type SettingsStoreOptions } from "@n1h/sweetview/settings-store";
-import { defineAppIdentity } from "@n1h/sweetview-settings";
-```
+The settings store is `@n1h/sweetview/settings-store` in the facade, or
+`@n1h/sweetview-settings/settings-store` standalone. The app identity, which
+names the settings folder and is shared with the native and build helpers,
+lives beside it in `@n1h/sweetview-settings`.
 
+- [App identity](#app-identity)
+  - [defineAppIdentity](#defineappidentity)
+  - [AppIdentityInput, AppIdentity and AppIdentityIcon](#appidentityinput-appidentity-and-appidentityicon)
+  - [validateUrlScheme](#validateurlscheme)
 - [Reference](#reference)
   - [appDataDir](#appdatadir)
-  - [defineAppIdentity](#defineappidentity)
   - [SettingsStoreOptions](#settingsstoreoptions)
   - [SettingsStore](#settingsstore)
   - [createSettingsStore](#createsettingsstore)
 - [Example](#example)
 
-## Reference
+## App identity
 
-### defineAppIdentity
-
-`defineAppIdentity(input: AppIdentityInput): AppIdentity` is available from
-`@n1h/sweetview-settings`, the desktop facade root, and the build and native
-entry points. Supply
-a nonempty `appId` and `appName`. Optional `slug` defaults to a safe slug
-derived from the last segment of the app ID. Optional `version` defaults to
-`0.1.0`. `urlSchemes` are normalized and validated. An optional `icon`
-contains RGBA bytes, width and height. The result includes `dataDir` from
-`appDataDir(slug)`. Creating an identity leaves the filesystem untouched.
+One `AppIdentity` names the app everywhere it needs a name: the settings
+folder (`SettingsStore`), the single-instance lock and URL schemes
+(`singleInstance`, `registerUrlScheme`), the Windows toast identity
+(`Notifier`), the default window title and Windows window icon (`Window`),
+and the macOS bundle (`makeMacApp`). It is plain data with no `bun:ffi` or
+webview import, so build scripts use it on any OS.
 
 ```ts
+import { defineAppIdentity } from "@n1h/sweetview-settings";
+import { SettingsStore } from "@n1h/sweetview/settings-store";
+
 const identity = defineAppIdentity({
   appId: "com.example.notes",
   appName: "Notes",
   urlSchemes: ["example-notes"],
 });
 const settings = new SettingsStore({ identity, defaults: { theme: "system" } });
+```
+
+Where to import it from:
+
+| Path | Exports |
+|---|---|
+| `@n1h/sweetview`, `@n1h/sweetview/native`, `@n1h/sweetview/build` | `defineAppIdentity`, `AppIdentity`, `AppIdentityInput` |
+| `@n1h/sweetview-settings` | everything on this page, including `AppIdentityIcon` and `validateUrlScheme` |
+| `@n1h/sweetview-settings/app-identity` | the identity alone: `defineAppIdentity`, `validateUrlScheme`, `AppIdentity`, `AppIdentityInput`, `AppIdentityIcon` |
+
+The facade's `@n1h/sweetview/settings-store` exports the store only, not the
+identity.
+
+### defineAppIdentity
+
+```ts
+defineAppIdentity(input: AppIdentityInput): AppIdentity
+```
+
+Normalizes the input into a frozen `AppIdentity`:
+
+| Field | Rule |
+|---|---|
+| `appId`, `appName` | Trimmed. Empty after trimming throws `sweetview: defineAppIdentity requires a non-empty appId` (or `appName`). |
+| `slug` | Trimmed; when omitted or blank, derived from the last dot-separated segment of `appId` (or `appName` when `appId` has none), lowercased, with runs of characters other than `a-z 0-9 . _ -` replaced by `-` and leading and trailing `-` removed; `sweetview-app` if nothing is left. `com.example.My Notes!` gives `my-notes`. An explicit slug is used as given, so keep it a valid folder name. |
+| `version` | Trimmed; `"0.1.0"` when omitted or blank. |
+| `urlSchemes` | Each passed through [`validateUrlScheme`](#validateurlscheme): trimmed, lowercased, validated. The array is frozen. |
+| `icon` | Passed through unchanged. |
+| `dataDir` | `appDataDir(slug)`. The folder is not created. |
+
+What it deliberately does not check: that `appId` is reverse-DNS
+(`com.example.app`), that `version` is semver, or that `icon`'s `rgba`
+length matches `width * height * 4`. A `Window` that uses the icon checks the
+dimensions when it is created and throws
+`sweetview: identity icon dimensions do not match its RGBA data`. Creating an
+identity never touches the file system.
+
+### AppIdentityInput, AppIdentity and AppIdentityIcon
+
+```ts
+type AppIdentityInput = {
+  appId: string;                       // reverse-DNS by convention: macOS bundle ID, lock name, toast AUMID
+  appName: string;                     // title bars, Finder, menus, protocol descriptions
+  slug?: string;                       // folder name under the app-data directory
+  version?: string;                    // default "0.1.0"
+  urlSchemes?: readonly string[];      // e.g. ["my-app"]
+  icon?: AppIdentityIcon;
+};
+
+type AppIdentity = {
+  readonly appId: string;
+  readonly appName: string;
+  readonly slug: string;
+  readonly version: string;
+  readonly urlSchemes: readonly string[];
+  readonly icon?: AppIdentityIcon;
+  readonly dataDir: string;
+};
+
+type AppIdentityIcon = { readonly rgba: Uint8Array; readonly width: number; readonly height: number };
+```
+
+`AppIdentityIcon` is top-down RGBA pixels. Its only automatic consumer is
+`new Window({ identity })` on Windows, which encodes it as the window icon
+when no `icon` option is given, centering a non-square image on a
+transparent square. macOS windows have no per-window icon. Trays,
+`writeIconFiles`, `setAppIcon` and `makeMacApp` do not read it; give each its
+icon explicitly, for example with `icnsFromRgba` for the bundle
+([build](build.md#macappoptions)).
+
+### validateUrlScheme
+
+```ts
+import { validateUrlScheme } from "@n1h/sweetview-settings";
+
+validateUrlScheme(" Example-Notes "); // "example-notes"
+```
+
+```ts
+validateUrlScheme(scheme: string): string
+```
+
+Trims and lowercases `scheme` and checks it against
+`/^[a-z][a-z0-9+.-]*$/i`: a letter, then letters, digits, `+`, `.` or `-`.
+Returns the normalized scheme, or throws
+`sweetview: invalid URL scheme "<scheme>" (must match /^[a-z][a-z0-9+.-]*$/i)`.
+`defineAppIdentity`, `registerUrlScheme`, `singleInstance` and `makeMacApp`
+all use it, so a scheme is spelled the same everywhere.
+
+## Reference
+
+The store, from `@n1h/sweetview/settings-store`:
+
+```ts
+import { appDataDir, createSettingsStore, SettingsStore, type SettingsStoreOptions } from "@n1h/sweetview/settings-store";
 ```
 
 ### appDataDir

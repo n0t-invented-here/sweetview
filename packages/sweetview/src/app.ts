@@ -13,7 +13,7 @@ import { createFrameAssembler, type AnyEvent, type EventMap, type MethodMap, typ
 import { RequestResponseAssembler, requestError, runNativeRequest, type NativeRequestResponse, type StreamingResponseFrame } from "./request-response";
 import type { HttpRequestMessage, InitMessage, NativeRequest, NativeResponse } from "./messages";
 import { Window, quitEventLoop, runEventLoop, signalReady, type Rect, type TabHandle, type WindowOptions } from "@n1h/sweetview-native";
-import { discardQuit, emitWindowFileDrop, getWindowMeta, isWindowDisposed, onWindowDispose, onWindowFileDropListenersChange, preserveWindowGeometry, scheduleNativeTimeout, windowFileDropCount } from "@n1h/sweetview-native/internal";
+import { discardQuit, emitWindowFileDrop, getWindowMeta, holdWindowNativeDispose, isWindowDisposed, onWindowDispose, onWindowFileDropListenersChange, preserveWindowGeometry, scheduleNativeTimeout, windowFileDropCount } from "@n1h/sweetview-native/internal";
 import { Ring } from "./ring";
 import { ASSET_ORIGIN, allowExternalDropCall, backgroundColorCall, fileDropHandlerCall, openWebviewCore, requestHandlerCalls, setAssetCall, streamingResponseCalls, webviewLibPath } from "./webview-lib";
 
@@ -43,7 +43,13 @@ export type WebViewOptions<M extends MethodMap = MethodMap> = {
   worker?: URL | string;
   /** Handle dynamic requests on the UI thread, or forward them to the Worker. */
   onRequest?: "worker" | ((request: NativeRequest) => NativeResponse);
-  /** Whether the webview accepts desktop drag-and-drop. Enabled by default. */
+  /**
+   * Whether the webview accepts drags that start in another application
+   * (files from Explorer or Finder, text or links from other apps). Default:
+   * true. On Windows, false sets `ICoreWebView2Controller4::AllowExternalDrop`
+   * to FALSE; on macOS, false makes the `SweetviewWKWebView` reject drags
+   * whose source is another app. Drags within the page keep working.
+   */
   allowExternalDrop?: boolean;
   /** Devtools and context menu. */
   debug?: boolean;
@@ -64,9 +70,46 @@ export type WebViewOptions<M extends MethodMap = MethodMap> = {
 };
 
 export type TabOptions<M extends MethodMap = MethodMap> = WebViewOptions<M> & {
-  /** Insert after this tab instead of the currently selected tab. */
+  /**
+   * Insert the new tab directly after this tab. Honored only when `after`
+   * belongs to the same window the tab opens in; a tab from another window
+   * (or a closed tab) is ignored and the tab opens after the currently
+   * selected tab, as when `after` is omitted.
+   */
   after?: TabHandle;
 };
+
+/**
+ * Internal `WebView.attach` hooks the tab drivers pass under
+ * `tabAttachHooks`; not part of the public API. A tab's webview is attached
+ * to a borrowed child window (a pane or one NSWindow of a tab group) while
+ * the app sees a separate logical `Window({ tabs: true })` that can change
+ * when the tab tears off or merges.
+ */
+export type TabAttachHooks = {
+  /** The tab's current logical host: file-drop demand comes from it and drops over the webview are delivered to it. */
+  fileDropHost(): Window;
+  /** Replaces `window.show()` on the borrowed child window for `showOnReady` and the ready watchdog. */
+  revealWindow?(): void;
+  /**
+   * Set by `WebView.attach`: re-subscribes file-drop demand to the current
+   * `fileDropHost()`. The driver calls it after the tab's logical host
+   * changes (tear-off, merge); the old host's subscription is dropped first,
+   * so a drop is delivered once, to the new host.
+   */
+  rebindFileDrop?: () => void;
+  /**
+   * True once the driver abandoned this attach (its host was disposed while
+   * the attach was awaiting). `WebView.attach` checks it around every await
+   * and throws before touching the borrowed native window again.
+   */
+  isCancelled?(): boolean;
+};
+
+/** Internal options key for `TabAttachHooks` (not exported from the package entry). */
+export const tabAttachHooks: unique symbol = Symbol("sweetview.tabAttachHooks");
+
+type InternalWebViewOptions<M extends MethodMap> = WebViewOptions<M> & { [tabAttachHooks]?: TabAttachHooks };
 
 export interface Tab<M extends MethodMap = MethodMap, E extends EventMap = EventMap> extends TabHandle {
   readonly webview: WebView<M, E>;
@@ -220,6 +263,7 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
     window: Window,
     options: WebViewOptions<M>,
   ): Promise<WebView<M, E>> {
+    const tabHooks = (options as InternalWebViewOptions<M>)[tabAttachHooks];
     if (process.platform !== "win32" && process.platform !== "darwin") {
       throw new Error(
         `sweetview: ${process.platform} is not supported (win32 and darwin are): the native module has no backend for it and the webview library does not serve assets there`,
@@ -236,14 +280,21 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
     if (onRequest === "worker" && options.worker === undefined) {
       throw new Error('sweetview: onRequest: "worker" requires a worker entry point');
     }
+    // A tab driver can abandon the attach while it awaits (its host was
+    // disposed); the borrowed native window may be gone, so stop before using it.
+    const ensureAttachable = () => {
+      if (tabHooks?.isCancelled?.() || isWindowDisposed(window)) {
+        throw new Error("sweetview: cannot attach WebView to a disposed window");
+      }
+    };
+    ensureAttachable();
     const libPath = await webviewLibPath();
+    ensureAttachable();
     const requestCalls = onRequest === undefined ? undefined : requestHandlerCalls(libPath);
     if (onRequest !== undefined && !requestCalls) {
       throw new Error("sweetview: onRequest requires webview_set_request_handler and webview_complete_request from @n1h/sweetview-webview-bun >= 2.8.0 or a compatible WEBVIEW_PATH");
     }
     const meta = getWindowMeta(window);
-    const scale = window.scale() || 1;
-    const winBounds: Rect = window.bounds();
 
     const useDirectUrl = options.url !== undefined && options.page === undefined && options.assets === undefined;
     const assets: Record<string, Asset> = { ...options.assets };
@@ -253,6 +304,7 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
     if (!useDirectUrl) {
       if (options.page) {
         const page = await pageAssets(options.page);
+        ensureAttachable();
         Object.assign(assets, page.assets);
         index = options.index ?? page.index;
         const html = assets[index];
@@ -260,6 +312,7 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
           title = htmlTitle(
             typeof html === "string" ? await Bun.file(html).text() : html instanceof Uint8Array ? new TextDecoder().decode(html) : await html.text(),
           );
+          ensureAttachable();
         }
       }
       const windowTitle: string = title ?? basename(Bun.main, extname(Bun.main));
@@ -269,8 +322,8 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
       title ??= basename(Bun.main, extname(Bun.main));
     }
 
+    ensureAttachable();
     const host = window.handle;
-    if (isWindowDisposed(window)) throw new Error("sweetview: cannot attach WebView to a disposed window");
     if (host === null || host === 0 || host === 0n) {
       throw new Error("sweetview: cannot attach WebView to a window with a NULL handle");
     }
@@ -281,6 +334,9 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
     }
 
     // Read DIPs directly from the Window so callers never duplicate width/height/scale/resizable.
+    // Read after the last await so the borrowed window is known to be live.
+    const scale = window.scale() || 1;
+    const winBounds: Rect = window.bounds();
     const widthDips = Math.max(1, Math.round(winBounds.width / scale));
     const heightDips = Math.max(1, Math.round(winBounds.height / scale));
     // Frameless windows resize via Window.startResize(), not WS_THICKFRAME.
@@ -420,6 +476,7 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
         if (dispatchId !== undefined) pendingUiDispatches.delete(dispatchId);
         dispatchId = undefined;
       };
+      const dropHost = (): Window => tabHooks?.fileDropHost() ?? window;
       let dropCallback: JSCallback | undefined;
       let dropRegistered = false;
       const setFileDrop = (enabled: boolean) => {
@@ -436,7 +493,7 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
               return;
             }
             if (Array.isArray(paths) && paths.every((path) => typeof path === "string")) {
-              emitWindowFileDrop(window, paths);
+              emitWindowFileDrop(dropHost(), paths);
             }
           }, { args: [FFIType.ptr, FFIType.ptr], returns: FFIType.void });
         }
@@ -445,6 +502,20 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
         if (error !== 0) console.error(`sweetview: webview_set_file_drop_handler failed (${error})`);
       };
       let unsubscribeFileDrop: (() => void) | undefined;
+      // Subscribes file-drop demand to the logical host (the window itself,
+      // or a tab's current tabbed Window), replacing any previous host's
+      // subscription so one drop is never delivered to two hosts.
+      const bindFileDrop = () => {
+        unsubscribeFileDrop?.();
+        unsubscribeFileDrop = undefined;
+        const target = isLive() ? dropHost() : undefined;
+        if (target === undefined || isWindowDisposed(target)) {
+          setFileDrop(false);
+          return;
+        }
+        unsubscribeFileDrop = onWindowFileDropListenersChange(target, setFileDrop);
+        setFileDrop(windowFileDropCount(target) > 0);
+      };
       const detachFileDrop = () => {
         unsubscribeFileDrop?.();
         unsubscribeFileDrop = undefined;
@@ -452,14 +523,40 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
         dropCallback?.close();
         dropCallback = undefined;
       };
-      const unsubscribeWindowDispose = onWindowDispose(window, () => {
+      // True while run() is inside webview_run: the native loop still owns the view.
+      let running = false;
+      // Inside run(), webview_run must return before the view is destroyed:
+      // stop everything that can reach the view, end the loop, and let
+      // run()'s finally finish the teardown (webview_destroy).
+      const stopInsideRun = () => {
         cancelStartup();
         clearDispatches();
         detachFileDrop();
+        workerDrains.delete(drainToken);
+        ring.stopDispatch();
+        worker?.terminate();
+        quit();
+      };
+      const unsubscribeWindowDispose = onWindowDispose(window, () => {
+        if (running) {
+          stopInsideRun();
+          return;
+        }
+        if (!meta.owned) {
+          // A borrowed window's owner (a tab driver, or the embedding app)
+          // disposes the WebView itself.
+          cancelStartup();
+          clearDispatches();
+          detachFileDrop();
+          return;
+        }
+        shutdown();
+        discardQuit();
       });
       const shutdown = () => {
         if (down) return;
         down = true;
+        if (tabHooks) tabHooks.rebindFileDrop = undefined;
         unsubscribeWindowDispose();
         cancelStartup();
         clearDispatches();
@@ -526,7 +623,9 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
         }
       };
       const showWhenReady = () => {
-        if (isLive() && options.showOnReady && !window.isVisible()) window.show();
+        if (!isLive() || !options.showOnReady) return;
+        if (tabHooks?.revealWindow) tabHooks.revealWindow();
+        else if (!window.isVisible()) window.show();
       };
       const callReadyHook = (name: string, hook: (() => void) | undefined) => {
         try {
@@ -537,8 +636,8 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
       };
 
       try {
-        unsubscribeFileDrop = onWindowFileDropListenersChange(window, setFileDrop);
-        setFileDrop(windowFileDropCount(window) > 0);
+        bindFileDrop();
+        if (tabHooks) tabHooks.rebindFileDrop = bindFileDrop;
         if (worker) {
           workerDrains.set(drainToken, drain);
           const init: InitMessage = {
@@ -618,7 +717,7 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
           }
           for (const [path, source] of Object.entries(assets)) {
             const bytes = await assetBytes(source);
-            if (!isLive()) throw new Error("sweetview: the window was disposed during WebView.attach");
+            if (!isLive() || tabHooks?.isCancelled?.()) throw new Error("sweetview: the window was disposed during WebView.attach");
             const err = setAsset(handle(), path, assetMime(path), bytes);
             if (err !== 0) throw new Error(`sweetview: webview_set_asset(${path}) failed (${err})`);
           }
@@ -653,16 +752,30 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
           return () => taps.delete(tap);
         },
         run() {
+          if (down) return;
+          // Keep the owned native window alive until webview_destroy has run:
+          // a window.dispose() or native close inside the loop only ends it.
+          const releaseWindowDispose = meta.owned ? holdWindowNativeDispose(window) : undefined;
+          running = true;
           try {
             core.webview_run(handle());
           } finally {
-            shutdown();
+            running = false;
+            try {
+              shutdown();
+            } finally {
+              releaseWindowDispose?.();
+            }
             discardQuit();
           }
         },
         quit,
         dispose() {
           if (down) return;
+          if (running) {
+            stopInsideRun();
+            return;
+          }
           shutdown();
           discardQuit();
         },
@@ -691,7 +804,7 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
     this.#emit(name, payload);
   }
 
-  /** Fire-and-forget call to the worker (renamed from `call`). */
+  /** Fire-and-forget call to a worker method: no reply, and errors are not reported back. */
   notify<K extends keyof M & string>(method: K, ...params: M[K][0] extends void ? [] : [M[K][0]]): void {
     this.#notify(method, params[0] ?? null);
   }
@@ -765,6 +878,9 @@ export async function createApp<M extends MethodMap = MethodMap, E extends Event
       if (Window.visibleWindows().length === 0) webview.quit();
     });
     let disposed = false;
+    // True while run() is inside webview.run(): dispose() then ends the loop and
+    // leaves the window to run(), after the webview is destroyed.
+    let inRun = false;
     return {
       window,
       webview,
@@ -784,7 +900,13 @@ export async function createApp<M extends MethodMap = MethodMap, E extends Event
         return webview.onEvent(fn);
       },
       run() {
-        webview.run();
+        inRun = true;
+        try {
+          webview.run();
+        } finally {
+          inRun = false;
+          if (disposed) window.dispose();
+        }
       },
       quit() {
         webview.quit();
@@ -794,7 +916,7 @@ export async function createApp<M extends MethodMap = MethodMap, E extends Event
         disposed = true;
         unsubAutoQuit?.();
         webview.dispose();
-        window.dispose();
+        if (!inRun) window.dispose();
       },
     };
   } catch (err) {

@@ -24,7 +24,12 @@ export type AppIdentityInput = {
   version?: string;
   /** Custom URL schemes handled by this application, e.g. `["my-app"]`. */
   urlSchemes?: readonly string[];
-  /** Default application icon shared across windows, tray, and build scripts. */
+  /**
+   * Application icon pixels. The only automatic consumer is `new Window({ identity })`
+   * on Windows, which uses it as the window icon when `icon` is not given (macOS
+   * windows have no per-window icon). Tray icons, `writeIconFiles`, and
+   * `makeMacApp` do not read it: pass each of them its icon explicitly.
+   */
   icon?: AppIdentityIcon;
 };
 

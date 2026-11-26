@@ -1,91 +1,121 @@
 # @n1h/sweetview/page
 
-The page module gives browser code a transport to the window host. It runs in the browser page inside a sweetview window. Its only import is a type from `@n1h/sweetview/ipc`, so it bundles for the browser without Bun or `bun:ffi`.
+The page module gives browser code a transport to the window that hosts it,
+and the ready handshake. It runs in the page, inside a Sweetview window or a
+plain browser. Its only import is a type from `@n1h/sweetview/ipc`, so it
+bundles for the browser without Bun or `bun:ffi`. The host side is in
+[app.md](app.md).
 
-```ts
-import { isWebview, webviewTransport } from "@n1h/sweetview/page";
-```
-
-- [Reference](#reference)
+- [Connecting to the host](#connecting-to-the-host)
   - [isWebview](#iswebview)
   - [webviewTransport](#webviewtransport)
+- [The ready handshake](#the-ready-handshake)
   - [signalReady](#signalready)
 - [Globals](#globals)
-- [Example](#example)
 
-## Reference
-
-### isWebview
-
-```ts
-export const isWebview = (): boolean
-```
-
-Reports whether the page is running inside a sweetview window. It checks that `window` exists and that `window.__sweetview_rpc` is a function.
-
-Returns: `true` inside a sweetview window, `false` elsewhere, including outside a browser.
-
-### webviewTransport
-
-```ts
-export function webviewTransport(): Transport
-```
-
-Creates a `Transport` for the page's sweetview window. `Transport` is documented in [ipc.md](ipc.md). Pass the result to `createBridge` for the typed surface.
-
-| Field | Type | Meaning |
-|---|---|---|
-| `kind` | `TransportKind` | Always `"webview"`. |
-| `call(method, params)` | `Promise<unknown>` | Calls `__sweetview_rpc(method, params)`. Resolves with the result. A result of `undefined` arrives as `null`. Rejects with an `Error` whose message is the rejection value's `message` field as a string, or the value as a string when it has no `message` field. |
-| `notify(method, params)` | `void` | Sends the same call as `call` and discards the result. A failure is logged with `console.error` as `"<method> failed:"` and the message. |
-| `onEvent(fn)` | `() => void` | Registers `fn` for every event. Returns a function that removes it. |
-
-Every transport created on one page shares one set of event listeners. The first `webviewTransport()` call installs `window.__sweetview_emit`, unless the page already defined it. In that case `onEvent` listeners receive no events. Events the host emits before the first `webviewTransport()` call find no `__sweetview_emit` and are lost.
-
-Returns: a `Transport` whose `kind` is `"webview"`.
-
-Throws: `Error` with the message `"not running inside sweetview"` when `window.__sweetview_rpc` is not defined.
-
-Outside a browser, where there is no global `window`, it throws the same `Error`.
-
-Thread: the browser page.
-
-### signalReady
-
-```ts
-export function signalReady(): Promise<void>;
-```
-
-Import from `@n1h/sweetview/page` and call after initial render and listener
-registration. The promise resolves when the host acknowledges the signal.
-Inside Sweetview, it cancels the native startup watchdog, releases buffered
-URL activations and can reveal the window when `showOnReady` is enabled.
-In a regular browser it resolves immediately.
-
-## Globals
-
-
-The module declares both globals as optional properties of `Window`.
-
-| Global | Type | Installed by | Meaning |
-|---|---|---|---|
-| `__sweetview_rpc` | `(method: string, params: unknown) => Promise<unknown>` | The UI thread, with `webview_bind`, in `WebView.attach` / `createApp` | Sends a call to the host. A method in `uiMethods` is answered on the UI thread. Any other method goes to the worker. In a window without a worker, any other method rejects. A result of `undefined` resolves as `null`. Rejects with `{ message }` on failure. |
-| `__sweetview_emit` | `(name: string, payload: unknown) => void` | `webviewTransport()`, on its first call | The UI thread evaluates `__sweetview_emit(name, payload)` once per event. A payload of `undefined` arrives as `null`. It passes the event to every listener registered with `onEvent`. |
-
-The host side of both is in [app.md](app.md).
-
-## Example
+## Connecting to the host
 
 ```ts
 import { createBridge } from "@n1h/sweetview/ipc";
+import { wsTransport } from "@n1h/sweetview/ipc-ws/client";
 import { isWebview, webviewTransport } from "@n1h/sweetview/page";
 
 type Methods = { "notes.list": [void, string[]] };
 type Events = { "notes.changed": { count: number } };
 
-if (isWebview()) {
-  const bridge = createBridge<Methods, Events>(webviewTransport());
-  bridge.on("notes.changed", ({ count }) => console.log(count));
-  console.log(await bridge.rpc("notes.list"));
-}
+const bridge = createBridge<Methods, Events>(isWebview() ? webviewTransport() : wsTransport());
+bridge.on("notes.changed", ({ count }) => console.log(count));
+console.log(await bridge.rpc("notes.list"));
 ```
+
+A page that runs both in a Sweetview window and in a browser picks its
+transport once; everything after that is the same typed `bridge`.
+
+### isWebview
+
+```ts
+isWebview(): boolean
+```
+
+`true` when `window.__sweetview_rpc` is a function, which the host installs
+in every Sweetview window. `false` in a plain browser and outside a browser.
+
+### webviewTransport
+
+```ts
+webviewTransport(): Transport
+```
+
+A [`Transport`](ipc.md#transport) for the hosting window. Pass it to
+`createBridge`.
+
+| Field | Meaning |
+|---|---|
+| `kind` | `"webview"`. |
+| `call(method, params)` | Calls `__sweetview_rpc(method, params)`. Resolves with the result (`undefined` arrives as `null`). Rejects with an `Error` whose message is the host's `message`, or the rejection value as a string. |
+| `notify(method, params)` | The same call, result discarded. A failure is logged with `console.error` as `"<method> failed:"` and the message. |
+| `onEvent(fn)` | Registers `fn` for every event; returns a function that removes it. |
+
+Throws `Error("not running inside sweetview")` when `__sweetview_rpc` is not
+defined, including outside a browser.
+
+All transports created on one page share one set of event listeners. The
+first `webviewTransport()` call installs `window.__sweetview_emit`, unless
+the page already defined it, in which case `onEvent` listeners receive
+nothing. Events the host emits before that first call are lost, so create the
+transport early, before anything that might trigger events.
+
+A call goes to the host's `uiMethods` first, then its `deferredUiMethods`,
+then the worker. In a window with neither a matching UI method nor a worker
+it rejects with `<method>: this window has no worker and no UI-thread method of that name`.
+
+## The ready handshake
+
+```ts
+import { createBridge } from "@n1h/sweetview/ipc";
+import { signalReady, webviewTransport } from "@n1h/sweetview/page";
+
+const bridge = createBridge<Methods, Events>(webviewTransport());
+bridge.on("notes.changed", render);  // 1. install listeners
+render(await bridge.rpc("notes.list")); // 2. draw the first screen
+await signalReady();                     // 3. tell the host
+```
+
+A window created with `showOnReady: true` stays hidden until the page says it
+is ready, so the user never sees a blank or half-drawn page. Call
+`signalReady()` after installing listeners and rendering the initial UI.
+
+### signalReady
+
+```ts
+signalReady(): Promise<void>
+```
+
+Sends the reserved RPC `__sweetview.ready`. That method name belongs to the
+host: it is answered before `uiMethods` and the worker are consulted, so an
+app cannot define a method with that name.
+
+On the first signal from a webview, the host:
+
+1. cancels that webview's `readyTimeoutMs` watchdog;
+2. calls the native [`signalReady()`](native/activation-and-single-instance.md#signalready),
+   which drains buffered activation URLs for the whole app (this happens
+   once per process, on the first webview to become ready);
+3. calls that webview's `onReady`;
+4. shows the window when `showOnReady` is set.
+
+Later signals from the same page resolve without doing anything again.
+
+| Where | Result |
+|---|---|
+| Plain browser | Resolves immediately; there is nothing to signal. |
+| Sweetview window | Resolves when the host acknowledges. Rejects if the host RPC fails, for example when the window is being torn down, with the host's raw rejection value (`{ message }`), not an `Error`. |
+
+## Globals
+
+The module declares both globals as optional properties of `Window`.
+
+| Global | Installed by | Meaning |
+|---|---|---|
+| `__sweetview_rpc(method, params): Promise<unknown>` | the host, with `webview_bind`, in `WebView.attach` / `createApp` | Sends a call. Resolves with the result (`undefined` as `null`); rejects with `{ message }`. |
+| `__sweetview_emit(name, payload): void` | `webviewTransport()`, on its first call | The host evaluates `__sweetview_emit(name, payload)` once per event (`undefined` payload as `null`); it passes the event to every `onEvent` listener. |

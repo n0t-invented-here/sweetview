@@ -2,10 +2,6 @@
 
 A window chrome drawn by the page: the title bar, the minimise, maximise and close buttons and the resize handles are HTML, and the UI thread carries them out on the native window. The module has two halves joined by one method table: `windowChromeMethods` runs on the UI thread, and `windowChromeControls` and `resizeHandles` run in the browser page. Its imports from `@n1h/sweetview/ipc` and `@n1h/sweetview/native` are type-only, so it loads neither `bun:ffi` nor the webview library and a page bundle can import it.
 
-```ts
-import { resizeHandles, windowChromeControls, windowChromeMethods, type ResizeHandle, type WindowChromeControls, type WindowChromeInfo, type WindowChromeKind, type WindowChromeMethods, type WindowChromeMethodTable, type WindowChromeOptions } from "@n1h/sweetview/window-chrome";
-```
-
 - [Shared types](#shared-types)
   - [WindowChromeKind](#windowchromekind)
   - [WindowChromeInfo](#windowchromeinfo)
@@ -25,7 +21,11 @@ import { resizeHandles, windowChromeControls, windowChromeMethods, type ResizeHa
 
 These types describe the contract between the two halves. They are usable in both environments.
 
-`ResizeEdge` comes from `@n1h/sweetview/native`, see [native.md](native.md). It is `"left" | "right" | "top" | "bottom" | "top-left" | "top-right" | "bottom-left" | "bottom-right"`.
+```ts
+import type { WindowChromeInfo, WindowChromeKind, WindowChromeMethods } from "@n1h/sweetview/window-chrome";
+```
+
+`ResizeEdge` comes from `@n1h/sweetview/native`, see [Windows and screens](native/windows.md#types). It is `"left" | "right" | "top" | "bottom" | "top-left" | "top-right" | "bottom-left" | "bottom-right"`.
 
 ### WindowChromeKind
 
@@ -87,7 +87,27 @@ One handler per method of `WindowChromeMethods`, each taking that method's param
 
 ## UI thread
 
-This half runs on the UI thread, inside the process that owns the window. It answers the `window.*` calls through the `uiMethods` option of `WebView.attach` or `createApp`, see [app.md](app.md). `windowChromeMethods`, `WindowChromeInfo`, `WindowChromeKind`, `WindowChromeMethods` and `WindowChromeOptions` are also exported from `@n1h/sweetview`.
+This half runs on the UI thread, inside the process that owns the window. It answers the `window.*` calls through the `uiMethods` option of `WebView.attach` or `createApp`, see [app.md](app.md).
+
+The handlers need the `Window`, so create the window first and attach the
+webview to it:
+
+```ts
+import { WebView } from "@n1h/sweetview";
+import { Window } from "@n1h/sweetview/native";
+import { windowChromeMethods, type WindowChromeMethods } from "@n1h/sweetview/window-chrome";
+import page from "./index.html";
+
+const win = new Window({ frame: false, transparent: true, bounds: { x: 100, y: 100, width: 900, height: 640 } });
+const view = await WebView.attach<WindowChromeMethods>(win, {
+  page,
+  uiMethods: windowChromeMethods(win, { onClose: () => view.quit() }),
+});
+win.show();
+view.run();
+```
+
+`windowChromeMethods`, `WindowChromeInfo`, `WindowChromeKind`, `WindowChromeMethods`, `WindowChromeMethodTable` and `WindowChromeOptions` are also exported from the root `@n1h/sweetview`. The page half (`windowChromeControls`, `resizeHandles`) is only in `@n1h/sweetview/window-chrome`.
 
 ### WindowChromeOptions
 
@@ -108,27 +128,38 @@ The options of `windowChromeMethods`.
 ### windowChromeMethods
 
 ```ts
-export function windowChromeMethods(window: Window, options: WindowChromeOptions = {}): WindowChromeMethodTable
+export function windowChromeMethods(
+  window: Pick<Window, "hide" | "isMaximized" | "startDrag" | "startResize" | "minimize" | "toggleMaximize">,
+  options: WindowChromeOptions = {},
+): WindowChromeMethodTable
 ```
 
 Builds the `window.*` handlers for one window. Spread the result into `uiMethods`. The table in `WindowChromeMethods` lists what each handler does.
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
-| `window` | `Window` | required | The window the methods act on, from `new Window(...)` / `createWindow(...)` in `@n1h/sweetview/native`, see [native.md](native.md). Create it with `frame: false, transparent: true` for a page-drawn chrome. |
+| `window` | `Pick<Window, ...>` | required | The window the methods act on: a `Window` from `@n1h/sweetview/native` (see [Windows and screens](native/windows.md)), or any object with those six methods, such as a test double. Create a real one with `frame: false` (and usually `transparent: true`) for a page-drawn chrome. |
 | `options` | `WindowChromeOptions` | `{}` | See `WindowChromeOptions`. |
 
 Returns: a `WindowChromeMethodTable` bound to `window`.
 
 Throws: on Windows, the `window.resize` handler throws `sweetview: SetTimer failed (<code>)` when the resize timer cannot be created; `WebView` passes the message to the page as a failed call.
 
-Platforms: Windows: implemented; `window.resize` moves the edge or corner with the cursor every 10 ms, down to 160x120 window units, and `window.maximize` toggles between the current monitor's work area (`Screen.of(window).workArea`) and the previous bounds (or OS maximize on framed windows). macOS: implemented; `window.resize` polls cursor movement at 10 ms while the left mouse button is held, and `window.maximize` zooms. Linux: not available; `new Window()` throws.
+Platforms:
+
+- `window.resize` runs `Window.startResize`, Sweetview's own resize loop, on both platforms: every 10 ms while the left button is held (a `SetTimer` on Windows, an `NSTimer` on macOS), it moves the edge or corner with the cursor. It stops at the window's `minWidth` / `minHeight`, or at 160 x 120 window units when neither is set. That 160 x 120 fallback belongs to this custom loop only: resizing a framed window by its native frame, and macOS zoom, use the OS's own limits and `minWidth` / `minHeight`.
+- `window.maximize` runs `Window.toggleMaximize`: on a frameless Windows window it toggles between the current monitor's work area (`Screen.of(window).workArea`) and the previous bounds; on a framed Windows window it uses the OS maximize; on macOS it zooms.
+- Linux: not available; `new Window()` throws. For a UI on Linux, serve the page to a browser over WebSocket instead: see [browser + WebSocket mode](ipc-ws.md).
 
 Thread: UI thread. Each handler calls the `Window` directly.
 
 ## Page
 
 This half runs in the browser page shown in the window. It talks to the UI thread through a `Transport` from `@n1h/sweetview/ipc`, see [ipc.md](ipc.md); inside a webview window that is `webviewTransport()` from `@n1h/sweetview/page`, see [page.md](page.md). It uses no framework.
+
+```ts
+import { resizeHandles, windowChromeControls, type ResizeHandle, type WindowChromeControls } from "@n1h/sweetview/window-chrome";
+```
 
 ### WindowChromeControls
 
@@ -225,11 +256,17 @@ const chrome = windowChromeControls(webviewTransport());
 const info = await chrome.info();
 if (info.chrome === "page") {
   document.getElementById("title-bar")?.addEventListener("pointerdown", chrome.onTitlePointerDown);
+  document.getElementById("minimize")?.addEventListener("click", () => chrome.minimize());
+  document.getElementById("maximize")?.addEventListener("click", () => chrome.toggleMaximize());
   document.getElementById("close")?.addEventListener("click", () => chrome.close());
   for (const h of info.maximized ? [] : resizeHandles()) {
     const el = document.body.appendChild(document.createElement("div"));
     el.style.position = "absolute";
-    for (const [key, value] of Object.entries(h.style)) el.style.setProperty(key, `${value}${typeof value === "number" ? "px" : ""}`);
+    el.style.cursor = h.style.cursor;
+    for (const key of ["top", "right", "bottom", "left", "width", "height"] as const) {
+      const value = h.style[key];
+      if (value !== undefined) el.style[key] = `${value}px`; // lengths only; cursor is not a length
+    }
     el.addEventListener("pointerdown", chrome.onHandlePointerDown(h.edge));
   }
 }

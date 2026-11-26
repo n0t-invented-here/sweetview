@@ -646,7 +646,7 @@ export function createApp<M extends MethodMap, E extends EventMap>(
 * `pumpEvents`, `quitEventLoop`, `runEventLoop`, `setActivationPolicy`
 * `ASSET_ORIGIN`, `FRAMES_ORIGIN`, `NativeRequest` and `NativeResponse` support [zero-TCP dynamic routes](app.md#dynamic-requests).
 * `defineAppIdentity`, `AppIdentity` and `AppIdentityInput` share settings and
-  packaging defaults. The root also re-exports the [activation APIs](native.md#url-schemes-and-single-instance).
+  packaging defaults. The root also re-exports the [activation APIs](native/activation-and-single-instance.md).
 * `RawWebview` (re-export of `Webview` from `@n1h/sweetview-webview-bun`), `SizeHint`, `WEBVIEW_VERSION`
 
 ---

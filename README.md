@@ -24,17 +24,30 @@ bun add @n1h/sweetview @n1h/sweetview-webview-bun
 ```
 
 Only the root module `@n1h/sweetview` loads the library, when it is
-imported. Every other module works without it, so a browser page or a web
-server installs the package alone:
+imported. Every other module works without it, so a browser page, a web
+server or a tray-only app installs the package alone:
 
 ```bash
 bun add @n1h/sweetview
 ```
 
+The peer range is `^2.7.0`. A 2.7.0 library runs windows, bundled pages,
+assets, transparency, tabs and IPC. Four features need the additions that
+arrive with `@n1h/sweetview-webview-bun` 2.8.0, which the range accepts:
+dynamic requests (`onRequest`), streamed worker responses,
+`allowExternalDrop`, and file drops onto the webview (`Window.onFileDrop`
+over a page). Sweetview checks for each one separately when it is used: a
+missing request symbol throws with instructions, missing streaming symbols
+fall back to buffered responses, and the drop features log a warning or fall
+back to drops on the native window. Until 2.8.0 is published, set
+`WEBVIEW_PATH` to a library built from the `v1-drafting` branches; see
+[the webview library](docs/webview-library.md#where-it-comes-from).
+
 ## Documentation
 
 One reference page per module, indexed in the [reference index](docs/README.md).
-Each documents every export: signature, parameters, return value, errors,
+The native module has an overview page and seven topic guides. The pages
+document each export's signature, parameters, return value, errors,
 platform differences and thread rules.
 
 | Module | Contents |
@@ -44,10 +57,10 @@ platform differences and thread rules.
 | [`@n1h/sweetview/page`](docs/page.md) | `isWebview`, `webviewTransport`, `signalReady` |
 | [`@n1h/sweetview/ipc`](docs/ipc.md) | the contract: `defineService`, `createBridge`, `memoryTransport`, the wire frames |
 | [`@n1h/sweetview/ipc-ws`](docs/ipc-ws.md) | the contract over WebSockets: `wsHost` for `Bun.serve`, `wsTransport` and `wsUrl` for the browser; each side alone as `/ipc-ws/server` and `/ipc-ws/client` |
-| [`@n1h/sweetview/native`](docs/native.md) | unified `Window` / `createWindow` (`Window.fromHandle`, overlays, frames, tabs), `Screen`, `Menu.popup`, `Tray`, `Notifier`, `HitRelay` & hit regions, `pickFolder`, `setAppMenu`, `setAppIcon`, `runEventLoop` / `quitEventLoop`, icon encoders (`dotIco`, `dotPng`, `dotIcns`); the hit-region helpers alone, without FFI, as `/native/hit-regions` |
-| [`@n1h/sweetview/settings-store`](docs/settings-store.md) | a JSON settings file in the user's application data folder |
+| [`@n1h/sweetview/native`](docs/native.md) | overview, then guides: [windows and screens](docs/native/windows.md), [overlays and hit regions](docs/native/overlays-and-hit-regions.md), [menus and the tray](docs/native/menus-and-tray.md), [notifications](docs/native/notifications.md), [activation and single instance](docs/native/activation-and-single-instance.md), [dialogs, clipboard and files](docs/native/dialogs-clipboard-files.md), [event loop and icons](docs/native/event-loop-and-icons.md); the hit-region helpers alone, without FFI, as `/native/hit-regions` |
+| [`@n1h/sweetview/settings-store`](docs/settings-store.md) | a JSON settings file in the user's application data folder, and the shared app identity (`defineAppIdentity`) |
 | [`@n1h/sweetview/window-chrome`](docs/window-chrome.md) | a page-drawn title bar and resize handles backed by OS moves and resizes |
-| [`@n1h/sweetview/build`](docs/build.md) | `writeIconFiles` and `makeMacApp`; the page also covers the `make-app.ts` script and the `/file-imports` types |
+| [`@n1h/sweetview/build`](docs/build.md) | `writeIconFiles`, `makeMacApp` and `refreshWindowsIcons`; the page also covers the `make-app.ts` script and the `/file-imports` types |
 | [the webview library](docs/webview-library.md) | native assets and dynamic requests, transparency, the frames origin, and external drop control |
 
 The workspace publishes six packages. The facade includes the application,
@@ -238,17 +251,25 @@ ties settings, packaging and native URL activation together. The native package
 also provides clipboard, bounded and chunked file reads, and OS file drops.
 [Startup and deferred UI](docs/app.md#startup-and-deferred-ui), [native APIs](docs/native.md).
 
-The loop can instead be run from a Bun timer with `runEventLoop`, which keeps
-Bun's event loop alive on the UI thread, so an app needs no worker and a
-menu-bar app needs no window; [The event loop](docs/app.md#the-event-loop)
-explains both ways and when to use which.
+`run()` blocks the UI thread inside the OS loop, so Bun's event loop does not
+turn there: an app that uses `run()` needs a worker for any asynchronous
+logic. The loop can instead be run from a Bun timer with `runEventLoop`,
+which keeps Bun's event loop alive on the UI thread. There the worker is
+optional, and a menu-bar app needs no window, page or worker at all.
+Tabbed apps always use `runEventLoop`.
+[The event loop](docs/app.md#the-event-loop) explains both ways and when to
+use which.
 
 ## Platforms
 
-| | Windows x64 | macOS arm64 | Linux x64 |
+Sweetview targets Windows and macOS. Some modules are pure TypeScript and
+run wherever Bun runs:
+
+| | Windows x64 | macOS arm64 | Other OSes Bun runs on |
 |---|---|---|---|
-| Window, asset serving, transparency, native tabs | yes | yes | no: `WebView.attach` / `createApp` throws |
-| `native` (window, screen, popup menu, tray, notifications, folder picker, app menu, event loop) | yes | yes | throws on first call; icons and hit regions work |
+| Window, asset serving, transparency, native tabs (`WebView.attach`, `createApp`) | yes | yes | no: throws before creating anything |
+| Native OS entry points in `native` (`Window`, `Screen`, `Menu.popup`, `Tray`, `Notifier`, `pickFolder`, `Clipboard`, `setAppMenu`, `setAppIcon`, `runEventLoop`, `singleInstance`, ...) | yes | yes | importing works; the first call throws |
+| Pure TypeScript: icon encoders and PNG decoder, hit-region geometry, menu templates, file-read helpers, IPC, WebSocket IPC, settings, app identity, build helpers | yes | yes | yes |
 | Build host that can embed the Windows exe file icon | yes | no, Bun's stock icon | no, Bun's stock icon |
 
 - Bun accepts `--windows-icon` only on a Windows host; the demos pass it

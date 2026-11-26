@@ -20,7 +20,8 @@ type Backend = {
   primary(): ScreenInfo;
   all(): ScreenInfo[];
   at(point: Point): ScreenInfo;
-  of(handle: WindowHandle): ScreenInfo;
+  /** `window` is the original reference, for backends that resolve windows without a native handle. */
+  of(handle: WindowHandle, window?: WindowRef): ScreenInfo;
   bounds(): Rect;
   cursor(): Point;
 };
@@ -41,7 +42,7 @@ export const Screen = {
     return impl().at(point);
   },
   of(window: WindowRef): ScreenInfo {
-    return impl().of(unwrapHandle(window));
+    return impl().of(unwrapHandle(window), window);
   },
   /** Combined bounding rect of all connected monitors. */
   bounds(): Rect {

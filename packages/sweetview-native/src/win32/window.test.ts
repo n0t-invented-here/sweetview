@@ -3,10 +3,10 @@
 // Windows only; creates hidden windows so nothing flashes on screen.
 
 import { describe, expect, test } from "bun:test";
-import { toArrayBuffer } from "bun:ffi";
+import { FFIType, dlopen, ptr, toArrayBuffer } from "bun:ffi";
 import { defineAppIdentity } from "@n1h/sweetview-settings";
 import { Screen } from "../screen";
-import { closeToTrayOnLastWindow, createWindow, getWindowMeta, Window } from "../window";
+import { closeToTrayOnLastWindow, createWindow, getWindowMeta, holdWindowNativeDispose, isWindowDisposed, onWindowDispose, Window } from "../window";
 
 const onWindows = process.platform === "win32";
 
@@ -187,6 +187,51 @@ describe.if(onWindows)("win32 Window", () => {
     }
   });
 
+  test("a native-dispose hold keeps the HWND until the last hold is released (dispose() and WM_CLOSE)", async () => {
+    const { user32, WM_CLOSE } = await import("./api");
+    const { asHwnd } = await import("./window");
+
+    for (const close of ["dispose", "WM_CLOSE"] as const) {
+      const win = new Window({ title: `Held ${close}` });
+      const hwnd = asHwnd(win.handle);
+      let hooks = 0;
+      onWindowDispose(win, () => hooks++);
+      const releaseA = holdWindowNativeDispose(win);
+      const releaseB = holdWindowNativeDispose(win);
+      try {
+        if (close === "dispose") win.dispose();
+        else user32.SendMessageW(hwnd, WM_CLOSE, 0n, 0n);
+        // Disposal is observable at once; only the native window waits.
+        expect(isWindowDisposed(win)).toBe(true);
+        expect(hooks).toBe(1);
+        expect(Window.visibleWindows()).not.toContain(win);
+        expect(user32.IsWindow(hwnd)).not.toBe(0);
+        win.dispose();
+        releaseA();
+        releaseA();
+        expect(user32.IsWindow(hwnd)).not.toBe(0);
+        releaseB();
+        expect(user32.IsWindow(hwnd)).toBe(0);
+        expect(hooks).toBe(1);
+      } finally {
+        releaseA();
+        releaseB();
+        win.dispose();
+      }
+    }
+
+    // Releasing a hold on a window that was never disposed leaves it alive.
+    const live = new Window({ title: "Held live" });
+    const liveHwnd = asHwnd(live.handle);
+    try {
+      holdWindowNativeDispose(live)();
+      expect(user32.IsWindow(liveHwnd)).not.toBe(0);
+    } finally {
+      live.dispose();
+    }
+    expect(user32.IsWindow(liveHwnd)).toBe(0);
+  });
+
   test("onResize and onMove fire with outer bounds and stop after unsubscribe", () => {
     const win = new Window({ title: "Events", bounds: { x: 100, y: 100, width: 300, height: 200 } });
     const resizes: { width: number; height: number }[] = [];
@@ -248,6 +293,106 @@ describe.if(onWindows)("win32 Window", () => {
       expect(closes).toBe(1);
     } finally {
       msg.destroy();
+    }
+  });
+
+  test("tabbed windows honor topmost on creation and setTopmost afterwards", async () => {
+    const { GWL_EXSTYLE, user32 } = await import("./api");
+    const win = new Window({ tabs: true, topmost: true });
+    try {
+      const hwnd = BigInt(win.handle!);
+      const topmost = () => (user32.GetWindowLongPtrW(hwnd, GWL_EXSTYLE) & 0x8n) !== 0n; // WS_EX_TOPMOST
+      expect(topmost()).toBe(true);
+      expect(getWindowMeta(win).topmost).toBe(true);
+      win.setTopmost(false);
+      expect(topmost()).toBe(false);
+      expect(getWindowMeta(win).topmost).toBe(false);
+      win.setTopmost(true);
+      expect(topmost()).toBe(true);
+    } finally {
+      win.dispose();
+    }
+  });
+
+  test("tabbed windows apply resizable, opacity, hideFromTaskbar, noActivate and outer minimum size", async () => {
+    const { GWL_EXSTYLE, GWL_STYLE, WM_GETMINMAXINFO, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_THICKFRAME, WS_MAXIMIZEBOX, user32 } = await import("./api");
+    const win = new Window({ tabs: true, resizable: false, opacity: 0.5, hideFromTaskbar: true, noActivate: true, minWidth: 700, minHeight: 500 });
+    try {
+      const hwnd = BigInt(win.handle!);
+      const style = user32.GetWindowLongPtrW(hwnd, GWL_STYLE);
+      const ex = user32.GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+      expect(style & BigInt(WS_THICKFRAME | WS_MAXIMIZEBOX)).toBe(0n);
+      expect(ex & BigInt(WS_EX_LAYERED)).toBe(BigInt(WS_EX_LAYERED));
+      expect(ex & BigInt(WS_EX_TOOLWINDOW)).toBe(BigInt(WS_EX_TOOLWINDOW));
+      expect(ex & BigInt(WS_EX_NOACTIVATE)).toBe(BigInt(WS_EX_NOACTIVATE));
+      // MINMAXINFO.ptMinTrackSize is outer physical pixels: caller minimums apply unscaled.
+      const info = new Int32Array(10);
+      user32.SendMessageW(hwnd, WM_GETMINMAXINFO, 0n, BigInt(ptr(info)));
+      expect([info[6], info[7]]).toEqual([700, 500]);
+    } finally {
+      win.dispose();
+    }
+  });
+
+  test("tabbed windows keep per-frame appearance; system updates only touch system frames", async () => {
+    const { getTabFrame, setDarkWindows } = await import("./tab-window");
+    const dwm = dlopen("dwmapi.dll", { DwmGetWindowAttribute: { args: [FFIType.u64, FFIType.u32, FFIType.ptr, FFIType.u32], returns: FFIType.i32 } }).symbols;
+    const dwmDark = (hwnd: bigint) => {
+      const value = new Int32Array(1);
+      expect(dwm.DwmGetWindowAttribute(hwnd, 20, value, 4)).toBe(0); // DWMWA_USE_IMMERSIVE_DARK_MODE
+      return value[0] !== 0;
+    };
+    const darkWin = new Window({ tabs: true, appearance: "dark" });
+    const lightWin = new Window({ tabs: true, appearance: "light" });
+    const systemWin = new Window({ tabs: true, appearance: "system" });
+    try {
+      const dark = getTabFrame(BigInt(darkWin.handle!))!;
+      const light = getTabFrame(BigInt(lightWin.handle!))!;
+      const system = getTabFrame(BigInt(systemWin.handle!))!;
+      expect(dark.isDark()).toBe(true);
+      expect(light.isDark()).toBe(false);
+      expect(dwmDark(dark.hwnd)).toBe(true);
+      expect(dwmDark(light.hwnd)).toBe(false);
+
+      setDarkWindows(true);
+      expect(light.isDark()).toBe(false);
+      expect(system.isDark()).toBe(true);
+      expect(dwmDark(system.hwnd)).toBe(true);
+      setDarkWindows(false);
+      expect(dark.isDark()).toBe(true);
+      expect(system.isDark()).toBe(false);
+      expect(dwmDark(dark.hwnd)).toBe(true);
+
+      system.setSystemDark(true);
+      light.setSystemDark(true);
+      dark.setSystemDark(false);
+      expect(system.isDark()).toBe(true);
+      expect(light.isDark()).toBe(false);
+      expect(dark.isDark()).toBe(true);
+      expect(dwmDark(light.hwnd)).toBe(false);
+    } finally {
+      darkWin.dispose();
+      lightWin.dispose();
+      systemWin.dispose();
+    }
+  });
+
+  test("Window.fromHandle reports the wrapped window's frame and resizability", () => {
+    const frameless = new Window({ frame: false });
+    const fixed = new Window({ resizable: false });
+    const framed = new Window();
+    const wrappers = [frameless, fixed, framed].map((win) => Window.fromHandle(win.handle));
+    try {
+      expect(wrappers.map((w) => ({ frame: getWindowMeta(w).frame, resizable: getWindowMeta(w).resizable }))).toEqual([
+        { frame: false, resizable: false },
+        { frame: true, resizable: false },
+        { frame: true, resizable: true },
+      ]);
+    } finally {
+      for (const w of wrappers) w.dispose();
+      frameless.dispose();
+      fixed.dispose();
+      framed.dispose();
     }
   });
 

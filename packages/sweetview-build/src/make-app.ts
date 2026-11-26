@@ -1,18 +1,28 @@
 #!/usr/bin/env bun
 // The macOS .app bundle around a compiled sweetview binary, from the command
 // line. The same thing as a function is `makeMacApp` in "@n1h/sweetview/build".
-// Runs on any OS: it only writes files.
+// On macOS it also signs the bundle with `codesign` by default (ad-hoc unless
+// --sign names an identity); pass --no-sign to skip that. Off macOS it signs
+// only when --sign is passed. Unsigned, it only writes the bundle files, which
+// works on any OS.
 //
-//   bun src/make-app.ts --name "My App" --bundle-id dev.example.my-app \
+// The script is packages/sweetview-build/src/make-app.ts in this repo; when
+// installed it is the `@n1h/sweetview-build/make-app` export, at
+// node_modules/@n1h/sweetview-build/src/make-app.ts.
+//
+//   bun packages/sweetview-build/src/make-app.ts --name "My App" --bundle-id dev.example.my-app \
 //     --binary dist/my-app-macos-arm64 --out dist [--icns build/AppIcon.icns] \
 //     [--version 1.0.0] [--min-macos 11.0] [--plist LSUIElement=true] [--sign "Developer ID Application: …" | --no-sign]
 
 import { parseArgs } from "node:util";
 import { makeMacApp, type MacAppOptions } from "./build";
 
-const USAGE = `usage: bun src/make-app.ts --name <name> --bundle-id <id> --binary <path> --out <dir>
-                          [--icns <path>] [--version <x.y.z>] [--min-macos <x.y>] [--url-scheme <scheme>]...
-                          [--plist <Key=value>]... [--sign <identity> | --no-sign]
+const USAGE = `usage: bun packages/sweetview-build/src/make-app.ts --name <name> --bundle-id <id> --binary <path> --out <dir>
+         [--icns <path>] [--version <x.y.z>] [--min-macos <x.y>] [--url-scheme <scheme>]...
+         [--plist <Key=value>]... [--sign <identity> | --no-sign]
+
+  Installed as a dependency, the script is node_modules/@n1h/sweetview-build/src/make-app.ts
+  (the @n1h/sweetview-build/make-app export).
 
   --name        what Finder and the Dock show; the bundle is <name>.app
   --bundle-id   reverse-DNS id (dev.example.my-app); macOS notifications need one

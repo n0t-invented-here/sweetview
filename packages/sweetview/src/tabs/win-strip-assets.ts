@@ -26,8 +26,22 @@ export const STRIP_CSS = `:root {
   --focus: #0067c0;
   font: 12px/1 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
 }
+/* data-theme carries the frame's effective appearance (explicit "light" or
+   "dark" frames ignore the OS setting); before it is set the OS setting applies. */
+:root[data-theme="light"] { color-scheme: light; }
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --strip: #292a30;
+  --tab: #15161a;
+  --text: #f2f2f5;
+  --muted: #a6a7b0;
+  --hover: rgb(255 255 255 / 0.08);
+  --press: rgb(255 255 255 / 0.05);
+  --line: rgb(255 255 255 / 0.18);
+  --focus: #4cc2ff;
+}
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme]) {
     --strip: #292a30;
     --tab: #15161a;
     --text: #f2f2f5;
@@ -61,8 +75,9 @@ button:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
 .tab:hover { background: var(--hover); color: var(--text); }
 .tab.selected { background: var(--tab); color: var(--text); }
 .tab.selected.tinted { background: oklch(98.5% 0.006 var(--hue)); }
+:root[data-theme="dark"] .tab.selected.tinted { background: oklch(19% 0.012 var(--hue)); }
 @media (prefers-color-scheme: dark) {
-  .tab.selected.tinted { background: oklch(19% 0.012 var(--hue)); }
+  :root:not([data-theme]) .tab.selected.tinted { background: oklch(19% 0.012 var(--hue)); }
 }
 #tabs.more-left { mask-image: linear-gradient(to right, transparent, #000 28px); }
 #tabs.more-right { mask-image: linear-gradient(to left, transparent, #000 28px); }
@@ -337,8 +352,14 @@ window.addEventListener("wheel", (event) => {
 window.addEventListener("resize", render);
 window.addEventListener("dragstart", (event) => event.preventDefault());
 
+// Reports the OS dark state; the host replies with this frame's effective
+// dark state, which differs for frames with an explicit appearance.
 const darkMode = matchMedia("(prefers-color-scheme: dark)");
-const tellDark = () => notify("strip.dark", darkMode.matches);
+const tellDark = () => {
+  rpc("strip.dark", darkMode.matches).then((dark) => {
+    if (typeof dark === "boolean") document.documentElement.dataset.theme = dark ? "dark" : "light";
+  }, () => {});
+};
 darkMode.addEventListener("change", tellDark);
 tellDark();
 

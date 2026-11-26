@@ -18,6 +18,15 @@ const impl = backend<Backend>(
   () => require("./darwin/app-icon"),
 );
 
+/**
+ * Sets the running application's icon.
+ * - macOS: replaces `NSApplication.applicationIconImage`, the Dock tile and
+ *   Cmd+Tab icon of the running process.
+ * - Windows: no-op. Windows has no process-wide runtime icon; embed the
+ *   executable icon at build time (`bun build --compile --windows-icon=app.ico`)
+ *   and set per-window title bar / taskbar / Alt+Tab icons with
+ *   `Window.setIcon` or `WindowOptions.icon`.
+ */
 export function setAppIcon(icon: Icon): void {
   impl().setAppIcon(icon);
 }

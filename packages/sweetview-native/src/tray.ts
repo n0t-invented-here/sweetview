@@ -8,7 +8,14 @@ import type { Icon } from "./icon";
 import type { MenuSource } from "./menu";
 import { backend } from "./platform";
 
-/** The tray's icon: an `Icon`. Windows picks the 16px image for the tray and 32px for toasts; macOS shows the PNG at 18x18 points (36px for Retina). */
+/**
+ * The tray's icon: an `Icon`.
+ * - Windows: the notification-area icon (and the icon of legacy tray balloon
+ *   tips) is taken from the `.ico`, which should carry a 16px image (plus
+ *   20/24/32px for higher DPI). WinRT toast notifications are separate: their
+ *   images come from the toast XML (`Notifier`), not from this icon.
+ * - macOS: the menu bar status item shows the PNG at 18x18 points (36px for Retina).
+ */
 export type TrayIcon = Icon;
 
 export type TrayOptions = {

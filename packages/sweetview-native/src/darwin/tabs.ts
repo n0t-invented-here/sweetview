@@ -17,6 +17,7 @@ import {
   sel,
   send,
   sendBool,
+  sendF64Void,
   sendIntArg,
   sendPtr,
   sendPtrIntVoid,
@@ -40,15 +41,30 @@ const NSWindowStyleMaskResizable = 8n;
 const NSBackingStoreBuffered = 2n;
 const NSWindowTabbingModePreferred = 1n;
 const NSWindowAbove = 1n;
+const NSNormalWindowLevel = 0n;
+const NSStatusWindowLevel = 25n;
+const NSWindowCollectionBehaviorIgnoresCycle = 1n << 6n;
+const NSApplicationActivationPolicyAccessory = 1n;
 
 export type WindowTabsOptions = {
   identifier: string;
   bounds?: Rect;
   width: number;
   height: number;
+  /** Minimum outer frame size in points (`NSWindow.setMinSize:`). Default: 480x320. */
   minWidth?: number;
   minHeight?: number;
   appearance?: Appearance;
+  /** Allow user resizing (`NSWindowStyleMaskResizable`). Default: true. */
+  resizable?: boolean;
+  /** Initial window level of tab windows: `NSStatusWindowLevel` when true. Default: false. */
+  topmost?: boolean;
+  /** Whole-window opacity, 0..1 (`setAlphaValue:`). */
+  opacity?: number;
+  /** Add `NSWindowCollectionBehaviorIgnoresCycle` and switch the app to the `accessory` activation policy. Default: false. */
+  hideFromTaskbar?: boolean;
+  /** Show tab windows with `orderFrontRegardless` instead of `makeKeyAndOrderFront:` + `activateIgnoringOtherApps:`. Default: false. */
+  noActivate?: boolean;
   onNewTabRequest(): void;
   onSelected?(window: Id): void;
   onResized?(window: Id): void;
@@ -59,9 +75,19 @@ export type WindowTabsOptions = {
 
 export type WindowTabs = {
   createWindow(title: string): Id;
-  show(window: Id, after?: Id, beforeShow?: (window: Id) => void): void;
+  /**
+   * Shows a window from `createWindow()`. `anchor` picks where it goes: a
+   * shown window of this group tabs it in after that window; `null` (or a
+   * window that is not shown) opens it standalone; omitted, it tabs into the
+   * group's current window, if any.
+   */
+  show(window: Id, anchor?: Id | null, beforeShow?: (window: Id) => void): void;
   discard(window: Id): void;
   setTitle(window: Id, title: string): void;
+  /** Sets one tab window's level (`NSStatusWindowLevel` / `NSNormalWindowLevel`). */
+  setTopmost(window: Id, on: boolean): void;
+  /** Sets the level of every tab window in the group, and of tab windows created later. */
+  setGroupTopmost(on: boolean): void;
   select(window: Id): void;
   close(window: Id): void;
   moveToNewWindow(window: Id): void;
@@ -145,6 +171,13 @@ export function createWindowTabs(options: WindowTabsOptions): WindowTabs {
   const hidden = new Set<Id>();
   const responder = ensureResponder();
   let disposed = false;
+  let topmost = options.topmost ?? false;
+  const noActivate = options.noActivate ?? false;
+  // The tab last selected, shown, or made main. Under noActivate no tab becomes
+  // key, so current() cannot rely on keyWindow and uses this tab's group instead.
+  let lastSelected: Id | undefined;
+  const groupOf = (window: Id): Id => asId(send(window, sel("tabGroup")));
+  const applyLevel = (window: Id, on: boolean) => sendIntArg(window, sel("setLevel:"), on ? NSStatusWindowLevel : NSNormalWindowLevel);
 
   const keepTabBar = (window: Id) => {
     if (!shown.has(window)) return;
@@ -166,6 +199,11 @@ export function createWindowTabs(options: WindowTabsOptions): WindowTabs {
     },
     onWillClose: (window) => {
       if (!shown.delete(window)) return;
+      if (lastSelected === window) {
+        // Advance to another live tab in the same group (or none; current() falls back).
+        const group = groupOf(window);
+        lastSelected = group === NIL ? undefined : [...shown].findLast((w) => groupOf(w) === group);
+      }
       stopObserving(window);
       setTimeout(
         () =>
@@ -181,6 +219,7 @@ export function createWindowTabs(options: WindowTabsOptions): WindowTabs {
     },
     onDidBecomeMain: (window) => {
       if (disposed || !shown.has(window)) return;
+      lastSelected = window;
       options.onSelected?.(window);
       setTimeout(() => pooled(() => keepTabBar(window)), 0);
     },
@@ -206,13 +245,23 @@ export function createWindowTabs(options: WindowTabsOptions): WindowTabs {
   const current = (): Id | undefined => {
     const key = asId(send(app, sel("keyWindow")));
     if (shown.has(key)) return key;
-    return [...shown].at(-1);
+    // No tab is key (e.g. noActivate, or the app is inactive): ask the tab group
+    // of the last selected tab (else the last shown tab) which tab it shows.
+    const anchor = lastSelected !== undefined && shown.has(lastSelected) ? lastSelected : [...shown].at(-1);
+    if (anchor === undefined) return undefined;
+    const group = groupOf(anchor);
+    if (group !== NIL) {
+      const selected = asId(send(group, sel("selectedWindow")));
+      if (shown.has(selected)) return selected;
+    }
+    return anchor;
   };
 
   return {
     createWindow: (title) =>
       pooled(() => {
-        const style = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable;
+        let style = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskMiniaturizable;
+        if (options.resizable !== false) style |= NSWindowStyleMaskResizable;
         const c = options.bounds ? toCocoa(options.bounds) : { x: 0, y: 0, w: options.width, h: options.height };
         const window = asId(
           sendRectUIntUIntBool(asId(send(darwinTabWindowClass(), sel("alloc"))), sel("initWithContentRect:styleMask:backing:defer:"), c.x, c.y, c.w, c.h, style, NSBackingStoreBuffered, false),
@@ -221,7 +270,14 @@ export function createWindowTabs(options: WindowTabsOptions): WindowTabs {
         sendBool(window, sel("setReleasedWhenClosed:"), false);
         if (options.bounds) sendRectBool(window, sel("setFrame:display:"), c.x, c.y, c.w, c.h, false);
         sendPtr(window, sel("setTitle:"), nsString(title));
-        sendSize(window, sel("setContentMinSize:"), options.minWidth ?? 480, options.minHeight ?? 320);
+        // setMinSize: is the outer frame size in points, matching the WindowOptions outer-frame contract.
+        sendSize(window, sel("setMinSize:"), options.minWidth ?? 480, options.minHeight ?? 320);
+        if (options.opacity !== undefined) sendF64Void(window, sel("setAlphaValue:"), Math.min(1, Math.max(0, options.opacity)));
+        if (topmost) applyLevel(window, true);
+        if (options.hideFromTaskbar) {
+          sendUIntArg(window, sel("setCollectionBehavior:"), NSWindowCollectionBehaviorIgnoresCycle);
+          sendIntArg(app, sel("setActivationPolicy:"), NSApplicationActivationPolicyAccessory);
+        }
         if (options.appearance && options.appearance !== "system") {
           const name = options.appearance === "dark" ? "NSAppearanceNameDarkAqua" : "NSAppearanceNameAqua";
           sendPtr(window, sel("setAppearance:"), asId(sendPtr(cls("NSAppearance"), sel("appearanceNamed:"), nsString(name))));
@@ -236,13 +292,18 @@ export function createWindowTabs(options: WindowTabsOptions): WindowTabs {
     show: (window, after, beforeShow) =>
       pooled(() => {
         if (!hidden.delete(window)) throw new Error("sweetview: show() takes a window from createWindow(), once");
-        const anchor = after !== undefined && shown.has(after) ? after : current();
+        const anchor = after === undefined ? current() : after !== null && shown.has(after) ? after : undefined;
         shown.add(window);
+        lastSelected = window;
         beforeShow?.(window);
         if (anchor === undefined && !options.bounds) send(window, sel("center"));
         else if (anchor !== undefined) sendPtrIntVoid(anchor, sel("addTabbedWindow:ordered:"), window, NSWindowAbove);
-        sendPtr(window, sel("makeKeyAndOrderFront:"), NIL);
-        sendBool(app, sel("activateIgnoringOtherApps:"), true);
+        if (noActivate) {
+          send(window, sel("orderFrontRegardless"));
+        } else {
+          sendPtr(window, sel("makeKeyAndOrderFront:"), NIL);
+          sendBool(app, sel("activateIgnoringOtherApps:"), true);
+        }
         keepTabBar(window);
       }),
     discard: (window) =>
@@ -255,9 +316,27 @@ export function createWindowTabs(options: WindowTabsOptions): WindowTabs {
       pooled(() => {
         if (shown.has(window) || hidden.has(window)) sendPtr(window, sel("setTitle:"), nsString(title));
       }),
+    setTopmost: (window, on) =>
+      pooled(() => {
+        if (shown.has(window) || hidden.has(window)) applyLevel(window, on);
+      }),
+    setGroupTopmost: (on) =>
+      pooled(() => {
+        topmost = on;
+        for (const window of [...shown, ...hidden]) applyLevel(window, on);
+      }),
     select: (window) =>
       pooled(() => {
-        if (shown.has(window)) sendPtr(window, sel("makeKeyAndOrderFront:"), NIL);
+        if (!shown.has(window)) return;
+        lastSelected = window;
+        if (noActivate) {
+          // Select the tab and bring it forward without taking key focus or activating the app.
+          const group = groupOf(window);
+          if (group !== NIL) sendPtr(group, sel("setSelectedWindow:"), window);
+          send(window, sel("orderFrontRegardless"));
+        } else {
+          sendPtr(window, sel("makeKeyAndOrderFront:"), NIL);
+        }
       }),
     close: (window) =>
       pooled(() => {
@@ -278,6 +357,7 @@ export function createWindowTabs(options: WindowTabsOptions): WindowTabs {
       pooled(() => {
         if (disposed) return;
         disposed = true;
+        lastSelected = undefined;
         if (lastActiveGroup === hooks) lastActiveGroup = undefined;
         for (const w of [...hidden]) {
           hidden.delete(w);

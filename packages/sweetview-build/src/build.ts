@@ -5,7 +5,8 @@
 //
 //   import { makeMacApp, writeIconFiles } from "@n1h/sweetview/build";
 //
-// The bundle is also a script to run: src/make-app.ts.
+// The bundle is also a script to run: packages/sweetview-build/src/make-app.ts
+// in this repo, the `@n1h/sweetview-build/make-app` export when installed.
 
 import { spawnSync } from "node:child_process";
 import { chmodSync, cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
@@ -33,7 +34,10 @@ export type MacAppOptions = {
   minimumSystemVersion?: string;
   /** Custom URL schemes written as `CFBundleURLTypes` in `Info.plist`, e.g. `["my-app"]`. */
   urlSchemes?: readonly string[];
-  /** More `Info.plist` entries, by key: `{ LSUIElement: true }` for a menu-bar-only app with no Dock tile, say. These win over the defaults. */
+  /**
+   * More `Info.plist` entries, by key: `{ LSUIElement: true }` for a menu-bar-only app with no Dock tile, say. These win over the defaults.
+   * Values are scalars only, so `CFBundleURLTypes` here is rejected while URL schemes are given: use `urlSchemes` for it.
+   */
   plist?: Record<string, string | number | boolean>;
   /**
    * The `codesign` identity for the bundle: `"-"` for an ad-hoc signature, or a
@@ -70,6 +74,9 @@ export function makeMacApp(options: MacAppOptions): string {
   if (options.icns !== undefined && !existsSync(options.icns)) throw new Error(`makeMacApp: ${options.icns} not found (write the .icns first)`);
 
   const schemes = (options.urlSchemes ?? options.identity?.urlSchemes ?? []).map(validateUrlScheme);
+  if (schemes.length > 0 && options.plist !== undefined && Object.hasOwn(options.plist, "CFBundleURLTypes")) {
+    throw new Error("makeMacApp: plist.CFBundleURLTypes conflicts with urlSchemes, which writes CFBundleURLTypes; pass the schemes in urlSchemes only");
+  }
   const executable = basename(options.binary);
   const app = join(options.outDir, `${name}.app`);
   const macos = join(app, "Contents", "MacOS");
@@ -168,7 +175,11 @@ export function writeIconFiles(dir: string, files: { ico?: Uint8Array; icns?: Ui
  * Windows: tells the shell that icons changed, so Explorer, the taskbar and the Start menu draw a
  * rebuilt program's icon. Without it they go on drawing the icon they kept from the file that was at
  * that path before the build, however the new file's icon differs. It is the call an installer makes
- * (SHChangeNotify with SHCNE_ASSOCCHANGED) and changes nothing on the computer. Elsewhere: does nothing.
+ * (SHChangeNotify with SHCNE_ASSOCCHANGED and SHCNF_FLUSH, which flushes Explorer's icon cache) and
+ * changes nothing on the computer.
+ *
+ * Elsewhere it does nothing, because nothing needs it: macOS reads the icon from the `.app` bundle's
+ * `Contents/Resources/AppIcon.icns` (see `makeMacApp`), so rebuilding the bundle is the whole update.
  */
 export function refreshWindowsIcons(): void {
   if (process.platform !== "win32") return;

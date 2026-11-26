@@ -71,7 +71,7 @@ import { clearWindowIcon, setWindowIcon } from "./icon";
 import { ensureWin32Init } from "./init";
 import { of as screenOf, primary as primaryScreen } from "./screen";
 import { STRIP_HEIGHT } from "./strip-shared";
-import { createFrameWindow, getTabFrame, setDarkWindows } from "./tab-window";
+import { createFrameWindow, getTabFrame } from "./tab-window";
 
 export { colorRef };
 
@@ -531,9 +531,6 @@ export function createWindow(options: WindowOptions): WindowBackend {
 
 function createTabbedWindow(options: WindowOptions): WindowBackend {
   const appearance = options.appearance ?? "system";
-  if (appearance === "dark") setDarkWindows(true);
-  else if (appearance === "light") setDarkWindows(false);
-  else setDarkWindows(systemIsDark());
 
   let disposed = false;
   let ownerDispose = () => self.dispose();
@@ -542,9 +539,17 @@ function createTabbedWindow(options: WindowOptions): WindowBackend {
     bounds: options.bounds,
     width: options.bounds ? undefined : 1040,
     height: options.bounds ? undefined : 720 + STRIP_HEIGHT,
-    minWidth: options.minWidth ?? 560,
-    minHeight: options.minHeight ?? 420 + STRIP_HEIGHT,
+    // Outer-frame minimums in physical pixels; the frame supplies a DIP-scaled default when omitted.
+    minWidth: options.minWidth,
+    minHeight: options.minHeight,
     stripHeight: STRIP_HEIGHT,
+    appearance,
+    systemDark: appearance === "system" ? systemIsDark() : undefined,
+    resizable: options.resizable,
+    topmost: options.topmost,
+    opacity: options.opacity,
+    hideFromTaskbar: options.hideFromTaskbar,
+    noActivate: options.noActivate,
     onCloseRequest() {
       if (fireClose(frame.hwnd)) return;
       ownerDispose();
@@ -605,7 +610,7 @@ function createTabbedWindow(options: WindowOptions): WindowBackend {
     },
     isMaximized: () => !disposed && frame.isMaximized(),
     setTopmost: (on) => {
-      if (!disposed) user32.SetWindowPos(frame.hwnd, on ? HWND_TOPMOST : HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+      if (!disposed) frame.setTopmost(on);
     },
     startDrag: () => {
       if (!disposed) frame.startDrag();
@@ -652,10 +657,17 @@ export function fromHandle(handle: WindowHandle): WindowBackend {
   const hwnd = asHwnd(handle);
   const style = Number(user32.GetWindowLongPtrW(hwnd, GWL_STYLE));
   const framed = (style & WS_POPUP) === 0;
-  return buildWindow(hwnd, {}, framed, false);
+  const resizable = (style & WS_THICKFRAME) !== 0;
+  return buildWindow(hwnd, {}, framed, false, { frame: framed, resizable });
 }
 
-function buildWindow(hwnd: bigint, options: WindowOptions, framed: boolean, owned: boolean): WindowBackend {
+function buildWindow(
+  hwnd: bigint,
+  options: WindowOptions,
+  framed: boolean,
+  owned: boolean,
+  detectedMeta?: WindowBackend["detectedMeta"],
+): WindowBackend {
   const transparent = options.transparent ?? false;
   const colorKey = options.colorKey;
   const opacity = options.opacity;
@@ -707,6 +719,7 @@ function buildWindow(hwnd: bigint, options: WindowOptions, framed: boolean, owne
 
   const self: WindowBackend = {
     handle: hwnd,
+    detectedMeta,
 
     isVisible() {
       return !disposed && user32.IsWindowVisible(hwnd) !== 0;

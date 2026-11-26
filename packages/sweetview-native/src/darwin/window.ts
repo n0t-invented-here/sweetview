@@ -325,7 +325,11 @@ export function darwinTabWindowClass(): Id {
 
 // ---- hit-region polling timer (invalidated when hits.size === 0) ----------------
 
-const mouseButtonsDown = (): boolean => BigInt(sendInt(cls("NSEvent"), sel("pressedMouseButtons")) ?? 0) !== 0n;
+const pressedMouseButtons = (): bigint => BigInt(sendInt(cls("NSEvent"), sel("pressedMouseButtons")) ?? 0);
+/** Any mouse button held (hit polling pauses during any drag, like Windows' L/R/M check). */
+const mouseButtonsDown = (): boolean => pressedMouseButtons() !== 0n;
+/** Primary (left) button held: bit 0 of `+[NSEvent pressedMouseButtons]`, matching Windows `VK_LBUTTON`. */
+const primaryMouseButtonDown = (): boolean => (pressedMouseButtons() & 1n) !== 0n;
 
 type HitState = { packed: Int32Array; refine?: HitRefiner; inPolygon: boolean; asked?: Point; askSeq: number };
 const hits = new Map<Id, HitState>();
@@ -430,6 +434,61 @@ function ensureResizeTimer() {
   );
 }
 
+/**
+ * Starts a cursor-following resize of `win` from `edge`, shared by regular
+ * windows and macOS tab-group windows. A 10ms NSTimer tracks the cursor while
+ * the primary (left) mouse button stays down, clamping to `minW` x `minH`
+ * outer points, and stops when the button is released or `isDisposed()`
+ * returns true. A new gesture on the same window replaces the previous one.
+ */
+export function startDarwinWindowResize(
+  win: Id,
+  edge: ResizeEdge,
+  minW: number,
+  minH: number,
+  getBounds: () => Rect,
+  setBounds: (rect: Rect) => void,
+  isDisposed: () => boolean,
+): void {
+  if (isDisposed() || !primaryMouseButtonDown()) return;
+  const startCursor = cursorPoint();
+  if (!startCursor) return;
+  const from = getBounds();
+  const tick = () => {
+    if (isDisposed() || !primaryMouseButtonDown()) {
+      if (resizers.get(win) === tick) resizers.delete(win);
+      return;
+    }
+    const curPt = cursorPoint();
+    if (!curPt) return;
+    const dx = curPt.x - startCursor.x;
+    const dy = curPt.y - startCursor.y;
+    let { x, y, width, height } = from;
+    if (edge.includes("left")) {
+      width = Math.max(minW, from.width - dx);
+      x = from.x + from.width - width;
+    }
+    if (edge.includes("right")) width = Math.max(minW, from.width + dx);
+    if (edge.includes("top")) {
+      height = Math.max(minH, from.height - dy);
+      y = from.y + from.height - height;
+    }
+    if (edge.includes("bottom")) height = Math.max(minH, from.height + dy);
+    const cur = getBounds();
+    if (x !== cur.x || y !== cur.y || width !== cur.width || height !== cur.height) {
+      setBounds({ x, y, width, height });
+    }
+  };
+  resizers.set(win, tick);
+  ensureResizeTimer();
+}
+
+/** Cancels an in-progress `startDarwinWindowResize` gesture on `win`, if any. */
+export function stopDarwinWindowResize(win: Id): void {
+  if (!resizers.delete(win)) return;
+  stopResizeTimerIfIdle();
+}
+
 // ---- window construction --------------------------------------------------------
 
 function defaultBounds(): Rect {
@@ -505,20 +564,73 @@ export type DarwinTabGroupController = {
   isMaximized(): boolean;
   dispose(): void;
   setFileDropEnabled(enabled: boolean): void;
+  /** Sets the window level of every tab NSWindow in the group. */
+  setTopmost?(on: boolean): void;
+  /** Starts a native drag of the active tab NSWindow from the current event. */
+  startDrag?(): void;
+  /** Starts a cursor-following resize of the active tab NSWindow (see `startDarwinWindowResize`). */
+  startResize?(edge: ResizeEdge): void;
+  /** The active tab's `NSWindow*`, or null while the group has no shown tab window. */
+  activeHandle?(): Id | null;
+};
+
+/** State a virtual tabbed window records before a controller is bound, replayed on bind. */
+type VirtualTabState = {
+  disposed: boolean;
+  /** Set by show()/hide()/toggle() before bind; undefined when neither was called. */
+  pendingVisible: boolean | undefined;
+  bounds: Rect;
+  /** True once setBounds/moveTo/resize stored bounds before bind. */
+  boundsChanged: boolean;
+  title: string;
+  topmost: boolean;
 };
 
 const darwinTabControllers = new Map<WindowBackend, DarwinTabGroupController>();
 const darwinTabEvents = new Map<WindowBackend, EventBucket>();
+const darwinTabStates = new Map<WindowBackend, VirtualTabState>();
 
+/** The active tab `NSWindow*` of a macOS virtual tabbed window, or null when none exists yet (or `backend` is not one). */
+export function getDarwinTabActiveHandle(backend: WindowBackend): Id | null {
+  const handle = darwinTabControllers.get(backend)?.activeHandle?.() ?? null;
+  return handle === NIL ? null : handle;
+}
+
+/**
+ * Binds the platform tab driver's controller to a virtual tabbed window.
+ * File-drop demand is synced synchronously. Other state set before binding
+ * (`setTopmost`, `setTitle`, `setBounds`/`moveTo`/`resize`, and the latest
+ * `show()`/`hide()`) is applied by the returned `replay()`, which the caller
+ * runs synchronously once it has finished initialising the controller. Runs
+ * after the first, or after the window is disposed, do nothing.
+ */
 export function bindDarwinTabGroup(backend: WindowBackend, controller: DarwinTabGroupController): {
   fireResize(bounds: Rect): void;
   fireMove(bounds: Rect): void;
   fireClose(): boolean;
   fireFileDrop(paths: string[]): void;
+  replay(): void;
 } {
   darwinTabControllers.set(backend, controller);
   if (darwinTabEvents.get(backend)?.fileDrop.size) controller.setFileDropEnabled(true);
+  const state = darwinTabStates.get(backend);
+  let replayed = false;
   return {
+    replay() {
+      if (replayed) return;
+      replayed = true;
+      if (!state || state.disposed || darwinTabControllers.get(backend) !== controller) return;
+      const visible = state.pendingVisible;
+      state.pendingVisible = undefined;
+      try {
+        if (state.topmost) controller.setTopmost?.(true);
+        if (state.title) controller.setTitle(state.title);
+        if (state.boundsChanged) controller.setBounds(state.bounds);
+        if (visible === true) controller.show();
+      } catch (err) {
+        console.error("sweetview: replaying tabbed window state threw:", err);
+      }
+    },
     fireResize(bounds) {
       const b = darwinTabEvents.get(backend);
       if (!b) return;
@@ -561,27 +673,44 @@ export function bindDarwinTabGroup(backend: WindowBackend, controller: DarwinTab
 }
 
 function createVirtualTabbedWindow(options: WindowOptions): WindowBackend {
-  let storedBounds: Rect = options.bounds ?? { x: 100, y: 100, width: 1040, height: 720 };
-  let disposed = false;
+  const state: VirtualTabState = {
+    disposed: false,
+    pendingVisible: undefined,
+    bounds: options.bounds ?? { x: 100, y: 100, width: 1040, height: 720 },
+    boundsChanged: false,
+    title: options.title ?? "",
+    topmost: options.topmost ?? false,
+  };
   const bucket: EventBucket = { resize: new Set(), move: new Set(), close: new Set(), fileDrop: new Set() };
+  const controller = () => (state.disposed ? undefined : darwinTabControllers.get(self));
 
   const self: WindowBackend = {
     handle: null,
-    isVisible: () => !disposed && (darwinTabControllers.get(self)?.isVisible() ?? false),
+    isVisible: () => controller()?.isVisible() ?? false,
+    // The latest show()/hide() is always recorded, so a bind's replay applies the newest request.
     show: () => {
-      if (!disposed) darwinTabControllers.get(self)?.show();
+      if (state.disposed) return;
+      state.pendingVisible = true;
+      controller()?.show();
     },
     hide: () => {
-      if (!disposed) darwinTabControllers.get(self)?.hide();
+      if (state.disposed) return;
+      state.pendingVisible = false;
+      controller()?.hide();
     },
     toggle: () => {
-      if (self.isVisible()) self.hide();
+      if (state.disposed) return;
+      const visible = controller() ? self.isVisible() : state.pendingVisible === true;
+      if (visible) self.hide();
       else self.show();
     },
-    bounds: () => darwinTabControllers.get(self)?.bounds() ?? storedBounds,
+    bounds: () => controller()?.bounds() ?? state.bounds,
     setBounds: (r) => {
-      storedBounds = r;
-      if (!disposed) darwinTabControllers.get(self)?.setBounds(r);
+      if (state.disposed) return;
+      state.bounds = r;
+      const c = controller();
+      if (c) c.setBounds(r);
+      else state.boundsChanged = true;
     },
     moveTo: (x, y) => {
       const b = self.bounds();
@@ -593,19 +722,21 @@ function createVirtualTabbedWindow(options: WindowOptions): WindowBackend {
     },
     scale: () => 1,
     setTitle: (title) => {
-      if (!disposed) darwinTabControllers.get(self)?.setTitle(title);
+      if (state.disposed) return;
+      state.title = title;
+      controller()?.setTitle(title);
     },
     setIcon() {},
-    minimize: () => {
-      if (!disposed) darwinTabControllers.get(self)?.minimize();
+    minimize: () => controller()?.minimize(),
+    toggleMaximize: () => controller()?.toggleMaximize(),
+    isMaximized: () => controller()?.isMaximized() ?? false,
+    setTopmost: (on) => {
+      if (state.disposed) return;
+      state.topmost = on;
+      controller()?.setTopmost?.(on);
     },
-    toggleMaximize: () => {
-      if (!disposed) darwinTabControllers.get(self)?.toggleMaximize();
-    },
-    isMaximized: () => !disposed && (darwinTabControllers.get(self)?.isMaximized() ?? false),
-    setTopmost() {},
-    startDrag() {},
-    startResize() {},
+    startDrag: () => controller()?.startDrag?.(),
+    startResize: (edge) => controller()?.startResize?.(edge),
     setClickThrough() {},
     setHitRegions() {},
     onResize(handler) {
@@ -623,17 +754,19 @@ function createVirtualTabbedWindow(options: WindowOptions): WindowBackend {
     onFileDrop(handler) {
       const listener = (paths: string[]) => handler(paths);
       bucket.fileDrop.add(listener);
-      if (bucket.fileDrop.size === 1) darwinTabControllers.get(self)?.setFileDropEnabled(true);
+      if (bucket.fileDrop.size === 1) controller()?.setFileDropEnabled(true);
       return () => {
-        if (bucket.fileDrop.delete(listener) && bucket.fileDrop.size === 0) darwinTabControllers.get(self)?.setFileDropEnabled(false);
+        if (bucket.fileDrop.delete(listener) && bucket.fileDrop.size === 0) controller()?.setFileDropEnabled(false);
       };
     },
     dispose() {
-      if (disposed) return;
-      disposed = true;
-      darwinTabControllers.get(self)?.dispose();
+      if (state.disposed) return;
+      const c = darwinTabControllers.get(self);
+      state.disposed = true;
+      c?.dispose();
       darwinTabControllers.delete(self);
       darwinTabEvents.delete(self);
+      darwinTabStates.delete(self);
       bucket.resize.clear();
       bucket.move.clear();
       bucket.close.clear();
@@ -641,6 +774,7 @@ function createVirtualTabbedWindow(options: WindowOptions): WindowBackend {
     },
   };
   darwinTabEvents.set(self, bucket);
+  darwinTabStates.set(self, state);
   return self;
 }
 
@@ -649,10 +783,11 @@ export function fromHandle(handle: WindowHandle): WindowBackend {
   const win = asNSWindow(handle);
   const mask = BigInt(sendInt(win, sel("styleMask")) ?? 0);
   const framed = (mask & NSWindowStyleMaskTitled) !== 0n;
-  return buildWindow(win, {}, framed, false);
+  const resizable = (mask & NSWindowStyleMaskResizable) !== 0n;
+  return buildWindow(win, {}, framed, false, { frame: framed, resizable });
 }
 
-function buildWindow(win: Id, options: WindowOptions, framed: boolean, owned: boolean): WindowBackend {
+function buildWindow(win: Id, options: WindowOptions, framed: boolean, owned: boolean, detectedMeta?: WindowBackend["detectedMeta"]): WindowBackend {
   const transparent = options.transparent ?? false;
   const opacity = options.opacity;
   const topmost = options.topmost ?? false;
@@ -698,6 +833,7 @@ function buildWindow(win: Id, options: WindowOptions, framed: boolean, owned: bo
 
   const self: WindowBackend = {
     handle: win,
+    detectedMeta,
 
     isVisible() {
       return !disposed && (Boolean(sendRetBool(win, sel("isVisible"))) || (!hidden && Boolean(sendRetBool(win, sel("isMiniaturized")))));
@@ -787,36 +923,7 @@ function buildWindow(win: Id, options: WindowOptions, framed: boolean, owned: bo
     },
 
     startResize(edge: ResizeEdge) {
-      if (disposed) return;
-      const startCursor = cursorPoint();
-      if (!startCursor) return;
-      const from = self.bounds();
-      resizers.set(win, () => {
-        if (disposed || !mouseButtonsDown()) {
-          resizers.delete(win);
-          return;
-        }
-        const curPt = cursorPoint();
-        if (!curPt) return;
-        const dx = curPt.x - startCursor.x;
-        const dy = curPt.y - startCursor.y;
-        let { x, y, width, height } = from;
-        if (edge.includes("left")) {
-          width = Math.max(minW, from.width - dx);
-          x = from.x + from.width - width;
-        }
-        if (edge.includes("right")) width = Math.max(minW, from.width + dx);
-        if (edge.includes("top")) {
-          height = Math.max(minH, from.height - dy);
-          y = from.y + from.height - height;
-        }
-        if (edge.includes("bottom")) height = Math.max(minH, from.height + dy);
-        const cur = self.bounds();
-        if (x !== cur.x || y !== cur.y || width !== cur.width || height !== cur.height) {
-          self.setBounds({ x, y, width, height });
-        }
-      });
-      ensureResizeTimer();
+      startDarwinWindowResize(win, edge, minW, minH, self.bounds, self.setBounds, () => disposed);
     },
 
     setClickThrough(on) {

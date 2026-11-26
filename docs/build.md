@@ -1,15 +1,12 @@
 # @n1h/sweetview/build
 
-Build-time helpers for shipping an app: the icon files a build uses, and the macOS `.app` bundle around the compiled binary. They run on any OS in any build script and load neither `bun:ffi` nor the webview library. This page also covers the `make-app.ts` command line and the `@n1h/sweetview/file-imports` types.
-
-```ts
-import { defineAppIdentity, makeMacApp, writeIconFiles, type MacAppOptions } from "@n1h/sweetview/build";
-```
+Build-time helpers for shipping an app: the icon files a build uses, and the macOS `.app` bundle around the compiled binary. They run on any OS in any build script and load neither `bun:ffi` nor the webview library. This page also covers the `make-app.ts` command line and the `@n1h/sweetview/file-imports` types. The module is `@n1h/sweetview/build` in the facade and the standalone package `@n1h/sweetview-build`; it also re-exports [`defineAppIdentity`](settings-store.md#defineappidentity), so one identity can drive the build and the app.
 
 - [Reference](#reference)
   - [MacAppOptions](#macappoptions)
   - [makeMacApp](#makemacapp)
   - [writeIconFiles](#writeiconfiles)
+  - [refreshWindowsIcons](#refreshwindowsicons)
 - [make-app command line](#make-app-command-line)
 - [File-import types](#file-import-types)
 - [Example](#example)
@@ -17,6 +14,10 @@ import { defineAppIdentity, makeMacApp, writeIconFiles, type MacAppOptions } fro
 ## Reference
 
 ### MacAppOptions
+
+```ts
+import { makeMacApp, type MacAppOptions } from "@n1h/sweetview/build";
+```
 
 ```ts
 export type MacAppOptions = {
@@ -42,10 +43,10 @@ The options of `makeMacApp`.
 | `name` | `string` | `identity.appName` or required | What Finder, the Dock and the menu bar show. The bundle is `<name>.app`. Written as `CFBundleName` and `CFBundleDisplayName`. |
 | `bundleId` | `string` | `identity.appId` or required | The reverse-DNS bundle id, such as `com.example.my-app`. Written as `CFBundleIdentifier`. |
 | `binary` | `string` | required | The compiled macOS executable, from `bun build --compile --target=bun-darwin-arm64`. Copied in under its own file name. |
-| `outDir` | `string` | required | The folder the bundle is written into. Created when missing. An existing `<name>.app` there is deleted first. |
-| `icns` | `string` | none | The `.icns` file for Finder and the Dock, for example one written by `writeIconFiles`. Without it the bundle has no icon file and shows the stock icon. |
+| `outDir` | `string` | required | The folder the bundle is written into. Created when missing. An existing `<name>.app` there is deleted once the preflight checks pass. |
+| `icns` | `string` | none | The `.icns` file for Finder and the Dock, for example one written by `writeIconFiles`. Without it the bundle has no icon file and shows the stock icon. `identity.icon` is not used here: an identity's icon is raw RGBA for window icons, and `makeMacApp` does not encode it. Produce the file with `icnsFromRgba(identity.icon.width, identity.icon.rgba)` (square icons) or `icnsFromPng` from `@n1h/sweetview/native`, write it with `writeIconFiles`, and pass its path. |
 | `version` | `string` | `identity.version` or `"0.1.0"` | Written as `CFBundleVersion` and `CFBundleShortVersionString`. |
-| `urlSchemes` | `readonly string[]` | `identity.urlSchemes` or empty | Registers the schemes in `CFBundleURLTypes`. An explicit empty array omits the declaration. |
+| `urlSchemes` | `readonly string[]` | `identity.urlSchemes` or empty | Registers the schemes in `CFBundleURLTypes`, the only place macOS reads URL schemes from ([why](native/activation-and-single-instance.md#registerurlscheme-and-unregisterurlscheme)). Each is trimmed, lowercased and validated. An explicit empty array omits the declaration. |
 | `minimumSystemVersion` | `string` | `"11.0"` | Written as `LSMinimumSystemVersion`. |
 | `plist` | `Record<string, string \| number \| boolean>` | none | More `Info.plist` entries by key, such as `{ LSUIElement: true }` for a menu-bar app with no Dock tile. An entry with a new key is written after the defaults. An entry with the key of a default replaces that default's value in the default's position. |
 | `sign` | `string \| false` | `"-"` on macOS, `false` elsewhere | The `codesign` identity for the bundle: `"-"` for an ad-hoc signature, a certificate name such as `"Developer ID Application: Example (TEAMID)"`, or `false` to leave the bundle unsigned. A bundle that is not signed is refused by macOS's notification service and shows no notifications: Bun's compiled binary carries only a linker signature with the identifier `a.out`, and the bundle around it has no seal. |
@@ -62,7 +63,7 @@ Wraps the compiled macOS binary in a `.app` bundle at `<outDir>/<name>.app`, and
 |---|---|---|---|
 | `options` | `MacAppOptions` | required | See `MacAppOptions`. |
 
-It checks that `binary` exists, and `icns` when set. It then deletes any existing bundle at that path and writes these files:
+It first runs the preflight checks listed below (name, bundle ID, `binary`, `icns`, schemes, and the `CFBundleURLTypes` conflict). Only then does it delete any existing bundle at that path and write these files:
 
 | Path inside `<name>.app` | Content |
 |---|---|
@@ -87,7 +88,7 @@ It checks that `binary` exists, and `icns` when set. It then deletes any existin
 | `LSMinimumSystemVersion` | `minimumSystemVersion`, default `11.0` |
 | `NSHighResolutionCapable` | `true` |
 | `NSPrincipalClass` | `NSApplication` |
-| `CFBundleURLTypes` | When schemes are set, a dictionary naming the bundle ID and listing the normalized schemes. |
+| `CFBundleURLTypes` | When schemes are set, an array holding one dictionary: `CFBundleURLName` is the bundle ID and `CFBundleURLSchemes` is the array of normalized schemes. |
 
 A boolean value is written as `<true/>` or `<false/>`, an integer as `<integer>`, any other number as `<real>`, and a string as `<string>`. `NaN` and infinities throw, because a plist cannot hold them. `&`, `<` and `>` in keys and strings are escaped.
 
@@ -97,9 +98,23 @@ On a Mac that calls a copied bundle damaged, `xattr -dr com.apple.quarantine "<n
 
 Returns: the bundle's path, `<outDir>/<name>.app`.
 
-Throws: `makeMacApp: <binary> not found (compile the macOS binary first)` when `binary` does not exist. Nothing is deleted or written in that case.
+These preflight checks run before an existing `<name>.app` is deleted or anything is written, and throw:
 
-Throws: `makeMacApp: <icns> not found (write the .icns first)` when `icns` is set and does not exist. Nothing is deleted or written in that case.
+| Condition | Message |
+|---|---|
+| No `name` and no `identity.appName` | `makeMacApp: name (or identity.appName) is required` |
+| No `bundleId` and no `identity.appId` | `makeMacApp: bundleId (or identity.appId) is required` |
+| `binary` missing | `makeMacApp: <binary> not found (compile the macOS binary first)` |
+| `icns` set and missing | `makeMacApp: <icns> not found (write the .icns first)` |
+| A scheme that is not `/^[a-z][a-z0-9+.-]*$/i` | `sweetview: invalid URL scheme "<scheme>" (must match /^[a-z][a-z0-9+.-]*$/i)` |
+| Schemes set and `plist.CFBundleURLTypes` also set | `makeMacApp: plist.CFBundleURLTypes conflicts with urlSchemes, which writes CFBundleURLTypes; pass the schemes in urlSchemes only` |
+
+Without schemes, a `plist.CFBundleURLTypes` entry is written like any other entry, which can only hold a string, number or boolean, not the array of dictionaries macOS expects; declare schemes with `urlSchemes`. `bundleId` is not checked for reverse-DNS form and `version` is not checked for any format.
+
+Two failures happen only after the old bundle has been deleted, so a failed rebuild leaves no bundle (or a partly written one) behind:
+
+- A `plist` or default value of `NaN` or an infinity throws `Info.plist cannot hold <value>` while the plist is generated.
+- A `codesign` failure, described below, happens after every file is written.
 
 Throws: any file-system error from deleting, copying or writing, unchanged.
 
@@ -112,10 +127,14 @@ Thread: blocks the calling thread on file I/O.
 ### writeIconFiles
 
 ```ts
+import { writeIconFiles } from "@n1h/sweetview/build";
+```
+
+```ts
 export function writeIconFiles(dir: string, files: { ico?: Uint8Array; icns?: Uint8Array }): string[]
 ```
 
-Writes the icon files a build embeds into `dir`, creating the folder and any missing parents. Existing files of the same name are replaced. The encoders for both formats, such as `icoFromRgba` and `icnsFromRgba`, are in `@n1h/sweetview/native`, see [native.md](native.md).
+Writes the icon files a build embeds into `dir`, creating the folder and any missing parents. Existing files of the same name are replaced. The encoders for both formats, such as `icoFromPng` and `icnsFromPng`, are pure TypeScript in `@n1h/sweetview/native`, see [icon encoders](native/event-loop-and-icons.md#icon-encoders-and-the-png-decoder).
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
@@ -128,6 +147,32 @@ Returns: the paths written, `app.ico` first when present, then `AppIcon.icns`.
 Throws: any file-system error from creating the folder or writing, unchanged.
 
 Thread: blocks the calling thread on file I/O.
+
+### refreshWindowsIcons
+
+```ts
+import { refreshWindowsIcons } from "@n1h/sweetview/build";
+
+refreshWindowsIcons(); // after bun build --compile --windows-icon=build/app.ico
+```
+
+```ts
+export function refreshWindowsIcons(): void
+```
+
+Tells the Windows shell that program icons changed. Explorer, the taskbar and
+the Start menu cache icons by path, so after recompiling an executable with a
+new `--windows-icon` they keep drawing the icon of the file that was at that
+path before. `refreshWindowsIcons` makes the call an installer makes,
+`SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_FLUSH)`, which flushes Explorer's
+icon cache. It changes no setting and needs no rights. Run it at the end of a
+Windows build script.
+
+On macOS and Linux it returns without doing anything, because nothing needs
+it: macOS reads an app's icon from its bundle's
+`Contents/Resources/AppIcon.icns` ([`makeMacApp`](#makemacapp)), so
+rebuilding the bundle is the whole update. Failures (no `shell32.dll`, no
+`bun:ffi`) are swallowed: the icon is in the file either way.
 
 ## make-app command line
 
@@ -170,8 +215,8 @@ A `--plist` entry splits at its first `=`. The value may contain further `=` sig
 
 In this repository the CLI is `packages/sweetview-build/src/make-app.ts`.
 Run `bun packages/sweetview-build/src/refresh-icons.ts` on Windows after
-recompiling a demo to refresh Explorer's icon cache. The package also
-exports the same operation as `refreshWindowsIcons()`.
+recompiling a demo to refresh Explorer's icon cache; it calls
+[`refreshWindowsIcons`](#refreshwindowsicons).
 
 ## File-import types
 
@@ -188,11 +233,10 @@ An app references the module from a `.d.ts` file of its own with `/// <reference
 
 ```ts
 import { makeMacApp, writeIconFiles } from "@n1h/sweetview/build";
+import { icnsFromPng, icoFromPng } from "@n1h/sweetview/native";
 
-declare const ico: Uint8Array;
-declare const icns: Uint8Array;
-
-writeIconFiles("build", { ico, icns });
+const png = new Uint8Array(await Bun.file("art/icon.png").arrayBuffer());
+writeIconFiles("build", { ico: icoFromPng(png), icns: icnsFromPng(png) });
 const app = makeMacApp({
   name: "My App",
   bundleId: "com.example.my-app",

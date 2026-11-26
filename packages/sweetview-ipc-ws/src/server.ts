@@ -19,8 +19,18 @@ export type WsHostOptions = {
   /**
    * Which `Origin` values may connect. Browsers do not apply same-origin to
    * WebSockets, so without this any page the user has open could talk to the
-   * service. Default: only the page's own origin (Origin host matches the
-   * request's Host). Pass a list of origins, or a predicate.
+   * service.
+   *
+   * - Default: the Origin's host (hostname and port) must equal the request's
+   *   `Host` header. The scheme is not compared, so `http://` and `https://`
+   *   pages on the same host both pass.
+   * - A list: exact string match against the full `Origin` value
+   *   (`"https://app.example:8443"`).
+   * - A predicate: called with the `Origin` value and the request.
+   *
+   * A request with no `Origin` header (a non-browser client) is always
+   * accepted, without calling a predicate. Frames are JSON; binary frames are
+   * decoded as UTF-8 text before parsing.
    */
   allowOrigin?: string[] | ((origin: string, req: Request) => boolean);
 };

@@ -48,6 +48,23 @@ describe("makeMacApp", () => {
     expect(plist).toContain("<string>scheme2</string>");
   });
 
+  test("plist.CFBundleURLTypes alongside urlSchemes throws before anything is written", () => {
+    const binary = join(dir, "my-app-macos-arm64");
+    writeFileSync(binary, "not a Mach-O");
+    expect(() =>
+      makeMacApp({
+        name: "My App",
+        bundleId: "dev.example.my-app",
+        binary,
+        outDir: join(dir, "dist"),
+        urlSchemes: ["my-app"],
+        plist: { CFBundleURLTypes: "my-app" },
+        sign: false,
+      }),
+    ).toThrow(/CFBundleURLTypes conflicts with urlSchemes/);
+    expect(existsSync(join(dir, "dist"))).toBe(false);
+  });
+
   test("a missing binary throws before anything is written", () => {
     expect(() => makeMacApp({ name: "My App", bundleId: "dev.example.my-app", binary: join(dir, "missing"), outDir: join(dir, "dist"), sign: false })).toThrow(/not found/);
     expect(existsSync(join(dir, "dist"))).toBe(false);

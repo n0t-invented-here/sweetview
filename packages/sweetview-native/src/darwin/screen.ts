@@ -3,7 +3,8 @@
 // coordinates after. Top-left origin of the primary screen in points.
 
 import type { ScreenInfo } from "../screen";
-import type { Point, Rect, WindowHandle } from "../types";
+import type { Point, Rect, WindowHandle, WindowRef } from "../types";
+import { getWindowBackend, type Window, type WindowBackend } from "../window";
 import {
   NIL,
   asId,
@@ -20,7 +21,7 @@ import {
   sharedApp,
   type Id,
 } from "./objc";
-import { asNSWindow } from "./window";
+import { asNSWindow, getDarwinTabActiveHandle } from "./window";
 
 export type CocoaRect = { x: number; y: number; w: number; h: number };
 const rectBuf = new Float64Array(4);
@@ -123,9 +124,41 @@ export function at(point: Point): ScreenInfo {
   return nearest ?? primary();
 }
 
-export function of(handle: WindowHandle): ScreenInfo {
+/** The screen sharing the largest area with `rect`, or the one nearest its center. */
+function bestFor(rect: Rect): ScreenInfo {
+  let best: ScreenInfo | undefined;
+  let bestArea = 0;
+  for (const s of all()) {
+    const b = s.bounds;
+    const w = Math.min(rect.x + rect.width, b.x + b.width) - Math.max(rect.x, b.x);
+    const h = Math.min(rect.y + rect.height, b.y + b.height) - Math.max(rect.y, b.y);
+    const area = w > 0 && h > 0 ? w * h : 0;
+    if (area > bestArea) {
+      bestArea = area;
+      best = s;
+    }
+  }
+  return best ?? at({ x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 });
+}
+
+/**
+ * The screen showing `handle`. A virtual tabbed `Window` (`tabs: true`) has a
+ * null handle: it resolves to its active tab's NSWindow, or, before any tab
+ * window exists, to the display best matching `window.bounds()`.
+ */
+export function of(handle: WindowHandle, window?: WindowRef): ScreenInfo {
   sharedApp();
-  const win = asNSWindow(handle);
+  let win: Id;
+  if ((handle === null || handle === 0 || handle === 0n) && typeof window === "object" && window !== null && "handle" in window) {
+    // Undefined for objects that are not sweetview Windows.
+    const backend: WindowBackend | undefined = getWindowBackend(window as Window);
+    if (!backend) throw new Error("sweetview: window handle is nil");
+    const active = getDarwinTabActiveHandle(backend);
+    if (active === null) return bestFor(backend.bounds());
+    win = active;
+  } else {
+    win = asNSWindow(handle);
+  }
   const s = asId(send(win, sel("screen")));
   if (s === NIL) return primary();
   return screenInfo(s, s === primaryScreen());

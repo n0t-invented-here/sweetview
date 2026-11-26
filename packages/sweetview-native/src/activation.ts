@@ -56,6 +56,16 @@ export type SingleInstanceOptions = {
 
 export type SingleInstanceLock = {
   readonly isPrimary: boolean;
+  /**
+   * Secondary instance only: true when the `{ args, cwd, url }` payload was
+   * delivered over the native transport (Windows `WM_COPYDATA` returned
+   * success, macOS `CFMessagePortSendRequest` succeeded). It reports transport
+   * delivery, not that the primary's `onSecondInstance` handler ran or
+   * succeeded. On macOS it is also true when this process already holds the
+   * lock for the same app ID: the payload is then handed to this process's
+   * own `onSecondInstance` handler in-process, with no transport involved.
+   * Always false on the primary instance.
+   */
   readonly handedOff: boolean;
   dispose(): void;
 };
@@ -116,13 +126,23 @@ export function extractUrlFromArgs(args: readonly string[], schemes?: readonly s
 /**
  * Registers a custom URL scheme for the current user.
  * - Windows: writes `HKCU\Software\Classes\<scheme>` (no admin/UAC required).
- * - macOS: validates scheme syntax; bundle registration comes from `Info.plist` `CFBundleURLTypes` (`makeMacApp({ urlSchemes })`).
+ * - macOS: only validates scheme syntax. Launch Services has no per-user
+ *   runtime registry an unbundled process can write to: it reads
+ *   `CFBundleURLTypes` from the signed `.app` bundle's `Info.plist` when the
+ *   bundle is registered (first launch, or when it is copied into place).
+ *   Declare schemes at build time with `makeMacApp({ urlSchemes })`.
  */
 export function registerUrlScheme(scheme: string, options?: RegisterUrlSchemeOptions): void {
   impl().registerUrlScheme(scheme, options);
 }
 
-/** Removes a user-level custom URL scheme registration (Windows HKCU; validated no-op on macOS). */
+/**
+ * Removes a user-level custom URL scheme registration.
+ * - Windows: deletes `HKCU\Software\Classes\<scheme>`.
+ * - macOS: only validates scheme syntax. The scheme lives in the `.app`
+ *   bundle's `Info.plist` `CFBundleURLTypes` (`makeMacApp({ urlSchemes })`),
+ *   so it is removed by rebuilding the bundle without it, not at run time.
+ */
 export function unregisterUrlScheme(scheme: string): void {
   impl().unregisterUrlScheme(scheme);
 }

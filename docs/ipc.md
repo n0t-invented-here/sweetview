@@ -1,16 +1,12 @@
 # @n1h/sweetview/ipc
 
-The typed contract between a page and its backend: a `Service` on the backend, a `Bridge` on the page, and the JSON frames a host's transport carries between them. The module imports nothing outside itself and uses no runtime API, so it runs in a browser page, a webview page, a Worker, or Bun. Hosts supply the transport; [`ipc-ws.md`](ipc-ws.md) covers the WebSocket one, and [`../README.md`](../README.md) covers install and the window host.
+The typed contract between a page and its backend: a `Service` on the backend, a `Bridge` on the page, and the JSON frames a host's transport carries between them. The module imports nothing outside itself and uses no runtime API, so it runs in a browser page, a webview page, a Worker, or Bun. It is `@n1h/sweetview/ipc` in the facade and the standalone package `@n1h/sweetview-ipc`. Hosts supply the transport; [`ipc-ws.md`](ipc-ws.md) covers the WebSocket one, and [`../README.md`](../README.md) covers install and the window host.
 
-```ts
-import { type CallFrame, type EventFrame, type Frame, type ReplyFrame, defineService, type AnyEvent, type Ctx, type Emit, type EventMap, type Handlers, type MethodMap, type Service, type ServiceDefinition, type Session, type SessionKind, createBridge, type Bridge, type Transport, type TransportKind, memoryTransport } from "@n1h/sweetview/ipc";
-```
-
-- [Reference](#reference)
-  - [CallFrame](#callframe)
-  - [EventFrame](#eventframe)
-  - [Frame](#frame)
-  - [ReplyFrame](#replyframe)
+- [Example](#example)
+- [Wire format](#wire-format)
+  - [ChunkFrame](#chunkframe)
+  - [createFrameAssembler](#createframeassembler)
+- [Services](#services)
   - [defineService](#defineservice)
   - [AnyEvent](#anyevent)
   - [Ctx](#ctx)
@@ -22,69 +18,117 @@ import { type CallFrame, type EventFrame, type Frame, type ReplyFrame, defineSer
   - [ServiceDefinition](#servicedefinition)
   - [Session](#session)
   - [SessionKind](#sessionkind)
+- [Bridges and transports](#bridges-and-transports)
   - [createBridge](#createbridge)
   - [Bridge](#bridge)
   - [Transport](#transport)
   - [TransportKind](#transportkind)
   - [memoryTransport](#memorytransport)
-- [Example](#example)
 
-## Reference
+## Example
 
-### CallFrame
-
-```ts
-export type CallFrame = { kind: "call"; seq: string | null; method: string; params: unknown };
-```
-
-A request from the page to the backend.
-
-| Field | Type | Meaning |
-|---|---|---|
-| `kind` | `"call"` | Frame discriminant. |
-| `seq` | `string \| null` | Correlation id chosen by the sender. `null` means fire and forget: no reply frame is sent. |
-| `method` | `string` | Method name in the service's `MethodMap`. |
-| `params` | `unknown` | The single argument. A method called without an argument carries `null`. |
-
-### EventFrame
+One contract, one service, one bridge. `memoryTransport` connects them in the same process; in an app the bridge sits on `webviewTransport()` from [`@n1h/sweetview/page`](page.md) or `wsTransport()` from [`@n1h/sweetview/ipc-ws/client`](ipc-ws.md), and the service code does not change.
 
 ```ts
-export type EventFrame = { kind: "event"; name: string; payload: unknown };
+import { createBridge, defineService, memoryTransport } from "@n1h/sweetview/ipc";
+
+// Shared by both sides: method name -> [params, result], event name -> payload.
+type Methods = {
+  "notes.add": [{ text: string }, { id: number }];
+  "notes.list": [void, string[]];
+};
+type Events = {
+  "notes.changed": { count: number }; // broadcast
+  "notes.saved": { id: number };      // sent only to the caller
+};
+
+// Backend.
+const service = defineService<Methods, Events>((emit) => {
+  const notes: string[] = [];
+  return {
+    methods: {
+      "notes.add": ({ text }, ctx) => {
+        if (!text.trim()) throw new Error("A note needs some text."); // becomes the page's rejection
+        notes.push(text);
+        emit("notes.changed", { count: notes.length });           // every session
+        emit("notes.saved", { id: notes.length }, ctx.session.id); // only this session
+        return { id: notes.length };
+      },
+      "notes.list": () => [...notes],
+    },
+    endSession: (sessionId) => console.log("client left", sessionId),
+  };
+});
+
+// Page.
+const transport = memoryTransport(service);
+const bridge = createBridge<Methods, Events>(transport);
+const stopChanged = bridge.on("notes.changed", ({ count }) => console.log("notes:", count));
+const stopSaved = bridge.on("notes.saved", ({ id }) => console.log("saved", id));
+
+console.log(await bridge.rpc("notes.add", { text: "Buy milk" })); // { id: 1 }
+try {
+  await bridge.rpc("notes.add", { text: "  " });
+} catch (error) {
+  console.log((error as Error).message); // "A note needs some text."
+}
+console.log(await bridge.rpc("notes.list")); // ["Buy milk"]
+
+// Teardown: page listener, then the session, then the backend.
+stopChanged();
+stopSaved();
+transport.dispose();     // runs endSession for this session
+await service.dispose(); // the application's shutdown hook
 ```
 
-An unsolicited message from the backend to the page.
+## Wire format
 
-| Field | Type | Meaning |
-|---|---|---|
-| `kind` | `"event"` | Frame discriminant. |
-| `name` | `string` | Event name in the service's `EventMap`. |
-| `payload` | `unknown` | The event payload. |
-
-### Frame
+Application code rarely touches frames; they matter when writing a host or a transport, or when debugging one. A service never sees frames: the host turns each call frame into a `Service.call` and answers with a reply frame, and the page's transport matches replies to calls by `seq`, ignoring a reply whose `seq` matches no pending call. Over a WebSocket each frame is one JSON text message; between a window's worker and its UI thread frames are JSON in the shared ring. `memoryTransport` uses no frames at all and passes values by reference.
 
 ```ts
-export type Frame = CallFrame | ReplyFrame | EventFrame;
+import { createFrameAssembler, type CallFrame, type ChunkFrame, type EventFrame, type Frame, type ReplyFrame, type WireFrame } from "@n1h/sweetview/ipc";
 ```
 
-Every frame a transport carries, as JSON. A service never sees frames. The host that wraps a service turns each `CallFrame` into a `Service.call` and answers with a `ReplyFrame`. The page's transport matches each `ReplyFrame` to its call by `seq` and ignores a `ReplyFrame` whose `seq` matches no pending call.
+| Type | Shape | Direction | Notes |
+|---|---|---|---|
+| `CallFrame` | `{ kind: "call"; seq: string \| null; method: string; params: unknown }` | page to backend | `seq` is chosen by the sender; `null` means fire and forget, with no reply. `params` is the single argument; a call without one, or with `undefined`, carries `null`, so the key is never missing. |
+| `ReplyFrame` | `{ kind: "reply"; seq: string; ok: true; result: unknown }` or `{ kind: "reply"; seq: string; ok: false; error: string }` | backend to page | Answers one call whose `seq` was not `null`. `ok: false` covers a rejected handler and an unknown method; `error` is the rejection's `message` (or `String(value)` for a non-`Error`), shown to the page, so it must be safe for the user to see. A result of `undefined` is dropped by `JSON.stringify`: the window host then resolves with `null`, the WebSocket client with `undefined`; return `null` for the same value everywhere. |
+| `EventFrame` | `{ kind: "event"; name: string; payload: unknown }` | backend to page | An unsolicited event, already filtered to this client by the host. |
+| `ChunkFrame` | `{ kind: "chunk"; id: number; index: number; total: number; data: string }` | worker to UI thread only | One piece of a frame too large for the ring, see [below](#chunkframe). |
+| `Frame` | `CallFrame \| ReplyFrame \| EventFrame` | | The protocol's frames. |
+| `WireFrame` | `Frame \| ChunkFrame` | | Everything that can appear on the worker-to-UI ring. |
 
-### ReplyFrame
+### ChunkFrame
+
+A `ReplyFrame` or `EventFrame` larger than `ringBytes - 4` bytes as UTF-8 JSON does not fit the worker's ring. The worker serializes the frame, base64-encodes it, and splits the text into `total` chunks sharing one `id`, each carrying its position (`index`, `0` to `total - 1`) and a base64 slice in `data`. The UI thread reassembles them with `createFrameAssembler` before the page sees anything. Only the worker-to-UI ring uses chunks; WebSocket messages have no size limit of this kind.
+
+### createFrameAssembler
 
 ```ts
-export type ReplyFrame =
-  | { kind: "reply"; seq: string; ok: true; result: unknown }
-  | { kind: "reply"; seq: string; ok: false; error: string };
+export function createFrameAssembler(): {
+  push(frame: WireFrame): Frame | null;
+  clear(): void;
+};
 ```
 
-The backend's answer to one `CallFrame` whose `seq` was not `null`.
+Reassembles chunked frames. `push` returns a non-chunk frame unchanged. For a
+chunk it stores the piece and returns `null` until every piece of that `id`
+has arrived, then returns the decoded `Frame`. Pieces may arrive in any
+order; a repeated index replaces the earlier piece, and a chunk with an
+invalid `index` or `total` is ignored. `clear()` drops every partial frame,
+which a host does on shutdown. Base64 decoding uses `Buffer` when present and
+`atob` otherwise, so the assembler also runs in a browser.
 
-| Field | Type | Meaning |
-|---|---|---|
-| `kind` | `"reply"` | Frame discriminant. |
-| `seq` | `string` | The `seq` of the call being answered. |
-| `ok` | `boolean` | `true` when `Service.call` resolved. `false` when it rejected, including for an unknown method. |
-| `result` | `unknown` | The handler's return value. Present when `ok` is `true`. |
-| `error` | `string` | The rejection's `message`, or `String(value)` when the rejection is not an `Error`. Present when `ok` is `false`. The page sees it, so it must be safe for the user to see. |
+## Services
+
+The backend side: a handler table and the types around it.
+
+```ts
+import { defineService, type Ctx, type Emit, type EventMap, type MethodMap, type Service } from "@n1h/sweetview/ipc";
+```
+
+`AnyEvent`, `Handlers`, `ServiceDefinition`, `Session` and `SessionKind` are
+exported as types from the same module.
 
 ### defineService
 
@@ -235,6 +279,14 @@ export type SessionKind = "webview" | "web";
 
 `"webview"` for a page in a sweetview window. `"web"` for a page in a browser or for `memoryTransport` by default.
 
+## Bridges and transports
+
+The page side: a transport from the host, and the typed bridge over it.
+
+```ts
+import { createBridge, memoryTransport, type Bridge, type Transport, type TransportKind } from "@n1h/sweetview/ipc";
+```
+
 ### createBridge
 
 ```ts
@@ -324,23 +376,3 @@ Returns: a `Transport` with `kind` set to `session.kind`, plus `dispose()`.
 - `notify` discards both the result and any rejection.
 - Events reach this transport when they are broadcast or targeted at `session.id`. They are delivered synchronously inside `emit`, so a listener on this transport that throws makes the backend's `emit` throw.
 - `dispose()` is idempotent: the first call stops event delivery, clears listeners, and calls `service.endSession(session.id)`. Later `dispose()` calls do nothing. Calls made after `dispose()` still reach the service.
-
-## Example
-
-```ts
-import { createBridge, defineService, memoryTransport } from "@n1h/sweetview/ipc";
-
-type Methods = { add: [{ a: number; b: number }, number] };
-type Events = { added: { sum: number } };
-const service = defineService<Methods, Events>((emit) => ({
-  methods: {
-    add: ({ a, b }, ctx) => {
-      emit("added", { sum: a + b }, ctx.session.id);
-      return a + b;
-    },
-  },
-}));
-const bridge = createBridge<Methods, Events>(memoryTransport(service));
-bridge.on("added", ({ sum }) => console.log("event", sum));
-console.log("result", await bridge.rpc("add", { a: 2, b: 3 }));
-```

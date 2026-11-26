@@ -1,30 +1,39 @@
-// macOS WKWebView helpers used by src/tabs/darwin-tabs.ts (lives in src/tabs/
-// so src/native/ stays strictly webview-free).
+// macOS WKWebView helpers used by ./darwin-tabs (they live here so
+// @n1h/sweetview-native stays strictly webview-free).
 
 import { FFIType, JSCallback, dlopen, type Pointer } from "bun:ffi";
 import {
   NIL,
   type Id,
   asId,
+  cstr,
   dataSymbolAddress,
   jsString,
   makeTarget,
+  objc_getClass,
   sel,
   send,
+  sendIntRetBool,
   sendPtr,
   sendUIntRetPtr,
 } from "@n1h/sweetview-native/darwin/objc";
 import { pooled } from "@n1h/sweetview-native/darwin/tabs";
 import { pumpEvents } from "@n1h/sweetview-native";
 
-/** Finds the WKWebView subview hosted inside an NSWindow's contentView. */
+/**
+ * Finds the WKWebView subview hosted inside an NSWindow's contentView.
+ * Matches with `isKindOfClass:` so WKWebView subclasses such as
+ * `SweetviewWKWebView` are found, not only views whose class is exactly WKWebView.
+ */
 export function hostedWebView(window: Id): Id | undefined {
+  const wkWebView = asId(objc_getClass(cstr("WKWebView")));
+  if (wkWebView === NIL) return undefined;
   const content = asId(send(window, sel("contentView")));
   if (content === NIL) return undefined;
   const views = asId(send(content, sel("subviews")));
   for (let i = 0n, n = BigInt(asId(send(views, sel("count")))); i < n; i++) {
     const view = asId(sendUIntRetPtr(views, sel("objectAtIndex:"), i));
-    if (jsString(asId(send(view, sel("className")))) === "WKWebView") return view;
+    if (view !== NIL && sendIntRetBool(view, sel("isKindOfClass:"), wkWebView)) return view;
   }
   return undefined;
 }

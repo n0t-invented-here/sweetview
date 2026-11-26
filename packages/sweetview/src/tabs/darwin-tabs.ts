@@ -1,14 +1,14 @@
 // macOS TabsDriver: wires virtual Window({ tabs: true }) controllers to
-// AppKit window tabbing (src/native/darwin/tabs.ts) and WKWebView lifecycle
-// hooks (src/tabs/darwin-webview.ts).
+// AppKit window tabbing (@n1h/sweetview-native/darwin/tabs) and WKWebView
+// lifecycle hooks (./darwin-webview).
 
-import { WebView, type Tab, type TabOptions, type TabsDriver } from "../app";
+import { WebView, tabAttachHooks, type Tab, type TabAttachHooks, type TabOptions, type TabsDriver, type WebViewOptions } from "../app";
 import type { EventMap, MethodMap } from "@n1h/sweetview-ipc";
-import { NIL, type Id, sel, sendPtr, sendRectBool, sendRetBool } from "@n1h/sweetview-native/darwin/objc";
+import { NIL, type Id, asId, sel, send, sendPtr, sendRectBool, sendRetBool, sharedApp } from "@n1h/sweetview-native/darwin/objc";
 import { fromCocoa, rectOf, toCocoa } from "@n1h/sweetview-native/darwin/screen";
 import { createWindowTabs, installTabMenus, pooled, type WindowTabs } from "@n1h/sweetview-native/darwin/tabs";
-import { bindDarwinTabGroup, subscribeDarwinFileDrop } from "@n1h/sweetview-native/darwin/window";
-import { Window, type Rect } from "@n1h/sweetview-native";
+import { bindDarwinTabGroup, startDarwinWindowResize, stopDarwinWindowResize, subscribeDarwinFileDrop } from "@n1h/sweetview-native/darwin/window";
+import { Window, type Rect, type ResizeEdge } from "@n1h/sweetview-native";
 import {
   emitWindowNewTab,
   emitWindowTabClose,
@@ -49,6 +49,8 @@ type MacTabRecord = {
   host: MacTabHost;
   title: string;
   webview: WebView<any, any>;
+  /** Attach hooks; `rebindFileDrop` moves webview file-drop delivery to the current `host.window`. */
+  readonly hooks: TabAttachHooks;
   shown: boolean;
   closed: boolean;
   api: Tab<any, any>;
@@ -57,16 +59,29 @@ type MacTabRecord = {
 
 type PendingShow = {
   readonly nsWin: Id;
+  /** An explicit same-host `after` anchor; otherwise the anchor is resolved when the tab is shown. */
   readonly after?: Id;
 };
 
 type MacTabHost = {
   readonly window: Window;
+  /** AppKit tabbing group, shared with the hosts torn off from it. */
   readonly group: WindowTabs;
-  readonly ownsGroup: boolean;
   readonly tabs: Map<Id, MacTabRecord>;
+  /**
+   * Tab NSWindows created for `openTab` whose `WebView.attach` is still in
+   * flight. They are not in `tabs` yet; `openTab` discards them on rollback,
+   * and the group is kept alive until it has.
+   */
+  readonly attaching: Set<Id>;
   readonly pendingShow: PendingShow[];
+  readonly minWidth: number;
+  readonly minHeight: number;
   selectedBeforeShow?: Id;
+  /** Last known outer frame; used while the host has no shown tab window. */
+  bounds: Rect;
+  title: string;
+  topmost: boolean;
   visible: boolean;
   closed: boolean;
   fireResize: (bounds: Rect) => void;
@@ -79,8 +94,30 @@ type MacTabHost = {
 const hosts = new Map<Window, MacTabHost>();
 const recordByNsWin = new Map<Id, MacTabRecord>();
 const tabRecordByApi = new WeakMap<object, MacTabRecord>();
+/**
+ * Hosts still using each shared AppKit group. A host leaves only once it is
+ * closed, its teardown has finished, and no attach of its is in flight; the
+ * group is disposed when the last one leaves, so a nested or concurrent
+ * teardown never disposes a group another host is still closing or attaching into.
+ */
+const activeGroupRefs = new Map<WindowTabs, Set<MacTabHost>>();
 let nextGroupId = 1;
 let nextTabId = 1;
+
+function retainGroup(host: MacTabHost): void {
+  let refs = activeGroupRefs.get(host.group);
+  if (!refs) activeGroupRefs.set(host.group, (refs = new Set()));
+  refs.add(host);
+}
+
+/** Drops `host`'s use of its group once it is closed with no attach in flight; disposes the group after the last user. */
+function releaseGroupIfIdle(host: MacTabHost): void {
+  if (!host.closed || host.attaching.size > 0) return;
+  const refs = activeGroupRefs.get(host.group);
+  if (!refs?.delete(host) || refs.size > 0) return;
+  activeGroupRefs.delete(host.group);
+  host.group.dispose();
+}
 
 function syncFileDrop(record: MacTabRecord): void {
   if (record.host.fileDropEnabled && !record.closed) {
@@ -91,22 +128,70 @@ function syncFileDrop(record: MacTabRecord): void {
   }
 }
 
+/** Moves a tab record to `host`: native and webview file-drop delivery, and window level. */
+function rehome(record: MacTabRecord, host: MacTabHost): void {
+  // A resize gesture started through the old host must not keep driving the window.
+  stopDarwinWindowResize(record.nsWin);
+  record.host = host;
+  // Resubscribe so the NSWindow drop handler delivers to the new host only.
+  record.stopFileDrop?.();
+  record.stopFileDrop = undefined;
+  syncFileDrop(record);
+  record.hooks.rebindFileDrop?.();
+  host.group.setTopmost(record.nsWin, host.topmost);
+}
+
+/**
+ * Disposes one logical host. Only the tab NSWindows this host owns are
+ * closed (tabs torn off into other hosts stay open). Tab windows still
+ * attaching are left to `openTab`'s rollback, and the shared AppKit group is
+ * disposed only after every host using it has finished (see `releaseGroupIfIdle`).
+ */
 function disposeMacHost(host: MacTabHost): void {
   if (host.closed) return;
   host.closed = true;
   hosts.delete(host.window);
   host.pendingShow.length = 0;
+  host.selectedBeforeShow = undefined;
   for (const [nsWin, rec] of [...host.tabs]) {
     host.tabs.delete(nsWin);
     recordByNsWin.delete(nsWin);
+    stopDarwinWindowResize(nsWin);
     if (!rec.closed) {
       rec.closed = true;
       syncFileDrop(rec);
       detachPage(nsWin);
       rec.webview.dispose();
     }
+    if (rec.shown) pooled(() => send(nsWin, sel("close")));
+    else host.group.discard(nsWin);
   }
-  if (host.ownsGroup) host.group.dispose();
+  releaseGroupIfIdle(host);
+}
+
+/** A shown, open tab window of `host`: the group's current window when it is one, else the first. */
+function activeTab(host: MacTabHost): Id | undefined {
+  const cur = host.group.current();
+  const curRec = cur !== undefined ? host.tabs.get(cur) : undefined;
+  if (cur !== undefined && curRec?.shown && !curRec.closed) return cur;
+  for (const [nsWin, rec] of host.tabs) if (rec.shown && !rec.closed) return nsWin;
+  return undefined;
+}
+
+function showTab(host: MacTabHost, record: MacTabRecord, after: Id | undefined): void {
+  const afterRec = after !== undefined ? host.tabs.get(after) : undefined;
+  const anchor = afterRec?.shown && !afterRec.closed ? after : activeTab(host);
+  record.shown = true;
+  // No shown tab of this host: open standalone, never into the group's
+  // current window, which may belong to a torn-off sibling host.
+  host.group.show(record.nsWin, anchor ?? null, (w) => {
+    if (anchor === undefined) {
+      // The host's first tab window takes the host's frame.
+      const c = toCocoa(host.bounds);
+      sendRectBool(w, sel("setFrame:display:"), c.x, c.y, c.w, c.h, false);
+    }
+    focusWebView(w);
+  });
 }
 
 function flushPendingShow(host: MacTabHost): void {
@@ -115,8 +200,7 @@ function flushPendingShow(host: MacTabHost): void {
   for (const item of queued) {
     const rec = host.tabs.get(item.nsWin);
     if (!rec || rec.closed || rec.shown) continue;
-    rec.shown = true;
-    host.group.show(item.nsWin, item.after, (w) => focusWebView(w));
+    showTab(host, rec, item.after);
   }
   if (host.selectedBeforeShow !== undefined) {
     const selWin = host.selectedBeforeShow;
@@ -126,57 +210,64 @@ function flushPendingShow(host: MacTabHost): void {
   }
 }
 
-function bindHostToWindow(window: Window, group: WindowTabs, ownsGroup: boolean, initialBounds: Rect): MacTabHost {
+function bindHostToWindow(window: Window, group: WindowTabs, initialBounds: Rect): MacTabHost {
+  const meta = getWindowMeta(window);
   const tabs = new Map<Id, MacTabRecord>();
   let fileDropEnabled = false;
   let host!: MacTabHost;
-  const activeWin = (): Id | undefined => {
-    const cur = group.current();
-    if (cur !== undefined && tabs.has(cur)) return cur;
-    for (const [nsWin, rec] of tabs) if (rec.shown && !rec.closed) return nsWin;
-    return undefined;
+  const activeWin = (): Id | undefined => activeTab(host);
+  const bounds = (): Rect => {
+    const cur = activeWin();
+    if (cur !== undefined) host.bounds = pooled(() => fromCocoa(rectOf(cur, "frame")));
+    return host.bounds;
+  };
+  const setBounds = (rect: Rect) => {
+    host.bounds = { ...rect };
+    const cur = activeWin();
+    if (cur !== undefined) {
+      pooled(() => {
+        const c = toCocoa(rect);
+        sendRectBool(cur, sel("setFrame:display:"), c.x, c.y, c.w, c.h, true);
+      });
+    }
   };
 
   const hooks = bindDarwinTabGroup(getWindowBackend(window), {
     show() {
+      if (host.closed) return;
       host.visible = true;
-      flushPendingShow(host);
+      // Bring back the tabs hide() ordered out before anchoring queued tabs to them.
       const cur = activeWin();
       if (cur !== undefined) group.select(cur);
+      flushPendingShow(host);
     },
     hide() {
+      if (host.closed) return;
       host.visible = false;
       pooled(() => {
         for (const [nsWin, rec] of tabs) {
-          if (rec.shown) sendPtr(nsWin, sel("orderOut:"), NIL);
+          if (rec.shown && !rec.closed) sendPtr(nsWin, sel("orderOut:"), NIL);
         }
       });
     },
     isVisible() {
-      return host.visible && activeWin() !== undefined;
+      return !host.closed && host.visible && activeWin() !== undefined;
     },
-    bounds(): Rect {
-      const cur = activeWin();
-      return cur !== undefined ? pooled(() => fromCocoa(rectOf(cur, "frame"))) : initialBounds;
-    },
-    setBounds(rect: Rect) {
-      const cur = activeWin();
-      if (cur !== undefined) {
-        pooled(() => {
-          const c = toCocoa(rect);
-          sendRectBool(cur, sel("setFrame:display:"), c.x, c.y, c.w, c.h, true);
-        });
-      }
-    },
+    bounds,
+    setBounds,
     setTitle(title: string) {
+      host.title = title;
       const cur = activeWin();
-      if (cur !== undefined) group.setTitle(cur, title);
+      const rec = cur !== undefined ? tabs.get(cur) : undefined;
+      // Through the tab API so the tab's recorded title matches its NSWindow title.
+      rec?.api.setTitle(title);
     },
     minimize() {
       const cur = activeWin();
       if (cur !== undefined) pooled(() => sendPtr(cur, sel("miniaturize:"), NIL));
     },
     toggleMaximize() {
+      if (meta.resizable === false) return;
       const cur = activeWin();
       if (cur !== undefined) pooled(() => sendPtr(cur, sel("zoom:"), NIL));
     },
@@ -192,14 +283,60 @@ function bindHostToWindow(window: Window, group: WindowTabs, ownsGroup: boolean,
       if (host) host.fileDropEnabled = enabled;
       for (const record of tabs.values()) syncFileDrop(record);
     },
+    setTopmost(on) {
+      if (host.closed) return;
+      host.topmost = on;
+      for (const nsWin of tabs.keys()) group.setTopmost(nsWin, on);
+    },
+    startDrag() {
+      const cur = activeWin();
+      if (cur === undefined || host.closed) return;
+      pooled(() => {
+        const event = asId(send(sharedApp(), sel("currentEvent")));
+        if (event !== NIL) sendPtr(cur, sel("performWindowDragWithEvent:"), event);
+      });
+    },
+    startResize(edge: ResizeEdge) {
+      if (host.closed || meta.resizable === false) return;
+      const nsWin = activeWin();
+      const rec = nsWin !== undefined ? tabs.get(nsWin) : undefined;
+      if (nsWin === undefined || !rec) return;
+      // The gesture is bound to the window it started on: it stops if that
+      // window closes or moves to another host, and never follows activeWin().
+      const ended = () => host.closed || rec.closed || rec.host !== host;
+      startDarwinWindowResize(
+        nsWin,
+        edge,
+        host.minWidth,
+        host.minHeight,
+        () => pooled(() => fromCocoa(rectOf(nsWin, "frame"))),
+        (rect) => {
+          if (ended()) return;
+          host.bounds = { ...rect };
+          pooled(() => {
+            const c = toCocoa(rect);
+            sendRectBool(nsWin, sel("setFrame:display:"), c.x, c.y, c.w, c.h, true);
+          });
+        },
+        ended,
+      );
+    },
+    activeHandle() {
+      return host.closed ? null : (activeWin() ?? null);
+    },
   });
 
   host = {
     window,
     group,
-    ownsGroup,
     tabs,
+    attaching: new Set(),
     pendingShow: [],
+    minWidth: meta.minWidth ?? 480,
+    minHeight: meta.minHeight ?? 320,
+    bounds: { ...initialBounds },
+    title: meta.title,
+    topmost: meta.topmost ?? false,
     visible: false,
     closed: false,
     fireResize: hooks.fireResize,
@@ -209,7 +346,10 @@ function bindHostToWindow(window: Window, group: WindowTabs, ownsGroup: boolean,
     fileDropEnabled,
   };
   hosts.set(window, host);
+  retainGroup(host);
   onWindowDispose(window, () => disposeMacHost(host));
+  // Apply state set on the Window before this bind (visibility, title, bounds, topmost) now that `host` exists.
+  hooks.replay();
   return host;
 }
 
@@ -234,6 +374,11 @@ function ensureHost(window: Window): MacTabHost {
     minWidth: meta.minWidth ?? 480,
     minHeight: meta.minHeight ?? 320,
     appearance: meta.appearance,
+    resizable: meta.resizable,
+    topmost: meta.topmost,
+    opacity: meta.opacity,
+    hideFromTaskbar: meta.hideFromTaskbar,
+    noActivate: meta.noActivate,
     onNewTabRequest: () => {
       const cur = group.current();
       const targetWin = (cur !== undefined ? recordByNsWin.get(cur)?.host.window : undefined) ?? window;
@@ -245,21 +390,30 @@ function ensureHost(window: Window): MacTabHost {
     },
     onResized: (nsWin) => {
       const rec = recordByNsWin.get(nsWin);
-      if (rec && !rec.host.closed) rec.host.fireResize(pooled(() => fromCocoa(rectOf(nsWin, "frame"))));
+      if (!rec || rec.host.closed) return;
+      const frame = pooled(() => fromCocoa(rectOf(nsWin, "frame")));
+      rec.host.bounds = frame;
+      rec.host.fireResize(frame);
     },
     onMoved: (nsWin) => {
       const rec = recordByNsWin.get(nsWin);
-      if (rec && !rec.host.closed) rec.host.fireMove(pooled(() => fromCocoa(rectOf(nsWin, "frame"))));
+      if (!rec || rec.host.closed) return;
+      const frame = pooled(() => fromCocoa(rectOf(nsWin, "frame")));
+      rec.host.bounds = frame;
+      rec.host.fireMove(frame);
     },
     onCloseRequest: (nsWin) => {
       const host = recordByNsWin.get(nsWin)?.host;
       return Boolean(host && host.tabs.size === 1 && host.fireClose());
     },
     onClosed: (nsWin) => {
+      // Deferred from willClose: a record a host teardown already removed was
+      // detached there, so never detach it again or pump events at its torn-down host.
       const rec = recordByNsWin.get(nsWin);
-      recordByNsWin.delete(nsWin);
-      detachPage(nsWin);
       if (!rec) return;
+      recordByNsWin.delete(nsWin);
+      stopDarwinWindowResize(nsWin);
+      detachPage(nsWin);
       const tabHost = rec.host;
       tabHost.tabs.delete(nsWin);
       if (!rec.closed) {
@@ -274,7 +428,7 @@ function ensureHost(window: Window): MacTabHost {
     },
   });
 
-  return bindHostToWindow(window, group, true, b);
+  return bindHostToWindow(window, group, b);
 }
 
 export const darwinTabsDriver: TabsDriver = {
@@ -285,25 +439,74 @@ export const darwinTabsDriver: TabsDriver = {
     const id = nextTabId++;
     const initialTitle = options.title ?? (options.url ? new URL(options.url).hostname || options.url : `Tab ${id}`);
     const nsWin = host.group.createWindow(initialTitle);
-    const wrappedWin = Window.fromHandle(nsWin);
+    host.group.setTopmost(nsWin, host.topmost);
+    // While attaching, a host teardown leaves nsWin (and the group) alive for the rollback below.
+    host.attaching.add(nsWin);
+    let wrappedWin: Window;
+    try {
+      wrappedWin = Window.fromHandle(nsWin);
+    } catch (err) {
+      host.attaching.delete(nsWin);
+      host.group.discard(nsWin);
+      releaseGroupIfIdle(host);
+      throw err;
+    }
+    // Undo an attach that did not produce a tab; `webview` is set when the attach itself succeeded.
+    const rollback = (webview?: WebView<any, any>) => {
+      if (webview) {
+        detachPage(nsWin);
+        webview.dispose();
+      }
+      wrappedWin.dispose();
+      host.attaching.delete(nsWin);
+      host.group.discard(nsWin);
+      releaseGroupIfIdle(host);
+    };
+
+    // The tab's logical host changes on tear-off and merge; until the record
+    // exists it is the host the tab opens in.
+    let owner: MacTabRecord | undefined;
+    const logicalHost = () => owner?.host ?? host;
+    const hooks: TabAttachHooks = {
+      fileDropHost: () => logicalHost().window,
+      revealWindow: () => {
+        const h = logicalHost();
+        if (!h.closed && !isWindowDisposed(h.window) && !h.window.isVisible()) h.window.show();
+      },
+      isCancelled: () => host.closed,
+    };
+    const attachOptions: WebViewOptions<M> & { [tabAttachHooks]: TabAttachHooks } = {
+      ...options,
+      title: initialTitle,
+      [tabAttachHooks]: hooks,
+    };
 
     let webview: WebView<M, E>;
     try {
-      webview = await WebView.attach<M, E>(wrappedWin, { ...options, title: initialTitle });
+      webview = await WebView.attach<M, E>(wrappedWin, attachOptions);
     } catch (err) {
-      host.group.discard(nsWin);
+      rollback();
       throw err;
     }
+    if (host.closed || isWindowDisposed(window)) {
+      rollback(webview);
+      throw new Error("sweetview: the window was disposed while the tab was opening");
+    }
+    host.attaching.delete(nsWin);
+    // setTopmost() during the attach updated only the host's listed tabs.
+    host.group.setTopmost(nsWin, host.topmost);
 
     const record: MacTabRecord = {
       nsWin,
       host,
       title: initialTitle,
       webview,
+      hooks,
       shown: false,
       closed: false,
       api: null as unknown as Tab<M, E>,
     };
+    owner = record;
 
     const api: Tab<M, E> = {
       webview,
@@ -330,11 +533,13 @@ export const darwinTabsDriver: TabsDriver = {
           tabHost.group.close(nsWin);
         } else {
           record.closed = true;
+          stopDarwinWindowResize(nsWin);
           syncFileDrop(record);
           tabHost.tabs.delete(nsWin);
           recordByNsWin.delete(nsWin);
           const idx = tabHost.pendingShow.findIndex((p) => p.nsWin === nsWin);
           if (idx !== -1) tabHost.pendingShow.splice(idx, 1);
+          if (tabHost.selectedBeforeShow === nsWin) tabHost.selectedBeforeShow = undefined;
           detachPage(nsWin);
           record.webview.dispose();
           tabHost.group.discard(nsWin);
@@ -351,19 +556,35 @@ export const darwinTabsDriver: TabsDriver = {
           // Detach ONLY this tab without revealing unrelated hidden pending tabs.
           const idx = fromHost.pendingShow.findIndex((p) => p.nsWin === nsWin);
           if (idx !== -1) fromHost.pendingShow.splice(idx, 1);
+          if (fromHost.selectedBeforeShow === nsWin) fromHost.selectedBeforeShow = undefined;
           record.shown = true;
-          fromHost.group.show(nsWin, undefined, (w) => focusWebView(w));
+          // Standalone: never tab into the group's current window, which may be another host's.
+          fromHost.group.show(nsWin, null, (w) => focusWebView(w));
         } else {
           fromHost.group.moveToNewWindow(nsWin);
         }
-        const detachedWin = new Window({ tabs: true, title: record.title, bounds: fromHost.window.bounds() });
-        const detachedHost = bindHostToWindow(detachedWin, fromHost.group, false, fromHost.window.bounds());
+        const meta = getWindowMeta(fromHost.window);
+        const frame = pooled(() => fromCocoa(rectOf(nsWin, "frame")));
+        const detachedWin = new Window({
+          tabs: true,
+          title: record.title,
+          bounds: frame,
+          appearance: meta.appearance,
+          icon: meta.icon,
+          resizable: meta.resizable,
+          opacity: meta.opacity,
+          hideFromTaskbar: meta.hideFromTaskbar,
+          noActivate: meta.noActivate,
+          minWidth: meta.minWidth,
+          minHeight: meta.minHeight,
+          topmost: fromHost.topmost,
+        });
+        const detachedHost = bindHostToWindow(detachedWin, fromHost.group, frame);
         detachedHost.visible = true;
         forwardWindowTabEvents(detachedWin, fromHost.window);
         fromHost.tabs.delete(nsWin);
         detachedHost.tabs.set(nsWin, record);
-        record.host = detachedHost;
-        syncFileDrop(record);
+        rehome(record, detachedHost);
         return detachedWin;
       },
       dispose() {
@@ -384,15 +605,16 @@ export const darwinTabsDriver: TabsDriver = {
       onLoadFailed(nsWin, (reason) => webview.raw.setHTML(loadFailedPage(options.url!, reason)));
     }
 
+    // `after` anchors only within this host: a tab of another window, or a
+    // closed tab, is ignored as in the Windows driver.
     const afterRec = options.after ? tabRecordByApi.get(options.after) : undefined;
-    // Anchor inside the target host's own tabs if `after` was not specified.
-    const anchorNsWin = afterRec?.nsWin ?? [...host.tabs.keys()].find((w) => w !== nsWin && host.tabs.get(w)?.shown);
+    const after = afterRec && afterRec.host === host && !afterRec.closed ? afterRec.nsWin : undefined;
     if (host.visible) {
-      record.shown = true;
-      host.group.show(nsWin, anchorNsWin, (w) => focusWebView(w));
+      showTab(host, record, after);
       emitWindowTabSelect(window, api);
     } else {
-      host.pendingShow.push({ nsWin, after: anchorNsWin });
+      // The default anchor is resolved when the host is shown: tabs hide() ordered out are not anchors.
+      host.pendingShow.push({ nsWin, after });
       host.selectedBeforeShow ??= nsWin;
     }
     return api;
@@ -404,17 +626,20 @@ export const darwinTabsDriver: TabsDriver = {
     if (!target) return;
     target.group.mergeAllWindows();
     // Re-associate detached hosts sharing this tabbing group back into `target`.
-    for (const [win, h] of [...hosts]) {
+    for (const h of [...hosts.values()]) {
       if (h === target || h.group !== target.group) continue;
       for (const [nsWin, rec] of [...h.tabs]) {
         h.tabs.delete(nsWin);
         target.tabs.set(nsWin, rec);
-        rec.host = target;
-        syncFileDrop(rec);
+        rehome(rec, target);
       }
-      h.closed = true;
-      hosts.delete(win);
+      for (const item of h.pendingShow.splice(0)) target.pendingShow.push({ nsWin: item.nsWin });
+      h.selectedBeforeShow = undefined;
+      // The emptied host owns no tab windows now, so disposing its Window closes none (as on Windows).
+      h.window.dispose();
+      disposeMacHost(h);
     }
+    if (target.visible) flushPendingShow(target);
   },
 
   disposeWindow(window: Window) {

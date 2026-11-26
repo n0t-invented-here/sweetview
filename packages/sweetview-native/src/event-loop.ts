@@ -28,8 +28,12 @@ const impl = backend<Backend>(
 
 /**
  * Dispatches every OS event waiting for this thread and returns at once.
- * Returns false when the OS asked the loop to end (Windows: `WM_QUIT`), true
- * otherwise. For a loop of your own; `runEventLoop` calls it on a timer.
+ * For a loop of your own; `runEventLoop` calls it on a timer.
+ *
+ * @returns `false` when the OS asked the loop to end (Windows: a `WM_QUIT`
+ * was dequeued, e.g. from `PostQuitMessage`), so the caller should stop
+ * pumping; `true` otherwise. macOS has no equivalent quit message here and
+ * returns `true`.
  */
 export function pumpEvents(): boolean {
   return impl().pumpEvents();
@@ -83,7 +87,14 @@ export function quitEventLoop(): void {
   stopRunning?.();
 }
 
-/** macOS: how the app appears in the Dock and the app switcher; `accessory` for a menu-bar app. Windows: no-op. */
+/**
+ * macOS: sets the process-wide `NSApplicationActivationPolicy`, which decides
+ * whether the app has a Dock icon, appears in Cmd+Tab, and owns the menu bar
+ * when active. Use `accessory` for a menu-bar app.
+ *
+ * Windows: no-op. Windows has no process-wide equivalent; taskbar and Alt+Tab
+ * presence is per window, set with `WindowOptions.hideFromTaskbar`.
+ */
 export function setActivationPolicy(policy: ActivationPolicy): void {
   impl().setActivationPolicy(policy);
 }

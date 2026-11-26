@@ -1,10 +1,6 @@
 # @n1h/sweetview/ipc-ws
 
-The [`ipc`](ipc.md) contract over WebSockets, so a `Service` served by `Bun.serve` reaches a page in an ordinary browser. `@n1h/sweetview/ipc-ws/server` runs in Bun and hosts the service; `@n1h/sweetview/ipc-ws/client` runs in the browser page and provides its `Transport`. `@n1h/sweetview/ipc-ws` re-exports both; neither module touches Bun or browser globals until one of its functions is called.
-
-```ts
-import { wsHost, type WsData, type WsHost, type WsHostOptions, wsTransport, wsUrl, type WsTransport } from "@n1h/sweetview/ipc-ws";
-```
+The [`ipc`](ipc.md) contract over WebSockets, so a `Service` served by `Bun.serve` reaches a page in an ordinary browser. `@n1h/sweetview/ipc-ws/server` runs in Bun and hosts the service; `@n1h/sweetview/ipc-ws/client` runs in the browser page and provides its `Transport`. `@n1h/sweetview/ipc-ws` re-exports both, and the standalone package is `@n1h/sweetview-ipc-ws`. Neither module touches Bun or browser globals until one of its functions is called. Import each side from its own path so a page bundle never pulls in the server's types.
 
 - [Server: `@n1h/sweetview/ipc-ws/server`](#server-n1hsweetviewipc-wsserver)
   - [wsHost](#wshost)
@@ -21,6 +17,10 @@ import { wsHost, type WsData, type WsHost, type WsHostOptions, wsTransport, wsUr
 ## Server: `@n1h/sweetview/ipc-ws/server`
 
 Bun only. Its types come from `bun`. It works with `Bun.serve`, on the main thread or in a Worker.
+
+```ts
+import { wsHost, type WsData, type WsHost, type WsHostOptions } from "@n1h/sweetview/ipc-ws/server";
+```
 
 ### wsHost
 
@@ -89,11 +89,22 @@ Which browser pages may connect. Browsers do not apply the same-origin policy to
 |---|---|---|---|
 | `allowOrigin` | `string[] \| ((origin: string, req: Request) => boolean)` | `Origin` host equals `Host` | A list of allowed `Origin` values, compared as exact strings, or a predicate that decides. |
 
-A request without an `Origin` header is always accepted, because it does not come from a browser. With no `allowOrigin`, a request is accepted when the host of its `Origin` equals its `Host` header. An `Origin` that is not a valid URL, such as `null`, is then refused. Binding `Bun.serve` to `127.0.0.1` keeps the service off the network.
+The check, in order:
+
+1. A request without an `Origin` header is accepted, whatever `allowOrigin` says: a predicate is not even called. Browsers always send `Origin` on a WebSocket upgrade, so a request without one comes from a non-browser client (a script, `curl`, another server), which the same-origin concern does not apply to. If those clients must be refused too, authenticate them in `fetch` before calling `upgrade`.
+2. With a predicate, its return value decides.
+3. With a list, the `Origin` must equal one entry exactly, scheme and port included.
+4. With no `allowOrigin`, the request is accepted when the host part of `Origin` (hostname and port) equals the request's `Host` header. The scheme is not compared, so `http://` and `https://` pages on the same host and port both pass. An `Origin` that is not a valid URL, such as `null` from a sandboxed iframe or a `file:` page, is refused.
+
+Binding `Bun.serve` to `127.0.0.1` keeps the service off the network.
 
 ## Client: `@n1h/sweetview/ipc-ws/client`
 
 Runs in a browser page, or in any runtime with a global `WebSocket`, such as Bun. `wsUrl`, and `wsTransport` called without a `url`, need the global `location`.
+
+```ts
+import { wsTransport, wsUrl, type WsTransport } from "@n1h/sweetview/ipc-ws/client";
+```
 
 ### wsTransport
 
@@ -177,7 +188,7 @@ Event targeting:
 
 Messages a side does not expect:
 
-- The server decodes binary messages as UTF-8 text.
+- The server accepts binary messages as well as text: it decodes the bytes as UTF-8 and parses the result as JSON, exactly like a text message. A client that sends frames as `Uint8Array` therefore works, but the server always answers with text messages.
 - The server ignores a message that is not valid JSON. It sends no reply and logs nothing.
 - The server ignores a JSON value that is not an object: `null`, a number, a string or a boolean. The client does the same.
 - When a result or an event payload cannot be serialised as JSON (a `BigInt`, a cycle), the server answers the call with an error reply `<seq>: the result is not serialisable: <message>`; an event that cannot be serialised is logged and dropped.

@@ -7,10 +7,13 @@
 import { FFIType, JSCallback, dlopen, ptr, toArrayBuffer, type Pointer } from "bun:ffi";
 import type { MenuTemplate } from "../menu";
 import type { Point, Rect } from "../types";
-import type { ResizeEdge } from "../window";
+import type { Appearance, ResizeEdge } from "../window";
 import {
   GW_CHILD,
   HTCAPTION,
+  HWND_NOTOPMOST,
+  HWND_TOPMOST,
+  LWA_ALPHA,
   SWP_FRAMECHANGED,
   SWP_NOACTIVATE,
   SWP_NOMOVE,
@@ -21,6 +24,7 @@ import {
   SW_MINIMIZE,
   SW_RESTORE,
   SW_SHOW,
+  SW_SHOWNOACTIVATE,
   WM_CLOSE,
   WM_DROPFILES,
   WM_GETMINMAXINFO,
@@ -30,7 +34,12 @@ import {
   WM_NULL,
   WM_SIZE,
   WS_CLIPCHILDREN,
+  WS_EX_LAYERED,
+  WS_EX_NOACTIVATE,
+  WS_EX_TOOLWINDOW,
+  WS_MAXIMIZEBOX,
   WS_OVERLAPPEDWINDOW,
+  WS_THICKFRAME,
   dwmapi,
   hInstance,
   lastError,
@@ -43,6 +52,7 @@ import { cursor as cursorPosition, primary as primaryScreen } from "./screen";
 
 const extra = dlopen("user32.dll", {
   SetParent: { args: [FFIType.u64, FFIType.u64], returns: FFIType.u64 },
+  GetParent: { args: [FFIType.u64], returns: FFIType.u64 },
   GetForegroundWindow: { args: [], returns: FFIType.u64 },
   FillRect: { args: [FFIType.u64, FFIType.ptr, FFIType.u64], returns: FFIType.i32 },
   InvalidateRect: { args: [FFIType.u64, FFIType.ptr, FFIType.i32], returns: FFIType.i32 },
@@ -65,6 +75,9 @@ const SM_CXSIZEFRAME = 32;
 const SM_CYSIZEFRAME = 33;
 const SM_CXPADDEDBORDER = 92;
 const IDC_ARROW = 32512n;
+const GW_HWNDNEXT = 2;
+/** Default minimum page size in DIPs, used when the caller gives no outer minimum. */
+const DEFAULT_MIN_PAGE = { width: 560, height: 420 };
 const VK_LBUTTON = 0x01;
 const DWMWA_USE_IMMERSIVE_DARK_MODE = 20;
 const HIT: Record<ResizeEdge, number> = {
@@ -90,9 +103,28 @@ export type FrameWindowOptions = {
   bounds?: Rect;
   width?: number;
   height?: number;
-  minWidth: number;
-  minHeight: number;
+  /**
+   * Minimum outer window size in physical pixels (the `WindowOptions`
+   * outer-frame contract). When omitted, a default page minimum of 560x420
+   * DIPs plus the strip and frame extents is used.
+   */
+  minWidth?: number;
+  minHeight?: number;
   stripHeight: number;
+  /** Title bar / backdrop theme of this frame. Default: "system". */
+  appearance?: Appearance;
+  /** Current system dark state, used while `appearance` is "system". Default: false. */
+  systemDark?: boolean;
+  /** Allow user resizing and maximizing. Default: true. */
+  resizable?: boolean;
+  /** Start above normal windows. Default: false. */
+  topmost?: boolean;
+  /** Whole-window opacity, 0..1 (`WS_EX_LAYERED` + `LWA_ALPHA`). */
+  opacity?: number;
+  /** Omit from the taskbar and Alt+Tab (`WS_EX_TOOLWINDOW`). Default: false. */
+  hideFromTaskbar?: boolean;
+  /** Never activate on show or click (`WS_EX_NOACTIVATE`, `SW_SHOWNOACTIVATE`). Default: false. */
+  noActivate?: boolean;
   at?: Point;
   onCloseRequest(): void;
   onActivate(active: boolean): void;
@@ -100,6 +132,8 @@ export type FrameWindowOptions = {
   onFileDrop?(drop: bigint): void;
   onMoved(): void;
 };
+
+export type FrameCallbacks = Partial<Pick<FrameWindowOptions, "onCloseRequest" | "onActivate" | "onResized" | "onMoved">>;
 
 export type FrameWindow = {
   readonly hwnd: bigint;
@@ -126,15 +160,31 @@ export type FrameWindow = {
   toggleMaximize(): void;
   startDrag(held?: Point): void;
   startResize(edge: ResizeEdge, held?: Point): void;
-  addCallbacks(callbacks: Partial<Pick<FrameWindowOptions, "onCloseRequest" | "onActivate" | "onResized" | "onMoved">>): void;
+  setTopmost(on: boolean): void;
+  /** Requested appearance of this frame. */
+  appearance(): Appearance;
+  /** Effective dark state of this frame (its explicit appearance, or the last system state for "system"). */
+  isDark(): boolean;
+  /** Updates the system dark state; only changes this frame when its appearance is "system". */
+  setSystemDark(dark: boolean): void;
+  /** Adds callbacks run after the frame's own; returns a function that removes them again. */
+  addCallbacks(callbacks: FrameCallbacks): () => void;
   destroy(): void;
 };
 
-type Frame = { options: FrameWindowOptions; stripPane: bigint; shown: bigint | undefined; live: boolean };
+type Frame = {
+  options: FrameWindowOptions;
+  stripPane: bigint;
+  shown: bigint | undefined;
+  live: boolean;
+  /** Requested appearance; "system" frames follow setSystemDark. */
+  appearance: Appearance;
+  /** Effective dark state, applied per HWND. */
+  dark: boolean;
+};
 const frames = new Map<bigint, Frame>();
 const frameApiByHwnd = new Map<bigint, FrameWindow>();
 const panes = new Set<bigint>();
-let dark = false;
 
 export const getTabFrame = (hwnd: bigint): FrameWindow | undefined => frameApiByHwnd.get(hwnd);
 
@@ -177,7 +227,7 @@ function erase(hwnd: bigint, hdc: bigint, color: number): bigint {
   return 1n;
 }
 
-const colors = () => (dark ? BACKDROP.dark : BACKDROP.light);
+const colors = (frame: Frame | undefined) => (frame?.dark ? BACKDROP.dark : BACKDROP.light);
 
 function frameProc(hwnd: bigint, message: number, wParam: bigint, lParam: bigint): bigint {
   const frame = frames.get(hwnd);
@@ -198,11 +248,14 @@ function frameProc(hwnd: bigint, message: number, wParam: bigint, lParam: bigint
       }
       return 0n;
     case WM_GETMINMAXINFO: {
+      // MINMAXINFO.ptMinTrackSize (offset 24) is the outer window size in
+      // physical pixels: caller minimums are already outer, so apply them as is.
       const info = new Int32Array(toArrayBuffer(Number(lParam) as Pointer, 0, 40));
+      const { minWidth, minHeight, stripHeight } = frame.options;
       const dpi = dpiOf(hwnd);
       const edge = border(dpi);
-      info[6] = Math.round((frame.options.minWidth * dpi) / 96) + 2 * edge.x;
-      info[7] = Math.round((frame.options.minHeight * dpi) / 96) + edge.y;
+      info[6] = minWidth !== undefined ? Math.max(0, Math.round(minWidth)) : Math.round((DEFAULT_MIN_PAGE.width * dpi) / 96) + 2 * edge.x;
+      info[7] = minHeight !== undefined ? Math.max(0, Math.round(minHeight)) : Math.round(((DEFAULT_MIN_PAGE.height + stripHeight) * dpi) / 96) + edge.y;
       return 0n;
     }
     case WM_DPICHANGED: {
@@ -211,7 +264,7 @@ function frameProc(hwnd: bigint, message: number, wParam: bigint, lParam: bigint
       return 0n;
     }
     case WM_ERASEBKGND:
-      return erase(hwnd, wParam, colors().strip);
+      return erase(hwnd, wParam, colors(frame).strip);
     case WM_ACTIVATE:
       if (frame.live) frame.options.onActivate((wParam & 0xffffn) !== 0n);
       break;
@@ -242,8 +295,8 @@ function paneProc(hwnd: bigint, message: number, wParam: bigint, lParam: bigint)
       return 0n;
     }
     case WM_ERASEBKGND: {
-      const parent = [...frames].find(([, frame]) => frame.stripPane === hwnd);
-      return erase(hwnd, wParam, parent ? colors().strip : colors().page);
+      const parent = frames.get(extra.GetParent(hwnd));
+      return erase(hwnd, wParam, parent?.stripPane === hwnd ? colors(parent).strip : colors(parent).page);
     }
     case WM_NCDESTROY:
       panes.delete(hwnd);
@@ -298,15 +351,28 @@ function createPaneIn(parent: bigint, area: Rect): bigint {
   return pane;
 }
 
-function applyDark(hwnd: bigint): void {
-  dwmapi.DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, new Int32Array([dark ? 1 : 0]), 4);
+function applyDark(hwnd: bigint, frame: Frame): void {
+  dwmapi.DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, new Int32Array([frame.dark ? 1 : 0]), 4);
   extra.InvalidateRect(hwnd, null, 1);
+  // Panes paint their own backdrop; repaint them with this frame's colors.
+  for (let child = user32.GetWindow(hwnd, GW_CHILD); child !== 0n; child = user32.GetWindow(child, GW_HWNDNEXT)) {
+    if (panes.has(child)) extra.InvalidateRect(child, null, 1);
+  }
 }
 
+function setFrameSystemDark(hwnd: bigint, frame: Frame, dark: boolean): void {
+  if (frame.appearance !== "system" || frame.dark === dark) return;
+  frame.dark = dark;
+  applyDark(hwnd, frame);
+}
+
+/**
+ * Updates the system dark state of every frame whose appearance is "system".
+ * Frames created with an explicit "light" or "dark" appearance are unaffected.
+ * Prefer `FrameWindow.setSystemDark` to update a single frame.
+ */
 export function setDarkWindows(on: boolean): void {
-  if (dark === on) return;
-  dark = on;
-  for (const hwnd of frames.keys()) applyDark(hwnd);
+  for (const [hwnd, frame] of frames) setFrameSystemDark(hwnd, frame, on);
 }
 
 export const windowExists = (hwnd: bigint): boolean => user32.IsWindow(hwnd) !== 0;
@@ -315,11 +381,34 @@ export { cursorPosition };
 
 export function createFrameWindow(options: FrameWindowOptions): FrameWindow {
   prepare();
-  const hwnd = user32.CreateWindowExW(0, wstr(FRAME_CLASS), wstr(options.title), WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN, CW_USEDEFAULT, 0, 0, 0, 0n, 0n, hInstance(), null);
+  const resizable = options.resizable ?? true;
+  const noActivate = options.noActivate ?? false;
+  const layered = options.opacity !== undefined;
+  let style = WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN;
+  if (!resizable) style &= ~(WS_THICKFRAME | WS_MAXIMIZEBOX);
+  // WS_EX_APPWINDOW is never set on frames, so WS_EX_TOOLWINDOW alone hides them from the taskbar.
+  const exStyle = (layered ? WS_EX_LAYERED : 0) | (options.hideFromTaskbar ? WS_EX_TOOLWINDOW : 0) | (noActivate ? WS_EX_NOACTIVATE : 0);
+  const hwnd = user32.CreateWindowExW(exStyle, wstr(FRAME_CLASS), wstr(options.title), style, CW_USEDEFAULT, 0, 0, 0, 0n, 0n, hInstance(), null);
   if (hwnd === 0n) throw new Error(`sweetview: CreateWindowExW(frame) failed (${lastError()})`);
-  const frame: Frame = { options, stripPane: 0n, shown: undefined, live: false };
+  const appearance = options.appearance ?? "system";
+  const frame: Frame = {
+    options,
+    stripPane: 0n,
+    shown: undefined,
+    live: false,
+    appearance,
+    dark: appearance === "system" ? (options.systemDark ?? false) : appearance === "dark",
+  };
   frames.set(hwnd, frame);
-  applyDark(hwnd);
+  applyDark(hwnd, frame);
+  if (layered) {
+    const alpha = Math.round(Math.min(1, Math.max(0, options.opacity!)) * 255);
+    if (!user32.SetLayeredWindowAttributes(hwnd, 0, alpha, LWA_ALPHA)) {
+      const error = lastError();
+      user32.DestroyWindow(hwnd);
+      throw new Error(`sweetview: SetLayeredWindowAttributes failed (${error})`);
+    }
+  }
 
   const dpi = dpiOf(hwnd);
   const edge = border(dpi);
@@ -340,6 +429,7 @@ export function createFrameWindow(options: FrameWindowOptions): FrameWindow {
     y = options.at ? options.at.y : area.y + Math.max(0, Math.round((area.height - height) / 2));
   }
   user32.SetWindowPos(hwnd, 0n, x, y, width, height, SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+  if (options.topmost) user32.SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
 
   const page = pageArea(hwnd, frame);
   frame.stripPane = createPaneIn(hwnd, { x: 0, y: 0, width: page.width, height: page.y });
@@ -352,6 +442,7 @@ export function createFrameWindow(options: FrameWindowOptions): FrameWindow {
     return { x: at.x - (rect[0]! + Math.round(held.x * scale)), y: at.y - (rect[1]! + Math.round(held.y * scale)) };
   };
 
+  let extraCallbacks: Set<FrameCallbacks> | undefined;
   const self: FrameWindow = {
     hwnd,
     stripPane: frame.stripPane,
@@ -382,8 +473,10 @@ export function createFrameWindow(options: FrameWindowOptions): FrameWindow {
       return { width: Math.max(1, Math.round(area.width / scale)), height: Math.max(1, Math.round(area.height / scale)) };
     },
     show() {
-      user32.ShowWindow(hwnd, user32.IsIconic(hwnd) ? SW_RESTORE : SW_SHOW);
-      user32.SetForegroundWindow(hwnd);
+      // SW_SHOWNOACTIVATE also restores a minimized window, without activating it.
+      if (user32.IsIconic(hwnd)) user32.ShowWindow(hwnd, noActivate ? SW_SHOWNOACTIVATE : SW_RESTORE);
+      else user32.ShowWindow(hwnd, noActivate ? SW_SHOWNOACTIVATE : SW_SHOW);
+      if (!noActivate) user32.SetForegroundWindow(hwnd);
     },
     hide: () => void user32.ShowWindow(hwnd, SW_HIDE),
     isVisible: () => user32.IsWindowVisible(hwnd) !== 0,
@@ -403,7 +496,10 @@ export function createFrameWindow(options: FrameWindowOptions): FrameWindow {
     isForeground: () => extra.GetForegroundWindow() === hwnd,
     isMaximized: () => user32.IsZoomed(hwnd) !== 0,
     minimize: () => void user32.ShowWindow(hwnd, SW_MINIMIZE),
-    toggleMaximize: () => void user32.ShowWindow(hwnd, user32.IsZoomed(hwnd) ? SW_RESTORE : SW_MAXIMIZE),
+    toggleMaximize() {
+      if (!resizable) return;
+      user32.ShowWindow(hwnd, user32.IsZoomed(hwnd) ? (noActivate ? SW_SHOWNOACTIVATE : SW_RESTORE) : SW_MAXIMIZE);
+    },
     startDrag(held) {
       if (!leftButtonDown()) return;
       if (held !== undefined && !user32.IsZoomed(hwnd)) {
@@ -415,7 +511,7 @@ export function createFrameWindow(options: FrameWindowOptions): FrameWindow {
       user32.SendMessageW(hwnd, WM_NCLBUTTONDOWN, BigInt(HTCAPTION), 0n);
     },
     startResize(edge, held) {
-      if (!leftButtonDown() || user32.IsZoomed(hwnd)) return;
+      if (!resizable || !leftButtonDown() || user32.IsZoomed(hwnd)) return;
       if (held !== undefined) {
         const travelled = sinceHeld(held);
         user32.GetWindowRect(hwnd, rect);
@@ -429,39 +525,40 @@ export function createFrameWindow(options: FrameWindowOptions): FrameWindow {
       user32.ReleaseCapture();
       user32.SendMessageW(hwnd, WM_NCLBUTTONDOWN, BigInt(HIT[edge]), 0n);
     },
+    setTopmost(on) {
+      user32.SetWindowPos(hwnd, on ? HWND_TOPMOST : HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    },
+    appearance: () => frame.appearance,
+    isDark: () => frame.dark,
+    setSystemDark(dark) {
+      if (user32.IsWindow(hwnd) !== 0) setFrameSystemDark(hwnd, frame, dark);
+    },
     addCallbacks(callbacks) {
-      if (callbacks.onCloseRequest) {
-        const prev = frame.options.onCloseRequest;
-        const next = callbacks.onCloseRequest;
+      if (!extraCallbacks) {
+        // Wrap the frame's own callbacks once; added callbacks live in a set so they can be removed.
+        const extras = (extraCallbacks = new Set());
+        const own = { ...frame.options };
         frame.options.onCloseRequest = () => {
-          prev();
-          next();
+          own.onCloseRequest();
+          for (const c of [...extras]) c.onCloseRequest?.();
         };
-      }
-      if (callbacks.onActivate) {
-        const prev = frame.options.onActivate;
-        const next = callbacks.onActivate;
         frame.options.onActivate = (a) => {
-          prev(a);
-          next(a);
+          own.onActivate(a);
+          for (const c of [...extras]) c.onActivate?.(a);
         };
-      }
-      if (callbacks.onResized) {
-        const prev = frame.options.onResized;
-        const next = callbacks.onResized;
         frame.options.onResized = () => {
-          prev();
-          next();
+          own.onResized();
+          for (const c of [...extras]) c.onResized?.();
         };
-      }
-      if (callbacks.onMoved) {
-        const prev = frame.options.onMoved;
-        const next = callbacks.onMoved;
         frame.options.onMoved = () => {
-          prev();
-          next();
+          own.onMoved();
+          for (const c of [...extras]) c.onMoved?.();
         };
       }
+      const entry: FrameCallbacks = { ...callbacks };
+      const extras = extraCallbacks;
+      extras.add(entry);
+      return () => void extras.delete(entry);
     },
     destroy: () => {
       if (user32.IsWindow(hwnd) !== 0) user32.DestroyWindow(hwnd);

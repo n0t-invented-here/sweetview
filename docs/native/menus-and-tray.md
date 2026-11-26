@@ -1,0 +1,211 @@
+# Menus and the tray
+
+Menus in Sweetview are data: an array of items, or a function returning one.
+The same template drives a context menu (`Menu.popup`), a tray menu (`Tray`),
+and menu-item icons. This page also covers the macOS application menu bar and
+activation policy, which have no per-window equivalent on Windows. Part of
+the [native module](../native.md).
+
+- [Menu templates](#menu-templates)
+- [Menu.popup](#menupopup)
+- [Tray](#tray)
+  - [Clicks: why macOS differs](#clicks-why-macos-differs)
+- [setAppMenu](#setappmenu)
+- [setActivationPolicy](#setactivationpolicy)
+
+## Menu templates
+
+```ts
+import { type MenuTemplate } from "@n1h/sweetview/native";
+
+let paused = false;
+const menu = (): MenuTemplate => [
+  { label: "Pause", checked: paused, click: () => { paused = !paused; } },
+  { label: "Export", submenu: [{ label: "As PNG", click: exportPng }, { label: "As SVG", enabled: false }] },
+  { type: "separator" },
+  { label: "Quit", click: quit },
+];
+```
+
+| Item | Fields |
+|---|---|
+| item (`type` omitted or `"item"`) | `label`; `enabled` (default `true`); `checked`; `icon`; `click` |
+| submenu (`type` omitted or `"submenu"`) | `label`; `enabled`; `icon`; `submenu: MenuTemplate` |
+| separator | `{ type: "separator" }` |
+
+`MenuSource` is a `MenuTemplate` or a function returning one. The function
+form is called every time the menu is about to open, so labels, check marks
+and enabled state follow app state without bookkeeping. `resolveMenu(source)`
+performs that resolution: `undefined` gives `[]`, a function is called, an
+array is returned as is.
+
+A menu item `icon` is an [`Icon`](event-loop-and-icons.md#icon): the 16 px
+image from `icon.windows.ico` on Windows, and on macOS `icon.macos.symbol` or
+`icon.macos.png` as a 16 pt template image.
+
+Click handlers run on the UI thread, from inside the OS menu loop. Return
+quickly. Under the blocking `webview.run()` loop Bun's own event loop is not
+turning, so a handler cannot await anything; defer work to the worker or to a
+`runEventLoop` app ([event loop](event-loop-and-icons.md)).
+
+## Menu.popup
+
+```ts
+import { Menu, Window } from "@n1h/sweetview/native";
+
+const win = new Window({ title: "Canvas" });
+const chosen = Menu.popup(win, [
+  { label: "Copy", click: copy },
+  { label: "Paste", click: paste },
+]);
+```
+
+```ts
+Menu.popup(owner: { readonly handle: WindowHandle } | WindowHandle, menu: MenuSource, at?: Point): boolean
+```
+
+Opens a context menu at screen point `at`, or at the cursor when `at` is
+omitted, blocks until it closes, runs the chosen item's `click`, and returns
+`true` if an item was chosen. An empty template returns `false` without
+showing anything.
+
+`owner` is structural: a `Window`, any object with a `handle` (a wrapper from
+another library), or a raw handle. The platforms use it differently:
+
+- Windows: `TrackPopupMenu` needs an owner `HWND` to receive the menu's
+  messages, and the owner is brought to the foreground first so the menu
+  closes when the user clicks elsewhere. Pass the window the menu belongs to.
+- macOS: the menu opens with
+  `popUpMenuPositioningItem:atLocation:inView:` and no view, positioned in
+  screen coordinates. AppKit menus are not owned by windows, so `owner` is
+  ignored and may be `null`.
+
+## Tray
+
+```ts
+import { Tray, dotIco } from "@n1h/sweetview/native";
+
+const tray = new Tray({
+  tooltip: "My app",
+  icon: { windows: { ico: dotIco() }, macos: { symbol: "circle.fill" } },
+  menu: () => [
+    { label: "Open Settings", click: openSettings },
+    { type: "separator" },
+    { label: "Quit", click: quit },
+  ],
+});
+```
+
+A `Tray` is an icon in the Windows notification area, or a status item in the
+macOS menu bar. `createTray(options)` is the same as `new Tray(options)`.
+
+| Option | Meaning |
+|---|---|
+| `tooltip` | Hover text. |
+| `icon` | An [`Icon`](event-loop-and-icons.md#icon). Windows uses the `.ico` (a 16 px image, plus 20, 24 and 32 px for higher DPI); macOS uses the SF Symbol or the PNG at 18 x 18 points (36 px for Retina), as a template image by default. |
+| `menu` | A `MenuSource`, resolved each time it opens. |
+| `onClick` | Left single click. Fires only when the click did not become a double click. |
+| `onDoubleClick` | Left double click. |
+
+| Method | Meaning |
+|---|---|
+| `setTooltip(text)` | Changes the tooltip. |
+| `setIcon(icon)` | Changes the icon. |
+| `setMenu(menu)` | Replaces the menu; `undefined` removes it. |
+| `dispose()` | Removes the icon. Safe to call twice. |
+
+Without an icon, Windows shows the stock application icon (`IDI_APPLICATION`)
+and macOS shows the text `●` in the menu bar, so a tray is never invisible.
+On Windows the icon survives an Explorer restart: Sweetview re-adds it when
+the taskbar is recreated.
+
+### Clicks: why macOS differs
+
+The two shells have different conventions, and Sweetview follows each:
+
+| | Windows | macOS |
+|---|---|---|
+| Menu opens on | right click | any click, when a menu is set |
+| `onClick` / `onDoubleClick` | always | only when no menu is set |
+
+On Windows the tray icon is a button: left click is the app's primary action,
+right click is its menu. On macOS a menu bar status item is a menu: users
+expect any click to open it, as with every other item in the menu bar. So
+when a tray has a menu, macOS opens it on left and right click alike and
+`onClick` and `onDoubleClick` never fire.
+
+A tray that should behave the same on both platforms puts its primary action
+in the menu, as the first item, and uses `onClick` / `onDoubleClick` only as
+a Windows shortcut for it:
+
+```ts
+import { Tray, Window, dotIco } from "@n1h/sweetview/native";
+
+const settings = new Window({ title: "Settings" });
+const openSettings = () => settings.show();
+
+new Tray({
+  tooltip: "My app",
+  icon: { windows: { ico: dotIco() }, macos: { symbol: "gearshape" } },
+  menu: [
+    { label: "Open Settings", click: openSettings },
+    { type: "separator" },
+    { label: "Quit", click: () => process.exit(0) },
+  ],
+  onDoubleClick: openSettings, // Windows only: macOS opens the menu instead
+});
+```
+
+A macOS tray with no menu receives left clicks in `onClick` and
+`onDoubleClick`, which suits a status item that toggles a popover window.
+
+## setAppMenu
+
+```ts
+import { setAppMenu } from "@n1h/sweetview/native";
+
+setAppMenu({ appName: "Notes", aboutText: "Notes 1.0" });
+```
+
+macOS has one menu bar at the top of the screen, owned by the active
+application rather than by any window. The webview library creates
+`NSApplication` without one, so without `setAppMenu` the app has no menu bar
+entries and Cmd+Q, Cmd+C, Cmd+V and Cmd+Z do nothing in the page.
+`setAppMenu` installs the standard pair:
+
+- the application menu: About (showing `aboutText`) and Quit (Cmd+Q);
+- an Edit menu: Undo, Redo, Cut, Copy, Paste, Select All, routed to the
+  focused view so the webview handles them.
+
+It also sets the activation policy to `regular`, since only a regular app
+shows a menu bar. Call it on the UI thread before the loop starts.
+
+On Windows it does nothing. Windows has no application-wide menu bar: menus
+belong to a window (a page-drawn menu, or a native one) or to the tray, and
+editing shortcuts work in the webview without one.
+
+## setActivationPolicy
+
+```ts
+import { setActivationPolicy } from "@n1h/sweetview/native";
+
+setActivationPolicy("accessory"); // a menu-bar app: no Dock icon, no Cmd+Tab
+```
+
+`ActivationPolicy` is macOS's `NSApplicationActivationPolicy`, a property of
+the whole process:
+
+| Policy | Dock icon and Cmd+Tab | Menu bar | Windows and menus |
+|---|---|---|---|
+| `regular` | yes | owns it when active | yes |
+| `accessory` | no | no | yes |
+| `prohibited` | no | no | no |
+
+Use `accessory` for a menu-bar or tray app. On Windows the call is a no-op,
+because taskbar and Alt+Tab presence is decided per window, with
+[`hideFromTaskbar`](windows.md#stacking-focus-and-the-taskbar).
+
+The reverse also holds: `hideFromTaskbar: true` on any macOS window switches
+the whole app to `accessory`, since macOS cannot hide one window from the
+Dock and Cmd+Tab. `setAppMenu` switches it back to `regular`. When both are
+used, the last call wins.

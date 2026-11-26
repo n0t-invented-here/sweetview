@@ -3,7 +3,7 @@
 // shortcuts, drag reorder, tear-off, drop-on-strip, context menus, and
 // Tab / App tab events.
 
-import { WebView, type Tab, type TabOptions, type TabsDriver } from "../app";
+import { WebView, tabAttachHooks, type Tab, type TabAttachHooks, type TabOptions, type TabsDriver, type WebViewOptions } from "../app";
 import { indexHtml } from "../html";
 import type { EventMap, MethodMap } from "@n1h/sweetview-ipc";
 import { WM_CLOSE, user32 } from "@n1h/sweetview-native/win32/api";
@@ -13,7 +13,6 @@ import {
   cursorPosition,
   getTabFrame,
   leftButtonDown,
-  setDarkWindows,
   showTabPopupMenu,
   windowMenu,
   type FrameWindow,
@@ -63,6 +62,8 @@ type WinTabRecord = {
   window: WinTabHost;
   pane: bigint;
   webview: WebView<any, any>;
+  /** Attach hooks; `rebindFileDrop` moves webview file-drop delivery to the current `window.window`. */
+  readonly hooks: TabAttachHooks;
   controller: Controller;
   cleanups: (() => void)[];
   closed: boolean;
@@ -199,6 +200,8 @@ function moveTabBetweenHosts(record: WinTabRecord, target: WinTabHost, index: nu
   if (source.shown === record) source.shown = undefined;
   target.frame.adoptPane(record.pane);
   record.window = target;
+  // Drops over the tab's webview now go to the target window only.
+  record.hooks.rebindFileDrop?.();
   target.tabs.splice(Math.max(0, Math.min(target.tabs.length, index)), 0, record);
   target.selected = record;
   present(target);
@@ -226,6 +229,11 @@ async function createTearOffHost(from: WinTabHost, bounds?: { x: number; y: numb
     tabs: true,
     appearance: meta.appearance,
     icon: meta.icon,
+    resizable: meta.resizable,
+    topmost: meta.topmost,
+    opacity: meta.opacity,
+    hideFromTaskbar: meta.hideFromTaskbar,
+    noActivate: meta.noActivate,
     minWidth: meta.minWidth,
     minHeight: meta.minHeight,
     bounds: bounds ?? {
@@ -235,8 +243,14 @@ async function createTearOffHost(from: WinTabHost, bounds?: { x: number; y: numb
       height: srcBounds.height,
     },
   });
-  forwardWindowTabEvents(nextWin, from.window);
-  return await ensureHost(nextWin);
+  try {
+    forwardWindowTabEvents(nextWin, from.window);
+    return await ensureHost(nextWin);
+  } catch (err) {
+    // The tear-off window never got a working host: do not leak its frame.
+    nextWin.dispose();
+    throw err;
+  }
 }
 
 async function moveRecordToNewWindow(record: WinTabRecord, at?: { x: number; y: number }): Promise<Window> {
@@ -378,7 +392,13 @@ async function ensureHost(window: Window): Promise<WinTabHost> {
   }
 
   let resolveStrip!: () => void;
-  const stripReady = new Promise<void>((r) => (resolveStrip = r));
+  let rejectStrip!: (err: unknown) => void;
+  const stripReady = new Promise<void>((resolve, reject) => {
+    resolveStrip = resolve;
+    rejectStrip = reject;
+  });
+  // Concurrent openTab calls await stripReady; this caller gets the error directly.
+  stripReady.catch(() => {});
 
   const host: WinTabHost = {
     window,
@@ -393,10 +413,11 @@ async function ensureHost(window: Window): Promise<WinTabHost> {
   };
   hosts.set(window, host);
   hostOrder.unshift(host);
-  onWindowDispose(window, () => disposeHost(host));
+  const stopDisposeHook = onWindowDispose(window, () => disposeHost(host));
 
   let maximized = frame.isMaximized();
-  frame.addCallbacks({
+  // Removed again if the strip setup fails, so a retry never stacks callbacks on the frame.
+  const stopFrameCallbacks = frame.addCallbacks({
     onActivate(now) {
       host.active = now;
       if (now) {
@@ -429,46 +450,78 @@ async function ensureHost(window: Window): Promise<WinTabHost> {
       }
     });
 
+  // Frames with an explicit appearance start the strip in it; "system" frames follow the OS media query.
+  const explicitTheme = frame.appearance() === "system" ? "" : `<script>document.documentElement.dataset.theme = "${frame.isDark() ? "dark" : "light"}";</script>`;
   const stripWin = Window.fromHandle(frame.stripPane);
-  const lp = await libPath();
-  host.strip = await WebView.attach<StripMethods, StripEvents>(stripWin, {
-    title: meta.title || "Tabs",
-    assets: {
-      "index.html": indexHtml({ title: meta.title || "Tabs", body: STRIP_BODY }),
-      "main.js": new TextEncoder().encode(STRIP_JS),
-      "main.css": new TextEncoder().encode(STRIP_CSS),
-    },
-    uiMethods: {
-      "strip.state"() {
-        host.stripUp = true;
-        return stripState(host);
+  try {
+    const lp = await libPath();
+    const stripOptions: WebViewOptions<StripMethods> & { [tabAttachHooks]: TabAttachHooks } = {
+      title: meta.title || "Tabs",
+      assets: {
+        "index.html": indexHtml({ title: meta.title || "Tabs", head: explicitTheme, body: STRIP_BODY }),
+        "main.js": new TextEncoder().encode(STRIP_JS),
+        "main.css": new TextEncoder().encode(STRIP_CSS),
       },
-      "strip.select": (id) => fromStrip(() => tabOf(id) && selectTab(tabOf(id)!)),
-      "strip.close": (id) => fromStrip(() => tabOf(id) && closeTab(tabOf(id)!)),
-      "strip.new": () => fromStrip(() => emitWindowNewTab(host.window)),
-      "strip.move": ({ id, index }) => fromStrip(() => tabOf(id) && moveTabOrder(tabOf(id)!, index)),
-      "strip.detach": ({ id, held }) => fromStrip(() => tabOf(id) && void detachTab(tabOf(id)!, held).catch(console.error)),
-      "strip.menu": (id) => fromStrip(() => showContextMenu(host, id === null ? undefined : tabOf(id))),
-      "strip.focus": () => fromStrip(() => {}),
-      "strip.scrolled": (by) => void (host.scrolledBy = by),
-      "strip.dark": (d) => later(() => setDarkWindows(d)),
-      "strip.drag": (held) => fromStrip(() => frame.startDrag(held)),
-      "strip.resize": ({ edge, held }) => fromStrip(() => frame.startResize(edge, held)),
-      "strip.minimize": () => fromStrip(() => frame.minimize()),
-      "strip.maximize": () => fromStrip(() => frame.toggleMaximize()),
-      "strip.closeWindow": () => fromStrip(() => {
-        user32.SendMessageW(host.frame.hwnd, WM_CLOSE, 0n, 0n);
-      }),
-    },
-  });
+      uiMethods: {
+        "strip.state"() {
+          host.stripUp = true;
+          return stripState(host);
+        },
+        "strip.select": (id) => fromStrip(() => tabOf(id) && selectTab(tabOf(id)!)),
+        "strip.close": (id) => fromStrip(() => tabOf(id) && closeTab(tabOf(id)!)),
+        "strip.new": () => fromStrip(() => emitWindowNewTab(host.window)),
+        "strip.move": ({ id, index }) => fromStrip(() => tabOf(id) && moveTabOrder(tabOf(id)!, index)),
+        "strip.detach": ({ id, held }) => fromStrip(() => tabOf(id) && void detachTab(tabOf(id)!, held).catch(console.error)),
+        "strip.menu": (id) => fromStrip(() => showContextMenu(host, id === null ? undefined : tabOf(id))),
+        "strip.focus": () => fromStrip(() => {}),
+        "strip.scrolled": (by) => void (host.scrolledBy = by),
+        // Replies with this frame's effective dark state; explicit appearances ignore the OS.
+        "strip.dark": (d) => {
+          later(() => {
+            if (!host.closed) frame.setSystemDark(d);
+          });
+          return frame.appearance() === "system" ? d : frame.isDark();
+        },
+        "strip.drag": (held) => fromStrip(() => frame.startDrag(held)),
+        "strip.resize": ({ edge, held }) => fromStrip(() => frame.startResize(edge, held)),
+        "strip.minimize": () => fromStrip(() => frame.minimize()),
+        "strip.maximize": () => fromStrip(() => frame.toggleMaximize()),
+        "strip.closeWindow": () => fromStrip(() => {
+          user32.SendMessageW(host.frame.hwnd, WM_CLOSE, 0n, 0n);
+        }),
+      },
+      // A frame disposed mid-attach has destroyed the strip pane: abort before touching it.
+      [tabAttachHooks]: { fileDropHost: () => host.window, isCancelled: () => host.closed },
+    };
+    const strip = await WebView.attach<StripMethods, StripEvents>(stripWin, stripOptions);
+    if (host.closed || isWindowDisposed(window)) {
+      strip.dispose();
+      throw new Error("sweetview: the window was disposed while its tab strip was loading");
+    }
+    host.strip = strip;
 
-  frame.layout();
-  host.stripController = controllerOf(host.strip.raw, lp);
-  onAcceleratorKey(host.stripController, (key) => {
-    const found = shortcutFor(key);
-    if (found !== undefined) later(() => handleShortcut(host, found));
-    return true;
-  });
+    frame.layout();
+    host.stripController = controllerOf(host.strip.raw, lp);
+    onAcceleratorKey(host.stripController, (key) => {
+      const found = shortcutFor(key);
+      if (found !== undefined) later(() => handleShortcut(host, found));
+      return true;
+    });
+  } catch (err) {
+    // Forget the half-built host so a later openTab retries instead of awaiting a strip that never comes.
+    rejectStrip(err);
+    stopDisposeHook();
+    stopFrameCallbacks();
+    host.closed = true;
+    if (hosts.get(window) === host) hosts.delete(window);
+    const at = hostOrder.indexOf(host);
+    if (at !== -1) hostOrder.splice(at, 1);
+    host.strip?.dispose();
+    host.strip = undefined;
+    host.stripController = undefined;
+    stripWin.dispose();
+    throw err;
+  }
 
   resolveStrip();
   return host;
@@ -494,14 +547,41 @@ export const winTabsDriver: TabsDriver = {
     const initialTitle = options.title ?? (options.url ? new URL(options.url).hostname || options.url : `Tab ${id}`);
     const pane = host.frame.createPane();
     const paneWin = Window.fromHandle(pane);
-    const lp = await libPath();
+
+    // The tab's logical host changes on tear-off and merge; until the record
+    // exists it is the host the tab opens in.
+    let owner: WinTabRecord | undefined;
+    const logicalHost = () => owner?.window ?? host;
+    const hooks: TabAttachHooks = {
+      fileDropHost: () => logicalHost().window,
+      revealWindow: () => {
+        const h = logicalHost();
+        if (!h.closed && !isWindowDisposed(h.window) && !h.window.isVisible()) h.window.show();
+      },
+      // A frame disposed mid-attach has destroyed the pane: abort before touching it.
+      isCancelled: () => host.closed,
+    };
+    const attachOptions: WebViewOptions<M> & { [tabAttachHooks]: TabAttachHooks } = {
+      ...options,
+      title: initialTitle,
+      [tabAttachHooks]: hooks,
+    };
 
     let webview: WebView<M, E>;
+    let lp: string;
     try {
-      webview = await WebView.attach<M, E>(paneWin, { ...options, title: initialTitle });
+      lp = await libPath();
+      webview = await WebView.attach<M, E>(paneWin, attachOptions);
     } catch (err) {
-      host.frame.destroyPane(pane);
+      paneWin.dispose();
+      if (!host.closed) host.frame.destroyPane(pane);
       throw err;
+    }
+    if (host.closed || isWindowDisposed(window)) {
+      webview.dispose();
+      paneWin.dispose();
+      if (!host.closed) host.frame.destroyPane(pane);
+      throw new Error("sweetview: the window was disposed while the tab was opening");
     }
 
     host.frame.placePane(pane);
@@ -517,11 +597,13 @@ export const winTabsDriver: TabsDriver = {
       window: host,
       pane,
       webview,
+      hooks,
       controller,
       cleanups: [],
       closed: false,
       api: null as unknown as Tab<M, E>,
     };
+    owner = record;
 
     const api: Tab<M, E> = {
       webview,

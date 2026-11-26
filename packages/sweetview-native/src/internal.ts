@@ -8,6 +8,7 @@ export {
   forwardWindowTabEvents,
   getWindowBackend,
   getWindowMeta,
+  holdWindowNativeDispose,
   isWindowDisposed,
   onWindowDispose,
   onWindowFileDropListenersChange,

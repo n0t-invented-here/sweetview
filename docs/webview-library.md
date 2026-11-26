@@ -1,174 +1,295 @@
 # The webview library
 
-The library `@n1h/sweetview` runs on, and what differs from upstream webview.
+The native library `@n1h/sweetview` runs on, and what it adds to upstream
+[webview](https://github.com/webview/webview). Application code does not
+call it directly; `WebView.attach` and `createApp` do
+([app reference](app.md)). This page is for understanding what happens
+underneath, choosing a library build, and working on the library.
 
-- Shipped by [`@n1h/sweetview-webview-bun`](https://github.com/n0t-invented-here/sweetview-webview-bun)
-  in its `build/` folder for Windows x64, macOS (universal) and Linux x64.
-- The Bun bindings ship the patched library from their `webview` submodule.
-  The release work for these additions is on `v1-drafting` in both
-  companion repositories. The Linux arm64 build is outside Sweetview's
-  supported library targets.
+- [Where it comes from](#where-it-comes-from)
+- [Why Linux appears here](#why-linux-appears-here)
+- [The additions](#the-additions)
+  - [webview_set_background_color](#webview_set_background_color)
+  - [webview_set_asset](#webview_set_asset)
+  - [Dynamic interception and the frames origin](#dynamic-interception-and-the-frames-origin)
+  - [Streaming responses](#streaming-responses)
+  - [External drops](#external-drops)
+  - [File drops over the webview](#file-drops-over-the-webview)
+  - [Teardown](#teardown)
+- [Library selection and symbol probing](#library-selection-and-symbol-probing)
+- [Source](#source)
+- [Rebuilding](#rebuilding)
+
+## Where it comes from
+
+- The library ships in [`@n1h/sweetview-webview-bun`](https://github.com/n0t-invented-here/sweetview-webview-bun),
+  in its `build/` folder, for Windows x64, macOS (universal) and Linux x64.
+  The Bun bindings build it from their `webview` submodule, a fork of
+  upstream webview with Sweetview's additions.
+- `@n1h/sweetview` declares the bindings as an optional peer dependency,
+  `^2.7.0`. Version 2.7.0 has the window, asset and transparency additions.
+  The later additions (request interception through `onRequest`, streaming
+  responses, `allowExternalDrop`, and webview file drops) arrive with the
+  2.8.0 bindings, which the `^2.7.0` range accepts. Until 2.8.0 is
+  published, point `WEBVIEW_PATH` at a library rebuilt from the `v1-drafting`
+  branches. Sweetview probes each addition separately
+  ([below](#library-selection-and-symbol-probing)), so a 2.7.0 library still
+  runs every app that does not use them.
+
+## Why Linux appears here
+
+Sweetview supports Windows and macOS. The library is a fork of upstream
+webview, which also builds for Linux (GTK and WebKitGTK), and the fork keeps
+that build compiling so it stays mergeable with upstream and its C ABI stays
+the same on every platform. On Linux each Sweetview addition is therefore
+accepted and returns success, but does nothing: no asset serving, no
+interception, no drop handling. `WebView.attach` refuses Linux before it gets
+that far, so the Linux remarks below matter only to someone using the
+library directly. An app that wants a UI on Linux runs its page in a browser
+over WebSocket instead: see [browser + WebSocket mode](ipc-ws.md).
+
+## The additions
+
+Each addition is a C function in `core/include/webview/api.h`, shown with the
+section that explains it. The fork also changes `webview_set_size` on macOS: for a window passed to
+`webview_create`, it does nothing, so that window keeps its own style, size
+and position.
+
+### webview_set_background_color
 
 ```c
 webview_error_t webview_set_background_color(webview_t w, int r, int g, int b, int a);
-webview_error_t webview_set_asset(webview_t w, const char *path, const char *mime, const void *data, size_t len);
-webview_error_t webview_set_request_handler(webview_t w, webview_request_handler_t fn, void *arg);
-webview_error_t webview_complete_request(webview_t w, uint64_t request_id, int status, const char *headers_json, const void *body, size_t body_len);
-webview_error_t webview_begin_response(webview_t w, uint64_t request_id, int status, const char *headers_json);
-webview_error_t webview_write_response_chunk(webview_t w, uint64_t request_id, const void *chunk, size_t chunk_len);
-webview_error_t webview_end_response(webview_t w, uint64_t request_id);
-webview_error_t webview_set_allow_external_drop(webview_t w, int allow);
-webview_error_t webview_set_file_drop_handler(webview_t w, webview_file_drop_handler_t fn, void *arg);
 ```
 
-`webview_set_background_color`:
+Makes the browser's own background transparent (or any color), which
+`transparent: true` windows need. Each of `r`, `g`, `b` and `a` is 0 to 255.
 
 - Windows: sets `ICoreWebView2Controller2::DefaultBackgroundColor`. For the
   desktop to show through, the host window also needs composition that
-  honours alpha.
+  honours alpha, which `transparent: true` sets up.
 - macOS: sets `drawsBackground` on the `WKWebView` to false when `a` is 0 and
   to true otherwise. It makes the `NSWindow` non-opaque when `a` is below 255
-  and sets the window's background colour to the given colour.
+  and sets the window's background color to the given color.
 - Linux: accepted, does nothing.
-
-Each of `r`, `g`, `b` and `a` is 0 to 255.
 
 | Return | When |
 |---|---|
 | `WEBVIEW_ERROR_OK` (0) | Success. |
 | `WEBVIEW_ERROR_INVALID_ARGUMENT` (-2) | A component outside 0 to 255. |
 | `WEBVIEW_ERROR_INVALID_STATE` (-3) | Windows: the browser controller does not exist yet. macOS: there is no `WKWebView`. |
-| `WEBVIEW_ERROR_UNSPECIFIED` (-1) | Windows: `ICoreWebView2Controller2` is unavailable or refuses the colour. |
+| `WEBVIEW_ERROR_UNSPECIFIED` (-1) | Windows: `ICoreWebView2Controller2` is unavailable or refuses the color. |
 
-The fork also changes `webview_set_size` on macOS: for a window passed to
-`webview_create`, it does nothing, so that window keeps its own style, size
-and position.
+### webview_set_asset
 
-`webview_set_asset` serves bytes at a path of the webview's own origin.
+```c
+webview_error_t webview_set_asset(webview_t w, const char *path, const char *mime, const void *data, size_t len);
+```
 
-- A page is loaded with `webview_navigate` instead of `webview_set_html`,
-  which Windows caps at 2 MB.
-- The page fetches scripts, styles, images and models by relative URL.
-- The bytes are copied into the library; nothing reaches the network.
+Serves bytes at a path of the webview's own origin, so a page is loaded with
+`webview_navigate` instead of `webview_set_html` (which Windows caps at
+2 MB), fetches its scripts, styles, images and models by relative URL, and
+nothing reaches the network.
 
 - `path` is the URL path without the leading `/`; leading slashes are
   stripped. A path that needs percent-encoding is not supported.
 - A request's query string and fragment are ignored when matching.
 - `mime` is sent as the `Content-Type` header unchanged.
-- Calling again with the same path replaces the bytes. No call removes an
-  asset.
-- A request for a path with no asset reaches the request handler, or gets a
-  404 with an empty body when no handler is registered.
+- The bytes are copied into the library. Calling again with the same path
+  replaces them. No call removes an asset.
+- A request for a path with no asset goes to the request handler, or gets a
+  404 with an empty body when none is registered.
 
 | Return | When |
 |---|---|
 | `WEBVIEW_ERROR_OK` (0) | Success. |
 | `WEBVIEW_ERROR_INVALID_ARGUMENT` (-2) | `path` or `mime` is null, or `data` is null while `len` is not 0. |
 
-- Windows: origin `http://webview.localhost`. A `WebResourceRequested` filter
-  for that origin returns static matches with `CreateWebResourceResponse`.
-- macOS: origin `webview://localhost`. A `WKURLSchemeHandler` for the scheme
-  `webview` is registered on the `WKWebViewConfiguration` before the
-  `WKWebView` is created. Static matches get status 200 with the given
-  content type and byte length.
-- Linux: accepted and stored, not served.
+| OS | Origin (`ASSET_ORIGIN`) | Served by |
+|---|---|---|
+| Windows | `http://webview.localhost` | a `WebResourceRequested` filter answering with `CreateWebResourceResponse` |
+| macOS | `webview://localhost` | a `WKURLSchemeHandler` for the `webview` scheme, registered on the `WKWebViewConfiguration` before the `WKWebView` is created |
+| Linux | | accepted and stored, not served |
 
-### Dynamic interception and the second origin
+On Windows the filters are added with
+`ICoreWebView2_22::AddWebResourceRequestedFilterWithRequestSourceKinds` for
+every request source kind when the installed WebView2 Runtime has
+`ICoreWebView2_22` (Runtime 122, SDK 1.0.2365.46; the library is built
+against SDK 1.0.2478.35). That also catches requests from service workers,
+shared workers and cross-origin iframes. An older Runtime falls back to the
+legacy `AddWebResourceRequestedFilter`, which misses those, so on such a
+Runtime a service worker or a frames-origin iframe cannot load from these
+origins.
 
-`webview_set_request_handler` registers a native callback for misses at
-`ASSET_ORIGIN` and all requests to `FRAMES_ORIGIN`. The second origin is
-`http://frames.webview.localhost` on Windows and `webview-frames://localhost`
-on macOS. A page at the first origin cannot read iframe DOM at the second.
-The binding is installed only when `window === window.top`. macOS also
-rejects subframe messages using `WKScriptMessage.frameInfo.isMainFrame`.
-Requests to either origin use browser-engine interception and zero TCP.
+### Dynamic interception and the frames origin
 
-The callback runs on the UI thread. It receives a 64-bit request ID, method,
-URL, request headers as JSON pairs, body pointer, byte length and caller
-context. The pointers expire when the callback returns. WebView2 holds an
-`ICoreWebView2Deferral`. WebKit holds a `WKURLSchemeTask` and drops stopped
-tasks. The fork accepts registration on Linux without serving the requests.
+```c
+webview_error_t webview_set_request_handler(webview_t w, webview_request_handler_t fn, void *arg);
+webview_error_t webview_complete_request(webview_t w, uint64_t request_id, int status, const char *headers_json, const void *body, size_t body_len);
+```
 
-`webview_complete_request` copies response data and queues delivery. It
-accepts status 100–599, an object or list of header pairs (including repeated
-names), and raw body bytes. A repeat completion or a cancelled request is
-ignored. Sweetview invokes this API on the UI thread and forwards asynchronous
-worker responses through shared memory. [Application request API](app.md#dynamic-requests).
+`webview_set_request_handler` registers a native callback for requests that
+miss the asset table at `ASSET_ORIGIN`, and for every request to the second
+origin, `FRAMES_ORIGIN`: `http://frames.webview.localhost` on Windows,
+`webview-frames://localhost` on macOS. The browser's cross-origin boundary
+keeps a page at the first origin from reading the DOM of an iframe at the
+second. The RPC binding is installed only when `window === window.top`, and
+macOS also rejects messages from subframes with
+`WKScriptMessage.frameInfo.isMainFrame`, so framed content cannot call the
+app. Both origins use the browser engine's interception: no TCP socket is
+opened.
 
-`webview_begin_response` sends the status and headers for a streamed reply.
-`webview_write_response_chunk` copies each chunk before returning.
-`webview_end_response` marks EOF. Sweetview forwards these frames from the
-worker's body reader on the UI thread and falls back to
-`webview_complete_request` when any streaming symbol is missing.
+The callback runs on the UI thread. It receives a 64-bit request ID, the
+method, the URL, request headers as JSON pairs, a body pointer and byte
+length, and the caller's context. The pointers expire when the callback
+returns, so Sweetview copies them first. While a request is open, WebView2
+holds an `ICoreWebView2Deferral` and WebKit holds the `WKURLSchemeTask`
+(WebKit drops tasks it stops). Linux accepts registration without serving
+requests.
 
-- Windows passes an `IStream` to WebView2 and retains unread bytes in the
-  native stream. WebView2 buffers the intercepted response until EOF before
-  delivering it to the page. Use IPC events for real-time desktop push.
+`webview_complete_request` answers a request in one call. It copies the
+response, queues delivery, and accepts status 100 to 599, headers as an
+object or a list of pairs (repeated names allowed), and raw body bytes. A
+repeated completion, or one for a cancelled request, is ignored. Sweetview
+calls it on the UI thread for a synchronous `onRequest` handler, and for
+worker responses when the streaming symbols are missing.
+[Application request API](app.md#dynamic-requests).
+
+### Streaming responses
+
+```c
+webview_error_t webview_begin_response(webview_t w, uint64_t request_id, int status, const char *headers_json);
+webview_error_t webview_write_response_chunk(webview_t w, uint64_t request_id, const void *chunk, size_t chunk_len);
+webview_error_t webview_end_response(webview_t w, uint64_t request_id);
+```
+
+`webview_begin_response` sends a response's status and headers,
+`webview_write_response_chunk` copies one chunk before returning, and
+`webview_end_response` marks the end. Sweetview forwards a worker's
+`ReadableStream` body through these as it reads it.
+
+- macOS calls the `WKURLSchemeTask` with the response head, successive
+  `didReceiveData:` calls and `didFinish`, so the page receives bytes as
+  they arrive. Frames for a stopped task are discarded.
+- Windows hands WebView2 an `IStream` that holds unread bytes in the
+  library. WebView2 reads that stream to its end before giving the response
+  to the page, so a streamed response arrives all at once. Use IPC events
+  for real-time desktop push.
   [WebView2 Feedback #3519](https://github.com/MicrosoftEdge/WebView2Feedback/issues/3519).
-- macOS calls `WKURLSchemeTask` with the response head, successive
-  `didReceiveData:` calls, and `didFinish`, enabling incremental delivery.
-  Stopped tasks discard later frames.
 
 ### External drops
 
-`webview_set_allow_external_drop` sets WebView2's
-`ICoreWebView2Controller4::AllowExternalDrop`. A nonzero value enables
-external content drops and zero disables them. The default is enabled.
-macOS and Linux accept the call without changing behavior.
+```c
+webview_error_t webview_set_allow_external_drop(webview_t w, int allow);
+```
 
-`webview_set_file_drop_handler` installs a UI-thread callback taking
-`(const char *paths_json, void *arg)`. The JSON array is valid for the
-duration of the callback. Sweetview registers it when the attached
-`Window` has `onFileDrop` listeners and passes a null callback when the
-last listener unsubscribes or the attachment is torn down.
+`webview_set_allow_external_drop(w, allow)` controls whether the webview
+accepts drags that start in another application: files from Explorer or
+Finder, text or links from another app. Nonzero allows them, zero refuses
+them; the default is to allow. Drag-and-drop within the page keeps working
+either way. Sweetview calls it when `allowExternalDrop` is set on the
+webview.
 
-- Windows uses WebView2's `ICoreWebView2File` to read the real paths of
-  dropped files. External drops must be allowed and the Runtime must be
-  version 113 or newer.
-- macOS uses the `SweetviewWKWebView` drag destination for Finder file URLs.
-- Linux accepts the call without changing behavior.
+- Windows: sets WebView2's `ICoreWebView2Controller4::AllowExternalDrop`.
+  On a WebView2 Runtime too old to have `ICoreWebView2Controller4`, the call
+  returns an error, so `WebView.attach` throws
+  `webview_set_allow_external_drop failed (<code>)` when `allowExternalDrop`
+  is set explicitly. Leave the option unset to keep the engine default on
+  such a Runtime.
+- macOS: the library's `WKWebView` subclass, `SweetviewWKWebView`, refuses a
+  drag whose `NSDraggingInfo.draggingSource` is `nil`. AppKit sets the source
+  to `nil` exactly for drags from other applications and to an object for
+  drags that start inside the app, so in-page drag-and-drop is untouched.
+- Linux: accepted, does nothing.
 
-### Library selection
+### File drops over the webview
 
-`@n1h/sweetview` loads the library file the way `@n1h/sweetview-webview-bun`
-does.
+```c
+webview_error_t webview_set_file_drop_handler(webview_t w, webview_file_drop_handler_t fn, void *arg);
+```
 
-- `WEBVIEW_PATH` when set; otherwise `libwebview.dll`, `libwebview.dylib` or
-  `libwebview-<arch>.so` from `@n1h/sweetview-webview-bun/build/`.
-- The webview, the worker's `webview_dispatch` and the fork additions use
-  that one file, and `bun build --compile` embeds it.
-- `WebView.attach` (and `createApp`) caches the opened library per path and probes optional symbols on use:
+`webview_set_file_drop_handler(w, fn, arg)` installs a UI-thread callback
+`void fn(const char *paths_json, void *arg)` that receives the absolute paths
+of files dropped onto the webview, as a JSON array valid for the duration of
+the call. A null `fn` removes it, and the engine handles drops as it would
+by default. Sweetview installs it while the attached `Window` has at least
+one `onFileDrop` listener ([file drops](native/windows.md#file-drops)).
 
-| Situation | Behaviour |
-|---|---|
-| `transparent: true` and no `webview_set_background_color` | Logs a warning; the page stays opaque. |
-| `webview_set_background_color` returns an error | Throws `sweetview: webview_set_background_color failed (<code>)`. |
-| No `webview_set_asset` | Throws; the page cannot load without it. |
-| `webview_set_asset` returns an error | Throws `sweetview: webview_set_asset(<path>) failed (<code>)`. |
-| Asset `mime` | From the path's extension; unknown extensions get `application/octet-stream`. |
-| `onRequest` with missing request symbols | Throws with guidance to load a compatible library through `WEBVIEW_PATH`. |
-| Worker responses with missing streaming symbols | Buffers response bodies on the UI thread and completes them in one native call. |
-| `Window.onFileDrop` with a missing WebView drop symbol | Delivers drops routed directly to the native window. |
-| `allowExternalDrop` with a missing symbol | Warns once per library path and uses the browser default. |
+- Windows: WebView2 reports dropped files through `ICoreWebView2File`, read
+  while the drop's event arguments are valid. It needs WebView2 Runtime 113
+  or later, and external drops allowed. Only drops on the top-level document
+  are captured: a drop inside any `<iframe>`, same-origin or cross-origin,
+  stays with that iframe and never reaches the handler.
+- macOS: `SweetviewWKWebView` takes a drag whose pasteboard carries file
+  URLs and whose source allows copying, and resolves the URLs to paths. It
+  intercepts Finder file-URL drops anywhere on the `WKWebView` surface,
+  iframes included. A drag from Finder is an external drag, so external
+  drops must be allowed here too.
+- Linux: accepted, does nothing.
 
-- [Source](#source)
-- [Rebuilding](#rebuilding)
+### Teardown
+
+Destroying the webview ends every open request without letting any of them
+escape to the network. On Windows the order is: stop accepting new
+requests; abort every open streamed response (WebView2's IO thread may be
+blocked reading one); close the WebView2 controller, which tears down its
+navigation and network stack; then release every deferral still open,
+unanswered. Releasing a deferral before the controller closes would let
+WebView2 send that request to the network. On macOS, WebKit stops the
+outstanding `WKURLSchemeTask`s and later frames for them are discarded.
+Answers queued with `webview_complete_request` after teardown starts do
+nothing.
+
+## Library selection and symbol probing
+
+`@n1h/sweetview` loads the library the way `@n1h/sweetview-webview-bun` does:
+`WEBVIEW_PATH` when set, otherwise `libwebview.dll`, `libwebview.dylib` or
+`libwebview-<arch>.so` from `@n1h/sweetview-webview-bun/build/`. The
+webview, the worker's `webview_dispatch` and the additions all use that one
+file, and `bun build --compile` embeds it. Opened libraries are cached per
+path, so many windows and tabs do not leak library handles.
+
+Each addition is probed separately, on first use, and cached per path, so a
+library that predates one addition still serves everything else:
+
+| Probe | Symbols | When missing |
+|---|---|---|
+| Transparency | `webview_set_background_color` | `transparent: true` logs a warning; the page stays opaque. |
+| Assets | `webview_set_asset` | In asset mode (`page` or `assets` given), `WebView.attach` throws `sweetview: this webview library has no webview_set_asset; ...`. Direct-URL mode (`url` alone) never calls it. |
+| Requests | `webview_set_request_handler`, `webview_complete_request` | Setting `onRequest` throws `sweetview: onRequest requires webview_set_request_handler and webview_complete_request from @n1h/sweetview-webview-bun >= 2.8.0 or a compatible WEBVIEW_PATH`. |
+| Streaming | `webview_begin_response`, `webview_write_response_chunk`, `webview_end_response`, probed together | Worker response bodies are buffered on the UI thread and sent with one `webview_complete_request`. |
+| External drop | `webview_set_allow_external_drop` | Setting `allowExternalDrop` warns once per library path and continues; the engine default (allowed) stays. A library that has the symbol but runs on a WebView2 Runtime without `ICoreWebView2Controller4` is different: the call fails and `WebView.attach` throws (see [External drops](#external-drops)). |
+| File drop | `webview_set_file_drop_handler` | `Window.onFileDrop` receives only drops that land on the native window, not on the webview. |
+
+When a symbol exists but returns an error, Sweetview throws with the code:
+`webview_set_background_color failed (<code>)`,
+`webview_set_asset(<path>) failed (<code>)`,
+`webview_set_request_handler failed (<code>)`,
+`webview_set_allow_external_drop failed (<code>)`. Failures of
+`webview_complete_request`, the streaming calls and
+`webview_set_file_drop_handler` are logged instead, since they happen after
+the page is running.
 
 ## Source
 
-- C++ library and browser integrations on the `v1-drafting` branch of
-  `n0t-invented-here/sweetview-webview`.
-- Bun bindings, native binaries and live tests on the `v1-drafting` branch of
-  `n0t-invented-here/sweetview-webview-bun`, published as `@n1h/sweetview-webview-bun`.
-- Desktop facade, worker integration and application docs in
+- C++ library and browser integrations: `n0t-invented-here/sweetview-webview`,
+  branch `v1-drafting`.
+- Bun bindings, native binaries and live tests:
+  `n0t-invented-here/sweetview-webview-bun`, branch `v1-drafting`, published
+  as `@n1h/sweetview-webview-bun`.
+- Desktop facade, worker integration and application docs:
   `n0t-invented-here/sweetview`.
-- Files the change touches: `core/include/webview/api.h`, `c_api_impl.hh`,
-  `detail/engine_base.hh`, `detail/backends/win32_edge.hh`,
-  `detail/backends/cocoa_webkit.hh`, `detail/platform/windows/webview2/loader.hh`.
+- Files the additions touch in the library: `core/include/webview/api.h`,
+  `c_api_impl.hh`, `detail/engine_base.hh`, `detail/backends/win32_edge.hh`,
+  `detail/backends/cocoa_webkit.hh`,
+  `detail/platform/windows/webview2/loader.hh`.
 
 ## Rebuilding
 
-Use the bindings repository's `just build` on the target OS, then
-`bun test test/request-handler.test.ts`. The `^2.7.0` peer range accepts
-2.8.0. To verify the new symbols before publication, set `WEBVIEW_PATH` to
-the rebuilt target binary. [Platform verification](v1-macos-verification.md).
+The `webview/` folder of this repository has recipes that clone the bindings
+repository (with the library as its submodule) and build it. In the bindings
+repository, `just build` on the target OS builds the library and
+`bun test test/request-handler.test.ts` runs its live interception tests.
+
+To run Sweetview's own tests against a rebuilt library, set `WEBVIEW_PATH`
+to the built file and run `bun test packages/sweetview/src/request-handler.test.ts`
+from this repository's root. [Platform verification](v1-macos-verification.md).

@@ -53,19 +53,49 @@ export type WindowOptions = {
   appearance?: Appearance;
   /** Windows title bar / taskbar / Alt+Tab icon. */
   icon?: Icon;
-  /** Enable native tab bar support on this window. Default: false. */
+  /**
+   * Make this window a native, OS-framed tabbed container (Windows: a framed
+   * window with a tab strip; macOS: an AppKit window tab group, one NSWindow
+   * per tab). Tabs are opened with `WebView.openTab`. Default: false.
+   *
+   * `frame`, `transparent`, `colorKey`, `setClickThrough` and
+   * `setHitRegions` do not apply to tabbed windows: click-through and hit
+   * regions are for non-tabbed overlay windows only.
+   */
   tabs?: boolean;
   /** Alpha-composited transparent window. Default: false. */
   transparent?: boolean;
-  /** Windows-only 1-bit color key ("#rrggbb"). */
+  /**
+   * 1-bit color key (`"#rrggbb"`): pixels of exactly this color are fully
+   * transparent and click-through.
+   * - Windows: `WS_EX_LAYERED` + `SetLayeredWindowAttributes(LWA_COLORKEY)`.
+   * - macOS: unsupported; logs a warning and is ignored. Use
+   *   `transparent: true` with a transparent page background instead.
+   */
   colorKey?: string;
   /** Whole-window opacity, 0..1. */
   opacity?: number;
   /** Keep above normal windows. Default: false. */
   topmost?: boolean;
-  /** Omit from taskbar / Dock / Alt+Tab. Default: false. */
+  /**
+   * Omit from the taskbar / app switcher. Default: false.
+   * - Windows: per window, via `WS_EX_TOOLWINDOW` (and clearing
+   *   `WS_EX_APPWINDOW`); hidden from the taskbar and Alt+Tab.
+   * - macOS: adds `NSWindowCollectionBehaviorIgnoresCycle` to the window and
+   *   switches the whole app to the `accessory` activation policy (no Dock
+   *   icon, no Cmd+Tab entry, no menu bar ownership). The policy is
+   *   app-wide: it affects every window of the process.
+   */
   hideFromTaskbar?: boolean;
-  /** Never steal focus on click or show. Default: false. */
+  /**
+   * Never activate the app or take keyboard focus when shown or clicked.
+   * Default: false.
+   * - Windows: `WS_EX_NOACTIVATE`, shown with `SW_SHOWNOACTIVATE` and never
+   *   brought to the foreground.
+   * - macOS: shown with `orderFrontRegardless` instead of
+   *   `makeKeyAndOrderFront:` + `activateIgnoringOtherApps:`; a borderless
+   *   (`frame: false`) window additionally never becomes key.
+   */
   noActivate?: boolean;
   /** Declarative callbacks (used by createWindow; also accepted by new Window). */
   onResize?: (bounds: Rect) => void;
@@ -79,6 +109,11 @@ export type WindowOptions = {
 
 export interface WindowMeta {
   title: string;
+  /** Current topmost state (initial `WindowOptions.topmost`, updated by `Window.setTopmost`). */
+  topmost?: boolean;
+  readonly opacity?: number;
+  readonly hideFromTaskbar?: boolean;
+  readonly noActivate?: boolean;
   readonly frame: boolean;
   readonly resizable: boolean;
   readonly transparent: boolean;
@@ -92,6 +127,12 @@ export interface WindowMeta {
 
 export interface WindowBackend {
   readonly handle: WindowHandle;
+  /**
+   * Set by `fromHandle`: chrome detected from the native window's styles
+   * (Windows `GWL_STYLE` `WS_POPUP` / `WS_THICKFRAME`; macOS `styleMask`
+   * `NSWindowStyleMaskTitled` / `NSWindowStyleMaskResizable`).
+   */
+  readonly detectedMeta?: { frame: boolean; resizable: boolean };
   isVisible(): boolean;
   show(): void;
   hide(): void;
@@ -144,6 +185,10 @@ const windowTabListeners = new WeakMap<Window, TabListeners>();
 const windowDisposeHooks = new WeakMap<Window, Set<() => void>>();
 const windowDisposed = new WeakSet<Window>();
 const ownedWindows = new Set<Window>();
+// Active native-dispose holds per Window, and Windows whose backend dispose
+// waits for the last hold to be released.
+const windowNativeDisposeHolds = new WeakMap<Window, number>();
+const windowPendingNativeDispose = new WeakSet<Window>();
 
 type FileDropListener = (paths: string[]) => void;
 type FileDropChange = (hasListeners: boolean) => void;
@@ -217,6 +262,30 @@ export function onWindowDispose(win: Window, fn: () => void): () => void {
   }
   set.add(fn);
   return () => set.delete(fn);
+}
+
+/**
+ * Internal: defers releasing the native window (NSWindow / HWND) while held.
+ * Window.dispose() still runs its hooks and marks the Window disposed at once,
+ * but the backend dispose waits until the last hold is released. WebView.run()
+ * holds the window so webview_destroy runs before its native window goes away.
+ * The returned release function is idempotent.
+ */
+export function holdWindowNativeDispose(win: Window): () => void {
+  if (windowDisposed.has(win) && !windowPendingNativeDispose.has(win)) return () => {};
+  windowNativeDisposeHolds.set(win, (windowNativeDisposeHolds.get(win) ?? 0) + 1);
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    const count = (windowNativeDisposeHolds.get(win) ?? 1) - 1;
+    if (count > 0) {
+      windowNativeDisposeHolds.set(win, count);
+      return;
+    }
+    windowNativeDisposeHolds.delete(win);
+    if (windowPendingNativeDispose.delete(win)) getWindowBackend(win).dispose();
+  };
 }
 
 /** Internal check for whether Window.dispose() has already run. */
@@ -301,6 +370,10 @@ export class Window {
       const appearance = options.appearance ?? "system";
       this.#meta = {
         title: options.title ?? options.identity?.appName ?? "",
+        topmost: options.topmost ?? false,
+        opacity: options.opacity,
+        hideFromTaskbar: options.hideFromTaskbar ?? false,
+        noActivate: options.noActivate ?? false,
         frame,
         resizable,
         transparent,
@@ -337,8 +410,8 @@ export class Window {
     const inner = impl().fromHandle(handle);
     const meta: WindowMeta = {
       title: "",
-      frame: true,
-      resizable: true,
+      frame: inner.detectedMeta?.frame ?? true,
+      resizable: inner.detectedMeta?.resizable ?? true,
       transparent: false,
       tabs: false,
       appearance: "system",
@@ -401,6 +474,7 @@ export class Window {
     return this.#inner.isMaximized();
   }
   setTopmost(on: boolean): void {
+    this.#meta.topmost = on;
     this.#inner.setTopmost(on);
   }
   startDrag(): void {
@@ -484,6 +558,12 @@ export class Window {
     this.#fileDropListeners.clear();
     windowFileDropListeners.delete(this);
     windowFileDropHooks.delete(this);
+    // A held window (e.g. inside WebView.run()) keeps its native window until the
+    // holder releases it, so webview_destroy never touches a released NSWindow/HWND.
+    if ((windowNativeDisposeHolds.get(this) ?? 0) > 0) {
+      windowPendingNativeDispose.add(this);
+      return;
+    }
     this.#inner.dispose();
   }
 }
