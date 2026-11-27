@@ -73,26 +73,27 @@ The window, its procedure and the posts from WinRT threads are `MessageWindow` a
 
 ## sweetview-platform-shell
 
-### `crates/sweetview-platform-shell/src/clipboard.rs` (12)
+### `crates/sweetview-platform-shell/src/clipboard.rs` (13: 12 source, 1 test)
 
-- **The open clipboard** (3: `OpenClipboard`, `EmptyClipboard`, `CloseClipboard`) and **its data** (2: `GetClipboardData`, `SetClipboardData`). Contained by `OpenedClipboard`, which borrows the owner `MessageWindow` for as long as the clipboard is open and closes it in `Drop`; it is not `Send`.
-- **Global memory** (7: `GlobalAlloc`, `GlobalFree`, `GlobalLock`, `GlobalSize`, `GlobalUnlock`, the slice over the locked block, the copy into it). Contained by `OwnedGlobal` (freed in `Drop` unless the clipboard took it) and `LockedGlobal` (unlocked in `Drop`; the slice and the copy are bounded by the size read once the block is locked).
+- **The open clipboard** (3: `OpenClipboard`, `EmptyClipboard`, `CloseClipboard`) and **its data** (2: `GetClipboardData` in `LockedGlobal::lock`, `SetClipboardData`). Contained by `OpenedClipboard`, which borrows the owner `MessageWindow` for as long as the clipboard is open and closes it in `Drop`; it is not `Send`.
+- **Global memory** (7: `GlobalAlloc`, `GlobalFree`, `GlobalLock`, `GlobalSize`, `GlobalUnlock`, the slice over the locked block, the copy into it). Contained by `OwnedGlobal` (freed in `Drop` unless the clipboard took it) and `LockedGlobal` (unlocked in `Drop`; the slice and the copy are bounded by the size read once the block is locked). A lock is made only from what owns the block, borrowed for the lock's whole life (`Block`: the `OwnedGlobal` exclusively, or the open clipboard, from which the lock takes the text block itself), so the block stays allocated while it is locked whatever the caller does.
+- Test `a_global_block_not_handed_over_is_freed` (1: `GlobalSize`): the handle counts do not include global memory, so the block's own size is read before and after its owner drops.
 - Looked for: `clipboard-win` 5.4.3 (`clipboard-win-5.4.3/src/raw.rs`; https://docs.rs/clipboard-win/5.4.3/clipboard_win/raw/index.html), which `arboard` builds on, wraps exactly these calls safely, but `raw::close` impersonates the anonymous token around `CloseClipboard` and then reverts (`AnonymousTokenImpersonator`), which drops any impersonation the calling thread had, and `raw::size` turns a failed `GlobalLock` into "no data"; both change behaviour. `windows` 0.62.2 WinRT `Windows::ApplicationModel::DataTransfer::Clipboard` is safe but works through OLE delayed rendering and its own ownership and retry rules, which today's 5 tries 5 ms apart on `OpenClipboard` with a message-only owner are not.
 
-### `crates/sweetview-platform-shell/src/single_instance.rs` (10: 7 source, 3 test)
+### `crates/sweetview-platform-shell/src/single_instance.rs` (9: 6 source, 3 test)
 
-- **The named mutex** (1: `CreateMutexW`). Looked for: `std` has no named mutex; the name `Local\sweetview.instance.<id>` must be today's for the TypeScript layer to find it. Contained by `OwnedHandle`, released after the window in `SingleInstance`'s field order.
-- **Handing the payload to the primary** (4: `FindWindowExW`, `GetWindowThreadProcessId`, `AllowSetForegroundWindow`, `SendMessageTimeoutW`). No safe API sends `WM_COPYDATA`; the other process's window is validated by the OS on each call, and the payload is a slice this frame owns for the whole send.
-- **Reading a handoff** (2: the `COPYDATASTRUCT` deref, the slice over `lpData`). The OS's `WM_COPYDATA` contract: valid until the procedure returns; `lParam` checked non-null first; layout from the `windows` crate.
+- **Handing the payload to the primary** (4: `FindWindowExW`, `GetWindowThreadProcessId`, `AllowSetForegroundWindow`, `SendMessageTimeoutW`). Looked for: `tao` 0.38.0 (https://docs.rs/tao/0.38.0/tao/) and the other crates the policy names have no message to another process; `std::process` has none; `windows` 0.62.2 declares all four `unsafe fn` (https://docs.rs/windows/0.62.2/windows/Win32/UI/WindowsAndMessaging/fn.SendMessageTimeoutW.html). The primary must be found and reached by today's class, title and `WM_COPYDATA` layout, so a build on the old library and one on this one hand off to each other. The other process's window is validated by the OS on each call, and the payload is a slice this frame owns for the whole send.
+- **Reading a handoff** (2: the `COPYDATASTRUCT` deref, the slice over `lpData`). Looked for: `windows` 0.62.2 `COPYDATASTRUCT` (https://docs.rs/windows/0.62.2/windows/Win32/System/DataExchange/struct.COPYDATASTRUCT.html) is the plain struct with a raw `lpData`, and `MessageWindow`'s closure gets `lParam` as an integer; no crate reads another process's `WM_COPYDATA`. The OS's `WM_COPYDATA` contract: valid until the procedure returns; `lParam` checked non-null first; layout from the `windows` crate.
 - Test `a_secondary_retries_until_the_primarys_window_is_found` (3: `FindWindowExW`, `SetWindowTextW` twice): hides the primary's window from the lookup by renaming it, then shows it again.
 
-### `crates/sweetview-platform-shell/src/win.rs` (1)
+### `crates/sweetview-platform-shell/src/win.rs` (2)
 
-- **Closing a kernel handle** (1: `CloseHandle` in `OwnedHandle::drop`). Looked for: `windows-core` 0.62.2 `Owned<HANDLE>` (https://docs.rs/windows-core/0.62.2/windows_core/struct.Owned.html) closes on drop, but `Owned::new` is `unsafe`, so it moves the use rather than removing it.
+- **The named mutex** (1: `CreateMutexW` in `OwnedHandle::named_mutex`). Looked for: `std` has no named mutex; the name `Local\sweetview.instance.<id>` must be today's for the TypeScript layer to find it. Contained by `OwnedHandle`, released after the window in `SingleInstance`'s field order.
+- **Closing a kernel handle** (1: `CloseHandle` in `OwnedHandle::drop`). Looked for: `windows-core` 0.62.2 `Owned<HANDLE>` (https://docs.rs/windows-core/0.62.2/windows_core/struct.Owned.html) closes on drop, but `Owned::new` is `unsafe`, so it moves the use rather than removing it. `OwnedHandle`'s field is private to `win.rs` and its only constructor is the OS call that opens the handle (`named_mutex`), so no other code of the crate can wrap a handle it does not own.
 
 ### `crates/sweetview-platform-shell/src/icons.rs` (1)
 
-- **Telling the shell icons changed** (1: `SHChangeNotify`). No safe wrapper; `SHCNE_ASSOCCHANGED` takes no items, so both item pointers are null as documented.
+- **Telling the shell icons changed** (1: `SHChangeNotify`). Looked for: `windows` 0.62.2 `SHChangeNotify` (https://docs.rs/windows/0.62.2/windows/Win32/UI/Shell/fn.SHChangeNotify.html) is `unsafe fn` with no safe wrapper, and neither `tao` 0.38.0, `tray-icon` 0.27.0 nor `muda` 0.22.0 tells the shell anything about file associations. `SHCNE_ASSOCCHANGED` takes no items, so both item pointers are null as documented.
 
 The registry is `windows-registry` 0.6.1, and the message-only windows are `MessageWindow`, so `url_scheme.rs` has none.
 
