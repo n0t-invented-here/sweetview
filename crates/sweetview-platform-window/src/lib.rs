@@ -144,4 +144,4 @@ mod popup;
 pub mod test_support;
 
 pub use metrics::{double_click_time_ms, small_icon_size};
-pub use popup::{check_item, show_popup, PopupAt};
+pub use popup::{check_item, menu_handle_value, set_command_id, show_popup, PopupAt, PopupCorner};

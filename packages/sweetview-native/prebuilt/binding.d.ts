@@ -12,6 +12,14 @@ export interface IconBytes {
   ico?: Uint8Array
 }
 
+/** One icon, as Sweetview's `Icon` type carries it. Windows reads `ico`, then `png`. */
+export interface IconBytes {
+  ico?: Uint8Array
+  png?: Uint8Array
+  symbol?: string
+  template?: boolean
+}
+
 /** An accelerator key pressed while a page has focus. */
 export interface KeyData {
   virtualKey: number
@@ -27,7 +35,27 @@ export interface MenuEntryData {
   enabled: boolean
 }
 
+/**
+ * One menu entry. `kind` says which fields are read: an `item` has `id` (from 1), `label`,
+ * `enabled`, `checked` and `icon`; a `submenu` has `label`, `enabled`, `icon` and `items`.
+ */
+export interface MenuItemData {
+  kind: 'item' | 'submenu' | 'separator'
+  id?: number
+  label?: string
+  enabled?: boolean
+  checked?: boolean
+  icon?: IconBytes
+  items?: Array<MenuItemData>
+}
+
 /** A point in screen coordinates. */
+export interface Point {
+  x: number
+  y: number
+}
+
+/** A point on the screen, in physical pixels. */
 export interface Point {
   x: number
   y: number
@@ -329,6 +357,13 @@ export declare class Window {
 /** Starts a streamed answer to a request of webview `handle`. Callable from any thread. */
 export declare function beginResponse(handle: number, id: bigint, status: number, headersJson?: string | undefined | null): number
 
+/**
+ * Builds `menu` and returns its popup menu handle (`HMENU`) for the application's own
+ * `TrackPopupMenu`. Each item's command id is its `id`. The menu, its submenus and its item
+ * bitmaps stay alive until `destroyMenu` is called with the handle.
+ */
+export declare function buildMenu(menu: Array<MenuItemData>): bigint
+
 /** Cancels a timeout or an interval. Cancelling one that is gone does nothing. */
 export declare function cancelTimeout(id: number): void
 
@@ -359,6 +394,9 @@ export declare function decodeIcon(icon: IconBytes, size: number): Uint8Array | 
 /** Calls `job` on a later turn of whichever loop the UI thread is in, a modal one included. */
 export declare function defer(job: () => void): void
 
+/** Frees a menu `buildMenu` made. False when the handle names no such menu (freed already). */
+export declare function destroyMenu(handle: bigint): boolean
+
 /**
  * Takes back a quit request of this thread, dispatching what is waiting ahead of it.
  * Returns at once when none was made and nothing waits. Returns whether one was taken back.
@@ -370,14 +408,6 @@ export declare function endResponse(handle: number, id: bigint): number
 
 /** The permissions a feature needs, as a bit mask. An unknown feature needs none. */
 export declare function featurePermissions(feature: number): number
-
-/** One icon, as Sweetview's `Icon` type carries it. Windows reads `ico`, then `png`. */
-export interface IconBytes {
-  ico?: Uint8Array
-  png?: Uint8Array
-  symbol?: string
-  template?: boolean
-}
 
 /** macOS: the application menu (About, Quit) and the Edit menu. Windows: nothing. */
 export declare function installAppMenu(appName: string, aboutText: string): void
@@ -397,20 +427,6 @@ export declare function isUiThread(): boolean
 /** True while the left mouse button is down. */
 export declare function leftButtonDown(): boolean
 
-/**
- * One menu entry. `kind` says which fields are read: an `item` has `id` (from 1), `label`,
- * `enabled`, `checked` and `icon`; a `submenu` has `label`, `enabled`, `icon` and `items`.
- */
-export interface MenuItemData {
-  kind: 'item' | 'submenu' | 'separator'
-  id?: number
-  label?: string
-  enabled?: boolean
-  checked?: boolean
-  icon?: IconBytes
-  items?: Array<MenuItemData>
-}
-
 /** Asks the OS for one permission and returns its state, as `permissionStatus` does. */
 export declare function permissionRequest(permission: number): number
 
@@ -426,17 +442,13 @@ export declare function permissionStatus(permission: number): number
  */
 export declare function pickFolder(owner: bigint | undefined | null, title: string): string | null
 
-/** A point on the screen, in physical pixels. */
-export interface Point {
-  x: number
-  y: number
-}
-
 /**
  * Shows `menu` as a popup menu owned by the window `owner`, at the screen point `at` (physical
  * pixels) or at the cursor, and returns the chosen item's `id` after it closes; `null` when dismissed.
+ * With `above`, the menu opens upward from the point (its bottom-left corner there), as the tray's
+ * menu does; otherwise downward (its top-left corner there). Either mouse button chooses an item.
  */
-export declare function popupMenu(owner: bigint, menu: Array<MenuItemData>, at?: Point | undefined | null): number | null
+export declare function popupMenu(owner: bigint, menu: Array<MenuItemData>, at?: Point | undefined | null, above?: boolean | undefined | null): number | null
 
 /**
  * After `delayMs`, from inside whichever loop the UI thread is in, calls `transform(input)` and
@@ -512,6 +524,12 @@ export declare function wake(token: number): boolean
 
 /** True when `handle` names a window now. */
 export declare function windowExists(handle: bigint): boolean
+
+/**
+ * Shows the system menu (Restore, Move, Size, Minimize, Maximize, Close) of `owner`, a window of
+ * this thread, at the cursor, and carries out the chosen command. Any other value shows nothing.
+ */
+export declare function windowMenu(owner: bigint): void
 
 /** How many things Sweetview keeps for the window `handle`. For tests that check nothing leaks. */
 export declare function windowTrackedCount(handle: bigint): number

@@ -2,10 +2,12 @@
 // members that changed with tabs on the Rust frame, run for real: the frame is
 // a `Window` made with `{ tabs: true }` and `getTabFrame` gives its tab side;
 // the strip and the page are rectangles for child webviews; a close request
-// reaches `Window.onClose`; `showTabPopupMenu` and `windowMenu` act on tab
-// frames only; and `tab.webview.window` wraps the frame while `tab.window` is
-// the logical window. Prints one JSON line.
+// reaches `Window.onClose`; `showTabPopupMenu` and `windowMenu` act on any
+// window of this thread, as before the rewrite (a second process works each
+// menu while this thread is inside it); and `tab.webview.window` wraps the
+// frame while `tab.window` is the logical window. Prints one JSON line.
 
+import { fileURLToPath } from "node:url";
 import { WebView } from "@n1h/sweetview";
 import { Window } from "@n1h/sweetview-native";
 import { createChildWebview, engineOf, isWindowDisposed } from "@n1h/sweetview-native/internal";
@@ -39,11 +41,22 @@ engine.setVisible(true);
 report.childInFrame = BigInt(child.unsafeWindowHandle!) === frame!.hwnd;
 child.destroy();
 
-// showTabPopupMenu and windowMenu: tab frames only. A window that is not a tab frame shows no menu.
-report.popupOnPlainWindow = showTabPopupMenu(BigInt(plain.handle!), [{ label: "One" }]);
+// showTabPopupMenu and windowMenu: any window of this thread, a tab frame or not. The probe reads the
+// menu from a second process and chooses its first item or closes it.
+const probe = fileURLToPath(new URL("../../../packages/sweetview/test/fixtures/win-menu-probe.ts", import.meta.url));
+const workMenu = (action: string) => Bun.spawn([process.execPath, probe, String(process.pid), action], { stdout: "pipe", stderr: "pipe" });
+let chosen = "";
+const pick = workMenu("pick:0");
+report.popupOnPlainWindow = showTabPopupMenu(BigInt(plain.handle!), [{ label: "One", click: () => (chosen = "one") }]);
+await pick.exited;
+report.popupClickRan = chosen === "one";
 report.popupWithNoItems = showTabPopupMenu(frame!.hwnd, []);
-windowMenu(BigInt(plain.handle!)); // nothing to show, and nothing thrown
-report.windowMenuOnPlainWindow = "no error";
+const close = workMenu("close");
+windowMenu(BigInt(plain.handle!));
+await close.exited;
+const systemMenu = JSON.parse((await new Response(close.stdout).text()).trim()) as { items?: { enabled?: boolean; separator?: boolean }[] };
+// Restore, Move, Size, Minimize, Maximize, a separator, Close; Restore greyed on a window that is not maximised.
+report.windowMenuOnPlainWindow = systemMenu.items?.map((item) => (item.separator ? "-" : item.enabled));
 
 // FrameCallbacks.onCloseRequest -> Window.onClose: the frame's close request reaches the Window's listeners.
 let closes = 0;

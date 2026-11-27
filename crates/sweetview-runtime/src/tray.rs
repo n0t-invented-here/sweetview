@@ -22,7 +22,7 @@ use std::collections::HashMap;
 use std::rc::{Rc, Weak};
 use std::sync::Once;
 
-use sweetview_platform_window::{double_click_time_ms, small_icon_size, BorrowedWindow, PopupAt};
+use sweetview_platform_window::{double_click_time_ms, small_icon_size, BorrowedWindow, PopupAt, PopupCorner};
 use tray_icon::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent, TrayIconId};
 
 use crate::error::{Error, Result};
@@ -363,8 +363,13 @@ impl TrayState {
       Ok(built) => built,
       Err(e) => return eprintln!("{e}"),
     };
+    // At the cursor, opening upward: the menu sits above the taskbar the icon is on.
+    let at = match crate::screen::cursor() {
+      Ok(cursor) => PopupAt { x: cursor.x, y: cursor.y, corner: PopupCorner::BottomLeft },
+      Err(e) => return eprintln!("{e}"),
+    };
     self.menu_open.set(true);
-    let chosen = BorrowedWindow::with_handle_value(owner, |owner| menu::show(&built, owner, PopupAt::Cursor)).flatten();
+    let chosen = BorrowedWindow::with_handle_value(owner, |owner| menu::show(&built, owner, at)).flatten();
     self.menu_open.set(false);
     if let Some(id) = chosen {
       let chosen_handler = self.menu_chosen.clone();

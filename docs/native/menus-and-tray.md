@@ -83,10 +83,41 @@ another library), or a raw handle. The platforms use it differently:
 - Windows: `TrackPopupMenu` needs an owner `HWND` to receive the menu's
   messages, and the owner is brought to the foreground first so the menu
   closes when the user clicks elsewhere. Pass the window the menu belongs to.
+  An item is chosen with either mouse button (letting go of the right button
+  over it, so a menu opened by a right click is worked in one gesture) or
+  from the keyboard.
 - macOS: the menu opens with
   `popUpMenuPositioningItem:atLocation:inView:` and no view, positioned in
   screen coordinates. AppKit menus are not owned by windows, so `owner` is
   ignored and may be `null`.
+
+### Windows: a built menu, and a window's system menu
+
+`@n1h/sweetview-native/win32/menu` also hands an application the menu itself,
+for its own `TrackPopupMenu`:
+
+```ts
+import { buildMenu, destroyMenu } from "@n1h/sweetview-native/win32/menu";
+
+const built = buildMenu(contextMenu()); // { hmenu, commands, bitmaps }
+// const id = TrackPopupMenu(built.hmenu, TPM_RETURNCMD, x, y, 0, hwnd, null) from your own bun:ffi table
+// built.commands.get(id)?.();
+destroyMenu(built);
+```
+
+`built.hmenu` is the `HMENU`, with the same check marks, icons, submenus,
+separators and disabled items `Menu.popup` shows. Each item's command id is
+its number in `built.commands`, counted from 1 in template order (depth
+first, separators and submenus not counted), so the id `TrackPopupMenu`
+returns, or a `WM_COMMAND` carries, names the item's `click`. Sweetview owns
+the menu, its submenus and its item bitmaps until `destroyMenu(built)`, which
+is safe to call twice; `built.bitmaps` is always empty.
+
+`windowMenu(hwnd)` of `@n1h/sweetview-native/win32/tab-window` shows the
+system menu (Restore, Move, Size, Minimize, Maximize, Close) of any window of
+the UI thread at the cursor, with Restore, Move, Size and Maximize enabled as
+the window's maximised state allows, and carries out the chosen command as the
+title bar's own menu does.
 
 ## Tray
 
@@ -168,7 +199,8 @@ The two shells have different conventions, and Sweetview follows each:
 | `onClick` / `onDoubleClick` | always | only when no menu is set |
 
 On Windows the tray icon is a button: left click is the app's primary action,
-right click is its menu. On macOS a menu bar status item is a menu: users
+right click is its menu, which opens upward from the cursor (its bottom-left
+corner at the cursor), above the taskbar. On macOS a menu bar status item is a menu: users
 expect any click to open it, as with every other item in the menu bar. So
 when a tray has a menu, macOS opens it on left and right click alike and
 `onClick` and `onDoubleClick` never fire.
