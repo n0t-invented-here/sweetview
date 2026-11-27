@@ -124,7 +124,7 @@ export function WatchCard() {
           <Group align="flex-end" mb="md" wrap="nowrap">
             <TextInput
               label={bridge.kind === "web" ? "Folder on the server" : "Folder to watch"}
-              placeholder={"C:\\Users\\you\\Documents or /home/you"}
+              placeholder={"D:\\Documents\\notes or ~/notes"}
               value={typedPath}
               onChange={(e) => setTypedPath(e.currentTarget.value)}
               style={{ flex: 1 }}
