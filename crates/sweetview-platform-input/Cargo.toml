@@ -21,9 +21,9 @@ windows = { workspace = true, features = [
 
 [target.'cfg(windows)'.dev-dependencies]
 # The integration tests drive the hooks with synthetic input and count the process's handles.
+sweetview-platform-loop.workspace = true
 windows = { workspace = true, features = [
   "Win32_Foundation",
-  "Win32_System_Threading",
   "Win32_UI_HiDpi",
   "Win32_UI_Input_KeyboardAndMouse",
   "Win32_UI_WindowsAndMessaging",

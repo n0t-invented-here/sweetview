@@ -16,7 +16,6 @@ use std::time::{Duration, Instant};
 
 use sweetview_platform_input::{modifier, HookError, KeyEvent, KeyEventKind, KeyboardHook, MouseEvent, MouseEventKind, MouseHook};
 use windows::Win32::Foundation::POINT;
-use windows::Win32::System::Threading::{GetCurrentProcess, GetGuiResources, GetProcessHandleCount, GR_USEROBJECTS};
 use windows::Win32::UI::HiDpi::{SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
   GetAsyncKeyState, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBDINPUT, KEYBD_EVENT_FLAGS,
@@ -25,10 +24,10 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
   MOUSEEVENTF_RIGHTUP, MOUSEEVENTF_WHEEL, MOUSEINPUT, MOUSE_EVENT_FLAGS, VIRTUAL_KEY, VK_F24, VK_LBUTTON, VK_LSHIFT,
   VK_MBUTTON, VK_RBUTTON,
 };
-use windows::Win32::UI::WindowsAndMessaging::{
-  DispatchMessageW, GetCursorPos, GetSystemMetrics, PeekMessageW, SetCursorPos, MSG, PM_REMOVE, SM_CXSCREEN,
-  SM_CYSCREEN,
-};
+use windows::Win32::UI::WindowsAndMessaging::{GetCursorPos, GetSystemMetrics, SetCursorPos, SM_CXSCREEN, SM_CYSCREEN};
+
+// Dispatches this thread's messages, through which the OS calls its hooks.
+use sweetview_platform_loop::dispatch_waiting as pump;
 
 const F24: u32 = VK_F24.0 as u32;
 const LSHIFT: u32 = VK_LSHIFT.0 as u32;
@@ -42,16 +41,6 @@ fn serial() -> MutexGuard<'static, ()> {
   // SAFETY: takes a constant awareness context; a second call fails harmlessly, the awareness already set.
   let _ = unsafe { SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) };
   guard
-}
-
-/// Dispatches this thread's messages, through which the OS calls its hooks.
-fn pump() {
-  let mut message = MSG::default();
-  // SAFETY: `message` is a valid MSG for the call to fill.
-  while unsafe { PeekMessageW(&mut message, None, 0, 0, PM_REMOVE) }.as_bool() {
-    // SAFETY: `message` was filled by PeekMessageW just above.
-    unsafe { DispatchMessageW(&message) };
-  }
 }
 
 /// Pumps until `done` or two seconds pass; returns `done()`.
@@ -208,19 +197,11 @@ impl Drop for ButtonsUp {
 }
 
 fn user_objects() -> u32 {
-  // SAFETY: the pseudo-handle of the current process is always valid.
-  let process = unsafe { GetCurrentProcess() };
-  // SAFETY: `process` is the current process's pseudo-handle.
-  unsafe { GetGuiResources(process, GR_USEROBJECTS) }
+  sweetview_platform_loop::resource_counts().user_objects
 }
 
 fn kernel_handles() -> u32 {
-  // SAFETY: the pseudo-handle of the current process is always valid.
-  let process = unsafe { GetCurrentProcess() };
-  let mut count = 0u32;
-  // SAFETY: `count` is a valid u32 for the call to fill.
-  unsafe { GetProcessHandleCount(process, &mut count) }.expect("GetProcessHandleCount");
-  count
+  sweetview_platform_loop::resource_counts().kernel_handles
 }
 
 type Seen<T> = Rc<RefCell<Vec<T>>>;

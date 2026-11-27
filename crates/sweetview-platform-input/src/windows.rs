@@ -85,21 +85,23 @@ impl OwnedHook {
   /// Unhooks, reporting a failure that `Drop` would have to swallow.
   fn remove(self) -> Result<(), HookError> {
     let this = ManuallyDrop::new(self);
-    let name = this.name;
-    // SAFETY: `this.hhook` came from SetWindowsHookExW in `install` and is owned by this value
-    // alone; ManuallyDrop keeps `Drop` from unhooking it a second time.
-    let removed = unsafe { UnhookWindowsHookEx(this.hhook) };
-    removed.map_err(|e| HookError::Os(format!("UnhookWindowsHookEx({name}) failed: {e}")))
+    // ManuallyDrop keeps `Drop` from unhooking it a second time.
+    this.unhook().map_err(|e| HookError::Os(format!("UnhookWindowsHookEx({}) failed: {e}", this.name)))
+  }
+
+  /// The one unhook of this value's hook: called by `remove`, which then skips
+  /// `Drop`, or by `Drop`.
+  fn unhook(&self) -> windows::core::Result<()> {
+    // SAFETY: `self.hhook` came from SetWindowsHookExW in `install` and is owned by this value
+    // alone; the two callers (`remove` and `Drop`) are exclusive, so it is unhooked once.
+    unsafe { UnhookWindowsHookEx(self.hhook) }
   }
 }
 
 impl Drop for OwnedHook {
   fn drop(&mut self) {
-    // SAFETY: `self.hhook` came from SetWindowsHookExW in `install`, is owned by this value
-    // alone, and is unhooked only here or in `remove`, which skips this `Drop`.
-    let removed = unsafe { UnhookWindowsHookEx(self.hhook) };
     // Nothing useful can be done with a failure while dropping; `remove` reports it.
-    let _ = removed;
+    let _ = self.unhook();
   }
 }
 
@@ -260,6 +262,24 @@ fn deliver_key(message: u32, info: &KBDLLHOOKSTRUCT) -> bool {
   (state.handler)(&event)
 }
 
+/// The arguments the OS passed to one call of a hook procedure. Made only by
+/// the two procedures below, from their own arguments, and consumed by
+/// [`HookCall::pass_on`] before the procedure returns.
+struct HookCall {
+  code: i32,
+  wparam: WPARAM,
+  lparam: LPARAM,
+}
+
+impl HookCall {
+  /// Hands the event to the next hook in the chain, as a hook that does not swallow it must.
+  fn pass_on(self) -> LRESULT {
+    // SAFETY: the arguments are the ones the OS passed to the hook procedure that made this value
+    // (see the type), which is still running; the OS ignores the hook handle.
+    unsafe { CallNextHookEx(None, self.code, self.wparam, self.lparam) }
+  }
+}
+
 /// The `WH_MOUSE_LL` procedure. Called by the OS; never unwinds.
 extern "system" fn mouse_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
   // HC_ACTION (0) is the only code with an event; a negative one must go straight on.
@@ -274,8 +294,7 @@ extern "system" fn mouse_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRES
       return LRESULT(1);
     }
   }
-  // SAFETY: the arguments are the ones the OS passed to this hook procedure; the OS ignores the hook handle.
-  unsafe { CallNextHookEx(None, code, wparam, lparam) }
+  HookCall { code, wparam, lparam }.pass_on()
 }
 
 /// The `WH_KEYBOARD_LL` procedure. Called by the OS; never unwinds.
@@ -290,8 +309,7 @@ extern "system" fn keyboard_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -> L
       return LRESULT(1);
     }
   }
-  // SAFETY: the arguments are the ones the OS passed to this hook procedure; the OS ignores the hook handle.
-  unsafe { CallNextHookEx(None, code, wparam, lparam) }
+  HookCall { code, wparam, lparam }.pass_on()
 }
 
 #[cfg(test)]
