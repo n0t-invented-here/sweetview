@@ -90,8 +90,20 @@ Items name today's API members to say which behaviour is meant. The API may chan
 
     `rust-rewrite/evidence/w1-boundary.txt`: "a JavaScript function is called from inside the blocking loop and its return value comes back" and "each call opens its own handle scope: ten thousand callbacks inside one blocking run". `JsCallback::call` in `crates/sweetview-napi/src/callback.rs` runs every call inside `Env::run_in_scope`.
 
-- [ ] W1.3 A JavaScript exception thrown from such a callback is caught at the boundary, logged with the message today's code logs, and does not unwind into the OS. A test throws from each callback kind.
-- [ ] W1.4 A callback that removes itself or destroys its owner from inside its own call works. A test does both.
+- [x] W1.3 A JavaScript exception thrown from such a callback is caught at the boundary, logged with the message today's code logs, and does not unwind into the OS. A test throws from each callback kind.
+
+    `rust-rewrite/evidence/w1-callbacks.txt`: a table of every function-typed parameter of the generated `packages/sweetview-native/prebuilt/binding.d.ts` (26 kinds, and `onOpenUrl`, which on Windows is called from the single-instance handoff), each with the test that throws from it, followed by the per-test output: 96 pass, 1 skip, 0 fail across the seven files it cites (the skip is the accelerator-key test, which needs the foreground and passed in the run before). Each test asserts the message today's TypeScript logs for that kind (`UI dispatch failed:`, `onResize handler threw:`, `hit region poll threw:`, `keyboard hook handler threw:`, `onSecondInstance handler threw:` and the rest), that the loop goes on delivering, and the fallback where there is one: a hook does not swallow (read back from the OS: the key state and the cursor position), a request handler answers 500, a throwing menu function opens no menu. One test, "W1.3 an exception from every non-webview kind, with no TypeScript wrapper in between, is logged by the binding with its kind; each fallback applies and the loop goes on", throws straight through the raw binding in a process of its own and reads the binding's own `sweetview: <kind> threw:` line, so the backstop of D7 is proven apart from the wrappers.
+
+    ```
+    $ bun test packages/sweetview-native/src/callbacks.test.ts
+     27 pass
+     0 fail
+    ```
+
+- [x] W1.4 A callback that removes itself or destroys its owner from inside its own call works. A test does both.
+
+    `rust-rewrite/evidence/w1-callbacks.txt`, third column of the same table: for each kind, the test in which the callback removes or replaces itself, and the test in which it disposes of or destroys its owner (the webview, the window, the tray, the notifier, the hook, the single-instance lock, the timeout) from inside its own call; each asserts no crash and that the callback is not called again (or that the replacement is). `popupMenu` takes no callback: it returns the chosen number.
+
 - [x] W1.5 Calling a UI-thread function from a `Worker` throws `sweetview: this call must be made on the UI thread`. The functions `docs/` documents as callable from any thread work from a `Worker`.
 
     `rust-rewrite/evidence/w1-boundary.txt`, "a UI-thread function called from a Worker throws, and the worker is not the UI thread": each of nine UI-thread functions throws `sweetview: this call must be made on the UI thread` in a `Worker`; `wake` works there. The functions documented as callable from any thread (`completeWebviewRequest` and the streaming ones) answer real requests from a `Worker` in `rust-rewrite/evidence/w2-webview.txt`.
