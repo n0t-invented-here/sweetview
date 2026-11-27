@@ -486,3 +486,18 @@ describe.if(onWindows)("pickFolder (binding: rfd)", () => {
     }
   }, 20_000);
 });
+
+describe.if(onWindows)("app-wide settings (binding)", () => {
+  test("setAppMenu, setAppIcon and setActivationPolicy are accepted and change nothing on Windows", async () => {
+    const { setAppMenu } = await import("../app-menu");
+    const { setAppIcon } = await import("../app-icon");
+    const { setActivationPolicy } = await import("../event-loop");
+    const before = ownWindows("#32768").length;
+    setAppMenu({ appName: unique("app"), aboutText: "About" });
+    setAppIcon({ windows: { ico: dotIco() } });
+    setAppIcon({});
+    for (const policy of ["regular", "accessory", "prohibited"] as const) setActivationPolicy(policy);
+    expect(ownWindows("#32768").length).toBe(before);
+    expect(() => binding().setActivationPolicy("sideways" as never)).toThrow('sweetview: unknown activation policy "sideways"');
+  });
+});
