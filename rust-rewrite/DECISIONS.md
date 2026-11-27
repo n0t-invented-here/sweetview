@@ -68,3 +68,14 @@ Alternative left open: track the binary, so a clone runs with no Rust toolchain.
 Each application handler is wrapped in TypeScript before it reaches the binding, and the wrapper logs an exception with the message today's code logs for that handler. `JsCallback::call` in `sweetview-napi` catches whatever still reaches it, logs `sweetview: <kind> threw: <reason>`, and reports `None` to the runtime, which then uses the callback's failure value (a hook does not swallow, a request answers 500).
 
 Reason: today's messages live in the TypeScript layer already, per handler; keeping them there keeps them identical.
+
+## D8. Windows are made by `tao`; their events and the styles `tao` does not model come from one subclass
+
+`tao` creates every window Sweetview owns (frame, DPI awareness, dark title bar, alpha composition, drag, maximise). Two things are not taken from `tao`:
+
+- Events. `tao` delivers `Resized`, `Moved`, `CloseRequested` and `DroppedFile` through its event handler, which it holds back while that handler is already running (a handler with a modal dialog open) and never calls under a message loop `tao` does not run (an application's own `bun:ffi` loop). Today those events arrive synchronously inside any loop. `Window.fromHandle` needs a subclass for a window `tao` did not create in any case, so the same subclass (`SetWindowSubclass`, in `sweetview-platform-window`) is the event source for every window, owned or adopted, with one code path.
+- Extended styles `tao` has no flag for. `tao` rewrites the whole extended style from its own flags whenever one of them changes, which would drop `WS_EX_TOOLWINDOW` (off the taskbar and out of Alt+Tab; `tao`'s `set_skip_taskbar` removes the taskbar button only), `WS_EX_LAYERED` for `colorKey` and `opacity`, and the click-through bits while a layered window must stay layered. The subclass answers `WM_STYLECHANGING` with the bits Sweetview wants forced on and off, so they hold whoever changes the style.
+
+Bounds are set with one `SetWindowPos` in the platform crate, because `tao` offers an outer position and an inner size as two calls, and a window dragged by its left or top edge must move and resize in one step.
+
+Alternative left open: `tao`'s `WindowEvent`s and `set_ignore_cursor_events`, re-applying the extra styles after every `tao` call; it changes when events arrive and flickers a layered overlay each time click-through flips.
