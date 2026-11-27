@@ -106,3 +106,43 @@ Alternative left open: make `quit()` a no-op unless a blocking run is in progres
 ## D12. The binding's built-in types are positional where an object would need `unsafe`
 
 `#[napi(object)]` structs compile under `#![forbid(unsafe_code)]` and are used for data that crosses the boundary as an object (`Rect`, `RawRequest`, `KeyData`, `WindowInit`). Callback types are written out in each `#[napi]` signature in `sweetview-platform-node`, because a Rust type alias erases the parameter types from the generated TypeScript declarations.
+
+## D13. Tray events are queued, never run inside `tray-icon`'s window procedure
+
+`tray-icon` reports the shell's mouse messages from the icon's own window procedure, to one handler per process, while it holds its own state borrowed. The runtime's handler only queues the event as a deferred job (D3); the job runs on the next turn of whichever loop the UI thread is in. An application's click handler may therefore dispose of the tray, change its icon, or open a modal loop. The single and double click rule (a left click is a click only once the double-click time has passed with no second click) is safe Rust on a native timeout, as `win32/tray.ts` had it.
+
+Alternative left open: call the application from inside the event handler; a handler that disposes of its tray would then free `tray-icon`'s state under its own borrow.
+
+## D14. Menus are built fresh for each showing; item icons are 16 pixels
+
+A menu crosses the boundary as data each time it is about to open, and a `muda` menu is built for that one showing and dropped after it, so labels, check marks and enabled state follow application state with no bookkeeping and nothing outlives the showing. `muda` draws an item's icon into a 16 by 16 bitmap, so the icon is decoded and resampled to that size by the runtime (`icon.rs`) from the `.ico` or PNG bytes the application gave. An item with both an icon and a check mark, which `muda` has no item type for, gets its check from `sweetview-platform-window::popup::check_item`.
+
+## D15. The WebView2 environment is created the way the C++ library created it, once per process
+
+`wry` creates its environment with browser arguments, a language and the extensions flag. Two environments on one user data folder with different options cannot run at once (`ERROR_BUSY`), so an application running an old build beside a new one, or sharing its profile across an upgrade, would fail to start its webview. `sweetview-platform-webview` creates the environment with no options, on the folder the C++ library used (the roaming application-data folder joined with the executable's file name, or `WEBVIEW2_USER_DATA_FOLDER` when set), keeps one per process, and hands it to `wry` through `with_environment`. An application's profile (cookies, local storage, service workers) is the same folder before and after the upgrade.
+
+Alternative left open: let `wry` create it; existing profiles would then be unusable while any old build runs, and every origin's storage would start empty wherever `wry`'s default folder differs.
+
+## D16. A page message is answered on a later turn, and a webview is dropped after its callback returns
+
+A binding's function runs as a deferred job, not inside WebView2's `WebMessageReceived` callback, so it may open a modal dialog (W1.8) or destroy the webview. `destroy` marks the webview destroyed at once (no handler runs again; late answers get the documented `-3`), and the `wry` value is dropped when no callback of that webview is on the stack. This is the rule the proposal keeps from today ("a webview is never destroyed inside its own callback"), enforced in one place, `sweetview-runtime/src/engine.rs`.
+
+## D17. Dropped files reach the host as one string message
+
+The proposal names the C++ library's method: a script posts the dropped `File` objects with `postMessageWithAdditionalObjects`, and a `WebMessageReceived` handler reads each `ICoreWebView2File`. WebView2 delivers the additional objects only with a string message, which is what the C++ library posts; the platform crate posts the string `__sweetview_file_drop__` with the files attached and tells that message from the page's own by its exact text and its attached objects. `wry`'s drag-drop handler stays unused on Windows, as the proposal says, so drops inside the page still reach the page.
+
+## D18. The macOS seam is one module per shared file, and the bindings package loads only on macOS
+
+`packages/sweetview/src/webview-host.ts` is the seam R8 asks for: on Windows it returns the Rust engine; on macOS it returns today's code, which now lives in `darwin-webview-host.ts`, `darwin-webview-lib.ts` and `darwin-worker-wake.ts`. In the native package, `darwin/library.ts` is the only file that imports `@n1h/sweetview-webview-bun`, with a dynamic `import()` inside a `try` behind a platform test, so a Windows application bundles and compiles without that package installed; it is an optional peer dependency until the macOS goal removes it.
+
+## D19. No list of dependent applications was made by this session
+
+R2 runs the upgrade against each application listed in `rust-rewrite/local/dependents.txt` when that file exists. The file did not exist on this machine. Making one would mean searching the owner's private repositories for applications and deciding which count, which R6 keeps out of this work; so the file was not created, the `dependents` check reports that there was nothing to run, and `OWNER-ACTIONS.md` asks the owner to list them and run the check. The upgrade path itself is exercised by `rust-rewrite/compat/`: every row of `docs/upgrading.md` is imported and run in its new form.
+
+## D20. Tests corrected because they measured the machine
+
+Changed to correct a false result, each named here with its reason:
+
+- `crates/sweetview-platform-notify`, `toasts_register_the_app_id_and_route_each_click_once`: asserted that the fallback balloon of a failed toast was still pending after two turns of the loop. A shell that shows no balloons (the hosted CI runner) hides one at once. It now asserts that exactly one balloon was shown (`Notifier::balloons_shown`), which is the behaviour the test names.
+- `crates/sweetview-platform-webview/tests/teardown.rs`: asserted zero growth of USER and GDI objects over five webview lives. On the hosted runner WebView2 keeps one USER object over those lives with or without this project's extras. Growth is now compared with the same loop without the extras, which is how the test already measured kernel handles and is what it exists to prove.
+- `crates/sweetview-platform-notify`, `creating_and_dropping_returns_every_handle`: warms up with eight showing rounds instead of one, then measures 32 showing rounds instead of 8 against the same allowance, and prints each phase's counts.
