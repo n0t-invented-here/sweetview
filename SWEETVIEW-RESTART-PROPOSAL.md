@@ -10,9 +10,31 @@ Basis, read on 2026-11-27:
 - docs.rs API pages of `tao` 0.38.0, `wry` 0.58.2, `muda` 0.22.0 and `tray-icon` 0.27.0.
 - Line and file counts come from git.
 
-## The change in one paragraph
+## What Sweetview is
 
-Sweetview's native code is rebuilt in safe Rust on libraries that already wrap the OS behind safe APIs, and is called from Bun through N-API. Sweetview's own Rust crate carries `#![forbid(unsafe_code)]`. The public TypeScript API, the behaviour `main` has today, the pure TypeScript modules, the demos and the tests are kept. The TypeScript `bun:ffi` code, the bindings package and the C++ fork are retired.
+Sweetview lets a Bun app open a webview window, put an icon in the tray or menu bar, show notifications, and draw transparent click-through windows on the desktop. The app is TypeScript and compiles to one executable with `bun build --compile`.
+
+## What changes
+
+Today the webview is a C++ library, and everything else native is TypeScript calling the OS through `bun:ffi`. This proposal replaces both with one Rust library.
+
+| Piece | Today | After |
+|---|---|---|
+| The webview | a C++ fork of `webview/webview`, reached through a `bun:ffi` wrapper package | `wry`, the webview library Tauri 2 uses |
+| Windows, transparent overlays, click-through | TypeScript calling Win32 and AppKit through `bun:ffi` | `tao`, the window library Tauri 2 uses |
+| Tray or menu-bar icon | TypeScript `bun:ffi` | `tray-icon` |
+| Menus | TypeScript `bun:ffi` | `muda` |
+| Notifications | TypeScript `bun:ffi` | `notify-rust` |
+| How Bun reaches native code | `bun:ffi`, with pointers held in JavaScript | N-API, with no pointers in JavaScript |
+
+Sweetview's own Rust only calls the safe APIs of those libraries and carries `#![forbid(unsafe_code)]`.
+
+## What does not change
+
+- What an app developer writes: the same TypeScript API, `bun add`, `bun build --compile`.
+- What Sweetview does on `main` today: webview windows, IPC with no TCP, tray, notifications, several windows, transparent click-through.
+- The pure TypeScript parts: the IPC layer, the settings store, the icon encoders, the `.app` builder.
+- The demos and tests, which become the acceptance checks.
 
 ## What memory safety means here
 
