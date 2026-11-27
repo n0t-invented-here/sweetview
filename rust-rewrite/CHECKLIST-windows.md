@@ -579,5 +579,19 @@ Pure TypeScript and the same on every OS, so it is done once, here. The contract
     The safety pass that preceded it (decision D23) took the workspace from 322 uses to 217: 178 in source and 39 in test code, all in the six `sweetview-platform-*` crates that call the OS. The policy's tests: every owning type has a test that creates and drops it in a loop and reads the handle counts (the ledger and D23 name the ones added), and `rust-rewrite/evidence/w10-miri.txt` has `cargo miri test` for the logic crates: `sweetview-http` 15 passed, `sweetview-keycodes` 23 passed, `sweetview-window-logic` 29 passed, no undefined behaviour reported; `sweetview-runtime` cannot run under Miri (its first OS call is refused) and `sweetview-napi` has no tests of its own.
 
 - [ ] W10.2 A reviewer that did not write the code read every `unsafe` block against `UNSAFE-POLICY.md` and every checklist item against its evidence. Its findings are in `rust-rewrite/evidence/review-windows.md` and each is fixed or answered.
-- [ ] W10.3 `rust-rewrite/HANDOFF-macos.md` exists: what compiles for macOS, what is stubbed behind `cfg(target_os = "macos")`, the result of `cargo check --target aarch64-apple-darwin`, and anything the Windows work learned that changes `CHECKLIST-macos.md`.
-- [ ] W10.4 `rust-rewrite/OWNER-ACTIONS.md` lists everything left for the owner: publishing, upstream pull requests, the forks' state.
+- [x] W10.3 `rust-rewrite/HANDOFF-macos.md` exists: what compiles for macOS, what is stubbed behind `cfg(target_os = "macos")`, the result of `cargo check --target aarch64-apple-darwin`, and anything the Windows work learned that changes `CHECKLIST-macos.md`.
+
+    `rust-rewrite/HANDOFF-macos.md`, seven sections: where things stand; what compiles for macOS, with the command and its output; what is stubbed, crate by crate, with every public item's signature, what Windows does and what the stand-in returns (the gate in the code is `cfg(not(windows))`, which the document states with what the macOS goal should do about it when Linux arrives); the TypeScript seams; what the Windows work learned, decision by decision (D1 to D23) and item by item of `CHECKLIST-macos.md`, with item texts proposed for what no item covers; the shared files and the Windows commands to re-run; and the open points handed over, each with file and line.
+
+    ```
+    $ bun rust-rewrite/checks/mac-check.ts
+    $ cargo check --target aarch64-apple-darwin --workspace   (C compiler and archiver: a stand-in that creates empty outputs)
+    exit: 0; warnings and errors: 0
+    ```
+
+    That type-checks all twelve crates and their dependencies for macOS; it links nothing and runs nothing, which needs a Mac.
+
+- [x] W10.4 `rust-rewrite/OWNER-ACTIONS.md` lists everything left for the owner: publishing, upstream pull requests, the forks' state.
+
+    `rust-rewrite/OWNER-ACTIONS.md`, seven sections: merging the branch (nothing was merged, no pull request opened); publishing to npm (nothing was published; the eight packages, what changed for a consumer of each, the checks to run first, and the two package names and the wire names this work chose); running the upgrade against the real applications (decision D19); what only a person at the desk can do (a tray click and a toast click by hand, a drag out of Explorer, a second monitor at another scale); upstream findings for `tao`, `wry`, `muda` and WebView2, each with the place here that handles it (no issue or pull request was opened on a repository the owner does not own); the state of the two forks; housekeeping.
+
