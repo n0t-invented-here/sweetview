@@ -1,0 +1,30 @@
+W0.5: the binding builds for the host and lands where the loader finds it; just check builds it first.
+
+$ just native
+bun install
+bun install v1.4.4 (38afee6c8)
+Checked 139 installs across 184 packages (no changes) [15.00ms]
+bunx napi build --platform --release --cwd packages/sweetview-native --manifest-path ../../crates/sweetview-platform-node/Cargo.toml --output-dir prebuilt --no-js --dts binding.d.ts
+    Finished `release` profile [optimized] target(s) in 0.13s
+
+$ ls packages/sweetview-native/prebuilt
+binding.d.ts
+sweetview.win32-x64-msvc.node
+
+$ bun -e "..." (the loader finds it)
+binding loaded: true exports: 53
+
+$ just check        (native, then typecheck, then bun test; WEBVIEW2_USER_DATA_FOLDER set to a fresh folder under <TEMP>)
+exit code: 0
+bun install
+bun install v1.4.4 (38afee6c8)
+bunx napi build --platform --release --cwd packages/sweetview-native --manifest-path ../../crates/sweetview-platform-node/Cargo.toml --output-dir prebuilt --no-js --dts binding.d.ts
+    Finished `release` profile [optimized] target(s) in 0.12s
+bun run typecheck
+bun test
+bun test v1.4.4 (38afee6c8)
+ 404 pass
+ 16 skip
+ 0 fail
+ 1832 expect() calls
+Ran 420 tests across 45 files. [126.74s]

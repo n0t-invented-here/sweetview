@@ -77,7 +77,24 @@ Items name today's API members to say which behaviour is meant. The API may chan
     OK: no crate is forked
     ```
 
-- [ ] W0.5 `just native` builds the binding for the host and places it where the loader finds it. `just check` builds it first.
+- [x] W0.5 `just native` builds the binding for the host and places it where the loader finds it. `just check` builds it first.
+
+    `rust-rewrite/evidence/w0-build.txt`: `just native` runs `bunx napi build --platform --release --cwd packages/sweetview-native --manifest-path ../../crates/sweetview-platform-node/Cargo.toml --output-dir prebuilt --no-js --dts binding.d.ts`, which leaves `sweetview.win32-x64-msvc.node` and `binding.d.ts` in `packages/sweetview-native/prebuilt/`, the folder the loader's literal `require` names; a script that loads it through `packages/sweetview-native/src/binding.ts` prints `binding loaded: true exports: 53`. `just check` is declared as `check: native typecheck test` in the root `justfile`, and its run shows the build first:
+
+    ```
+    $ just check
+    exit code: 0
+    bunx napi build --platform --release --cwd packages/sweetview-native --manifest-path ../../crates/sweetview-platform-node/Cargo.toml --output-dir prebuilt --no-js --dts binding.d.ts
+        Finished `release` profile [optimized] target(s) in 0.12s
+    bun run typecheck
+    bun test
+     404 pass
+     16 skip
+     0 fail
+     1832 expect() calls
+    Ran 420 tests across 45 files.
+    ```
+
 - [ ] W0.6 A GitHub Actions workflow builds the binding and runs `cargo test`, `cargo clippy`, `bun run typecheck` and `bun test` on `windows-latest`.
 
 ## W1. The boundary
@@ -336,7 +353,27 @@ Source of truth for behaviour: the bindings repository's `docs/` and `test/`, an
     OK: the packed native package carries the binding and the loader finds it after install
     ```
 
-- [ ] W8.2 `just compile` builds every demo that has the recipe. `just pack` lists what would publish.
+- [x] W8.2 `just compile` builds every demo that has the recipe. `just pack` lists what would publish.
+
+    `rust-rewrite/evidence/w8-compile-pack.txt`: `just compile` exits 0 and builds the four demos that have the recipe (`web-app`, `desktop-pet`, `menubar-only`, `menubar-notify`), each as a Windows executable with the binding embedded, a macOS arm64 binary and its `.app` bundle; `demos/native-tabs` has no compile recipe.
+
+    ```
+    $ ls -la demos/*/dist/*.exe
+    127290880 demos/desktop-pet/dist/desktop-pet-windows-x64.exe
+    118944256 demos/menubar-notify/dist/menubar-notify-windows-x64.exe
+    118235136 demos/menubar-only/dist/menubar-only-windows-x64.exe
+    120040960 demos/web-app/dist/web-app-windows-x64.exe
+    ```
+
+    `just pack` exits 0, builds the binding first and lists what each of the eight packages would publish (`bun pm pack --dry-run`); the native package's list holds the binding and its declarations:
+
+    ```
+    packed 23.79KB prebuilt/binding.d.ts
+    packed 2.78MB prebuilt/sweetview.win32-x64-msvc.node
+    n1h-sweetview-native-1.0.0.tgz
+    Total files: 60
+    ```
+
 - [x] W8.3 `refreshWindowsIcons` and the rest of `packages/sweetview-build` work with no `bun:ffi`.
 
     `rust-rewrite/evidence/w8-build.txt`: 11 pass, 0 fail, 2 skip (macOS-only signing). `refreshWindowsIcons` goes through the binding (`refreshShellIcons`), does nothing on another OS, and a test asserts no source of `packages/sweetview-build` imports `bun:ffi`.
@@ -468,7 +505,18 @@ Pure TypeScript and the same on every OS, so it is done once, here. The contract
 
 ## W10. Safety and handoff
 
-- [ ] W10.1 `rust-rewrite/UNSAFE-LEDGER.md` is current and every entry has its reason.
+- [x] W10.1 `rust-rewrite/UNSAFE-LEDGER.md` is current and every entry has its reason.
+
+    `rust-rewrite/UNSAFE-LEDGER.md`: the table as `bun rust-rewrite/verify.ts windows --quick --ledger` writes it (running it again changes nothing but line endings), and under `## Reasons` an entry for every group of uses in every one of the 20 files: the behaviour, the number of uses, the safe API that was looked for with its crate, version and docs.rs page or source file, why it does not serve, and the owning type or invariant that contains it.
+
+    ```
+    $ bun rust-rewrite/verify.ts windows --quick
+    PASS  unsafe
+          111 Rust files, 217 uses of unsafe in 20 files
+    ```
+
+    The safety pass that preceded it (decision D23) took the workspace from 322 uses to 217: 178 in source and 39 in test code, all in the six `sweetview-platform-*` crates that call the OS. The policy's tests: every owning type has a test that creates and drops it in a loop and reads the handle counts (the ledger and D23 name the ones added), and `rust-rewrite/evidence/w10-miri.txt` has `cargo miri test` for the logic crates: `sweetview-http` 15 passed, `sweetview-keycodes` 23 passed, `sweetview-window-logic` 29 passed, no undefined behaviour reported; `sweetview-runtime` cannot run under Miri (its first OS call is refused) and `sweetview-napi` has no tests of its own.
+
 - [ ] W10.2 A reviewer that did not write the code read every `unsafe` block against `UNSAFE-POLICY.md` and every checklist item against its evidence. Its findings are in `rust-rewrite/evidence/review-windows.md` and each is fixed or answered.
 - [ ] W10.3 `rust-rewrite/HANDOFF-macos.md` exists: what compiles for macOS, what is stubbed behind `cfg(target_os = "macos")`, the result of `cargo check --target aarch64-apple-darwin`, and anything the Windows work learned that changes `CHECKLIST-macos.md`.
 - [ ] W10.4 `rust-rewrite/OWNER-ACTIONS.md` lists everything left for the owner: publishing, upstream pull requests, the forks' state.
