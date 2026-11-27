@@ -28,6 +28,7 @@ import {
   menuItemId,
   menuItemRect,
   trayFromShell,
+  type ShellIcon,
   user32,
   windowAt,
   doubleClickTime,
@@ -90,6 +91,21 @@ function whenMenuOpens(step: (menuWindow: bigint) => void): void {
 }
 
 const RED = { color: "#ff0000" };
+
+/**
+ * `trayFromShell`, asked again (with a pause, pumping) while the answer is not yet the expected
+ * one: Explorer applies a change to an icon on its own thread, after `Shell_NotifyIconW` returns,
+ * and its flyout takes a moment to close before it can be opened again.
+ */
+async function shellIcon(tooltip: string, found = true): Promise<ShellIcon> {
+  let answer: ShellIcon = { skip: "not read" };
+  for (let attempt = 0; attempt < 4; attempt++) {
+    if (attempt > 0) await pumpFor(800);
+    answer = await trayFromShell(tooltip);
+    if ("skip" in answer || answer.found === found) return answer;
+  }
+  return answer;
+}
 
 describe.if(onWindows)("icon decoding (binding)", () => {
   const pixel = (rgba: Uint8Array, size: number) => [...rgba.subarray(((size >> 1) * size + (size >> 1)) * 4, ((size >> 1) * size + (size >> 1)) * 4 + 4)];
@@ -455,7 +471,7 @@ describe.if(onWindows)("Tray (binding: tray-icon)", () => {
     try {
       expect(currentTray()?.windowHandle()).not.toBe(0n);
       // What Explorer shows for the icon: its tooltip, and the stock icon's image.
-      const stock = await trayFromShell(tooltip);
+      const stock = await shellIcon(tooltip);
       if ("skip" in stock) return console.warn(`tray-menu.test: the shell read skipped: ${stock.skip}`);
       expect(stock).toMatchObject({ found: true });
       if (!stock.found) return;
@@ -465,19 +481,30 @@ describe.if(onWindows)("Tray (binding: tray-icon)", () => {
       const changed = unique("tooltip");
       tray.setIcon({ windows: { ico: dotIco({ color: "#00ff00", sizes: [16, 20, 24, 32, 40, 48] }) } });
       tray.setTooltip(changed);
-      const green = await trayFromShell(changed);
+      let green = await shellIcon(changed);
       if ("skip" in green) return console.warn(`tray-menu.test: the shell read skipped: ${green.skip}`);
       expect(green).toMatchObject({ found: true });
       if (!green.found) return;
       expect(green.name.endsWith(changed)).toBe(true);
+      for (let attempt = 0; attempt < 3 && green.found && green.pixel[1] < 200; attempt++) {
+        await pumpFor(800);
+        const again = await shellIcon(changed);
+        if (!("found" in again) || !again.found) break;
+        green = again;
+      }
       const [r, g, b] = green.pixel;
       expect(g > 200 && r < 60 && b < 60).toBe(true);
       expect(green.pixel).not.toEqual(stock.pixel);
-      expect((await trayFromShell(tooltip)) as { found?: boolean }).toMatchObject({ found: false }); // the old tooltip is gone
+      expect((await shellIcon(tooltip, false)) as { found?: boolean }).toMatchObject({ found: false }); // the old tooltip is gone
 
       // Back to the stock icon: the shell shows the first image again.
       tray.setIcon({});
-      const back = await trayFromShell(changed);
+      const near = (pixel: number[]) => pixel.every((channel, i) => Math.abs(channel - stock.pixel[i]!) <= 8);
+      let back = await shellIcon(changed);
+      for (let attempt = 0; attempt < 3 && "found" in back && back.found && !near(back.pixel); attempt++) {
+        await pumpFor(800);
+        back = await shellIcon(changed);
+      }
       if ("skip" in back) return console.warn(`tray-menu.test: the shell read skipped: ${back.skip}`);
       expect(back).toMatchObject({ found: true });
       if (!back.found) return;
@@ -589,7 +616,7 @@ describe.if(onWindows)("Tray (binding: tray-icon)", () => {
       const long = unique("tooltip ").padEnd(200, "x");
       tray.setTooltip(long); // longer than the shell keeps: truncated, not refused
       // The shell shows the first 127 characters (NOTIFYICONDATAW's szTip holds 128 with its NUL).
-      const shown = await trayFromShell(long.slice(0, 127));
+      const shown = await shellIcon(long.slice(0, 127));
       if ("skip" in shown) console.warn(`tray-menu.test: the shell read skipped: ${shown.skip}`);
       else expect(shown).toMatchObject({ found: true });
 

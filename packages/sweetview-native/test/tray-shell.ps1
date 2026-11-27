@@ -54,11 +54,19 @@ function Find-Icon($root) {
   }
   return $null
 }
+$shellClasses = @("TopLevelWindowForOverflowXamlIsland", "Shell_TrayWnd")
 function Report($icon, $where) {
   $r = $icon.Current.BoundingRectangle
   $cx = [int]($r.Left + $r.Width / 2); $cy = [int]($r.Top + $r.Height / 2)
+  # The pixel is the shell's only when the shell's window is on top there (a toast banner sits in
+  # the same corner for some seconds, and another session's window can cover it), and once two
+  # readings apart agree (the flyout fades in).
+  $under = [TS]::RootClassAt($cx, $cy)
+  for ($i = 0; $i -lt 60 -and $shellClasses -notcontains $under; $i++) { Start-Sleep -Milliseconds 250; $under = [TS]::RootClassAt($cx, $cy) }
+  if ($shellClasses -notcontains $under) { return (@{ skip = "another window ($under) covers the notification icon" } | ConvertTo-Json -Compress) }
   $c = [TS]::Pixel($cx, $cy)
-  [ordered]@{ found = $true; name = $icon.Current.Name; where = $where; pixel = @(($c -band 0xff), (($c -shr 8) -band 0xff), (($c -shr 16) -band 0xff)); rect = @([int]$r.Left, [int]$r.Top, [int]$r.Width, [int]$r.Height) } | ConvertTo-Json -Compress
+  for ($i = 0; $i -lt 20; $i++) { Start-Sleep -Milliseconds 100; $next = [TS]::Pixel($cx, $cy); if ($next -eq $c) { break }; $c = $next }
+  [ordered]@{ found = $true; name = $icon.Current.Name; where = $where; under = $under; pixel = @(($c -band 0xff), (($c -shr 8) -band 0xff), (($c -shr 16) -band 0xff)); rect = @([int]$r.Left, [int]$r.Top, [int]$r.Width, [int]$r.Height) } | ConvertTo-Json -Compress
 }
 function Click-Chevron($chevron) {
   $r = $chevron.Current.BoundingRectangle
@@ -71,7 +79,7 @@ function Click-Chevron($chevron) {
   $under = [TS]::RootClassAt($x, $y)
   if ($under -ne "Shell_TrayWnd") { return "another window ($under) is over the overflow chevron" }
   if ([TS]::ButtonsDown()) { return "a mouse button was already down on the shared desktop" }
-  [TS]::Mouse(0x0002); Start-Sleep -Milliseconds 60; [TS]::Mouse(0x0004)
+  try { [TS]::Mouse(0x0002); Start-Sleep -Milliseconds 60 } finally { [TS]::Mouse(0x0004) }
   return ""
 }
 

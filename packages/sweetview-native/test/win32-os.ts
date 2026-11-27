@@ -519,7 +519,8 @@ export type ShellIcon =
 export async function trayFromShell(tooltip: string): Promise<ShellIcon> {
   const script = fileURLToPath(new URL("./tray-shell.ps1", import.meta.url));
   const child = Bun.spawn(["pwsh", "-NoProfile", "-NonInteractive", "-File", script, "-Tooltip", tooltip], { stdout: "pipe", stderr: "pipe" });
-  const killer = setTimeout(() => child.kill(), 30_000);
+  // A last resort only: the script releases every button it presses in a `finally`, which a kill would skip.
+  const killer = setTimeout(() => child.kill(), 120_000);
   try {
     while (child.exitCode === null && child.signalCode === null) {
       pumpEvents();
