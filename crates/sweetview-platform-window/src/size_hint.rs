@@ -46,14 +46,14 @@ mod imp {
   use std::ffi::c_void;
 
   use windows::Win32::Foundation::{HWND, RECT};
-  use windows::Win32::UI::HiDpi::{AdjustWindowRectExForDpi, GetDpiForWindow};
+  use windows::Win32::UI::HiDpi::AdjustWindowRectExForDpi;
   use windows::Win32::UI::WindowsAndMessaging::{
-    SetWindowLongPtrW, SetWindowPos, GWL_STYLE, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOZORDER, WINDOW_EX_STYLE,
-    WINDOW_STYLE,
+    GWL_STYLE, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOZORDER, WINDOW_EX_STYLE, WINDOW_STYLE,
   };
 
   use super::{scale_to_dpi, style_for_size_hint, GivenWindowSizeHint};
-  use crate::{handle_value, style, NativeWindow};
+  use crate::platform::{dpi_of, set_style_of, set_window_pos};
+  use crate::{handle_value, style, NativeWindow, Rect};
 
   /// Applies `webview_set_size(width, height, hint)` to a window the webview
   /// was given, as the C++ library did (see the module). False when the OS
@@ -62,17 +62,12 @@ mod imp {
     // The value of a window named by `NativeWindow`: checked when it was named.
     let hwnd = HWND(handle_value(window) as *mut c_void);
     let new_style = style_for_size_hint(style(window), hint);
-    // SAFETY: writes one window long of a handle named by `NativeWindow`; on a
-    // window that is gone the call fails with ERROR_INVALID_WINDOW_HANDLE and writes nothing.
-    let _previous = unsafe { SetWindowLongPtrW(hwnd, GWL_STYLE, new_style as isize) };
+    // On a window that is gone the call fails with ERROR_INVALID_WINDOW_HANDLE and writes nothing.
+    let _previous = set_style_of(hwnd, GWL_STYLE, new_style as isize);
     if matches!(hint, GivenWindowSizeHint::Min | GivenWindowSizeHint::Max) {
       return true;
     }
-    // SAFETY: a window function on a handle named by `NativeWindow`; an invalid one returns 0.
-    let dpi = match unsafe { GetDpiForWindow(hwnd) } {
-      0 => 96,
-      dpi => dpi,
-    };
+    let dpi = dpi_of(hwnd);
     let mut frame = RECT { left: 0, top: 0, right: scale_to_dpi(width, dpi), bottom: scale_to_dpi(height, dpi) };
     // As the library: the window's style, no menu, no extended style.
     // SAFETY: `frame` is a RECT owned by this frame for the call to adjust in place.
@@ -81,8 +76,7 @@ mod imp {
       return false;
     }
     let flags = SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOMOVE | SWP_FRAMECHANGED;
-    // SAFETY: a window function on a handle named by `NativeWindow`, with no insert-after window.
-    unsafe { SetWindowPos(hwnd, None, 0, 0, frame.right - frame.left, frame.bottom - frame.top, flags) }.is_ok()
+    set_window_pos(hwnd, None, Rect::new(0, 0, frame.right - frame.left, frame.bottom - frame.top), flags)
   }
 }
 
@@ -119,77 +113,35 @@ mod tests {
 mod live_tests {
   use std::sync::PoisonError;
 
-  use windows::core::w;
-  use windows::Win32::Foundation::{HWND, RECT};
-  use windows::Win32::System::LibraryLoader::GetModuleHandleW;
-  use windows::Win32::UI::HiDpi::GetDpiForWindow;
-  use windows::Win32::UI::WindowsAndMessaging::{CreateWindowExW, DestroyWindow, GetClientRect, IsWindowVisible, WINDOW_EX_STYLE, WS_OVERLAPPEDWINDOW};
-
   use super::*;
-  use crate::{style, ForeignWindow};
-
-  /// A hidden top-level window of this thread, as an application would hand one over; destroyed on drop.
-  struct GivenWindow(HWND);
-
-  impl GivenWindow {
-    fn new() -> Self {
-      // SAFETY: a null module name asks for the handle of the process's own executable.
-      let module = unsafe { GetModuleHandleW(None) }.expect("module handle");
-      // SAFETY: the class is the system's STATIC class and every string is static.
-      let hwnd = unsafe {
-        CreateWindowExW(WINDOW_EX_STYLE(0), w!("STATIC"), w!("sweetview size hint test"), WS_OVERLAPPEDWINDOW, 40, 40, 300, 200, None, None, Some(module.into()), None)
-      }
-      .expect("CreateWindowExW");
-      Self(hwnd)
-    }
-
-    fn client(&self) -> (i32, i32) {
-      let mut rect = RECT::default();
-      // SAFETY: `rect` is a RECT owned by this frame for the call to fill, on this test's own window.
-      unsafe { GetClientRect(self.0, &mut rect) }.expect("GetClientRect");
-      (rect.right, rect.bottom)
-    }
-
-    fn dpi(&self) -> u32 {
-      // SAFETY: a window function on this test's own window.
-      unsafe { GetDpiForWindow(self.0) }.max(96)
-    }
-
-    fn visible(&self) -> bool {
-      // SAFETY: a window function on this test's own window.
-      unsafe { IsWindowVisible(self.0) }.as_bool()
-    }
-  }
-
-  impl Drop for GivenWindow {
-    fn drop(&mut self) {
-      // SAFETY: the window was made by `new` on this thread and is destroyed only here.
-      let _ = unsafe { DestroyWindow(self.0) };
-    }
-  }
+  use crate::platform::client_size;
+  use crate::platform::tests::TestWindow;
+  use crate::{dpi_scale, is_visible, style};
 
   #[test]
   fn a_given_window_is_restyled_and_resized_as_the_library_did_and_never_shown() {
     let _serial = crate::TEST_SERIAL.lock().unwrap_or_else(PoisonError::into_inner);
-    let window = GivenWindow::new();
-    let given = ForeignWindow::from_handle_value(window.0 .0 as isize).expect("a live window");
+    // A hidden top-level window of this thread, as an application would hand one over.
+    let window = TestWindow::new();
+    let given = window.foreign();
+    let client = || client_size(window.0).expect("GetClientRect");
     let resizable = 0x0004_0000 | 0x0001_0000;
-    let dpi = window.dpi();
+    let dpi = (dpi_scale(&given) * 96.0).round() as u32;
 
     assert!(apply_given_window_size(&given, 420, 260, GivenWindowSizeHint::None));
-    assert_eq!(window.client(), (scale_to_dpi(420, dpi), scale_to_dpi(260, dpi)));
+    assert_eq!(client(), (scale_to_dpi(420, dpi), scale_to_dpi(260, dpi)));
     assert_eq!(style(&given) & resizable, resizable);
 
     assert!(apply_given_window_size(&given, 400, 250, GivenWindowSizeHint::Fixed));
-    assert_eq!(window.client(), (scale_to_dpi(400, dpi), scale_to_dpi(250, dpi)));
+    assert_eq!(client(), (scale_to_dpi(400, dpi), scale_to_dpi(250, dpi)));
     assert_eq!(style(&given) & resizable, 0);
 
     // MIN and MAX: the style only.
     assert!(apply_given_window_size(&given, 100, 100, GivenWindowSizeHint::Min));
     assert!(apply_given_window_size(&given, 900, 900, GivenWindowSizeHint::Max));
-    assert_eq!(window.client(), (scale_to_dpi(400, dpi), scale_to_dpi(250, dpi)));
+    assert_eq!(client(), (scale_to_dpi(400, dpi), scale_to_dpi(250, dpi)));
     assert_eq!(style(&given) & resizable, resizable);
 
-    assert!(!window.visible());
+    assert!(!is_visible(&given));
   }
 }

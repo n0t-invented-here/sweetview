@@ -2207,6 +2207,7 @@ version = "1.0.0"
 dependencies = [
  "muda",
  "raw-window-handle",
+ "sweetview-platform-loop",
  "sweetview-window-logic",
  "tao",
  "windows",

@@ -21,9 +21,7 @@ use tao::platform::windows::{MonitorHandleExtWindows, WindowExtWindows};
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, HMONITOR, MONITORINFO};
-use windows::Win32::System::Threading::{
-  GetCurrentProcess, GetCurrentThreadId, GetGuiResources, GetProcessHandleCount, GR_GDIOBJECTS, GR_USEROBJECTS,
-};
+use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetActiveWindow, GetAsyncKeyState, ReleaseCapture, VK_LBUTTON, VK_MBUTTON, VK_RBUTTON};
 use windows::Win32::UI::Shell::{DefSubclassProc, DragFinish, DragQueryFileW, RemoveWindowSubclass, SetWindowSubclass, HDROP};
@@ -172,8 +170,13 @@ pub fn is_active(window: &impl NativeWindow) -> bool {
 }
 
 pub fn is_minimized(window: &impl NativeWindow) -> bool {
-  // SAFETY: a window function on a handle named by `NativeWindow`; an invalid one reads as false.
-  unsafe { IsIconic(window.hwnd()) }.as_bool()
+  is_iconic(window.hwnd())
+}
+
+fn is_iconic(hwnd: HWND) -> bool {
+  // SAFETY: `IsIconic` takes the handle by value and reads no memory of ours; the OS
+  // validates the handle, and an invalid one reads as false.
+  unsafe { IsIconic(hwnd) }.as_bool()
 }
 
 pub fn is_zoomed(window: &impl NativeWindow) -> bool {
@@ -195,18 +198,34 @@ fn outer_bounds_of(hwnd: HWND) -> Option<Rect> {
 
 /// The window's DPI over 96: 1 at 100 %, 1.5 at 150 %.
 pub fn dpi_scale(window: &impl NativeWindow) -> f64 {
-  // SAFETY: a window function on a handle named by `NativeWindow`; an invalid one returns 0.
-  let dpi = unsafe { GetDpiForWindow(window.hwnd()) };
-  if dpi == 0 {
-    1.0
-  } else {
-    f64::from(dpi) / 96.0
+  f64::from(dpi_of(window.hwnd())) / 96.0
+}
+
+/// The window's DPI; 96 when the OS reports none (an invalid handle).
+pub(crate) fn dpi_of(hwnd: HWND) -> u32 {
+  // SAFETY: `GetDpiForWindow` takes the handle by value and reads no memory of ours; the OS
+  // validates the handle, and an invalid one returns 0.
+  match unsafe { GetDpiForWindow(hwnd) } {
+    0 => 96,
+    dpi => dpi,
   }
 }
 
 fn style_of(hwnd: HWND, index: windows::Win32::UI::WindowsAndMessaging::WINDOW_LONG_PTR_INDEX) -> isize {
   // SAFETY: reads one window long of a handle named by `NativeWindow`; an invalid one returns 0.
   unsafe { GetWindowLongPtrW(hwnd, index) }
+}
+
+/// Writes the style (`GWL_STYLE`) or extended style (`GWL_EXSTYLE`) of a
+/// window and returns the previous value. Any other index writes nothing and
+/// returns 0: those longs hold pointers (the window procedure, user data).
+pub(crate) fn set_style_of(hwnd: HWND, index: windows::Win32::UI::WindowsAndMessaging::WINDOW_LONG_PTR_INDEX, value: isize) -> isize {
+  if index != GWL_STYLE && index != GWL_EXSTYLE {
+    return 0;
+  }
+  // SAFETY: writes one of the two style longs (checked above), which hold bit flags and no
+  // pointer, of a handle the OS validates; an invalid one makes the call fail and write nothing.
+  unsafe { SetWindowLongPtrW(hwnd, index, value) }
 }
 
 /// The extended style, `GWL_EXSTYLE`.
@@ -228,7 +247,7 @@ pub fn chrome(window: &impl NativeWindow) -> Chrome {
 
 // ---- changing a window -----------------------------------------------------------------
 
-fn set_window_pos(hwnd: HWND, after: Option<HWND>, rect: Rect, flags: SET_WINDOW_POS_FLAGS) -> bool {
+pub(crate) fn set_window_pos(hwnd: HWND, after: Option<HWND>, rect: Rect, flags: SET_WINDOW_POS_FLAGS) -> bool {
   // SAFETY: a window function on a handle named by `NativeWindow`, with an
   // insert-after value that is either none or one of the HWND_* constants.
   unsafe { SetWindowPos(hwnd, after, rect.x, rect.y, rect.width, rect.height, flags) }.is_ok()
@@ -342,13 +361,17 @@ pub fn fill_first_child(window: &impl NativeWindow) {
 fn fill_first_child_of(hwnd: HWND) {
   // SAFETY: a window function on a handle named by `NativeWindow`; no child is an error result.
   let Ok(child) = (unsafe { GetWindow(hwnd, GW_CHILD) }) else { return };
-  let mut client = RECT::default();
-  // SAFETY: `client` is a RECT owned by this frame for the call to fill.
-  if unsafe { GetClientRect(hwnd, &mut client) }.is_err() {
-    return;
-  }
+  let Some((width, height)) = client_size(hwnd) else { return };
   // SAFETY: `child` was just returned by `GetWindow` as a child of this thread's window.
-  let _moved = unsafe { MoveWindow(child, 0, 0, client.right, client.bottom, true) };
+  let _moved = unsafe { MoveWindow(child, 0, 0, width, height, true) };
+}
+
+/// The width and height of the window's client area, or `None` when the window is gone.
+pub(crate) fn client_size(hwnd: HWND) -> Option<(i32, i32)> {
+  let mut client = RECT::default();
+  // SAFETY: `client` is a RECT owned by this frame for the call to fill; the OS validates the handle.
+  unsafe { GetClientRect(hwnd, &mut client) }.ok()?;
+  Some((client.right, client.bottom))
 }
 
 /// Sets the extended style to what `policy` decides for it. A window with a
@@ -361,9 +384,8 @@ fn apply_ex_style_to(hwnd: HWND, policy: &ExStylePolicy) {
   let current = style_of(hwnd, GWL_EXSTYLE) as u32;
   let wanted = policy.apply(current);
   if wanted != current {
-    // SAFETY: writes the extended style of a handle named by `NativeWindow`; the
-    // value is the current style with bits the policy decides changed.
-    let _previous = unsafe { SetWindowLongPtrW(hwnd, GWL_EXSTYLE, wanted as isize) };
+    // The current style with bits the policy decides changed.
+    let _previous = set_style_of(hwnd, GWL_EXSTYLE, wanted as isize);
   }
 }
 
@@ -386,11 +408,10 @@ pub fn set_layered_attributes(window: &impl NativeWindow, color_key: Option<u32>
 /// Destroys a window this process made through `tao`, now rather than when
 /// `tao` gets to its own deferred destroy. Drop the `tao` window right after.
 pub fn destroy_now(window: &tao::window::Window) {
-  // SAFETY: `tao` made this window on this thread (its windows are made on the
-  // loop's thread, which is the UI thread), and the caller drops the `tao`
-  // window next, so nothing uses the handle afterwards.
   let hwnd = sealed::Sealed::hwnd(window);
-  // SAFETY: as above: a window `tao` made on this thread, dropped by the caller next.
+  // SAFETY: `tao` made this window on this thread (its windows are made on the loop's
+  // thread, which is the UI thread, and `DestroyWindow` refuses another thread's window),
+  // and the caller drops the `tao` window next, so nothing uses the handle afterwards.
   let _destroyed = unsafe { DestroyWindow(hwnd) };
 }
 
@@ -420,8 +441,8 @@ impl GeometrySnapshot {
     let mut style_changed = false;
     for (index, before) in [(GWL_STYLE, self.style), (GWL_EXSTYLE, self.ex_style)] {
       if style_of(hwnd, index) != before {
-        // SAFETY: writes back a style value this same window had when the snapshot was taken.
-        let _previous = unsafe { SetWindowLongPtrW(hwnd, index, before) };
+        // Writes back a style value this same window had when the snapshot was taken.
+        let _previous = set_style_of(hwnd, index, before);
         style_changed = true;
       }
     }
@@ -474,7 +495,7 @@ fn load_icon(ico: Option<&[u8]>, size: i32) -> Result<(HICON, Option<OwnedIcon>)
   Ok((stock, None))
 }
 
-fn metric(index: windows::Win32::UI::WindowsAndMessaging::SYSTEM_METRICS_INDEX, fallback: i32) -> i32 {
+pub(crate) fn metric(index: windows::Win32::UI::WindowsAndMessaging::SYSTEM_METRICS_INDEX, fallback: i32) -> i32 {
   // SAFETY: `GetSystemMetrics` reads a system value and has no preconditions.
   match unsafe { GetSystemMetrics(index) } {
     0 => fallback,
@@ -531,16 +552,7 @@ pub fn work_area(monitor: &tao::monitor::MonitorHandle) -> Option<Rect> {
 
 /// The process's handle counts, for the tests that check every handle is given back.
 pub fn handle_counts() -> HandleCounts {
-  // SAFETY: the pseudo-handle of the current process needs no closing and is always valid.
-  let process = unsafe { GetCurrentProcess() };
-  // SAFETY: `process` is the current process's pseudo-handle.
-  let user_objects = unsafe { GetGuiResources(process, GR_USEROBJECTS) };
-  // SAFETY: `process` is the current process's pseudo-handle.
-  let gdi_objects = unsafe { GetGuiResources(process, GR_GDIOBJECTS) };
-  let mut kernel_handles = 0u32;
-  // SAFETY: `kernel_handles` is a u32 owned by this frame for the call to fill.
-  let _counted = unsafe { GetProcessHandleCount(process, &mut kernel_handles) };
-  HandleCounts { user_objects, gdi_objects, kernel_handles }
+  sweetview_platform_loop::resource_counts()
 }
 
 // ---- the subclass ------------------------------------------------------------------------------
@@ -654,10 +666,8 @@ impl WindowSubclass {
     }
     let current = style_of(self.hwnd, GWL_STYLE) as u32;
     if current & bits != bits {
-      // SAFETY: writes the style of the window this subclass is installed on
-      // (alive: the subclass is removed when it is destroyed); the value is the
-      // current style with `bits` added.
-      let _previous = unsafe { SetWindowLongPtrW(self.hwnd, GWL_STYLE, (current | bits) as isize) };
+      // The current style with `bits` added, on the window this subclass is installed on.
+      let _previous = set_style_of(self.hwnd, GWL_STYLE, (current | bits) as isize);
     }
   }
 
@@ -691,16 +701,21 @@ impl Drop for Drop_ {
 }
 
 impl Drop_ {
+  /// `DragQueryFileW`: the file count for index `u32::MAX`; a path's length in
+  /// characters with no buffer; the characters copied into `buffer` otherwise.
+  fn query(&self, index: u32, buffer: Option<&mut [u16]>) -> u32 {
+    // SAFETY: `self.0` is the drop of the message being handled, finished only in this
+    // value's `Drop`; `buffer` is none or a slice whose length the call takes from it.
+    unsafe { DragQueryFileW(self.0, index, buffer) }
+  }
+
   fn paths(&self) -> Vec<String> {
-    // SAFETY: with index 0xFFFFFFFF and no buffer, the call returns the file count.
-    let count = unsafe { DragQueryFileW(self.0, u32::MAX, None) };
+    let count = self.query(u32::MAX, None);
     let mut paths = Vec::with_capacity(count as usize);
     for index in 0..count {
-      // SAFETY: with no buffer, the call returns the length of one path in characters.
-      let length = unsafe { DragQueryFileW(self.0, index, None) };
+      let length = self.query(index, None);
       let mut buffer = vec![0u16; length as usize + 1];
-      // SAFETY: `buffer` is owned by this frame and its length is passed with it as a slice.
-      let copied = unsafe { DragQueryFileW(self.0, index, Some(&mut buffer)) } as usize;
+      let copied = self.query(index, Some(&mut buffer)) as usize;
       if copied > 0 {
         paths.push(String::from_utf16_lossy(&buffer[..copied.min(buffer.len())]));
       }
@@ -718,9 +733,24 @@ fn forward(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT 
   unsafe { DefSubclassProc(hwnd, message, wparam, lparam) }
 }
 
+/// The `STYLESTRUCT` of a `WM_STYLECHANGING` the OS passed to the subclass
+/// procedure, borrowed for as long as `lparam`, the procedure's own argument,
+/// is: the duration of the message. `None` for any other message or a null one.
+fn style_change(message: u32, lparam: &mut LPARAM) -> Option<&mut STYLESTRUCT> {
+  let change = lparam.0 as *mut STYLESTRUCT;
+  if message != WM_STYLECHANGING || change.is_null() {
+    return None;
+  }
+  // SAFETY: for WM_STYLECHANGING the OS passes a STYLESTRUCT it owns, aligned and valid for
+  // the duration of the message, and reads `styleNew` back after the procedure returns; the
+  // borrow is tied to `lparam`, the procedure's argument, so it cannot outlive the message,
+  // and nothing else touches the struct meanwhile.
+  Some(unsafe { &mut *change })
+}
+
 /// What the procedure does with one message: `Some` when it is done with it
 /// (having forwarded it itself where needed), `None` to forward it.
-fn handle(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> Option<LRESULT> {
+fn handle(hwnd: HWND, message: u32, wparam: WPARAM, mut lparam: LPARAM) -> Option<LRESULT> {
   let state = state_of(hwnd)?;
   match message {
     WM_SIZE => {
@@ -737,9 +767,7 @@ fn handle(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> Option<LR
     }
     WM_MOVE => {
       let result = forward(hwnd, message, wparam, lparam);
-      // SAFETY: a window function on the handle the OS passed to this procedure.
-      let iconic = unsafe { IsIconic(hwnd) }.as_bool();
-      if !iconic {
+      if !is_iconic(hwnd) {
         if let Some(bounds) = outer_bounds_of(hwnd) {
           deliver(&state, &WindowEvent::Moved(bounds));
         }
@@ -766,27 +794,20 @@ fn handle(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> Option<LR
       Some(LRESULT(0))
     }
     WM_STYLECHANGING if wparam.0 as i32 == GWL_EXSTYLE.0 => {
-      let change = lparam.0 as *mut STYLESTRUCT;
-      if !change.is_null() {
-        // SAFETY: for WM_STYLECHANGING the OS passes a STYLESTRUCT it owns for the duration of the message.
-        let wanted = unsafe { (*change).styleNew };
-        let enforced = state.policy.get().apply(wanted);
-        // SAFETY: the same STYLESTRUCT; the OS reads `styleNew` back after the message returns.
-        unsafe { (*change).styleNew = enforced };
+      if let Some(change) = style_change(message, &mut lparam) {
+        // The OS reads `styleNew` back after the message returns.
+        change.styleNew = state.policy.get().apply(change.styleNew);
       }
       None
     }
     WM_STYLECHANGING if wparam.0 as i32 == GWL_STYLE.0 && (state.hold_visibility.get() || state.forced_style.get() != 0) => {
-      let change = lparam.0 as *mut STYLESTRUCT;
-      if !change.is_null() {
-        // SAFETY: for WM_STYLECHANGING the OS passes a STYLESTRUCT it owns for the duration of the message.
-        let current: STYLESTRUCT = unsafe { *change };
-        let mut held = current.styleNew | state.forced_style.get();
+      if let Some(change) = style_change(message, &mut lparam) {
+        let mut held = change.styleNew | state.forced_style.get();
         if state.hold_visibility.get() {
-          held = (held & !WS_VISIBLE.0) | (current.styleOld & WS_VISIBLE.0);
+          held = (held & !WS_VISIBLE.0) | (change.styleOld & WS_VISIBLE.0);
         }
-        // SAFETY: the same STYLESTRUCT; the OS reads `styleNew` back after the message returns.
-        unsafe { (*change).styleNew = held };
+        // The OS reads `styleNew` back after the message returns.
+        change.styleNew = held;
       }
       None
     }
@@ -814,4 +835,4 @@ unsafe extern "system" fn subclass_proc(hwnd: HWND, message: u32, wparam: WPARAM
 
 #[cfg(test)]
 #[path = "windows_tests.rs"]
-mod tests;
+pub(crate) mod tests;

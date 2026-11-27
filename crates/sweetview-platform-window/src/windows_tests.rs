@@ -2,29 +2,28 @@ use std::cell::RefCell;
 use std::sync::PoisonError;
 
 use windows::core::w;
-use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::{CreateWindowExW, WINDOW_EX_STYLE, WS_OVERLAPPEDWINDOW};
 
 use super::*;
 use sweetview_window_logic::style::{WS_EX_ACCEPTFILES, WS_EX_APPWINDOW, WS_EX_LAYERED, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT};
 
 /// A plain hidden top-level window of this thread, destroyed on drop: what an
-/// application hands to `Window.fromHandle`.
-struct TestWindow(HWND);
+/// application hands to `Window.fromHandle`. The other test modules of this
+/// crate use it too.
+pub(crate) struct TestWindow(pub(crate) HWND);
 
 impl TestWindow {
-  fn new() -> Self {
-    // SAFETY: a null module name asks for the handle of the process's own executable.
-    let module = unsafe { GetModuleHandleW(None) }.expect("module handle");
-    // SAFETY: the class is the system's STATIC class and every string is static.
+  pub(crate) fn new() -> Self {
+    // SAFETY: the class is the system's STATIC class, a system-global class that needs no
+    // module handle, and every string is static; no parent or creation data is passed.
     let hwnd = unsafe {
-      CreateWindowExW(WINDOW_EX_STYLE(0), w!("STATIC"), w!("sweetview platform-window test"), WS_OVERLAPPEDWINDOW, 40, 40, 300, 200, None, None, Some(module.into()), None)
+      CreateWindowExW(WINDOW_EX_STYLE(0), w!("STATIC"), w!("sweetview platform-window test"), WS_OVERLAPPEDWINDOW, 40, 40, 300, 200, None, None, None, None)
     }
     .expect("CreateWindowExW");
     Self(hwnd)
   }
 
-  fn foreign(&self) -> ForeignWindow {
+  pub(crate) fn foreign(&self) -> ForeignWindow {
     ForeignWindow::from_handle_value(self.0 .0 as isize).expect("a live window")
   }
 
@@ -34,8 +33,7 @@ impl TestWindow {
   }
 
   fn set_ex_style(&self, style: u32) {
-    // SAFETY: writes the extended style of this test's own window.
-    unsafe { SetWindowLongPtrW(self.0, GWL_EXSTYLE, style as isize) };
+    set_style_of(self.0, GWL_EXSTYLE, style as isize);
   }
 }
 
