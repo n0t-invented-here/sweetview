@@ -34,7 +34,7 @@ jobs:
       - name: cargo test
         shell: pwsh
         run: |
-          cargo test --workspace 2>&1 | Tee-Object -FilePath cargo-test-output.txt
+          cargo test --workspace --no-fail-fast 2>&1 | Tee-Object -FilePath cargo-test-output.txt
           $code = $LASTEXITCODE
           if ($code -ne 0) {
             $lines = Get-Content cargo-test-output.txt
