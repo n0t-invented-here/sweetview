@@ -41,3 +41,11 @@ impl Waker {
     false
   }
 }
+
+/// See the Windows implementation for the contract.
+pub fn discard_quit() -> bool {
+  false
+}
+
+#[doc(hidden)]
+pub fn post_quit_for_tests() {}

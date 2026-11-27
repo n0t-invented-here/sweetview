@@ -1431,7 +1431,10 @@ dependencies = [
 name = "sweetview-runtime"
 version = "1.0.0"
 dependencies = [
+ "raw-window-handle",
  "sweetview-platform-loop",
+ "sweetview-platform-window",
+ "sweetview-window-logic",
  "tao",
 ]
 

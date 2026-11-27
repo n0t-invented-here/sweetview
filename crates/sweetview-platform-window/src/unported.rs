@@ -59,6 +59,9 @@ pub fn is_on_this_thread(_window: &impl NativeWindow) -> bool {
 pub fn is_visible(_window: &impl NativeWindow) -> bool {
   false
 }
+pub fn is_active(_window: &impl NativeWindow) -> bool {
+  false
+}
 pub fn is_minimized(_window: &impl NativeWindow) -> bool {
   false
 }
@@ -104,6 +107,8 @@ pub fn set_title(_window: &impl NativeWindow, _title: &str) -> bool {
   false
 }
 pub fn start_os_drag(_window: &impl NativeWindow) {}
+#[doc(hidden)]
+pub fn send_close_for_tests(_window: &impl NativeWindow) {}
 pub fn fill_first_child(_window: &impl NativeWindow) {}
 pub fn apply_ex_style(_window: &impl NativeWindow, _policy: &ExStylePolicy) {}
 pub fn set_layered_attributes(_window: &impl NativeWindow, _color_key: Option<u32>, _opacity: Option<f64>) -> Result<(), String> {
@@ -157,5 +162,6 @@ impl WindowSubclass {
     ExStylePolicy::default()
   }
   pub fn set_policy(&self, _policy: ExStylePolicy) {}
+  pub fn set_hold_visibility(&self, _on: bool) {}
   pub fn set_fill_child(&self, _on: bool) {}
 }

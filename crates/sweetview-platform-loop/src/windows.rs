@@ -17,8 +17,8 @@ use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::{
   CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, KillTimer, PeekMessageW, PostMessageW,
-  RegisterClassExW, SetTimer, HWND_MESSAGE, MSG, PM_REMOVE, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_TIMER,
-  WNDCLASSEXW,
+  RegisterClassExW, SetTimer, TranslateMessage, HWND_MESSAGE, MSG, PM_REMOVE, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP,
+  WM_QUIT, WM_TIMER, WNDCLASSEXW,
 };
 
 use crate::signal::{Signal, SignalError, TimerId};
@@ -199,6 +199,43 @@ impl Drop for SignalWindow {
   }
 }
 
+/// Takes back a quit request (`PostQuitMessage`) of this thread.
+///
+/// The OS keeps a quit request as a flag and hands out `WM_QUIT` only once
+/// nothing posted is left in the queue, so the one way to remove it is to
+/// dispatch what is waiting until it comes out, and drop it. Returns at once
+/// when no quit was asked for and nothing waits. Works from inside any loop,
+/// a handler of `tao`'s own included, as a modal loop does.
+///
+/// Returns true when a quit request was taken back.
+pub fn discard_quit() -> bool {
+  // Bounded, so a handler that keeps posting cannot hold the caller here.
+  for _ in 0..10_000 {
+    let mut message = MSG::default();
+    // SAFETY: `message` is a valid MSG owned by this frame for the call to fill.
+    let found = unsafe { PeekMessageW(&mut message, None, 0, 0, PM_REMOVE) };
+    if !found.as_bool() {
+      return false;
+    }
+    if message.message == WM_QUIT {
+      return true;
+    }
+    // SAFETY: `message` was filled by the PeekMessageW call above.
+    let _translated = unsafe { TranslateMessage(&message) };
+    // SAFETY: `message` was filled by the PeekMessageW call above.
+    unsafe { DispatchMessageW(&message) };
+  }
+  false
+}
+
+/// Sets this thread's quit request, as `PostQuitMessage(0)` does. For tests
+/// of code that must survive one.
+#[doc(hidden)]
+pub fn post_quit_for_tests() {
+  // SAFETY: `PostQuitMessage` sets the calling thread's quit flag and has no preconditions.
+  unsafe { windows::Win32::UI::WindowsAndMessaging::PostQuitMessage(0) };
+}
+
 /// The handler of the signal window `hwnd`, if it is one of this thread's.
 fn handler_of(hwnd: HWND) -> Option<Handler> {
   // `try_with`: a message can arrive while the thread's storage is being torn down.
@@ -342,6 +379,20 @@ mod tests {
     assert_eq!(calls.get(), 1);
     assert!(slot.borrow().is_none());
     assert!(!waker.wake(8));
+  }
+
+  #[test]
+  fn a_quit_request_is_taken_back_after_what_was_posted_ahead_of_it() {
+    let _serial = serial();
+    let seen = Rc::new(Cell::new(0u32));
+    let count = seen.clone();
+    let window = SignalWindow::new(move |_| count.set(count.get() + 1)).expect("signal window");
+    assert!(window.waker().wake(5));
+    // SAFETY: `PostQuitMessage` sets this thread's quit flag and has no preconditions.
+    unsafe { windows::Win32::UI::WindowsAndMessaging::PostQuitMessage(0) };
+    assert!(discard_quit());
+    assert_eq!(seen.get(), 1, "the wake posted ahead of the quit was dispatched");
+    assert!(!discard_quit(), "nothing asked for, nothing waiting");
   }
 
   #[test]

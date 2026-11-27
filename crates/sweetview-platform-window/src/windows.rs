@@ -25,7 +25,7 @@ use windows::Win32::System::Threading::{
   GetCurrentProcess, GetCurrentThreadId, GetGuiResources, GetProcessHandleCount, GR_GDIOBJECTS, GR_USEROBJECTS,
 };
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
-use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, ReleaseCapture, VK_LBUTTON, VK_MBUTTON, VK_RBUTTON};
+use windows::Win32::UI::Input::KeyboardAndMouse::{GetActiveWindow, GetAsyncKeyState, ReleaseCapture, VK_LBUTTON, VK_MBUTTON, VK_RBUTTON};
 use windows::Win32::UI::Shell::{DefSubclassProc, DragFinish, DragQueryFileW, RemoveWindowSubclass, SetWindowSubclass, HDROP};
 use windows::Win32::UI::WindowsAndMessaging::{
   CreateIconFromResourceEx, DestroyIcon, DestroyWindow, GetClientRect, GetSystemMetrics, GetWindow, GetWindowLongPtrW,
@@ -35,7 +35,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
   IDI_APPLICATION, LAYERED_WINDOW_ATTRIBUTES_FLAGS, LR_DEFAULTCOLOR, LWA_ALPHA, LWA_COLORKEY, SET_WINDOW_POS_FLAGS,
   SHOW_WINDOW_CMD, SIZE_MINIMIZED, SM_CXICON, SM_CXSMICON, STYLESTRUCT, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE,
   SWP_NOSIZE, SWP_NOZORDER, SW_HIDE, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE, SW_SHOW, SW_SHOWNOACTIVATE, WM_CLOSE,
-  WM_DROPFILES, WM_MOVE, WM_NCDESTROY, WM_NCLBUTTONDOWN, WM_SETICON, WM_SIZE, WM_STYLECHANGING, WS_POPUP, WS_THICKFRAME,
+  WM_DROPFILES, WM_MOVE, WM_NCDESTROY, WM_NCLBUTTONDOWN, WM_SETICON, WM_SIZE, WM_STYLECHANGING, WS_POPUP, WS_THICKFRAME, WS_VISIBLE,
 };
 
 use crate::{Chrome, ExStylePolicy, HandleCounts, Rect, WindowEvent};
@@ -140,6 +140,13 @@ pub fn is_on_this_thread(window: &impl NativeWindow) -> bool {
 pub fn is_visible(window: &impl NativeWindow) -> bool {
   // SAFETY: a window function on a handle named by `NativeWindow`; an invalid one reads as not visible.
   unsafe { IsWindowVisible(window.hwnd()) }.as_bool()
+}
+
+/// True when the window is this thread's active window.
+pub fn is_active(window: &impl NativeWindow) -> bool {
+  // SAFETY: `GetActiveWindow` reads this thread's active window and has no preconditions.
+  let active = unsafe { GetActiveWindow() };
+  active == window.hwnd()
 }
 
 pub fn is_minimized(window: &impl NativeWindow) -> bool {
@@ -295,6 +302,13 @@ pub fn start_os_drag(window: &impl NativeWindow) {
   let _released = unsafe { ReleaseCapture() };
   // SAFETY: a window message with plain integer parameters to a handle named by `NativeWindow`.
   let _result = unsafe { SendMessageW(window.hwnd(), WM_NCLBUTTONDOWN, Some(WPARAM(HTCAPTION as usize)), Some(LPARAM(0))) };
+}
+
+/// Sends `WM_CLOSE`, as the close button does. For tests of what a close request does.
+#[doc(hidden)]
+pub fn send_close_for_tests(window: &impl NativeWindow) {
+  // SAFETY: a plain message with no parameters to a handle named by `NativeWindow`.
+  let _result = unsafe { SendMessageW(window.hwnd(), WM_CLOSE, None, None) };
 }
 
 /// Resizes the window's first child to fill its client area, as a window
@@ -518,6 +532,7 @@ struct SubclassState {
   handler: Handler,
   policy: Cell<ExStylePolicy>,
   fill_child: Cell<bool>,
+  hold_visibility: Cell<bool>,
 }
 
 thread_local! {
@@ -568,6 +583,7 @@ impl WindowSubclass {
       handler: Rc::new(handler),
       policy: Cell::new(ExStylePolicy::default()),
       fill_child: Cell::new(false),
+      hold_visibility: Cell::new(false),
     });
     SUBCLASSES.with(|table| table.borrow_mut().insert(hwnd.0 as isize, state));
     // SAFETY: installs this crate's procedure on a window of this thread (checked
@@ -593,6 +609,16 @@ impl WindowSubclass {
       state.policy.set(policy);
     }
     apply_ex_style_to(self.hwnd, &policy);
+  }
+
+  /// When on, a rewrite of the window's style (`SetWindowLongPtr(GWL_STYLE)`)
+  /// never changes `WS_VISIBLE`: visibility changes only through `ShowWindow`.
+  /// `tao` writes the style from its own idea of the window's visibility, which
+  /// is stale after a show it did not make.
+  pub fn set_hold_visibility(&self, on: bool) {
+    if let Some(state) = state_of(self.hwnd) {
+      state.hold_visibility.set(on);
+    }
   }
 
   /// When on, each resize also lays the window's first child out to fill the
@@ -701,6 +727,17 @@ fn handle(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> Option<LR
         let enforced = state.policy.get().apply(wanted);
         // SAFETY: the same STYLESTRUCT; the OS reads `styleNew` back after the message returns.
         unsafe { (*change).styleNew = enforced };
+      }
+      None
+    }
+    WM_STYLECHANGING if wparam.0 as i32 == GWL_STYLE.0 && state.hold_visibility.get() => {
+      let change = lparam.0 as *mut STYLESTRUCT;
+      if !change.is_null() {
+        // SAFETY: for WM_STYLECHANGING the OS passes a STYLESTRUCT it owns for the duration of the message.
+        let current: STYLESTRUCT = unsafe { *change };
+        let held = (current.styleNew & !WS_VISIBLE.0) | (current.styleOld & WS_VISIBLE.0);
+        // SAFETY: the same STYLESTRUCT; the OS reads `styleNew` back after the message returns.
+        unsafe { (*change).styleNew = held };
       }
       None
     }

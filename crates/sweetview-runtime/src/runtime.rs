@@ -32,6 +32,9 @@ pub struct TimeoutId(pub u32);
 /// The wake token of the deferred-job queue. Every other token names a drain function.
 const DEFERRED_TOKEN: u64 = 0;
 
+/// The exit code a pump ends its run with, told apart from the 0 of a `WM_QUIT`.
+const PUMP_DONE: i32 = 0x5357;
+
 /// The waker of the process's runtime, for [`wake`] on any thread.
 static WAKER: Mutex<Option<Waker>> = Mutex::new(None);
 
@@ -121,6 +124,7 @@ impl Runtime {
   /// Drops this thread's runtime. Tests only: a process keeps its runtime for life.
   #[doc(hidden)]
   pub fn shutdown_for_tests() {
+    crate::window::destroy_all_for_tests();
     *WAKER.lock().unwrap_or_else(PoisonError::into_inner) = None;
     RUNTIME.with(|slot| slot.borrow_mut().take());
   }
@@ -137,7 +141,8 @@ impl Runtime {
     self.blocking.get()
   }
 
-  /// Stays inside the loop until [`Runtime::request_exit`] is called.
+  /// Stays inside the loop until [`Runtime::request_exit`] is called, or the
+  /// thread's quit request (`PostQuitMessage`) ends it.
   pub fn run_blocking(&self) -> Result<()> {
     if self.host.is_running() {
       return Err(Error::state("sweetview: the event loop is already running on this thread"));
@@ -152,7 +157,7 @@ impl Runtime {
       }
     });
     self.blocking.set(false);
-    ran.map_err(|e| Error::state(format!("sweetview: {e}")))
+    ran.map(|_code| ()).map_err(|e| Error::state(format!("sweetview: {e}")))
   }
 
   /// Ends the blocking run in progress. With none in progress it does nothing.
@@ -167,17 +172,35 @@ impl Runtime {
 
   /// Dispatches what is waiting and returns. Called while the loop is already
   /// running (from a callback) it does nothing.
-  pub fn pump(&self) {
-    let _ = self.host.run(|event, target, control_flow| {
+  ///
+  /// Returns false when the thread's quit request (`PostQuitMessage`) ended
+  /// the pump: the caller should stop pumping, as `pumpEvents` has always
+  /// reported. True otherwise.
+  pub fn pump(&self) -> bool {
+    let ran = self.host.run(|event, target, control_flow| {
       *control_flow = ControlFlow::Poll;
       self.dispatch(&event, target);
       if matches!(event, Event::MainEventsCleared) {
-        *control_flow = ControlFlow::Exit;
+        *control_flow = ControlFlow::ExitWithCode(PUMP_DONE);
       }
     });
+    let Ok(code) = ran else { return true };
     // A pumped loop always has its own repaint request queued, which the OS
     // serves before any timer; the timers are taken explicitly.
     self.signals.dispatch_due_timers();
+    // The run also ends when the OS hands `tao` a `WM_QUIT`, with code 0.
+    code == PUMP_DONE
+  }
+
+  /// Takes back a quit request of this thread: dispatches what is waiting
+  /// until the request comes out, and drops it. Returns at once when none was
+  /// made and nothing waits. Callable from inside either loop mode.
+  ///
+  /// Destroying a webview of the C++ library posts a quit request, which is
+  /// right after `run()` and wrong for one window of several; the caller takes
+  /// it back with this. Returns true when a request was taken back.
+  pub fn discard_quit(&self) -> bool {
+    sweetview_platform_loop::discard_quit()
   }
 
   /// Lends the loop's window target, for building windows.
@@ -312,10 +335,10 @@ fn build_event_loop() -> EventLoop<()> {
   EventLoopBuilder::new().build()
 }
 
+/// What the crate's tests share.
 #[cfg(all(test, windows))]
-mod tests {
+pub(crate) mod testing {
   use super::*;
-  use std::time::{Duration, Instant};
 
   /// Runs `body` as the UI thread with a fresh runtime, one test at a time.
   pub(crate) fn on_ui_thread(body: impl FnOnce(Rc<Runtime>)) {
@@ -331,6 +354,55 @@ mod tests {
     assert!(threads::claim_ui_thread());
     let _release = Release;
     body(Runtime::get().expect("runtime"));
+  }
+
+  /// Pumps until `done` or five seconds pass.
+  pub(crate) fn pump_until(runtime: &Runtime, done: impl Fn() -> bool) -> bool {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while !done() && std::time::Instant::now() < deadline {
+      runtime.pump();
+      std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    done()
+  }
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+  use super::testing::on_ui_thread;
+  use super::*;
+  use std::time::{Duration, Instant};
+
+  #[test]
+  fn a_quit_request_ends_a_pump_and_can_be_taken_back() {
+    on_ui_thread(|runtime| {
+      assert!(runtime.pump(), "nothing queued");
+      post_quit();
+      assert!(!runtime.pump(), "the quit request ended the pump");
+      assert!(runtime.pump(), "and is gone after it");
+      post_quit();
+      assert!(runtime.discard_quit());
+      assert!(runtime.pump());
+      // From inside the blocking run: taken back, the run goes on until asked to end.
+      let inner = runtime.clone();
+      let taken = Rc::new(Cell::new(false));
+      let seen = taken.clone();
+      runtime
+        .set_timeout(5, move || {
+          post_quit();
+          seen.set(inner.discard_quit());
+          let quitter = inner.clone();
+          inner.set_timeout(20, move || quitter.request_exit()).expect("timeout");
+        })
+        .expect("timeout");
+      runtime.run_blocking().expect("blocking run");
+      assert!(taken.get());
+    });
+  }
+
+  /// Asks this thread's loop to end, the way the C++ webview library does when a webview is destroyed.
+  fn post_quit() {
+    sweetview_platform_loop::post_quit_for_tests();
   }
 
   #[test]
@@ -360,8 +432,9 @@ mod tests {
       let counted = ticks.clone();
       let interval = runtime.set_interval(2, move || counted.set(counted.get() + 1)).expect("interval");
       let inner = runtime.clone();
+      // Long enough for a 2 ms interval to tick twice at the OS's default 15.6 ms timer resolution.
       runtime
-        .set_timeout(30, move || {
+        .set_timeout(100, move || {
           c.borrow_mut().push("timeout");
           assert!(inner.is_blocking());
           // A pump from inside the run is refused quietly.

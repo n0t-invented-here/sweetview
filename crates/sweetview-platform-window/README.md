@@ -11,7 +11,8 @@ Job: the window-level OS calls `tao` has no API for, and the events of any windo
 | `ForeignWindow` | an application's own window by handle, checked with `IsWindow`; implements `HasWindowHandle` so a webview can be mounted in it | `tao` wraps only windows it made |
 | `set_outer_bounds`, `move_outer`, `resize_outer` | outer position and size in one `SetWindowPos` | `tao` sets an outer position and an inner size, as two calls |
 | `set_layered_attributes` | `colorKey`, `opacity` | no `tao` API |
-| `show` (for windows `tao` did not make), `bring_to_front` | today's `show()` semantics: restore if minimised, no activation for `noActivate`, the foreground otherwise | `tao`'s `set_visible` activates, and `set_focus` is refused for a window that is not yet visible |
+| `show`, `bring_to_front` | today's `show()` semantics: restore if minimised, no activation for `noActivate`, the foreground otherwise | `tao`'s `set_visible` shows with `SW_SHOW`, which activates even a `WS_EX_NOACTIVATE` window (seen in the runtime's `show_activates_unless_no_activate` test) |
+| `WindowSubclass::set_hold_visibility` | a style rewrite never changes `WS_VISIBLE`, so `tao`, told afterwards that the window is visible, neither hides it nor activates it | `tao` writes `GWL_STYLE` from its own visibility flag, which is stale after a show it did not make |
 | `WindowIcons` | caption and taskbar icons from `.ico` bytes, the best image for each size, destroyed when replaced | `tao::window::Icon` takes one RGBA image for both sizes |
 | `mouse_buttons_down`, `left_button_down` | `GetAsyncKeyState` | no `tao` API outside its event handler |
 | `work_area` | a monitor's work area | `tao`'s `MonitorHandle` has bounds and scale, not the work area |

@@ -20,7 +20,7 @@ mod platform;
 mod platform;
 
 pub use loop_host::{AlreadyRunning, LoopHost};
-pub use platform::{SignalWindow, Waker};
+pub use platform::{discard_quit, post_quit_for_tests, SignalWindow, Waker};
 pub use signal::{Signal, SignalError, TimerId};
 
 /// Tests in this crate count the process's handles, so they run one at a time.
