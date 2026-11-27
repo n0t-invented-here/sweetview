@@ -107,12 +107,59 @@ Source of truth for behaviour: the bindings repository's `docs/` and `test/`, an
 
 Pure TypeScript and the same on every OS, so it is done once, here. The contract is `packages/sweetview-ipc`: a page talks through a `Transport` (`call`, `notify`, `onEvent`), and a host carries `CallFrame`, `ReplyFrame` and `EventFrame`. Two transports exist today: `webviewTransport()` and `wsTransport()`.
 
-- [ ] WT.1 A page-side `Transport` for Tauri 2 and one for Electron, each importable without pulling Bun code into a page bundle. A page built on `createBridge` runs unchanged on all four transports: only the line that picks the transport differs.
-- [ ] WT.2 The host side for Electron: the application's `Service` hosted in Electron's main process, carrying the same frames.
-- [ ] WT.3 The host side for Tauri 2: what a Tauri application adds so the page's calls reach a backend and events reach the page, with the frame format documented for a backend written in Rust.
-- [ ] WT.4 `bun test` covers each transport against a stand-in for its host API: a call and its reply, an error reply, `notify`, an event, and a large payload.
-- [ ] WT.5 The page of `demos/web-app` runs in a real Electron shell and a real Tauri 2 shell, each a small demo under `demos/`, calling a method and receiving an event. The run is written down with what was seen.
-- [ ] WT.6 `docs/` has a page for each transport, and `docs/ipc.md` lists all four.
+- [x] WT.1 A page-side `Transport` for Tauri 2 and one for Electron, each importable without pulling Bun code into a page bundle. A page built on `createBridge` runs unchanged on all four transports: only the line that picks the transport differs.
+
+    ```
+    $ grep -n "^import" packages/sweetview-ipc-electron/src/client.ts packages/sweetview-ipc-tauri/src/client.ts
+    packages/sweetview-ipc-electron/src/client.ts:5:import type { Frame, Transport } from "@n1h/sweetview-ipc";
+    packages/sweetview-ipc-electron/src/client.ts:6:import { ELECTRON_API_KEY, type SweetviewIpcApi } from "./channel";
+    packages/sweetview-ipc-tauri/src/client.ts:10:import type { CallFrame, EventFrame, ReplyFrame, Transport } from "@n1h/sweetview-ipc";
+    $ grep -n "Transport()" demos/web-app/packages/web-app-frontend/src/bridge.ts
+    13:const transport = isWebview() ? webviewTransport() : isElectron() ? electronTransport() : isTauri() ? tauriTransport() : wsTransport();
+    ```
+
+    The page of `demos/web-app` is the same source on all four; it ran on the Electron and Tauri transports in real shells (WT.5), and on the webview and WebSocket transports as before.
+
+- [x] WT.2 The host side for Electron: the application's `Service` hosted in Electron's main process, carrying the same frames.
+
+    `electronHost(service, ipcMain)` in `packages/sweetview-ipc-electron/src/server.ts`, `exposeSweetviewIpc` in `src/preload.ts` (context isolation on, node integration off). The web-app's real `Service` ran in Electron's main process: `rust-rewrite/evidence/wt5-electron.txt`.
+
+- [x] WT.3 The host side for Tauri 2: what a Tauri application adds so the page's calls reach a backend and events reach the page, with the frame format documented for a backend written in Rust.
+
+    `docs/ipc-tauri.md`, section "Rust backend": the command `sweetview_ipc` and its `frame` argument, the event `sweetview-ipc:event`, the JSON shape of each frame, `Ok`/`Err` replies, sessions and ordering. Reference implementation: `demos/web-app-tauri/src-tauri/src/sweetview_ipc.rs`, run for real in `rust-rewrite/evidence/wt5-tauri.txt`.
+
+- [x] WT.4 `bun test` covers each transport against a stand-in for its host API: a call and its reply, an error reply, `notify`, an event, and a large payload.
+
+    ```
+    $ bun test packages/sweetview-ipc-electron packages/sweetview-ipc-tauri
+     19 pass
+     0 fail
+     60 expect() calls
+    Ran 19 tests across 2 files.
+    ```
+
+    Each file covers a call and its reply, an error reply, `notify`, an event (broadcast and targeted) and a payload over 1 MB each way, against a stand-in for the host API.
+
+- [x] WT.5 The page of `demos/web-app` runs in a real Electron shell and a real Tauri 2 shell, each a small demo under `demos/`, calling a method and receiving an event. The run is written down with what was seen.
+
+    `rust-rewrite/evidence/wt5-electron.txt` (Electron 45.5.0) and `rust-rewrite/evidence/wt5-tauri.txt` (Tauri 2.12.7): in each, the unchanged page called `info.get` and showed its reply, then showed a note that arrived by the `notes.changed` event.
+
+    ```
+    PROBE {"location":"http://tauri.localhost/","transportBadge":"Tauri 2 · IPC","infoGet":{"host":"Tauri 2, Rust backend, 1 session","runtime":"Rust backend, Tauri 2.12.7","platform":"Windows / x64"},"notesBefore":"2","notesChangedEvent":{"notesAfter":"3","msFromClick":56}}
+    ```
+
+- [x] WT.6 `docs/` has a page for each transport, and `docs/ipc.md` lists all four.
+
+    ```
+    $ ls docs/ipc-*.md
+    docs/ipc-electron.md
+    docs/ipc-tauri.md
+    docs/ipc-ws.md
+    $ grep -n "^## Transports" docs/ipc.md
+    ```
+
+    `docs/ipc.md` has a "Transports" section listing `webviewTransport`, `wsTransport`, `electronTransport` and `tauriTransport`; `docs/README.md` and the root `README.md` list both new pages.
+
 
 ## W9. Removal and documents
 
