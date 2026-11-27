@@ -191,12 +191,19 @@ $ bun test packages/sweetview/src/tabs        (the third of three runs in a row;
  0 fail
 Ran 76 tests across 1 file.
 
-The move-loop control (packages/sweetview-native/test/win32-os.ts,
-moveLoopControl) ran first in the input fixture's process, on a plain window
-of its own: the OS ran its move loop for the injected press and the window
-followed the injected move, so no gesture check was skipped:
-$ bun packages/sweetview/test/fixtures/win-tabs-input.ts   (stderr)
+After the hosted runner's run of the merged branch, the gesture checks read
+the window inside the OS loop only once it has reached the expected place (or
+a limit passed), not after a fixed delay, since the runner applies a move
+later than this machine; and every window and cursor point is laid out inside
+the primary screen's work area, computed at run time. The move-loop control
+(packages/sweetview-native/test/win32-os.ts, moveLoopControl) waits the same
+way and now requires the window to be at the expected place while the button
+is down. It ran first in the input fixture's process, on a plain window of
+its own; no gesture check was skipped.
+
+$ bun packages/sweetview/test/fixtures/win-tabs-input.ts   (stderr, this machine's work area)
 move-loop control: {"ok":true,"readings":{"threadSawThePress":true,"inLoopBeforeTheMove":true,"inLoopAfterTheMove":true,"windowInTheLoop":{"x":90,"y":75},"windowAfter":{"x":90,"y":75},"expected":{"x":90,"y":75}}}
+layout: {"screen":{"x":0,"y":0,"width":2560,"height":1440},"workArea":{"x":0,"y":0,"width":2560,"height":1392},"laidOutIn":{"x":0,"y":0,"width":2560,"height":1392}}
 ok   strip.drag: the window follows the cursor, the held point stays under it
 ok   strip.resize top
 ok   strip.resize top-left
@@ -206,6 +213,24 @@ ok   strip.detach: a tab dragged out of a window with several tabs becomes a new
 ok   strip.detach: the only tab of a window drags the whole window
 ok   strip.detach: a tab dropped on another window's strip joins it at the drop index
 ok   real keys: Ctrl+T opens a tab and Ctrl+W closes it while the page has the keyboard focus
+
+$ SWEETVIEW_TEST_SMALL_SCREEN=1 bun packages/sweetview/test/fixtures/win-tabs-input.ts
+  (laid out as if the work area were 1024 x 768 at the screen's top-left; stderr)
+move-loop control: {"ok":true,"readings":{"threadSawThePress":true,"inLoopBeforeTheMove":true,"inLoopAfterTheMove":true,"windowInTheLoop":{"x":90,"y":75},"windowAfter":{"x":90,"y":75},"expected":{"x":90,"y":75}}}
+layout: {"screen":{"x":0,"y":0,"width":2560,"height":1440},"workArea":{"x":0,"y":0,"width":2560,"height":1392},"laidOutIn":{"x":0,"y":0,"width":1024,"height":768}}
+ok   strip.drag: the window follows the cursor, the held point stays under it
+ok   strip.resize top
+ok   strip.resize top-left
+ok   strip.resize top-right
+ok   strip.drag from a maximised window: it restores first and follows the cursor
+ok   strip.detach: a tab dragged out of a window with several tabs becomes a new window at the cursor, same size, keeping its page
+ok   strip.detach: the only tab of a window drags the whole window
+ok   strip.detach: a tab dropped on another window's strip joins it at the drop index
+ok   real keys: Ctrl+T opens a tab and Ctrl+W closes it while the page has the keyboard focus
+
+$ bun test packages/sweetview/src/tabs packages/sweetview-native/src/win32/window-native.test.ts
+  three runs in a row, then one with SWEETVIEW_TEST_SMALL_SCREEN=1:
+  88 pass, 0 fail each time; the startDrag test of window-native.test.ts ran (not skipped) each time.
 
 The focus check ("focus returns to the page after a strip action") ran and
 passed in every run above: the fixture now clicks its own window's selected
@@ -288,7 +313,10 @@ the one W1.3 / W1.4 check that needs the foreground; none is a tab check.
 - NotifyParentWindowPositionChanged is proven by a counter in the engine
   (Engine::moves_told, a test hook), not by an OS reading: WebView2 keeps the
   position it was told to itself.
-- On the hosted CI runner the OS starts no move loop for injected input (see
-  the coordinator's finding); there the gesture checks will be recorded as
-  skipped with the control's readings, not passed. They ran and passed on
-  this machine only.
+- The hosted CI runner does run the OS move loop for injected input (its
+  control read ok), but applies a move later than this machine, and its
+  screen is small. The gesture checks were changed for both (see "Runs");
+  their run on the runner after that change is not part of this file. The
+  small screen was proven here only by laying out in a 1024 x 768 area of a
+  larger screen (SWEETVIEW_TEST_SMALL_SCREEN=1), not on a 1024 x 768 display;
+  in that mode a maximised window still spans the real screen.

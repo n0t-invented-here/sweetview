@@ -139,7 +139,7 @@ const handleOf = (win: Window) => BigInt(win.handle!);
 // The move-loop control (test/win32-os.ts), run once before the gesture that needs the OS's move
 // loop: when the session's OS runs no move loop for a plain window of the test's own either, the
 // startDrag test is skipped for that reason rather than failed.
-const moveLoop = onWindows ? await (await api()).moveLoopControl(Screen.bounds()) : undefined;
+const moveLoop = onWindows ? await (await api()).moveLoopControl(Screen.bounds(), Screen.primary().workArea) : undefined;
 if (moveLoop?.ok === false) {
   console.log(`window-native.test: startDrag skipped: the session's OS started no move loop for the control window either (${moveLoop.why}): ${JSON.stringify(moveLoop.readings)}`);
 }
@@ -402,14 +402,25 @@ describe.if(onWindows)("Window on the binding: click-through, hit regions, the r
       const states: Record<string, ReturnType<typeof dragState>> = { beforeStartDrag: dragState() };
       native.scheduleTimeout(60, () => (states.inLoopBeforeTheMove = dragState()));
       native.scheduleTimeout(120, () => moveCursorAsInput(grip.x + 60, grip.y + 45));
-      native.scheduleTimeout(320, () => {
+      // No fixed delay before the reading: a session may apply the move well after the cursor got
+      // there (the hosted runner does). From inside the loop, wait until the window is where the
+      // cursor took it, or a generous limit passed; then read and release.
+      const readInLoop = (end: number) => {
+        const now = win.bounds();
+        if (now.x !== bounds.x + 60 || now.y !== bounds.y + 45) {
+          if (Date.now() < end && pressed) {
+            native.scheduleTimeout(20, () => readInLoop(end));
+            return;
+          }
+        }
         states.inLoopAfterTheMove = dragState();
-        duringDrag = win.bounds();
+        duringDrag = now;
         leftButton(false);
         pressed = false;
-      });
+      };
+      native.scheduleTimeout(140, () => readInLoop(Date.now() + 6000));
       win.startDrag();
-      await settle(1500, () => !pressed);
+      await settle(8000, () => !pressed);
       await settle(60);
       if (duringDrag?.x !== bounds.x + 60) console.warn(`window-native.test: startDrag: the window did not follow; ${JSON.stringify(states)}`);
       expect(duringDrag).toEqual({ x: bounds.x + 60, y: bounds.y + 45, width: 300, height: 200 });
@@ -423,7 +434,7 @@ describe.if(onWindows)("Window on the binding: click-through, hit regions, the r
       probe!.SetCursorPos(original.x, original.y);
       win.dispose();
     }
-  });
+  }, 20_000);
 });
 
 describe.if(onWindows)("Window.fromHandle on an application's own window (made here through bun:ffi)", () => {

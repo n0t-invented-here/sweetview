@@ -267,7 +267,9 @@ try {
   // screen, only where the frame is the window on top (another session's window may cover it).
   for (const appearance of ["light", "dark"] as const) {
     const name = `backdrop: the strip and the page areas in their own colours (${appearance})`;
-    const bare = make({ tabs: true, appearance, topmost: true, bounds: { x: 60, y: 60, width: 640, height: 420 } });
+    // Inside the primary screen's work area, whatever its size.
+    const work = Screen.primary().workArea;
+    const bare = make({ tabs: true, appearance, topmost: true, bounds: { x: work.x + 60, y: work.y + 60, width: Math.min(640, work.width - 120), height: Math.min(420, work.height - 120) } });
     bare.show();
     const bareHwnd = BigInt(bare.handle!);
     const bareScale = user32.GetDpiForWindow(bareHwnd) / 96;

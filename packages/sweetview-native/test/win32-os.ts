@@ -314,16 +314,19 @@ let control: Promise<MoveLoopControl> | undefined;
  * fire inside it). Run once per process; later calls answer the first run. The button is always
  * released, a watchdog ends the loop, and the cursor is put back.
  */
-export function moveLoopControl(desk: Desk): Promise<MoveLoopControl> {
-  return (control ??= runMoveLoopControl(desk));
+export function moveLoopControl(desk: Desk, area: Desk = desk): Promise<MoveLoopControl> {
+  return (control ??= runMoveLoopControl(desk, area));
 }
 
-async function runMoveLoopControl(desk: Desk): Promise<MoveLoopControl> {
+const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+
+async function runMoveLoopControl(desk: Desk, area: Desk): Promise<MoveLoopControl> {
   const native = binding();
   const WS_POPUP = 0x80000000;
   const WS_VISIBLE = 0x10000000;
   const WS_EX_TOPMOST = 0x8;
-  const bounds = { x: desk.x + 40, y: desk.y + 40, width: 240, height: 160 };
+  // Inside `area` (the primary screen's work area), with room for the move (50, 35).
+  const bounds = { x: area.x + 40, y: area.y + 40, width: 240, height: 160 };
   ownWindow().destroy(); // registers the class
   const hwnd = user32.CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE, wide(OWN_CLASS), wide(`move-loop control ${process.pid}`), WS_POPUP | WS_VISIBLE, bounds.x, bounds.y, bounds.width, bounds.height, 0n, 0n, hInstance(), null);
   if (hwnd === 0n) return { ok: false, why: `the control window could not be made (${kernel32.GetLastError()})`, readings: {} };
@@ -356,7 +359,7 @@ async function runMoveLoopControl(desk: Desk): Promise<MoveLoopControl> {
       }
     }
     if (why) return { ok: false, why, readings };
-    const watchdog = native.scheduleTimeout(4000, () => {
+    const watchdog = native.scheduleTimeout(10_000, () => {
       readings.watchdog = { inMoveSize: inMoveSize(), leftDown: user32.GetAsyncKeyState(0x01) < 0 };
       release();
       post(hwnd, 0x001f); // WM_CANCELMODE
@@ -366,21 +369,32 @@ async function runMoveLoopControl(desk: Desk): Promise<MoveLoopControl> {
     readings.threadSawThePress = await settle(2000, () => user32.GetKeyState(0x01) < 0);
     native.scheduleTimeout(60, () => void (readings.inLoopBeforeTheMove = inMoveSize()));
     native.scheduleTimeout(120, () => injectCursorMove(grip.x + 50, grip.y + 35, desk));
-    native.scheduleTimeout(320, () => {
-      readings.inLoopAfterTheMove = inMoveSize();
+    // No fixed delay before the reading: a session may apply the move well after the cursor got
+    // there (the hosted runner does). From inside the loop, wait until the window is where the
+    // cursor took it, or a generous limit passed; then read and release.
+    const expected = { x: bounds.x + 50, y: bounds.y + 35 };
+    const readInLoop = (end: number) => {
       const r = windowRect(hwnd);
+      const there = r.left === expected.x && r.top === expected.y;
+      if (!there && Date.now() < end && pressed) {
+        native.scheduleTimeout(20, () => readInLoop(end));
+        return;
+      }
+      readings.inLoopAfterTheMove = inMoveSize();
       readings.windowInTheLoop = { x: r.left, y: r.top };
       release();
-    });
+    };
+    native.scheduleTimeout(140, () => readInLoop(Date.now() + 6000));
     // A title bar's press, as DefWindowProc gets it: blocks in the OS move loop until the release.
     const at = BigInt.asUintN(16, BigInt(grip.x)) | (BigInt.asUintN(16, BigInt(grip.y)) << 16n);
     user32.SendMessageW(hwnd, 0x00a1, 2n, at); // WM_NCLBUTTONDOWN, HTCAPTION
-    await settle(1000, () => !pressed);
+    await settle(8000, () => !pressed);
     native.cancelTimeout(watchdog);
     const r = windowRect(hwnd);
     readings.windowAfter = { x: r.left, y: r.top };
-    readings.expected = { x: bounds.x + 50, y: bounds.y + 35 };
-    const ok = readings.inLoopAfterTheMove === true && r.left === bounds.x + 50 && r.top === bounds.y + 35;
+    readings.expected = expected;
+    // The window must be where the cursor took it while the button is still down, and stay there.
+    const ok = readings.inLoopAfterTheMove === true && same(readings.windowInTheLoop, expected) && r.left === expected.x && r.top === expected.y;
     return ok ? { ok, readings } : { ok, why: "the OS started no move loop for the control window, or the window did not follow the cursor", readings };
   } finally {
     release();
