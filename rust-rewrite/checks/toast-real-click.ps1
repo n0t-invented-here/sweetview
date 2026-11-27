@@ -2,8 +2,9 @@
 #
 #   pwsh -NoProfile -File rust-rewrite/checks/toast-real-click.ps1 -Title "Menubar Notify" [-WaitSeconds 10]
 #
-# The banner is found through UI Automation: a top-level window of the shell whose text holds
-# the notification's title. The cursor is moved onto the banner's text and a left click is
+# The banner is found where the shell shows it (the bottom right corner of the primary screen),
+# and its text is read through UI Automation: it must hold the notification's title. The cursor
+# is moved onto the banner's text and a left click is
 # injected with SendInput, so the click travels through the shell as a person's does and comes
 # back to the app as the toast's Activated event. The cursor is restored.
 #
@@ -23,6 +24,13 @@ public static class TC {
   [DllImport("user32.dll")] public static extern uint SendInput(uint n, INPUT[] inputs, int size);
   [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
   [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT p);
+  [DllImport("user32.dll")] public static extern IntPtr WindowFromPoint(POINT p);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetWindowTextW(IntPtr h, System.Text.StringBuilder s, int n);
+  // The toast banner's window at a screen point, or zero.
+  public static IntPtr BannerAt(int x, int y) {
+    POINT p; p.X = x; p.Y = y; var h = WindowFromPoint(p); var t = new System.Text.StringBuilder(64); GetWindowTextW(h, t, 64);
+    return t.ToString() == "New notification" ? h : IntPtr.Zero;
+  }
   public static void Mouse(uint flags, int dx, int dy) {
     var i = new INPUT[1]; i[0].type = 0; i[0].mi.dx = dx; i[0].mi.dy = dy; i[0].mi.dwFlags = flags; SendInput(1, i, Marshal.SizeOf(typeof(INPUT)));
   }
@@ -31,11 +39,17 @@ public static class TC {
 
 $auto = [System.Windows.Automation.AutomationElement]
 $tree = [System.Windows.Automation.TreeScope]
+Add-Type -AssemblyName System.Windows.Forms
+# The banner's window is the shell's own and is not among the desktop's children in UI Automation,
+# so it is found where it shows, in the bottom right corner of the primary screen's work area, by
+# its window title, and its text is then read through UI Automation from that window's handle.
 function Find-Toast {
-  foreach ($window in $auto::RootElement.FindAll($tree::Children, [System.Windows.Automation.Condition]::TrueCondition)) {
+  $area = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
+  foreach ($dy in 60, 100, 140, 180) {
+    $h = [TC]::BannerAt($area.Right - 200, $area.Bottom - $dy)
+    if ($h -eq [IntPtr]::Zero) { continue }
     try {
-      $class = $window.Current.ClassName
-      if ($class -ne "Windows.UI.Core.CoreWindow" -and $class -notlike "*Toast*" -and $class -notlike "*Notification*" -and $class -ne "XamlExplorerHostIslandWindow") { continue }
+      $window = $auto::FromHandle($h)
       foreach ($e in $window.FindAll($tree::Descendants, (New-Object System.Windows.Automation.PropertyCondition($auto::ControlTypeProperty, [System.Windows.Automation.ControlType]::Text)))) {
         if ($e.Current.Name -eq $Title) { return @{ Window = $window; Text = $e } }
       }

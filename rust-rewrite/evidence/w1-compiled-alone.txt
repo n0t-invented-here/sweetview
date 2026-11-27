@@ -1,0 +1,47 @@
+W1.6: a demo's compiled executable, copied alone into an empty folder, runs.
+
+The executables are the ones `just compile` built (rust-rewrite/evidence/w8-compile-pack.txt). Each was copied, alone,
+into a new empty folder under the system temp directory and started from there: no .node file, no
+node_modules and no source beside it, so the binding it runs on is the one embedded in the executable.
+
+== demos/menubar-only (a tray icon and its menu; no window, no webview; the Bun-timer loop) ==
+
+The folder, then demos/menubar-only/scripts/tray-drive.ts, which starts the executable and drives its tray
+icon with the messages the shell posts:
+
+files in the folder: menubar-only-windows-x64.exe
+started: <TEMP>\sv-alone-f98cc339\menubar-only-windows-x64.exe
+tray icon window found (class tray_icon_app) in the app's process
+right click -> menu: ["Up for 0 s [disabled]","----","Clock in Tooltip","----","Quit Menubar Only"]
+Escape -> menu closed, nothing chosen
+right click again -> menu: ["Up for 2 s [disabled]","----","Clock in Tooltip","----","Quit Menubar Only"]
+Down, Down, Return -> chose 'Clock in Tooltip'
+right click again -> menu: ["Up for 2 s [disabled]","----","Clock in Tooltip [checked]","----","Quit Menubar Only"]
+Down, Down, Down, Return -> chose 'Quit Menubar Only'
+process exit: 0
+stderr: (empty)
+tray-drive exit code: 0
+
+== demos/web-app (a webview window, a worker, a tray icon; the blocking loop) ==
+
+The folder, the window, demos/web-app/scripts/tray-click-probe.ps1 (the shell's click messages: one click toggles the
+window after the double-click time, a double click toggles it once), then a real right click on the icon
+Explorer shows (rust-rewrite/checks/tray-real-click.ps1) choosing Quit:
+
+files in the folder: web-app-windows-x64.exe
+window titled 'Web App' on screen: True
+--- scripts/tray-click-probe.ps1 (the shell's click messages posted to the tray icon's window)
+start: visible=True
+300ms after one left click: visible=True (still waiting for a second click)
+1.3s after one left click: visible=False (single click fired)
+after another single click: visible=True
+after a double click: visible=False (toggled once, not twice)
+--- real right click on the tray icon; Up, Return chooses the menu's last item (Quit Web App)
+overflow chevron: 'Show Hidden Icons', left click at 2456,1416
+icon found in the overflow flyout: 'Web App' (ControlType.Button, class SystemTray.NormalButton, at 2356,1255 size 40x40)
+window under the icon's centre: TopLevelWindowForOverflowXamlIsland
+right click (SendInput) at 2376,1275
+the app's popup menu is on screen: True
+Up, Return pressed; the menu is on screen: False
+app exit code: 0
+stderr: (empty)

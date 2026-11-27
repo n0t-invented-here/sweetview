@@ -138,9 +138,16 @@ try {
       try { if ($e.Current.AutomationId -eq "SystemTrayIcon" -and $e.Current.ClassName -eq "SystemTray.NormalButton") { $chevron = $e; break } } catch {}
     }
     if (-not $chevron) { throw "the icon is not on the taskbar and the overflow chevron was not found" }
-    "overflow chevron: '$($chevron.Current.Name)', left click at $(Click-At $chevron.Current.BoundingRectangle 0x0002 0x0004)"
-    Start-Sleep -Milliseconds 700
+    # The flyout may be open already (something else opened it, or an earlier run left it open):
+    # the chevron toggles, so it is clicked only when the icon is not on show yet.
     $icon = Find-Icon (Top-Window "TopLevelWindowForOverflowXamlIsland")
+    if ($icon -and $icon.Current.BoundingRectangle.Width -gt 0 -and -not $icon.Current.IsOffscreen) {
+      "overflow flyout already open"
+    } else {
+      "overflow chevron: '$($chevron.Current.Name)', left click at $(Click-At $chevron.Current.BoundingRectangle 0x0002 0x0004)"
+      Start-Sleep -Milliseconds 700
+      $icon = Find-Icon (Top-Window "TopLevelWindowForOverflowXamlIsland")
+    }
     $where = "the overflow flyout"
   }
   if (-not $icon) { throw "no notification icon whose tooltip starts with '$Tooltip'" }

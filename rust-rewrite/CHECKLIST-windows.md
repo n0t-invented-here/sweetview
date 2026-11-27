@@ -125,7 +125,23 @@ Items name today's API members to say which behaviour is meant. The API may chan
 
     `rust-rewrite/evidence/w1-boundary.txt`, "a UI-thread function called from a Worker throws, and the worker is not the UI thread": each of nine UI-thread functions throws `sweetview: this call must be made on the UI thread` in a `Worker`; `wake` works there. The functions documented as callable from any thread (`completeWebviewRequest` and the streaming ones) answer real requests from a `Worker` in `rust-rewrite/evidence/w2-webview.txt`.
 
-- [ ] W1.6 `bun build --compile` embeds the binding: a demo's compiled executable, copied alone into an empty folder, runs.
+- [x] W1.6 `bun build --compile` embeds the binding: a demo's compiled executable, copied alone into an empty folder, runs.
+
+    `rust-rewrite/evidence/w1-compiled-alone.txt`: two demos' executables from `just compile`, each copied alone into a new empty folder under the temp directory (the folder listing shows the one file) and run from there. `menubar-only-windows-x64.exe`: its tray icon appears, its menu is read item by item on each open, an item is checked, Quit ends it:
+
+    ```
+    files in the folder: menubar-only-windows-x64.exe
+    tray icon window found (class tray_icon_app) in the app's process
+    right click -> menu: ["Up for 0 s [disabled]","----","Clock in Tooltip","----","Quit Menubar Only"]
+    Down, Down, Return -> chose 'Clock in Tooltip'
+    right click again -> menu: ["Up for 2 s [disabled]","----","Clock in Tooltip [checked]","----","Quit Menubar Only"]
+    Down, Down, Down, Return -> chose 'Quit Menubar Only'
+    process exit: 0
+    stderr: (empty)
+    ```
+
+    `web-app-windows-x64.exe` (a webview window with a worker and a tray): its window appears, tray clicks toggle it, a real right click on the icon chooses Quit, exit code 0.
+
 - [x] W1.7 The binding loads a second time inside a Bun `Worker` while the UI thread holds it. From the worker, a frame written to the ring followed by the wake call runs the drain function on the UI thread, while the UI thread is inside the blocking loop and under the timer-pumped loop. This replaces today's second `dlopen` of the C library in `packages/sweetview/src/worker.ts` and its `webview_dispatch` call. The spike did not prove this; prove it here before W2.
 
     `rust-rewrite/evidence/w1-boundary.txt`: "from a Worker, a frame written to the ring then wake() runs the drain on the UI thread inside the blocking loop" and "... under the timer-pumped loop". The worker loads the binding through the same `require`; no `bun:ffi` and no second `dlopen` is involved.
@@ -255,7 +271,31 @@ Source of truth for behaviour: the bindings repository's `docs/` and `test/`, an
 
     `rust-rewrite/evidence/w4-windows.txt`: "Screen exposes primary, all, at, bounds, and cursor without a window", "Screen.of a window is the screen its frame is on; Screen.bounds holds every screen", "Screen.of(hwnd) resolves the monitor hosting a message window".
 
-- [ ] W4.7 `packages/sweetview-native/src/win32/window.test.ts` and `win32.test.ts` pass. `demos/desktop-pet` and `demos/web-app` run and compile.
+- [x] W4.7 `packages/sweetview-native/src/win32/window.test.ts` and `win32.test.ts` pass. `demos/desktop-pet` and `demos/web-app` run and compile.
+
+    `rust-rewrite/evidence/w4-demos.txt`.
+
+    ```
+    $ bun test packages/sweetview-native/src/win32/window.test.ts packages/sweetview-native/src/win32/win32.test.ts
+     25 pass
+     0 fail
+    Ran 25 tests across 2 files.
+    ```
+
+    `demos/desktop-pet` and `demos/web-app` compile (`rust-rewrite/evidence/w8-compile-pack.txt`) and run, compiled and from source. The pet, driven by its own `scripts/probe.ps1` with real input: the OS hands a click on its body to the pet's window and a click on its transparent corners to the desktop behind it, and a press-and-drag moves it:
+
+    ```
+    centre       (1632,1344) -> 44108116 'Pet'
+    lower body   (1632,1400) -> 44108116 'Pet'
+    top-left     (1542,1254) -> 65784 'Program Manager'
+    top-right    (1722,1254) -> 65784 'Program Manager'
+    while held: window at 1756,1188
+    after drop : window at 1756,1248  (moved 220 px right, back on the ground: True)
+    app exit code: 0
+    ```
+
+    The web-app from source: its window appears, a real left click on its tray icon hides it, a real right click chooses Quit, exit code 0; its compiled executable runs alone in an empty folder (`rust-rewrite/evidence/w1-compiled-alone.txt`).
+
 - [x] W4.8 An application's own `bun:ffi` modal dialog and popup menu, opened from a `uiMethods` call, work under both loop modes. A fixture under `rust-rewrite/compat/` does this.
 
     `rust-rewrite/evidence/w4-windows.txt`, `rust-rewrite/compat/own-modal-loops.test.ts`: an application's own `MessageBoxW` and `TrackPopupMenu`, called through `bun:ffi` from a handler, under the blocking loop and under `runEventLoop`; inside each modal loop a native timeout fires and a wake drains. 2 pass, 0 fail.
@@ -284,7 +324,28 @@ Source of truth for behaviour: the bindings repository's `docs/` and `test/`, an
 
     `rust-rewrite/evidence/w5-tray-menus.txt`: "pickFolder (binding: rfd)" (cancelled under the pumped mode and inside the blocking loop; a folder chosen, with the dialog owned by the given window) and "app-wide settings (binding)" (`setAppMenu`, `setAppIcon`, `setActivationPolicy`, which change nothing on Windows, as before). `Clipboard`: `rust-rewrite/evidence/w5-clipboard.txt`, "clipboard round-trips Unicode and empty text, and clears".
 
-- [ ] W5.5 `notifier.test.ts` passes. `demos/menubar-only` and `demos/menubar-notify` run and compile; the tray icon is clicked by hand and the result written down.
+- [x] W5.5 `notifier.test.ts` passes. `demos/menubar-only` and `demos/menubar-notify` run and compile; the tray icon is clicked by hand and the result written down.
+
+    `rust-rewrite/evidence/w5-demos-real-clicks.txt`.
+
+    ```
+    $ bun test packages/sweetview-native/src/win32/notifier.test.ts
+     4 pass
+     0 fail
+    ```
+
+    `demos/menubar-only` and `demos/menubar-notify` compile (`rust-rewrite/evidence/w8-compile-pack.txt`) and run. The tray icon was not clicked by a hand: nobody is at this machine. It was clicked with real mouse input instead, which travels the same way from the shell onwards: `rust-rewrite/checks/tray-real-click.ps1` finds the icon Explorer shows through UI Automation, moves the cursor onto it and injects the press with `SendInput`; Explorer posts the icon's message, the app opens its menu, typed keys choose an item. What was seen: in `menubar-only`, "Clock in Tooltip" chosen and the icon's tooltip then carrying the time (`'Menubar Only · 10:33:56 AM'`), then Quit and exit code 0, from source and compiled; in `menubar-notify` (compiled), "Send Notification Now" chosen from the tray menu, the toast appearing, a real left click on the toast banner (`rust-rewrite/checks/toast-real-click.ps1`) coming back as the notification's click, then Quit. The app's own log of that run:
+
+    ```
+    started; log at <LOCALAPPDATA>\menubar-notify.log
+    page ready
+    Sent menubar-notify-1
+    Clicked menubar-notify-1, sent at 10:35:40 AM
+    quit
+    ```
+
+    A click by a person is listed for the owner in `rust-rewrite/OWNER-ACTIONS.md`, section 4.
+
 
 ## W6. Activation
 
