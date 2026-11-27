@@ -6,6 +6,7 @@
 use std::marker::PhantomData;
 
 use crate::signal::{Signal, SignalError, TimerId};
+use crate::ResourceCounts;
 
 /// See the Windows implementation for the contract.
 pub struct SignalWindow {
@@ -53,4 +54,12 @@ pub fn post_quit_for_tests() {}
 /// See the Windows implementation for the contract.
 pub fn messages_waiting() -> bool {
   false
+}
+
+/// See the Windows implementation for the contract. Nothing is queued here.
+pub fn dispatch_waiting() {}
+
+/// See the Windows implementation for the contract. Not counted here yet.
+pub fn resource_counts() -> ResourceCounts {
+  ResourceCounts { user_objects: 0, gdi_objects: 0, kernel_handles: 0 }
 }

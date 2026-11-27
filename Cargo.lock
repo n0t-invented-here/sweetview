@@ -2150,6 +2150,7 @@ dependencies = [
 name = "sweetview-platform-loop"
 version = "1.0.0"
 dependencies = [
+ "raw-window-handle",
  "tao",
  "windows",
 ]

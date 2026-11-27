@@ -1,8 +1,7 @@
 //! Access to the event loop's window target while the loop is running.
 
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::fmt;
-use std::ptr::NonNull;
 
 use tao::event::Event;
 use tao::event_loop::{ControlFlow, EventLoop, EventLoopWindowTarget};
@@ -25,29 +24,25 @@ impl std::error::Error for AlreadyRunning {}
 /// `run_return` borrows the loop mutably for as long as it runs, and gives the
 /// window target only to its event handler. Code that the OS calls from inside
 /// the run but outside that handler (a WebView2 callback, a timer, a tray
-/// click) still has to create windows. `LoopHost` remembers the target `tao`
-/// handed to the handler for the duration of the run and lends it out through
-/// [`LoopHost::with_target`].
+/// click) still has to create windows. `LoopHost` keeps its own handle on the
+/// loop's window target, taken when the loop is handed over, and lends it out
+/// through [`LoopHost::with_target`]. `tao`'s `EventLoopWindowTarget` is
+/// `Clone`, and a clone shares the loop's thread, message target and runner
+/// with the one `tao` passes to the event handler, so a window made through it
+/// is made exactly as one made inside the handler. (`tao` derives that
+/// `Clone`, so the loop's user-event type must be `Clone` too.)
 ///
 /// Not `Send` and not `Sync`: it belongs to the thread that made it.
 pub struct LoopHost<T: 'static> {
   event_loop: RefCell<EventLoop<T>>,
-  /// The target of the run in progress. Set only by `run`, cleared by its guard.
-  running: Cell<Option<NonNull<EventLoopWindowTarget<T>>>>,
+  /// The loop's window target, cloned from `event_loop` when the host was made.
+  target: EventLoopWindowTarget<T>,
 }
 
-/// Clears `LoopHost::running` when a run ends, including by unwinding.
-struct RunGuard<'a, T: 'static>(&'a LoopHost<T>);
-
-impl<T: 'static> Drop for RunGuard<'_, T> {
-  fn drop(&mut self) {
-    self.0.running.set(None);
-  }
-}
-
-impl<T: 'static> LoopHost<T> {
+impl<T: Clone + 'static> LoopHost<T> {
   pub fn new(event_loop: EventLoop<T>) -> Self {
-    Self { event_loop: RefCell::new(event_loop), running: Cell::new(None) }
+    let target = (*event_loop).clone();
+    Self { event_loop: RefCell::new(event_loop), target }
   }
 
   /// True while [`LoopHost::run`] is on the stack.
@@ -61,39 +56,17 @@ impl<T: 'static> LoopHost<T> {
   ///
   /// A call made while a run is already on the stack returns
   /// [`AlreadyRunning`] and runs nothing.
-  pub fn run<F>(&self, mut handler: F) -> Result<i32, AlreadyRunning>
+  pub fn run<F>(&self, handler: F) -> Result<i32, AlreadyRunning>
   where
     F: FnMut(Event<'_, T>, &EventLoopWindowTarget<T>, &mut ControlFlow),
   {
     let mut event_loop = self.event_loop.try_borrow_mut().map_err(|_| AlreadyRunning)?;
-    let _guard = RunGuard(self);
-    let code = event_loop.run_return(|event, target, control_flow| {
-      // The same target every time; recorded on each event so it is in place
-      // before the first callback that could ask for it.
-      self.running.set(Some(NonNull::from(target)));
-      handler(event, target, control_flow);
-    });
-    Ok(code)
+    Ok(event_loop.run_return(handler))
   }
 
   /// Lends the loop's window target, whether or not the loop is running.
-  ///
-  /// Returns `None` only in the window between a run starting and `tao`
-  /// delivering its first event, when no callback has run yet.
-  pub fn with_target<R>(&self, f: impl FnOnce(&EventLoopWindowTarget<T>) -> R) -> Option<R> {
-    if let Some(target) = self.running.get() {
-      // SAFETY: `running` is set only inside `run`, from the reference `tao`
-      // passed to the event handler. That reference borrows the `EventLoop`
-      // held by `run`'s `RefMut` and lives for the whole `run_return` call.
-      // `RunGuard` clears `running` before `run` returns or unwinds, and
-      // `LoopHost` is neither `Send` nor `Sync`, so this is the same thread
-      // and the `run` frame that set it is still on the stack below us.
-      let target = unsafe { target.as_ref() };
-      return Some(f(target));
-    }
-    // Not running: nothing else holds the loop, so a shared borrow is free.
-    let event_loop = self.event_loop.try_borrow().ok()?;
-    Some(f(&event_loop))
+  pub fn with_target<R>(&self, f: impl FnOnce(&EventLoopWindowTarget<T>) -> R) -> R {
+    f(&self.target)
   }
 }
 
@@ -109,7 +82,7 @@ mod tests {
     let host: LoopHost<()> = LoopHost::new(EventLoopBuilder::new().with_any_thread(true).build());
     assert!(!host.is_running());
     // Outside a run: the target comes from the loop itself.
-    assert_eq!(host.with_target(|_| 1), Some(1));
+    assert_eq!(host.with_target(|_| 1), 1);
 
     let mut nested = None;
     let mut inside = None;
@@ -117,7 +90,7 @@ mod tests {
       .run(|event, _target, control_flow| {
         if let Event::NewEvents(_) = event {
           // Inside a run the loop is borrowed mutably, and the target is still reachable.
-          inside = host.with_target(|_| host.is_running());
+          inside = Some(host.with_target(|_| host.is_running()));
           nested = Some(host.run(|_, _, flow| *flow = ControlFlow::Exit));
         }
         *control_flow = ControlFlow::Exit;
@@ -126,6 +99,6 @@ mod tests {
     assert_eq!(inside, Some(true));
     assert_eq!(nested, Some(Err(AlreadyRunning)));
     assert!(!host.is_running());
-    assert_eq!(host.with_target(|_| 2), Some(2));
+    assert_eq!(host.with_target(|_| 2), 2);
   }
 }
