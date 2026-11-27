@@ -32,14 +32,29 @@ Items name today's API members to say which behaviour is meant. The API may chan
 
 ## W1. The boundary
 
-- [ ] W1.1 The binding loads with a literal `require` from `packages/sweetview-native`. A missing or wrong-platform binary fails with a message that names the file looked for.
-- [ ] W1.2 A JavaScript function passed to the binding is called from inside the blocking loop and its return value comes back. Each call opens its own handle scope. Proven by a `bun test` test; `rust-rewrite/spike/` shows the mechanism.
+- [x] W1.1 The binding loads with a literal `require` from `packages/sweetview-native`. A missing or wrong-platform binary fails with a message that names the file looked for.
+
+    `rust-rewrite/evidence/w1-boundary.txt`, "native binding: loading (W1.1)": the binding loads through the literal `require` in `packages/sweetview-native/src/binding.ts`; a missing file and a file for another platform each throw `sweetview: the native binding could not be loaded from <file>: ...`. 3 pass.
+
+- [x] W1.2 A JavaScript function passed to the binding is called from inside the blocking loop and its return value comes back. Each call opens its own handle scope. Proven by a `bun test` test; `rust-rewrite/spike/` shows the mechanism.
+
+    `rust-rewrite/evidence/w1-boundary.txt`: "a JavaScript function is called from inside the blocking loop and its return value comes back" and "each call opens its own handle scope: ten thousand callbacks inside one blocking run". `JsCallback::call` in `crates/sweetview-napi/src/callback.rs` runs every call inside `Env::run_in_scope`.
+
 - [ ] W1.3 A JavaScript exception thrown from such a callback is caught at the boundary, logged with the message today's code logs, and does not unwind into the OS. A test throws from each callback kind.
 - [ ] W1.4 A callback that removes itself or destroys its owner from inside its own call works. A test does both.
-- [ ] W1.5 Calling a UI-thread function from a `Worker` throws `sweetview: this call must be made on the UI thread`. The functions `docs/` documents as callable from any thread work from a `Worker`.
+- [x] W1.5 Calling a UI-thread function from a `Worker` throws `sweetview: this call must be made on the UI thread`. The functions `docs/` documents as callable from any thread work from a `Worker`.
+
+    `rust-rewrite/evidence/w1-boundary.txt`, "a UI-thread function called from a Worker throws, and the worker is not the UI thread": each of nine UI-thread functions throws `sweetview: this call must be made on the UI thread` in a `Worker`; `wake` works there. The functions documented as callable from any thread (`completeWebviewRequest` and the streaming ones) answer real requests from a `Worker` in `rust-rewrite/evidence/w2-webview.txt`.
+
 - [ ] W1.6 `bun build --compile` embeds the binding: a demo's compiled executable, copied alone into an empty folder, runs.
-- [ ] W1.7 The binding loads a second time inside a Bun `Worker` while the UI thread holds it. From the worker, a frame written to the ring followed by the wake call runs the drain function on the UI thread, while the UI thread is inside the blocking loop and under the timer-pumped loop. This replaces today's second `dlopen` of the C library in `packages/sweetview/src/worker.ts` and its `webview_dispatch` call. The spike did not prove this; prove it here before W2.
-- [ ] W1.8 A handler run on the UI thread opens a modal loop of its own (a message box, a popup menu) and, while it is open, the page's calls are still answered and worker replies still drain, as `scheduleDeferred` in `packages/sweetview/src/app.ts` relies on today. Proven under both loop modes.
+- [x] W1.7 The binding loads a second time inside a Bun `Worker` while the UI thread holds it. From the worker, a frame written to the ring followed by the wake call runs the drain function on the UI thread, while the UI thread is inside the blocking loop and under the timer-pumped loop. This replaces today's second `dlopen` of the C library in `packages/sweetview/src/worker.ts` and its `webview_dispatch` call. The spike did not prove this; prove it here before W2.
+
+    `rust-rewrite/evidence/w1-boundary.txt`: "from a Worker, a frame written to the ring then wake() runs the drain on the UI thread inside the blocking loop" and "... under the timer-pumped loop". The worker loads the binding through the same `require`; no `bun:ffi` and no second `dlopen` is involved.
+
+- [x] W1.8 A handler run on the UI thread opens a modal loop of its own (a message box, a popup menu) and, while it is open, the page's calls are still answered and worker replies still drain, as `scheduleDeferred` in `packages/sweetview/src/app.ts` relies on today. Proven under both loop modes.
+
+    `rust-rewrite/evidence/w1-boundary.txt`, "a modal loop opened by a handler (W1.8)", both loop modes. From the fixture's own report in the blocking run: `{"modalOpened":true,"modalReturned":true,"pageCallsInsideModal":6,"drainsInsideModal":1,"timeoutsInsideModal":1,"framesFromWorker":["written while the box was open"]}`; the pumped run reports the same counts.
+
 
 ## W2. The webview
 
@@ -59,12 +74,35 @@ Source of truth for behaviour: the bindings repository's `docs/` and `test/`, an
 
 ## W3. Input hooks
 
-- [ ] W3.1 `installMouseHook`: every event kind, coordinates, wheel notches, modifiers, swallow per event, one hook per process, dispose from inside the handler.
-- [ ] W3.2 `installKeyboardHook`: down, up, repeat, DOM codes, raw code, modifiers after the event, swallow per event.
-- [ ] W3.3 `permissions`: `needed`, `status`, `request`, `ready`, `autoRequest`, with the Windows answers.
-- [ ] W3.4 The key-code tables of `key_codes.hh` are ported with every test of the C++ fork that covers them.
+- [x] W3.1 `installMouseHook`: every event kind, coordinates, wheel notches, modifiers, swallow per event, one hook per process, dispose from inside the handler.
+
+    `rust-rewrite/evidence/w3-input.txt`: the 13 integration tests of `crates/sweetview-platform-input/tests/windows_hooks.rs` drive a real `WH_MOUSE_LL` hook with `SendInput`: every event kind at the cursor position, wheel notches 1, -2 and 0.5, modifiers, a swallowed move that does not move the pointer, one hook per process (from another thread too), a hook dropped from inside its handler. Through the TypeScript API: "a move arrives with coordinates and modifiers, a second hook is refused, dispose is idempotent" and "a hook may dispose itself from inside its handler, and a handler that throws does not swallow".
+
+- [x] W3.2 `installKeyboardHook`: down, up, repeat, DOM codes, raw code, modifiers after the event, swallow per event.
+
+    `rust-rewrite/evidence/w3-input.txt`: down, repeat and up with `"F24"` and raw `0x87`, a swallowed key that never reaches the system (the next press is a down, not a repeat), modifiers after the event, scan-code injection, in the same integration tests; through the TypeScript API, "down, repeat and up arrive with the DOM code and the raw code, and a swallowed key is swallowed per event".
+
+- [x] W3.3 `permissions`: `needed`, `status`, `request`, `ready`, `autoRequest`, with the Windows answers.
+
+    `rust-rewrite/evidence/w3-input.txt`, "permissions (W3.3)": on Windows `needed` is empty for both features, `status` and `request` are `"not-applicable"` (what the C++ library and `permissions.md` answer there), `ready` is true, `autoRequest` defaults to true and can be set, and a number that names no permission throws `webview permission call failed: error -2`.
+
+- [x] W3.4 The key-code tables of `key_codes.hh` are ported with every test of the C++ fork that covers them.
+
+    `rust-rewrite/evidence/w3-input.txt`: `cargo test -p sweetview-keycodes`, 23 passed. Both tables of `key_codes.hh` are ported (Windows 149 entries, macOS 121, each count asserted), with the C++ fork's table tests and its "scan code from a bare virtual key" test.
+
 - [ ] W3.5 The bindings' `examples/input-hooks.ts` runs against the new package, edited only for API changes that `docs/upgrading.md` records.
-- [ ] W3.6 The hooks, `permissions` and every other name in `rust-rewrite/reference/bindings-exports.txt` are exported by a Sweetview package. Today an application imports them from `@n1h/sweetview-webview-bun`, which Sweetview does not re-export; `docs/upgrading.md` gives the new import for each.
+- [x] W3.6 The hooks, `permissions` and every other name in `rust-rewrite/reference/bindings-exports.txt` are exported by a Sweetview package. Today an application imports them from `@n1h/sweetview-webview-bun`, which Sweetview does not re-export; `docs/upgrading.md` gives the new import for each.
+
+    ```
+    $ bun rust-rewrite/verify.ts windows --quick
+    PASS  api-surface
+          194 exports of 14 package entry points at pre-rust-rewrite: 194 kept, 0 changed with an upgrade row
+          32 exports of the bindings package: 32 exported by Sweetview, 0 with an upgrade row
+          0 unaccounted for
+    ```
+
+    Every name of `rust-rewrite/reference/bindings-exports.txt` is exported by `@n1h/sweetview-native` (`packages/sweetview-native/src/index.ts`: `webview.ts`, `input-hooks.ts`, `permissions.ts`), and so by `@n1h/sweetview/native`.
+
 
 ## W4. Loop, windows, overlays
 
