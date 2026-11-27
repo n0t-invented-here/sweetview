@@ -25,8 +25,58 @@ Items name today's API members to say which behaviour is meant. The API may chan
 
     `rust-rewrite/evidence/baseline-windows.txt`: typecheck exit 0; `bun test` 174 pass, 17 skip, 0 fail, 766 expect() calls, 191 tests across 30 files. Each test is listed by name.
 
-- [ ] W0.3 A Cargo workspace exists at the repository root, under `crates/`. Each crate has one job that its `README.md` states in a sentence. The binding (the `napi` crate) and the logic crates forbid `unsafe`; only crates named `sweetview-platform` or `sweetview-platform-<name>` may hold it. The crate layout and the reason for each boundary are in `rust-rewrite/DECISIONS.md`.
-- [ ] W0.4 Every crate comes from crates.io at a version pinned in `Cargo.lock`. `cargo metadata` shows no git dependency and no path dependency outside this repository: no crate is forked.
+- [x] W0.3 A Cargo workspace exists at the repository root, under `crates/`. Each crate has one job that its `README.md` states in a sentence. The binding (the `napi` crate) and the logic crates forbid `unsafe`; only crates named `sweetview-platform` or `sweetview-platform-<name>` may hold it. The crate layout and the reason for each boundary are in `rust-rewrite/DECISIONS.md`.
+
+    The workspace is the root `Cargo.toml` (`members = ["crates/*"]`); twelve crates, each with a `README.md` whose first line after the title states its job. The layout and the reason for each boundary: `rust-rewrite/DECISIONS.md`, D1 and D2.
+
+    ```
+    $ for c in crates/*/; do echo "$c: $(grep -m1 '^Job' $c/README.md)"; done
+    crates/sweetview-http/: Job: the rules of the webview's request handler that need no OS call.
+    crates/sweetview-keycodes/: Job: the tables that turn an OS key or mouse message into the values applications see.
+    crates/sweetview-napi/: Job: the binding, where JavaScript values and functions are converted and handed to the runtime.
+    crates/sweetview-platform-input/: Job: system-wide mouse and keyboard hooks and the permission model for them.
+    crates/sweetview-platform-loop/: Job: the parts of the UI thread's event loop that `tao` has no API for.
+    crates/sweetview-platform-node/: Job: the export table of the binding, the items that carry the `#[napi]` attribute.
+    crates/sweetview-platform-notify/: Job: desktop notifications with a click that comes back.
+    crates/sweetview-platform-shell/: Job: the shell integrations that are one OS conversation each: clipboard text, URL schemes, single instance, icon refresh.
+    crates/sweetview-platform-webview/: Job: what the webview needs on top of `wry` that `wry` has no API for.
+    crates/sweetview-platform-window/: Job: the window-level OS calls `tao` has no API for, and the events of any window by subclass.
+    crates/sweetview-runtime/: Job: everything that lives on Sweetview's UI thread, with no JavaScript in sight.
+    crates/sweetview-window-logic/: Job: what a window should do next, decided from cursor positions, button states and bounds.
+    $ grep -n "^#!\[forbid(unsafe_code)\]" crates/*/src/lib.rs
+    crates/sweetview-http/src/lib.rs:8:#![forbid(unsafe_code)]
+    crates/sweetview-keycodes/src/lib.rs:16:#![forbid(unsafe_code)]
+    crates/sweetview-napi/src/lib.rs:7:#![forbid(unsafe_code)]
+    crates/sweetview-runtime/src/lib.rs:5:#![forbid(unsafe_code)]
+    crates/sweetview-window-logic/src/lib.rs:6:#![forbid(unsafe_code)]
+    ```
+
+    The binding's logic (`sweetview-napi`) and every logic crate forbid `unsafe`; the seven crates that do not are all named `sweetview-platform-<name>`. `sweetview-platform-node` holds no hand-written `unsafe`: it is the export table, split off because the `#[napi]` attribute's own expansion cannot compile under `forbid` (D2). The `unsafe` check of `bun rust-rewrite/verify.ts windows` enforces all of this on every run.
+
+- [x] W0.4 Every crate comes from crates.io at a version pinned in `Cargo.lock`. `cargo metadata` shows no git dependency and no path dependency outside this repository: no crate is forked.
+
+    ```
+    $ bun rust-rewrite/checks/cargo-sources.ts
+    packages in the dependency graph: 310 (cargo metadata --locked: Cargo.lock is current)
+    from crates.io: 298
+    git dependencies: 0
+    other registries: 0
+    path packages: 12: sweetview-http, sweetview-keycodes, sweetview-napi, sweetview-platform-input, sweetview-platform-loop, sweetview-platform-node, sweetview-platform-notify, sweetview-platform-shell, sweetview-platform-webview, sweetview-platform-window, sweetview-runtime, sweetview-window-logic
+    path packages outside this repository: 0
+    versions of the crates the design names:
+      tao: 0.38.0
+      wry: 0.58.2
+      muda: 0.22.0
+      tray-icon: 0.27.0
+      rfd: 0.18.0
+      napi: 3.16.3
+      napi-derive: 3.7.2
+      napi-build: 2.7.0
+      windows: 0.62.2
+      webview2-com: 0.39.1
+    OK: no crate is forked
+    ```
+
 - [ ] W0.5 `just native` builds the binding for the host and places it where the loader finds it. `just check` builds it first.
 - [ ] W0.6 A GitHub Actions workflow builds the binding and runs `cargo test`, `cargo clippy`, `bun run typecheck` and `bun test` on `windows-latest`.
 
