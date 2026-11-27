@@ -54,7 +54,9 @@ mod imp {
   use raw_window_handle::{HandleError, HasWindowHandle, RawWindowHandle, Win32WindowHandle, WindowHandle};
   use windows::Win32::Foundation::{HWND, LPARAM, POINT, WPARAM};
   use windows::Win32::Graphics::Gdi::ScreenToClient;
-  use windows::Win32::UI::WindowsAndMessaging::{IsWindow, PostMessageW, WM_NULL};
+  use windows::Win32::UI::WindowsAndMessaging::{
+    GetSubMenu, IsWindow, PostMessageW, SetMenuItemInfoW, HMENU, MENUITEMINFOW, MENU_ITEM_STATE, MFS_CHECKED, MFS_DISABLED, MIIM_STATE, WM_NULL,
+  };
 
   use super::{OwnerWindow, PopupAt};
 
@@ -115,6 +117,33 @@ mod imp {
     let _ = posted;
     chosen
   }
+
+  pub fn check_item(menu: &muda::Menu, path: &[u32], enabled: bool) -> bool {
+    let Some((position, parents)) = path.split_last() else { return false };
+    let mut hmenu = HMENU(menu.hpopupmenu() as *mut core::ffi::c_void);
+    for parent in parents {
+      let Ok(index) = i32::try_from(*parent) else { return false };
+      // SAFETY: `hmenu` is the popup menu `menu` owns or one of its submenus, all owned by `menu`
+      // and valid while it is borrowed (muda's `hpopupmenu` contract); GetSubMenu reads it by value.
+      let submenu = unsafe { GetSubMenu(hmenu, index) };
+      if submenu.is_invalid() {
+        return false;
+      }
+      hmenu = submenu;
+    }
+    let disabled = if enabled { MENU_ITEM_STATE(0) } else { MFS_DISABLED };
+    let info = MENUITEMINFOW {
+      cbSize: size_of::<MENUITEMINFOW>() as u32,
+      fMask: MIIM_STATE,
+      fState: MFS_CHECKED | disabled,
+      ..Default::default()
+    };
+    // SAFETY: `hmenu` is a menu owned by `menu`, as above; `info` is a fully initialised
+    // MENUITEMINFOW owned by this frame for the whole call, and its size field is its own size.
+    // A position past the end makes the call fail.
+    let set = unsafe { SetMenuItemInfoW(hmenu, *position, true, &info) };
+    set.is_ok()
+  }
 }
 
 #[cfg(not(windows))]
@@ -144,6 +173,11 @@ mod imp {
   pub fn show_popup(_menu: &muda::Menu, _owner: &OwnerWindow, _at: PopupAt) -> bool {
     false
   }
+
+  /// Not ported.
+  pub fn check_item(_menu: &muda::Menu, _path: &[u32], _enabled: bool) -> bool {
+    false
+  }
 }
 
 /// Shows `menu` as a popup menu owned by `owner`, at `at`, and returns after it
@@ -156,6 +190,17 @@ pub fn show_popup(menu: &muda::Menu, owner: &OwnerWindow, at: PopupAt) -> bool {
   imp::show_popup(menu, owner, at)
 }
 
+/// Puts a check mark on an item `muda` made with an icon. `muda` has no item
+/// with both an icon and a check mark, which the OS draws side by side; this
+/// sets the item's state to checked, enabled or not as `enabled` says.
+///
+/// `path` names the item by position: the position of each submenu from the
+/// top of `menu`, then the item's position in the last one. Call it once the
+/// menu is complete. False when no item is at `path`.
+pub fn check_item(menu: &muda::Menu, path: &[u32], enabled: bool) -> bool {
+  imp::check_item(menu, path, enabled)
+}
+
 #[cfg(all(test, windows))]
 mod tests {
   use super::*;
@@ -166,3 +211,4 @@ mod tests {
     assert!(OwnerWindow::from_handle_value(0x7fff_fff0).is_none());
   }
 }
+

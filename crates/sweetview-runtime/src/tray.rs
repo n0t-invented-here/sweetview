@@ -106,6 +106,10 @@ struct TrayState {
   icon: RefCell<Option<TrayIcon>>,
   has_menu: Cell<bool>,
   menu_open: Cell<bool>,
+  /// The hidden window that owns the menu, made when the menu first opens. The icon's own
+  /// window cannot own it: `tray-icon` makes that window unable to activate, and a menu whose
+  /// owner cannot come to the foreground takes no keyboard and does not close on a click elsewhere.
+  menu_owner: RefCell<Option<tao::window::Window>>,
   clicks: RefCell<ClickRule>,
   click_timer: Cell<Option<TimeoutId>>,
   on_click: Option<Rc<dyn Fn()>>,
@@ -189,6 +193,7 @@ impl Tray {
       icon: RefCell::new(Some(icon)),
       has_menu: Cell::new(init.has_menu),
       menu_open: Cell::new(false),
+      menu_owner: RefCell::new(None),
       clicks: RefCell::new(ClickRule::default()),
       click_timer: Cell::new(None),
       on_click: init.on_click,
@@ -242,6 +247,8 @@ impl Tray {
     // Taken out before it is dropped: dropping destroys the icon's window, which may run code that reads the slot.
     let icon = self.state.icon.borrow_mut().take();
     drop(icon);
+    let owner = self.state.menu_owner.borrow_mut().take();
+    drop(owner);
   }
 }
 
@@ -345,11 +352,13 @@ impl TrayState {
     let open = self.open_menu.clone();
     let data = open();
     // The function that made the menu may have disposed of the tray.
-    let owner = self.icon.borrow().as_ref().map(window_handle_of).and_then(OwnerWindow::from_handle_value);
-    let Some(owner) = owner else { return };
-    if data.is_empty() {
+    if data.is_empty() || !self.is_live() {
       return;
     }
+    let owner = match self.menu_owner() {
+      Ok(owner) => owner,
+      Err(e) => return eprintln!("{e}"),
+    };
     let built = match menu::build(&data) {
       Ok(built) => built,
       Err(e) => return eprintln!("{e}"),
@@ -362,6 +371,30 @@ impl TrayState {
       chosen_handler(id);
     }
   }
+
+  /// The hidden window that owns the menu, made on first use.
+  fn menu_owner(&self) -> Result<OwnerWindow> {
+    if self.menu_owner.borrow().is_none() {
+      let runtime = Runtime::get()?;
+      let window = runtime
+        .with_target(|target| tao::window::WindowBuilder::new().with_visible(false).with_title("sweetview.tray-menu").build(target))?
+        .map_err(|e| Error::os("the tray menu's window could not be made", e))?;
+      *self.menu_owner.borrow_mut() = Some(window);
+    }
+    let handle = self.menu_owner.borrow().as_ref().map_or(0, window_handle_value);
+    OwnerWindow::from_handle_value(handle).ok_or_else(|| Error::state("sweetview: the tray menu's window is gone"))
+  }
+}
+
+#[cfg(windows)]
+fn window_handle_value(window: &tao::window::Window) -> isize {
+  use tao::platform::windows::WindowExtWindows;
+  window.hwnd()
+}
+
+#[cfg(not(windows))]
+fn window_handle_value(_window: &tao::window::Window) -> isize {
+  0
 }
 
 #[cfg(test)]

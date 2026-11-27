@@ -8,4 +8,4 @@ mod metrics;
 mod popup;
 
 pub use metrics::{double_click_time_ms, small_icon_size};
-pub use popup::{show_popup, OwnerWindow, PopupAt};
+pub use popup::{check_item, show_popup, OwnerWindow, PopupAt};

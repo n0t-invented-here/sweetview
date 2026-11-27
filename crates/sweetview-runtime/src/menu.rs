@@ -9,7 +9,7 @@
 use std::cell::Cell;
 
 use muda::{CheckMenuItem, IconMenuItem, IsMenuItem, Menu, MenuEvent, MenuId, MenuItem as MudaItem, PredefinedMenuItem, Submenu};
-use sweetview_platform_window::{show_popup, OwnerWindow, PopupAt};
+use sweetview_platform_window::{check_item, show_popup, OwnerWindow, PopupAt};
 
 use crate::error::{Error, Result};
 use crate::icon::IconBytes;
@@ -75,28 +75,67 @@ pub struct BuiltMenu {
 /// out, with the reason logged; the item is still shown.
 pub fn build(data: &[MenuItem]) -> Result<BuiltMenu> {
   let menu = Menu::new();
-  let mut items = Vec::new();
-  for entry in data {
-    let item = build_item(entry, &mut items)?;
-    menu.append(item.as_ref()).map_err(|e| Error::os("a menu item could not be added", e))?;
-    items.push(item);
+  let mut built = Building { items: Vec::new(), checks: Vec::new() };
+  fill(&menu, data, &mut Vec::new(), &mut built)?;
+  for (path, enabled) in &built.checks {
+    if !check_item(&menu, path, *enabled) {
+      eprintln!("sweetview: the check mark of a menu item with an icon could not be set");
+    }
   }
-  Ok(BuiltMenu { menu, _items: items })
+  Ok(BuiltMenu { menu, _items: built.items })
 }
 
-fn build_item(entry: &MenuItem, keep: &mut Vec<Box<dyn IsMenuItem>>) -> Result<Box<dyn IsMenuItem>> {
+struct Building {
+  items: Vec<Box<dyn IsMenuItem>>,
+  /// Items with an icon that are checked, by their path of positions, with whether they are enabled.
+  checks: Vec<(Vec<u32>, bool)>,
+}
+
+/// A `muda` menu or submenu, which items are appended to.
+trait Container {
+  fn add(&self, item: &dyn IsMenuItem) -> muda::Result<()>;
+}
+
+impl Container for Menu {
+  fn add(&self, item: &dyn IsMenuItem) -> muda::Result<()> {
+    self.append(item)
+  }
+}
+
+impl Container for Submenu {
+  fn add(&self, item: &dyn IsMenuItem) -> muda::Result<()> {
+    self.append(item)
+  }
+}
+
+fn fill(parent: &dyn Container, data: &[MenuItem], path: &mut Vec<u32>, built: &mut Building) -> Result<()> {
+  for (position, entry) in data.iter().enumerate() {
+    path.push(u32::try_from(position).unwrap_or(u32::MAX));
+    let item = build_item(entry, path, built)?;
+    parent.add(item.as_ref()).map_err(|e| Error::os("a menu item could not be added", e))?;
+    built.items.push(item);
+    path.pop();
+  }
+  Ok(())
+}
+
+/// The `muda` item for one entry at `path`.
+fn build_item(entry: &MenuItem, path: &mut Vec<u32>, built: &mut Building) -> Result<Box<dyn IsMenuItem>> {
   Ok(match entry {
     MenuItem::Separator => Box::new(PredefinedMenuItem::separator()),
     MenuItem::Item { id, label, enabled, checked, icon } => {
       let menu_id = MenuId::new(format!("{ID_PREFIX}{id}"));
       let text = escape_label(label);
-      if *checked {
-        // `muda` has no item with both a check mark and an icon; the check mark is the state and wins.
-        Box::new(CheckMenuItem::with_id(menu_id, text, *enabled, true, None))
-      } else if let Some(icon) = menu_icon(icon.as_ref()) {
-        Box::new(IconMenuItem::with_id(menu_id, text, *enabled, Some(icon), None))
-      } else {
-        Box::new(MudaItem::with_id(menu_id, text, *enabled, None))
+      match (menu_icon(icon.as_ref()), *checked) {
+        (Some(icon), checked) => {
+          // `muda` has no item with both an icon and a check mark; the check mark is set on the OS menu after.
+          if checked {
+            built.checks.push((path.clone(), *enabled));
+          }
+          Box::new(IconMenuItem::with_id(menu_id, text, *enabled, Some(icon), None))
+        }
+        (None, true) => Box::new(CheckMenuItem::with_id(menu_id, text, *enabled, true, None)),
+        (None, false) => Box::new(MudaItem::with_id(menu_id, text, *enabled, None)),
       }
     }
     MenuItem::Submenu { label, enabled, icon, items } => {
@@ -104,11 +143,7 @@ fn build_item(entry: &MenuItem, keep: &mut Vec<Box<dyn IsMenuItem>>) -> Result<B
       if let Some(icon) = menu_icon(icon.as_ref()) {
         submenu.set_icon(Some(icon));
       }
-      for child in items {
-        let item = build_item(child, keep)?;
-        submenu.append(item.as_ref()).map_err(|e| Error::os("a menu item could not be added", e))?;
-        keep.push(item);
-      }
+      fill(&submenu, items, path, built)?;
       Box::new(submenu)
     }
   })
@@ -137,9 +172,9 @@ pub fn show(menu: &BuiltMenu, owner: &OwnerWindow, at: PopupAt) -> Option<u32> {
       }
     }
   })));
-  let outer = CHOSEN.with(|chosen| chosen.take());
+  CHOSEN.with(|chosen| chosen.set(None));
   let picked = show_popup(&menu.menu, owner, at);
-  let chosen = CHOSEN.with(|chosen| chosen.replace(outer));
+  let chosen = CHOSEN.with(|chosen| chosen.take());
   MenuEvent::set_event_handler(previous);
   if picked {
     chosen

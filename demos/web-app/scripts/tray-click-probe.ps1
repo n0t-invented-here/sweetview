@@ -1,6 +1,6 @@
 # Proves the tray's single/double left-click handling inside the running demo
-# (dev or compiled): posts the shell's tray callback messages to the tray's
-# hidden message window, so the real timer and handlers run on the app's own
+# (dev or compiled): posts the shell's tray callback messages to the tray
+# icon's own window, so the real timer and handlers run on the app's own
 # loop, and reports the main window's visibility after each. No physical
 # click, so it works while the icon sits in the overflow flyout.
 #
@@ -25,16 +25,16 @@ public static class TC {
     uint pid = 0;
     EnumWindows((h,l)=>{ var sb=new StringBuilder(256); GetWindowTextW(h,sb,256); if (sb.ToString()==title) { Main=h; GetWindowThreadProcessId(h, out pid); return false; } return true; }, IntPtr.Zero);
     if (pid == 0) throw new Exception("no window titled " + title);
-    // sweetview's tray lives on a SweetviewMessageWindow in the same process.
-    EnumWindows((h,l)=>{ var sb=new StringBuilder(256); GetClassNameW(h,sb,256); uint p; GetWindowThreadProcessId(h, out p); if (p==pid && sb.ToString()=="SweetviewMessageWindow") { Tray=h; return false; } return true; }, IntPtr.Zero);
-    if (Tray == IntPtr.Zero) throw new Exception("no tray message window in that process");
+    // sweetview's tray icon (tray-icon) has a hidden window of class tray_icon_app in the same process.
+    EnumWindows((h,l)=>{ var sb=new StringBuilder(256); GetClassNameW(h,sb,256); uint p; GetWindowThreadProcessId(h, out p); if (p==pid && sb.ToString()=="tray_icon_app") { Tray=h; return false; } return true; }, IntPtr.Zero);
+    if (Tray == IntPtr.Zero) throw new Exception("no tray icon window in that process");
   }
 }
 "@
 [TC]::Find("Web App")
-$WM_TRAYICON = 0x8001  # WM_APP + 1, the callback message sweetnative registers; wParam is the tray's uid (1 for the first tray)
+$WM_TRAYICON = 6002  # the callback message tray-icon registers each icon with; lParam carries the mouse message
 $UP = 0x0202; $DBL = 0x0203
-$click = { param($m) [TC]::PostMessageW([TC]::Tray, $WM_TRAYICON, [IntPtr]1, [IntPtr]$m) | Out-Null }
+$click = { param($m) [TC]::PostMessageW([TC]::Tray, $WM_TRAYICON, [IntPtr]0, [IntPtr]$m) | Out-Null }
 "start: visible=$([TC]::IsWindowVisible([TC]::Main))"
 & $click $UP
 Start-Sleep -Milliseconds 300

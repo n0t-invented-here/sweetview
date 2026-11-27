@@ -1,15 +1,12 @@
-// Icon bytes to GDI objects: an HICON for the tray, toasts and window
-// captions; an HBITMAP for menu items (menus take bitmaps, not icons, and
-// want 32bpp premultiplied alpha). The .ico is decoded in JS so both paths
-// scale to the DPI's size instead of letting the menu stretch a 16px image.
+// Icon bytes to HICONs, for the notifier's balloon icons and window captions.
+// The tray and menu items take their icons through the native binding, which
+// decodes the .ico itself.
 
-import { ptr, toArrayBuffer } from "bun:ffi";
-import { icoRgba, parseIco, pickIcoEntry } from "../icon";
-import { ICON_BIG, ICON_SMALL, SM_CXICON, SM_CXSMICON, WM_SETICON, gdi32, lastError, user32 } from "./api";
+import { parseIco, pickIcoEntry } from "../icon";
+import { ICON_BIG, ICON_SMALL, SM_CXICON, SM_CXSMICON, WM_SETICON, lastError, user32 } from "./api";
 
 const IDI_APPLICATION = 32512n;
 const LR_DEFAULTCOLOR = 0;
-const DIB_RGB_COLORS = 0;
 
 export type LoadedIcon = { handle: bigint; owned: boolean };
 
@@ -29,43 +26,6 @@ export function loadIcon(ico: Uint8Array | undefined, metric: number = SM_CXSMIC
 export const releaseIcon = (icon: LoadedIcon) => {
   if (icon.owned) user32.DestroyIcon(icon.handle);
 };
-
-/**
- * A 32bpp premultiplied-alpha HBITMAP of the .ico at `size` px (default the
- * small-icon metric), for MENUITEMINFO.hbmpItem. 0n, with the reason logged,
- * when the .ico cannot be decoded. The caller owns it: DeleteObject when done.
- */
-export function iconBitmap(ico: Uint8Array, size: number = user32.GetSystemMetrics(SM_CXSMICON) || 16): bigint {
-  let rgba: Uint8Array;
-  try {
-    rgba = icoRgba(ico, size);
-  } catch (err) {
-    console.error(`sweetview: menu icon skipped: ${err instanceof Error ? err.message : err}`);
-    return 0n;
-  }
-  const info = new Uint8Array(40); // BITMAPINFOHEADER; no colour table for BI_RGB 32bpp
-  const dv = new DataView(info.buffer);
-  dv.setUint32(0, 40, true);
-  dv.setInt32(4, size, true);
-  dv.setInt32(8, -size, true); // negative: top-down, so the RGBA rows copy straight in
-  dv.setUint16(12, 1, true);
-  dv.setUint16(14, 32, true);
-  const bitsOut = new BigUint64Array(1);
-  const hbm = gdi32.CreateDIBSection(0n, info, DIB_RGB_COLORS, ptr(bitsOut), 0n, 0);
-  if (hbm === 0n || bitsOut[0] === 0n) {
-    console.error(`sweetview: CreateDIBSection failed (${lastError()})`);
-    return 0n;
-  }
-  const bits = new Uint8Array(toArrayBuffer(Number(bitsOut[0]) as never, 0, size * size * 4));
-  for (let i = 0; i < rgba.length; i += 4) {
-    const a = rgba[i + 3]!;
-    bits[i] = Math.round((rgba[i + 2]! * a) / 255); // B
-    bits[i + 1] = Math.round((rgba[i + 1]! * a) / 255); // G
-    bits[i + 2] = Math.round((rgba[i]! * a) / 255); // R
-    bits[i + 3] = a;
-  }
-  return hbm;
-}
 
 const windowIcons = new Map<bigint, LoadedIcon[]>();
 
