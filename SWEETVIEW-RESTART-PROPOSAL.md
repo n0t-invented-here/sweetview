@@ -1,8 +1,13 @@
 # Sweetview restart proposal
 
-Status: proposal, awaiting decisions D and E at the end.
+Status: proposal, awaiting decisions D, E and F at the end.
 
-Basis: git counts of this repository, its README and `webview/README.md`, and the external sources listed at the end, as of 2026-11-27.
+Basis, read on 2026-11-27:
+
+- `n0t-invented-here/sweetview-webview-bun`, branch `v1-drafting`: every file in `src/`, the README, every page in `docs/`, `scripts/build.ts`, the justfile.
+- `n0t-invented-here/sweetview-webview`, branch `v1-drafting`: every page in `sweetview/`, and the full diff against upstream `f1a9d6b` of `engine_base.hh`, `win32_edge.hh` and `cocoa_webkit.hh`, plus `input_hooks.hh`.
+- This repository on `main`: `README.md`, `docs/app.md`, `docs/native.md`, `docs/webview-library.md`, `webview/README.md`, `src/app.ts`, `src/worker.ts`, `src/webview-lib.ts`, `demos/desktop-pet/`.
+- Line and file counts come from git.
 
 ## The change in one paragraph
 
@@ -12,17 +17,58 @@ Sweetview's native code moves out of TypeScript and into one Rust library, calle
 
 | Part | Where | State |
 |---|---|---|
-| Webview library | `n0t-invented-here/sweetview-webview` (C++ fork of `webview/webview`) and `n0t-invented-here/sweetview-webview-bun` | works; carries this project's additions: background colour and transparency, native asset serving, and on its `v1-drafting` branches the request handler, streamed responses and external drop control |
+| C++ webview library | `n0t-invented-here/sweetview-webview`, a fork of `webview/webview` at `f1a9d6b` | works. Branch `sweetview` adds 2,705 lines; branch `v1-drafting` adds 8,646 lines in 32 files, 1,687 of them tests |
+| Bun bindings for it | `n0t-invented-here/sweetview-webview-bun`, a fork of `tr1ckydev/webview-bun`, published as `@n1h/sweetview-webview-bun` | works. 2,014 lines of TypeScript in `src/`, all `bun:ffi`. Ships the built library in `build/`: `libwebview.dll`, a universal `libwebview.dylib`, and an older `libwebview-x64.so`. 2.7.0 is published; 2.8.0 is the `v1-drafting` branch, unpublished |
 | Native layer on `main` | `src/native/win32/` and `src/native/darwin/` | 2,779 lines of TypeScript FFI in 24 files |
 | Native tabs on `main` | `demos/native-tabs/` | 2,004 lines of TypeScript FFI in 7 files |
 | Native layer on `v1-drafting` | `packages/sweetview-native/src/win32/` and `darwin/` | 6,916 lines of TypeScript FFI in 35 files, plus 2,669 lines in 8 files in the other packages |
 | Pure TypeScript | IPC contract and bridge, WebSocket transport, settings store, hit-region geometry, icon encoders, `.app` builder | works; no FFI |
 | Tests | 17 test files on `main`, 30 on `v1-drafting` | the acceptance suite for the port |
 
+### What the C++ fork adds to upstream
+
+| Addition | C API | In 2.7.0 | Windows | macOS | Linux |
+|---|---|---|---|---|---|
+| Background colour and transparency | `webview_set_background_color` | yes | WebView2 default background colour; alpha 0 or 255 only | any alpha, painted on the view's layer | no effect |
+| Assets at the page's own origin | `webview_set_asset` | yes | `http://webview.localhost`, WebView2 resource interception | `webview://localhost`, a URL scheme handler | stored, not served |
+| System-wide mouse hook | `webview_mouse_hook_install`, `_remove` | yes | `WH_MOUSE_LL` | a session event tap | fails |
+| System-wide keyboard hook | `webview_keyboard_hook_install`, `_remove` | yes | `WH_KEYBOARD_LL` | the same event tap | fails |
+| Permission model for the hooks | `webview_feature_permissions`, `webview_permission_status`, `_request`, `_set_auto_request` | yes | nothing to ask | Device Control and Data Access | nothing to ask |
+| Request handler and a second, cross-origin frames origin | `webview_set_request_handler`, `webview_complete_request` | no | deferred resource requests | the same scheme handler, two schemes | no effect |
+| Streamed responses | `webview_begin_response`, `webview_write_response_chunk`, `webview_end_response` | no | the page receives the body only when the stream ends, a WebView2 limit | the page receives each chunk as written | no effect |
+| External drop control | `webview_set_allow_external_drop` | no | WebView2 controller setting | enforced in a `WKWebView` subclass | no effect |
+| File drop paths | `webview_set_file_drop_handler` | no | a drop script plus WebView2 file objects | read from the drag pasteboard | no effect |
+
+The `v1-drafting` branch also hardens teardown: a registry of live webviews, alive tokens on queued work, COM references held by an owning wrapper, and an owned dispatch queue.
+
+### How Sweetview uses the library on `main`
+
+- `createWebviewApp` creates a `Webview`, in its own window or inside a window from `createOverlayWindow`.
+- Page to UI thread: the bound function `__sweetview_rpc`, through `webview_bind`.
+- UI thread to worker: `worker.postMessage`.
+- Worker to UI thread: JSON frames in a shared-memory ring; the worker wakes the UI thread with `webview_dispatch`, and a `JSCallback` drains the ring inside the OS loop.
+- UI thread to page: `webview_return` for replies, `webview_eval` for events.
+- The page loads from `webview_set_asset`, never from `webview_set_html`.
+- Two ways to run the loop: `run()`, the library's blocking loop, with app logic in a worker; or `runEventLoop`, pumped from a Bun timer, with no worker.
+- Sweetview refuses to start on Linux.
+- No branch of this repository calls the mouse hook, the keyboard hook or the permission model.
+
+### What Sweetview's native layer on `main` already does
+
+| Journey | Present on `main` |
+|---|---|
+| Tray or menu-bar app | `createTray`: icon, tooltip, `onClick`, `onDoubleClick`, menus with `checked`, `icon`, submenus and separators. A menu given as a function is rebuilt every time it opens. On macOS a tray with a menu opens the menu on any click and its click handlers do not fire |
+| Tray-only app, single file, no worker | `demos/menubar-only/app.ts`, 42 lines, on `runEventLoop` |
+| Notifications | `createNotifier` with click events. Windows: the tray icon's balloon, so the tray must exist first. macOS: the user notification centre, from a signed `.app` |
+| Webview app with IPC and no TCP | `createWebviewApp`, described above |
+| N windows | one `createOverlayWindow({ frame: true })` and one `createWebviewApp` per window, all in one loop |
+| Tabs | `demos/native-tabs/` only; `v1-drafting` moves them into the library |
+| Transparent click-through | `createOverlayWindow({ transparent: true })` with `setHitRegions`: a 10 ms cursor poll toggles the window's pass-through state against polygons the page sends, and the page answers exact hits through `createHitRelay`. `demos/desktop-pet/` runs on it |
+
 ## What is kept
 
-- The webview library, as it is. It is linked into the Rust library and called through its existing C API.
-- Every native behaviour the port source has: windows, transparent overlays and hit regions for the games, tray, notifications, menus, folder picker, icons, the event loop, native tabs.
+- The C++ webview library, as it is. It is linked into the Rust library and called through its existing C API.
+- Every native behaviour the port source has: windows, transparent overlays and hit regions for the games, tray, notifications, menus, folder picker, icons, both ways of running the event loop, native tabs.
 - The public TypeScript API. App code, demos and docs keep working.
 - All pure TypeScript modules, unchanged.
 - The tests. Each ported module passes the tests its TypeScript version passes.
@@ -37,7 +83,9 @@ Each TypeScript FFI file becomes a Rust module making the same OS calls.
 | Hand-rolled `objc_msgSend` calls in `darwin/objc.ts` | the `objc2` crates, with typed AppKit bindings and automatic retain and release |
 | `JSCallback` function pointers handed to the OS | Rust callbacks owned by the library, delivered to JavaScript through N-API |
 | Pointers and buffers held in JavaScript | none; JavaScript receives objects and plain values |
-| A separate `webview.dll` or `libwebview.dylib` loaded at run time | the same C++ code linked into the one native binary |
+| The 2,014 lines of `bun:ffi` in `@n1h/sweetview-webview-bun`, including its machinery for closing callbacks only after native code has left them | the Rust library calls the C API directly and owns every callback |
+| The shared-memory ring, the `webview_dispatch` wake-up and the drain `JSCallback` | a queue inside the Rust library, drained on the UI thread |
+| A separate `libwebview.dll` or `libwebview.dylib` loaded at run time | the same C++ code linked into the one native binary |
 
 ## What the port fixes
 
@@ -46,7 +94,7 @@ Each TypeScript FFI file becomes a Rust module making the same OS calls.
 | Wrong return type or argument count on a native call | commit `83d7411`: `isZoomed` read with the wrong return type, `orderFrontRegardless` called with the wrong arity | does not compile |
 | Object lifetime errors: use after release, leaks of COM or Objective-C objects | commit `db5fd1b`: COM cleanup on tab teardown | released by the type system when the owner is dropped |
 | A callback freed while the OS still holds its pointer | every `JSCallback` site, 65 on `v1-drafting` | the library owns the callback for the life of the registration |
-| A buffer moved or collected while the OS writes to it | every `ptr()` site, 63 on `v1-drafting` | buffers are Rust-owned for the duration of the call |
+| A buffer moved or collected while native code reads it | `encodeCString` in the bindings' `src/ffi.ts` exists because a bare pointer to a temporary array can be collected before the call; 63 raw pointer sites on `v1-drafting` | buffers are Rust-owned for the duration of the call |
 
 Each OS call in Rust still sits in an `unsafe` block, because the OS API is unsafe. The count of those blocks is visible to the compiler and to review, and they are confined to the platform modules. Every other module carries `#![forbid(unsafe_code)]`.
 
@@ -64,11 +112,11 @@ App developers write TypeScript only. `bun add` installs the package with its pr
 
 | Journey | Source of the implementation | Windows | macOS | Linux (minimal) |
 |---|---|---|---|---|
-| Tray or menu-bar app with icon clicks and menus | port of the existing tray and menu modules; checkmarks, item icons and dynamic menus added where missing | yes | yes | new code |
-| Webview app with IPC and no TCP | existing webview library and IPC layer | yes | yes | upstream `webview/webview` supports WebKitGTK; this project's fork additions are ported to it |
+| Tray or menu-bar app with icon clicks and menus | port of the existing tray and menu modules, which already have checkmarks, item icons and menus rebuilt on every open | yes | yes; with a menu set, the menu opens on any click | new code |
+| Webview app with IPC and no TCP | the existing webview library and IPC layer | yes | yes | new code: the library's upstream GTK backend runs, and each fork addition is implemented for it |
 | Native notifications | port of the existing notifier modules | yes | yes, from a signed `.app` | new code |
-| N windows and tabs | port of the existing window and native-tabs modules | yes | yes | windows yes; tabs not planned |
-| Transparent games with hit-region click-through | port of the existing overlay and hit-region modules, with the fork's input handling | yes | yes | not planned |
+| N windows and tabs | port of the existing window modules and the native-tabs demo | yes | yes | windows yes; tabs not planned |
+| Transparent games with hit-region click-through | port of the existing overlay and hit-region modules. The library's mouse and keyboard hooks are exposed for games that want to swallow right clicks, middle clicks, the wheel or keys over what they draw | yes | yes | not planned |
 
 ## IPC and bail-out
 
@@ -108,7 +156,7 @@ The port goes one module at a time. After each step the tree works, with ported 
 
 | Option | Why not |
 |---|---|
-| Replace the native layer with Tauri's `tao` and `wry` libraries | loses working features: streamed responses (`wry` accepts whole bodies only), the fork's input handling for transparent games, hit regions, the Windows tab strip. All of it would be written again |
+| Replace the native layer with Tauri's `tao` and `wry` libraries | loses working features: the request handler with its frames origin, streamed responses on macOS (`wry` accepts whole bodies only), the system-wide mouse and keyboard hooks with their permission model, file drop paths, hit regions, the Windows tab strip. All of it would be written again |
 | `webviewjs/webview` | an N-API binding over `tao` and `wry`. Its tray does not deliver events without a window (issue #96, open). It has no menu checkmarks or icons, no hit regions, no Linux tray clicks. One maintainer |
 | Electrobun | own CLI and toolchain, no `bun build --compile`, IPC over a localhost WebSocket, broken transparent click-through; excluded by the project owner |
 | bunmaska | alpha; its native layer is `bun:ffi` written in TypeScript |
@@ -118,7 +166,9 @@ The port goes one module at a time. After each step the tree works, with ported 
 
 ## Open decisions
 
-D. Should the webview library also be ported from C++ to Rust later, or stay C++ permanently? It works today and its fork diff is small. Porting it means reimplementing the WebView2 and WKWebView hosting that upstream already provides.
+D. Should the webview library also be ported from C++ to Rust later, or stay C++ permanently? It works today. It is upstream `webview/webview` plus 8,646 lines of this project's additions on `v1-drafting`. Porting it means rewriting both the WebView2 and WKWebView hosting that upstream provides and those additions.
+
+F. Which webview library branch does the port link: `sweetview` (2.7.0, published: background colour, assets, input hooks, permissions) or `v1-drafting` (2.8.0, unpublished: adds the request handler, streaming, external drop control, file drop paths and the teardown hardening)?
 
 E. Which branch is the source of the port? `main` has 2,779 lines of native code plus the native-tabs demo. `v1-drafting` has 6,916 lines and adds URL schemes, single instance, clipboard, WinRT toasts, screen info, the request handler and file drop. Recommended: port `main`, then bring `v1-drafting` features across one at a time, each reviewed as it is ported.
 
