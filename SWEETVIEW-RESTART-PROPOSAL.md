@@ -1,6 +1,8 @@
 # Sweetview restart proposal
 
-Status: proposal. The decisions it rests on are listed under Decisions.
+Status: proposal.
+
+Rule this proposal follows: no functionality is removed. Everything Sweetview, the bindings and the C++ webview fork do today, they do afterwards.
 
 Basis, read on 2026-11-27:
 
@@ -16,40 +18,43 @@ Sweetview lets a Bun app open a webview window, put an icon in the tray or menu 
 
 ## What changes
 
-Today the webview is a C++ library, and everything else native is TypeScript calling the OS through `bun:ffi`. This proposal replaces both with one Rust library.
+One thing changes: TypeScript stops calling native code through `bun:ffi`. A compiled native library takes over those calls, and Bun reaches it through N-API.
 
 | Piece | Today | After |
 |---|---|---|
-| The webview | a C++ fork of `webview/webview`, reached through a `bun:ffi` wrapper package | `wry`, the webview library Tauri 2 uses |
-| Windows, transparent overlays, click-through | TypeScript calling Win32 and AppKit through `bun:ffi` | `tao`, the window library Tauri 2 uses |
-| Tray or menu-bar icon | TypeScript `bun:ffi` | `tray-icon` |
-| Menus | TypeScript `bun:ffi` | `muda` |
-| Notifications | TypeScript `bun:ffi` | `notify-rust` |
-| System-wide mouse and keyboard hooks for the transparent games, with the macOS permission model | C++ in the webview fork | the same C++ files, carried over unchanged |
-| Request handler, frames origin, file drop paths | C++ in the webview fork | `wry` |
-| Streamed responses; service-worker requests reaching the handler | C++ in the webview fork | lost |
-| How Bun reaches native code | `bun:ffi`, with pointers held in JavaScript | N-API, with no pointers in JavaScript |
-
-Sweetview's own Rust only calls the safe APIs of those libraries and carries `#![forbid(unsafe_code)]`. The input hooks are the exception: they stay C++, 1,617 lines of the fork's own code.
+| The webview engine | the C++ fork of `webview/webview`, a separate `.dll` or `.dylib` | the same C++ fork, whole and unchanged, linked into the one native library |
+| The wrapper around the webview engine | `@n1h/sweetview-webview-bun`: 2,014 lines of TypeScript `bun:ffi` | Rust inside the native library, calling the same C API |
+| Windows, overlays, click-through, tray, menus, notifications, dialogs, event loop | 2,779 lines of TypeScript `bun:ffi` on `main` calling Win32 and AppKit | Rust inside the native library, making the same OS calls |
+| How Bun reaches native code | `bun:ffi`: hand-written signatures, pointers and callback pointers held in JavaScript | N-API: typed functions, no pointers in JavaScript |
 
 ## What does not change
 
+- Every function of the C++ webview fork. The table further down lists each one.
+- Everything Sweetview does today.
 - What an app developer writes: the same TypeScript API, `bun add`, `bun build --compile`.
-- What Sweetview does on `main` today: webview windows, IPC with no TCP, tray, notifications, several windows, transparent click-through.
-- The pure TypeScript parts: the IPC layer, the settings store, the icon encoders, the `.app` builder.
+- The pure TypeScript parts: the IPC layer, the settings store, the hit-region geometry, the icon encoders, the `.app` builder.
 - The demos and tests, which become the acceptance checks.
 
-## What memory safety means here
+## What this does for memory safety
 
-Win32, COM and AppKit are unsafe interfaces in every route. What differs is who writes the code that calls them.
+Win32, COM and AppKit are unsafe interfaces, and the webview engine is C++. Keeping every function means that code stays. This proposal does not make the native code memory safe. It removes the failure classes that come from doing the calls in TypeScript.
 
-| Route | Unsafe code this project writes and owns | Memory safe |
+| Failure class | Example in these repositories | After |
 |---|---|---|
-| Today: TypeScript `bun:ffi`, the bindings package, the C++ fork | all of it: 2,779 lines of TypeScript FFI on `main`, 2,014 in the bindings, and the C++ fork's 2,705 lines on its published branch | no |
-| Port each OS call to Rust with the `windows` and `objc2` crates and keep the C++ library | every OS call is an `unsafe` block, and the C++ stays. It gains typed signatures and ownership of buffers and callbacks | no |
-| Safe Rust on `tao`, `wry`, `muda` and `tray-icon`, plus the fork's input hook files | the input hooks only: 1,617 lines of C++ carried over. All other unsafe code is inside the four libraries, which Tauri 2 ships on | this project's Rust: yes. The input hooks: no |
+| Wrong return type or argument count on a native call | Sweetview commit `83d7411`: `isZoomed` read with the wrong return type, `orderFrontRegardless` called with the wrong arity | checked by the compiler |
+| A buffer collected while native code reads it | `encodeCString` in the bindings' `src/ffi.ts` exists because a bare pointer to a temporary array can be collected before the call | buffers are owned by Rust for the call |
+| A callback freed while native code is inside it | the bindings' `NativeCallback` and `HookCallback` classes exist to defer closing a `JSCallback` until native code has left it | the native library owns every callback |
+| COM and Objective-C objects released at the wrong time | Sweetview commit `db5fd1b`: COM cleanup on tab teardown | released when their owner is dropped |
+| A pointer forged or kept too long in JavaScript | `unsafeHandle`, passed to workers as a number | JavaScript holds no pointers |
 
-This proposal is the third route.
+Where unsafe code lives afterwards:
+
+| Code | Language | Unsafe |
+|---|---|---|
+| The webview engine, including the input hooks | C++, unchanged | yes, as today |
+| Platform modules: each OS call Sweetview makes today | Rust | yes: one `unsafe` block per OS call, in `win32/` and `darwin/` modules only |
+| Everything else in the native library: the N-API surface, queues, state, the hit-region poll logic | Rust | no: `#![forbid(unsafe_code)]` |
+| Sweetview's TypeScript | TypeScript | no native calls at all |
 
 ## What exists today
 
@@ -63,143 +68,100 @@ This proposal is the third route.
 | Pure TypeScript | IPC contract and bridge, WebSocket transport, settings store, hit-region geometry, icon encoders, `.app` builder | works; no FFI |
 | Tests | 17 test files on `main`, 30 on `v1-drafting` | the acceptance suite |
 
-### What the C++ fork adds to upstream
+### Every addition in the C++ fork
 
-Every addition, and what happens to it under this proposal. Nothing in the fork is left out of this table.
+All of them are kept, with the same C functions and the same behaviour per platform.
 
-| Addition | C API | In 2.7.0 | Used by | After |
-|---|---|---|---|---|
-| Background colour and transparency | `webview_set_background_color` | yes | Sweetview `main` | kept: `wry` `with_transparent`, `with_background_color` |
-| Assets at the page's own origin | `webview_set_asset` | yes | Sweetview `main` | kept: `wry` `with_custom_protocol` |
-| System-wide mouse hook | `webview_mouse_hook_install`, `webview_mouse_hook_remove` | yes | the owner's transparent desktop games, outside this repository. A must-have | **kept as it is**: the fork's own C++ files, carried over unchanged |
-| System-wide keyboard hook | `webview_keyboard_hook_install`, `webview_keyboard_hook_remove` | yes | the same games | **kept as it is**, same files |
-| Permission model for the hooks | `webview_feature_permissions`, `webview_permission_status`, `webview_permission_request`, `webview_permission_set_auto_request` | yes | the same games, on macOS | **kept as it is**, same files |
-| Request handler | `webview_set_request_handler`, `webview_complete_request` | no | Sweetview `v1-drafting` | kept: `wry` `with_asynchronous_custom_protocol` |
-| Frames origin, cross-origin from the page | part of the request handler | no | Sweetview `v1-drafting` | kept: a second custom protocol scheme |
-| Requests from service workers reaching the handler on Windows | part of the request handler | no | Sweetview `v1-drafting` | **lost**: `wry` exposes no equivalent filter |
-| Streamed responses | `webview_begin_response`, `webview_write_response_chunk`, `webview_end_response` | no | Sweetview `v1-drafting` | **lost**: `wry`'s responder takes a whole body. The fork streams to the page on macOS; on Windows its page also receives the body only at the end |
-| External drop control | `webview_set_allow_external_drop` | no | Sweetview `v1-drafting` | **changed**: `wry` `with_drag_drop_handler` can refuse OS drops, and on Windows turning it on also stops HTML drops inside the page, which the fork keeps working |
-| File drop paths | `webview_set_file_drop_handler` | no | Sweetview `v1-drafting` | kept: `wry` `with_drag_drop_handler`, with the same Windows change |
-| Teardown hardening: live-webview registry, alive tokens, owned COM references, owned dispatch queue | internal | no | everything on 2.8.0 | not carried: it guards the C++ engine, which is retired |
+| Addition | C API | In 2.7.0 | After |
+|---|---|---|---|
+| Background colour and transparency | `webview_set_background_color` | yes | kept |
+| Assets at the page's own origin | `webview_set_asset` | yes | kept |
+| System-wide mouse hook | `webview_mouse_hook_install`, `webview_mouse_hook_remove` | yes | kept |
+| System-wide keyboard hook | `webview_keyboard_hook_install`, `webview_keyboard_hook_remove` | yes | kept |
+| Permission model for the hooks | `webview_feature_permissions`, `webview_permission_status`, `webview_permission_request`, `webview_permission_set_auto_request` | yes | kept |
+| Request handler, with the frames origin and service-worker requests on Windows | `webview_set_request_handler`, `webview_complete_request` | no | kept |
+| Streamed responses | `webview_begin_response`, `webview_write_response_chunk`, `webview_end_response` | no | kept |
+| External drop control, with HTML drops inside the page still working | `webview_set_allow_external_drop` | no | kept |
+| File drop paths | `webview_set_file_drop_handler` | no | kept |
+| Teardown hardening: live-webview registry, alive tokens, owned COM references, owned dispatch queue | internal | no | kept |
 
-The hook files are `input_hooks.hh`, `mouse_hook.hh`, `keyboard_hook.hh` and `key_codes.hh`: 1,617 lines, with their unit tests. A hook belongs to no webview instance, so the files do not depend on the rest of the engine. They are linked into the Rust library and exposed through N-API with the same TypeScript API the bindings have today: `installMouseHook`, `installKeyboardHook`, `permissions`.
+The upstream functions are kept too: `webview_create` (own window or a host window), `webview_destroy`, `webview_run`, `webview_terminate`, `webview_dispatch`, `webview_get_window`, `webview_set_title`, `webview_set_size`, `webview_navigate`, `webview_set_html`, `webview_init`, `webview_eval`, `webview_bind`, `webview_unbind`, `webview_return`.
 
-### How Sweetview uses the library on `main`
+### Everything the bindings expose
 
-- `createWebviewApp` creates a `Webview`, in its own window or inside a window from `createOverlayWindow`.
-- Page to UI thread: the bound function `__sweetview_rpc`, through `webview_bind`.
-- UI thread to worker: `worker.postMessage`.
-- Worker to UI thread: JSON frames in a shared-memory ring; the worker wakes the UI thread with `webview_dispatch`, and a `JSCallback` drains the ring inside the OS loop.
-- UI thread to page: `webview_return` for replies, `webview_eval` for events.
-- The page loads from `webview_set_asset`.
-- Two ways to run the loop: `run()`, the library's blocking loop, with app logic in a worker; or `runEventLoop`, pumped from a Bun timer, with no worker.
+All kept, under the same names: `Webview` with `setAsset`, `assetOrigin`, `framesOrigin`, `setRequestHandler`, `completeRequest`, `beginResponse`, `writeResponseChunk`, `endResponse`, `setAllowExternalDrop`, `setFileDropHandler`, `setBackgroundColor`, `bind`, `bindRaw`, `unbind`, `return`, `eval`, `init`, `navigate`, `setHTML`, `run`, `destroy`; the worker functions `completeWebviewRequest`, `beginWebviewResponse`, `writeWebviewResponseChunk`, `endWebviewResponse`; `installMouseHook`, `installKeyboardHook`, `permissions`; `unload`.
 
-### What Sweetview's native layer on `main` already does
+### Everything Sweetview does on `main`
+
+All kept.
 
 | Journey | Present on `main` |
 |---|---|
 | Tray or menu-bar app | `createTray`: icon, tooltip, `onClick`, `onDoubleClick`, menus with `checked`, `icon`, submenus and separators. A menu given as a function is rebuilt every time it opens |
 | Tray-only app, single file, no worker | `demos/menubar-only/app.ts`, 42 lines, on `runEventLoop` |
-| Notifications | `createNotifier` with click events. Windows: the tray icon's balloon. macOS: the user notification centre, from a signed `.app` |
+| Notifications | `createNotifier` with click events |
 | Webview app with IPC and no TCP | `createWebviewApp` |
 | N windows | one `createOverlayWindow({ frame: true })` and one `createWebviewApp` per window, in one loop |
-| Tabs | `demos/native-tabs/` only |
-| Transparent click-through | `setHitRegions`: a 10 ms cursor poll toggles the window's pass-through state against polygons the page sends, and the page answers exact hits through `createHitRelay`. `demos/desktop-pet/` runs on it |
+| Tabs | `demos/native-tabs/` |
+| Transparent click-through | `createOverlayWindow({ transparent: true })`, `setHitRegions`, `createHitRelay` |
+| Both ways of running the loop | `run()`, the library's blocking loop, with a worker; `runEventLoop`, pumped from a Bun timer, with none |
+| Folder dialog, app menu, app icon, activation policy, page-drawn window chrome | `pickFolder`, `installAppMenu`, `setAppIcon`, `setActivationPolicy`, `windowChromeMethods` |
 
-## Coverage by safe library APIs
+### Everything `v1-drafting` adds to Sweetview
 
-Every call in this table is declared safe on its docs.rs page.
-
-| Behaviour on `main` | Safe call | Library |
-|---|---|---|
-| Create a window hidden, frameless, transparent, topmost, not focusable, off the taskbar | `WindowBuilder::with_visible`, `with_decorations`, `with_transparent`, `with_always_on_top`, `with_focusable`, `with_skip_taskbar` | `tao` 0.38.0 |
-| Transparent window without intermittent opacity on Windows | `with_no_redirection_bitmap` | `tao` |
-| Show, hide, move, resize, raise | `set_visible`, `set_outer_position`, `set_inner_size`, `set_always_on_top` | `tao` |
-| Click-through on and off | `set_ignore_cursor_events` | `tao` |
-| Cursor position for the hit-region poll | `cursor_position` | `tao` |
-| Screen, screen at a point, work area, scale | `primary_monitor`, `available_monitors`, `monitor_from_point`, `scale_factor` | `tao` |
-| Page-drawn title bar and resize handles | `drag_window`, `drag_resize_window`. The second is unsupported on macOS, where `startResize` on `main` already does nothing | `tao` |
-| Minimise, maximise, window icon, light or dark frame | `set_minimized`, `set_maximized`, `is_maximized`, `set_window_icon`, `set_theme` | `tao` |
-| A webview filling a window, or a child webview with bounds | `WebViewBuilder::build`, `build_as_child`, `with_bounds` | `wry` 0.58.2 |
-| Assets at the page's own origin; a request handler on further schemes | `with_custom_protocol`, `with_asynchronous_custom_protocol` | `wry` |
-| Page-to-host calls with no TCP | `with_ipc_handler` | `wry` |
-| Transparent page background | `with_transparent`, `with_background_color` | `wry` |
-| Bridge script in the top-level document only | `with_initialization_script_for_main_only` | `wry` |
-| File drop paths | `with_drag_drop_handler` | `wry` |
-| Tray icon, tooltip, menu, click events | `TrayIconBuilder::with_icon`, `with_tooltip`, `with_menu`; `TrayIconEvent::set_event_handler` | `tray-icon` 0.27.0 |
-| Linux tray with clicks | the `ksni` feature, which needs no GTK loop | `tray-icon` |
-| Menus with check marks, icons and submenus; click events | `CheckMenuItem`, `IconMenuItem`, `Submenu`; `MenuEvent::set_event_handler` | `muda` 0.22.0 |
-
-## Not covered by a safe API
-
-| Behaviour | Fact | Action |
-|---|---|---|
-| Streamed response bodies | `wry`'s protocol responder takes a whole body | Lost. Incremental data goes to the page as IPC events |
-| Service-worker requests reaching the request handler | `wry` exposes no equivalent filter | Lost |
-| HTML drops inside the page while OS file drops are handled, on Windows | `wry`'s drop handler replaces WebView2's drop target | Changed: a page that handles OS file drops gives up in-page HTML drops on Windows |
-| System-wide mouse and keyboard hooks, permission model | none of the four libraries has them | Kept as the fork's C++ files, linked into the library. This is the one part of the native code that is not safe Rust |
-| A popup menu shown at a point | `muda`'s `show_context_menu_for_hwnd` and `show_context_menu_for_nsview` are `unsafe` calls | Not provided. `main` has no such call; it is a `v1-drafting` addition |
-| "Do not flip click-through while a mouse button is down" | `tao` has no call for global button state | The page reports pointer-down and pointer-up over IPC and the poll holds its state between them. A drag begun in another app is no longer exempt |
-| The loop pumped from a Bun timer (`runEventLoop`) | `tao` documents `run_return` as discouraged; it does not return while a window is being resized | Step 1 runs the tray-only demo and a resizing window on `run_return` called from a Bun timer, on Windows and macOS. Where it stalls or drops events, that app runs on the blocking loop with its timers in a worker, as windowed apps on `main` do |
-| Windows notifications | not checked against a library in this reading | Step 3 uses `notify-rust`; its API is read before that step starts |
-
-## Kept and retired
-
-| Kept | Retired |
-|---|---|
-| the public TypeScript API of `main` | `src/native/win32/` and `src/native/darwin/`: 2,779 lines of `bun:ffi` |
-| IPC contract and bridge, WebSocket transport, settings store | `@n1h/sweetview-webview-bun`: 2,014 lines of `bun:ffi` |
-| hit-region geometry and the hit relay, icon encoders, `.app` builder | the C++ fork `n0t-invented-here/sweetview-webview`, except its input hook files |
-| the fork's mouse hook, keyboard hook and permission model, with the bindings' TypeScript API for them | |
-| the demos and the tests, as acceptance checks | the shared-memory ring, the `webview_dispatch` wake-up and the drain `JSCallback` |
-| the docs as the API reference | |
+All in scope, after `main`'s behaviour is running on the new library: URL schemes and single-instance handoff, clipboard, WinRT toast notifications, screen information, popup menus at a point, native file reading, the request handler and streamed worker responses, file drops, chunked IPC framing, app identity, tabs as library API.
 
 ## Shape
 
 | Layer | Content | Language |
 |---|---|---|
 | App | the developer's single `.ts` file | TypeScript |
-| Sweetview API | `createWebviewApp`, `createOverlayWindow`, `createTray`, `createNotifier`, menus, IPC, build helpers | TypeScript, as today |
-| Native library | one prebuilt binary per target, loaded through N-API | safe Rust, `#![forbid(unsafe_code)]` |
+| Sweetview API | the API of today, unchanged | TypeScript |
+| Native library | one prebuilt binary per target, loaded through N-API | Rust, with the C++ webview engine linked in |
 
-- `bun add` installs one package holding the TypeScript and one prebuilt binary per target: Windows x64, macOS arm64, Linux x64.
+- `bun add` installs one package holding the TypeScript and one prebuilt binary per target.
 - CI builds the binaries on one runner per OS. Consumers install no Rust and no C++ toolchain.
 - The binary is loaded with a literal `require` of a fixed path, the form `bun build --compile` embeds.
+- `@n1h/sweetview-webview-bun` is folded into the one package; its API is re-exported unchanged.
 
 ## IPC and bail-out
 
-The service definition and bridge stay as they are. Two transports are added beside the webview and WebSocket ones: Tauri 2 (`invoke` and events) and Electron (preload bridge). Page code is identical across all four. The native layer is the same libraries Tauri 2 runs on.
+The service definition and bridge stay as they are. Two transports are added beside the webview and WebSocket ones: Tauri 2 (`invoke` and events) and Electron (preload bridge). Page code is identical across all four.
 
 ## Order of work
 
-1. Crate skeleton with CI producing the prebuilt binaries. Acceptance: `demos/menubar-only` runs unchanged, and the timer-pumped loop is measured as described above.
-2. Windows and overlays, hit regions. Acceptance: the overlay tests pass and `demos/desktop-pet` runs unchanged.
-3. Input hooks: the fork's four hook files linked in and exposed as `installMouseHook`, `installKeyboardHook` and `permissions`. Acceptance: the fork's key-code unit tests pass and the bindings' `examples/input-hooks.ts` runs unchanged.
-4. Tray, menus, notifications. Acceptance: `demos/menubar-notify` runs unchanged.
-5. Webview and IPC. Acceptance: `demos/web-app` runs unchanged.
-6. Tabs. Acceptance: `demos/native-tabs` runs unchanged.
-7. Delete the TypeScript FFI, drop the bindings dependency.
-8. Tauri 2 and Electron transports.
-9. Linux minimal pass.
+Each step moves one group of native calls from TypeScript into the native library. After every step the tree works, with moved groups in the library and the rest still on `bun:ffi`.
+
+1. Native library skeleton: N-API entry point, the C++ engine linked in, CI producing the prebuilt binaries. Acceptance: the bindings' own tests pass against it, and `examples/basic.ts` runs unchanged.
+2. The webview wrapper: every `Webview` method, the worker functions, the hooks and permissions. Acceptance: the bindings' `test/request-handler.test.ts` and `examples/input-hooks.ts` pass unchanged.
+3. Event loop and windows. Acceptance: Sweetview's window tests pass and `demos/web-app` runs unchanged.
+4. Overlays and hit regions. Acceptance: `demos/desktop-pet` runs unchanged.
+5. Tray, menus, notifications, dialogs. Acceptance: `demos/menubar-only` and `demos/menubar-notify` run unchanged.
+6. Native tabs. Acceptance: `demos/native-tabs` runs unchanged.
+7. Delete the TypeScript FFI files and the separate bindings package.
+8. The `v1-drafting` features, one at a time, each accepted by its own tests.
+9. Tauri 2 and Electron transports.
+10. Linux minimal pass.
 
 ## Risks and actions
 
 | Risk | Action |
 |---|---|
-| A rebuilt module behaves differently from its TypeScript original | Each module is accepted against its existing tests and demo before the TypeScript version is deleted. |
-| A JavaScript callback must run on the UI thread while that thread is inside the blocking loop, which `bun:ffi` does today with `JSCallback` | Step 1 proves the N-API equivalent with the tray demo before any other module is built. |
-| A needed behaviour has no safe API | It goes in the "Not covered" table above with its action. Nothing is added to the crate with `unsafe`. |
-| The four libraries change or break | Each is pinned to an exact version in `Cargo.lock`; upgrades run the full demo acceptance set. |
-| macOS shows no notifications from an unsigned bundle | Unchanged from today: the `.app` builder signs the bundle. |
-| Linux has no existing behaviour to match | Linux is last, scoped to a window with a webview, a tray menu and a notification. |
+| A moved group behaves differently from its TypeScript original | Each group is accepted against its existing tests and demo before the TypeScript version is deleted. Both exist side by side until the tests pass on the library version. |
+| A JavaScript callback must run on the UI thread while that thread is inside the blocking loop, which `bun:ffi` does today with `JSCallback` | Step 1 proves the N-API equivalent with a bound function called from the page while `run()` blocks, before anything else is moved. |
+| A worker thread calls `webview_dispatch` and the completion and streaming functions today | Those functions stay callable from any thread, as the C API documents; step 2 runs the bindings' worker tests unchanged. |
+| `unsafe` blocks spread through the Rust code | `#![forbid(unsafe_code)]` on every module outside `win32/` and `darwin/`. CI fails when the count of `unsafe` blocks rises without a matching entry in a tracked list. |
+| The C++ engine has memory errors | CI builds it with AddressSanitizer and runs the fork's own unit and functional tests under it on macOS and Linux. |
+| Linux has little existing behaviour to match | Linux is last. The engine's upstream GTK backend runs there; each fork addition and each native module is implemented for it. |
 
 ## Alternatives ruled out
 
 | Option | Why not |
 |---|---|
-| Port each OS call to Rust and keep the C++ library | Every OS call stays an `unsafe` block and the C++ stays. It is not memory safe |
+| Replace the C++ engine with `wry` | It removes functionality: `wry`'s protocol responder takes a whole body, so streamed responses go; it has no service-worker request filter; its drop handler replaces WebView2's drop target, which stops HTML drops inside the page; it has no system-wide input hooks |
+| Replace Sweetview's windows with `tao` | `tao` runs its own event loop. Sweetview has two, the engine's blocking loop and the timer pump, and both are kept |
 | Keep the TypeScript FFI | No checks at all on any native call |
-| `webviewjs/webview` | Its tray does not deliver events without a window (issue #96, open). One maintainer. No checkmarks or icons in menus |
+| `webviewjs/webview` | Built on `wry`, so the same functionality goes. Its tray does not deliver events without a window (issue #96, open) |
 | Electrobun | own CLI and toolchain, no `bun build --compile`, IPC over a localhost WebSocket; excluded by the project owner |
 | bunmaska | alpha; its native layer is `bun:ffi` written in TypeScript |
 | `Bun.WebView` | headless browser automation; opens no window |
@@ -209,23 +171,20 @@ The service definition and bridge stay as they are. Two transports are added bes
 
 | Decision | Choice | Reason |
 |---|---|---|
-| Who owns the unsafe code | the `tao`, `wry`, `muda` and `tray-icon` libraries | It is the only route in which this project's code is memory safe |
-| The C++ webview library | its engine is retired; its input hook files are kept | `wry` covers what `main` uses from the engine. The hooks have no replacement and the owner's games need them |
-| Streamed responses and service-worker request interception | given up | They cannot exist on `wry`, and keeping them means keeping the whole C++ engine |
-| Behaviour the rebuild matches | Sweetview `main` | It is the published line and every journey runs on it. `v1-drafting` features are added afterwards, one at a time, where a safe API exists |
+| Functionality | all of it is kept | the rule this proposal follows |
+| The C++ webview engine | kept whole, from the fork's `v1-drafting` branch | it is the only implementation of everything the fork does, and that branch contains every addition |
+| Order | `main`'s behaviour first, then each `v1-drafting` feature | `main` is the published line; `v1-drafting` contains `main` |
 
 ## Sources
 
-- https://docs.rs/tao/latest/tao/window/struct.Window.html
-- https://docs.rs/tao/latest/tao/window/struct.WindowBuilder.html
-- https://docs.rs/tao/latest/x86_64-pc-windows-msvc/tao/platform/windows/trait.WindowBuilderExtWindows.html
-- https://docs.rs/tao/latest/tao/platform/run_return/trait.EventLoopExtRunReturn.html
-- https://docs.rs/wry/latest/wry/struct.WebViewBuilder.html
-- https://docs.rs/muda/latest/muda/
-- https://docs.rs/tray-icon/latest/tray_icon/
 - https://github.com/napi-rs/napi-rs
+- https://github.com/microsoft/windows-rs
+- https://github.com/madsmtm/objc2
 - https://bun.com/docs/compiler/executables
 - https://github.com/webview/webview
+- https://docs.rs/wry/latest/wry/struct.WebViewBuilder.html
+- https://docs.rs/tao/latest/tao/platform/run_return/trait.EventLoopExtRunReturn.html
+- https://webview.js.org/api/webview/
 - https://github.com/webviewjs/webview/issues/96
 - https://github.com/blackboardsh/electrobun
 - https://github.com/ipfizz/bunmaska
