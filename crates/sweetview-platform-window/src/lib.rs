@@ -27,6 +27,9 @@ mod platform;
 
 pub use platform::*;
 
+mod size_hint;
+pub use size_hint::*;
+
 /// The chrome of a window as its styles say: what `Window.fromHandle` reports.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Chrome {

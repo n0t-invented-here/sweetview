@@ -2024,6 +2024,7 @@ dependencies = [
  "sweetview-platform-window",
  "sweetview-window-logic",
  "tao",
+ "webview2-com",
  "wry",
 ]
 

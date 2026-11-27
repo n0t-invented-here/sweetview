@@ -18,7 +18,6 @@
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::rc::{Rc, Weak};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -29,7 +28,7 @@ use sweetview_platform_window::ForeignWindow;
 use tao::dpi::{LogicalSize, PhysicalPosition, PhysicalSize};
 use tao::event::{Event, WindowEvent};
 use tao::window::{Window as TaoWindow, WindowBuilder};
-use wry::{NewWindowResponse, WebContext, WebView, WebViewBuilder};
+use wry::{NewWindowResponse, WebView, WebViewBuilder};
 
 use crate::bridge::{self, BridgeCall};
 use crate::error::{Error, Result};
@@ -91,15 +90,17 @@ struct Binding {
 
 enum HostWindow {
   Own { window: TaoWindow, listener: u64 },
+  /// A window the webview was given to fill (`Host::Fill`).
+  Filled(ForeignWindow),
+  /// A window the webview is a child of (`Host::Child`).
   Foreign(ForeignWindow),
 }
 
 /// What exists only while the webview does. Fields drop in this order: what
-/// was added to the webview, the webview, its context, then its own window.
+/// was added to the webview, the webview, then its own window.
 struct Live {
   extras: WebviewExtras,
   webview: WebView,
-  _context: WebContext,
   window: HostWindow,
 }
 
@@ -150,14 +151,6 @@ fn drain_token(id: EngineId) -> u64 {
   (1u64 << 32) | u64::from(id)
 }
 
-/// Where WebView2 keeps the profile: `%APPDATA%\<executable file name>`, the
-/// folder the C++ library used, so an application keeps its cookies and storage.
-fn user_data_folder() -> Option<PathBuf> {
-  let roaming = std::env::var_os("APPDATA")?;
-  let exe = std::env::current_exe().ok()?;
-  Some(PathBuf::from(roaming).join(exe.file_name()?))
-}
-
 struct Inner {
   id: EngineId,
   runtime: Rc<Runtime>,
@@ -180,19 +173,21 @@ pub struct Engine {
 }
 
 impl Engine {
-  /// Makes a webview. `debug` enables the developer tools and the default context menu.
+  /// Makes a webview. `debug` enables the developer tools; the context menu is
+  /// on either way, as the C++ library left it.
   pub fn create(debug: bool, host: Host) -> Result<Engine> {
     let runtime = Runtime::get()?;
     let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
     let slot: Rc<RefCell<Weak<Inner>>> = Rc::new(RefCell::new(Weak::new()));
     let new_window: NewWindowSlot = Rc::new(RefCell::new(None));
 
-    let mut context = WebContext::new(user_data_folder());
     let message_slot = slot.clone();
     let popup_handler = new_window.clone();
     let popup_runtime = Rc::downgrade(&runtime);
-    let builder = WebViewBuilder::new_with_web_context(&mut context)
+    let builder = WebViewBuilder::new()
       .with_devtools(debug)
+      // How `wry` grants the clipboard-read permission the C++ library granted.
+      .with_clipboard(true)
       .with_ipc_handler(move |request| {
         let inner = message_slot.borrow().upgrade();
         if let Some(inner) = inner {
@@ -211,7 +206,7 @@ impl Engine {
           _ => NewWindowResponse::Allow,
         }
       });
-    let builder = configure_for_platform(builder, debug);
+    let builder = configure_for_platform(builder)?;
 
     let mount = |error: wry::Error| Error::os("the webview could not be created (is the WebView2 runtime installed?)", error);
     let foreign = |value: isize| {
@@ -240,7 +235,7 @@ impl Engine {
       }
       Host::Fill(value) => {
         let parent = foreign(value)?;
-        (builder.build(&parent).map_err(mount)?, HostWindow::Foreign(parent), value)
+        (builder.build(&parent).map_err(mount)?, HostWindow::Filled(parent), value)
       }
       Host::Child(value, bounds) => {
         let parent = foreign(value)?;
@@ -259,7 +254,7 @@ impl Engine {
     let inner = Rc::new(Inner {
       id,
       runtime: runtime.clone(),
-      live: RefCell::new(Some(Live { extras, webview, _context: context, window })),
+      live: RefCell::new(Some(Live { extras, webview, window })),
       destroyed: Cell::new(false),
       window_value: Cell::new(window_value),
       own_window_shown: Cell::new(false),
@@ -312,16 +307,28 @@ impl Engine {
   pub fn set_title(&self, title: &str) {
     self.inner.with_live(|live| match &live.window {
       HostWindow::Own { window, .. } => window.set_title(title),
-      HostWindow::Foreign(window) => {
+      HostWindow::Filled(window) | HostWindow::Foreign(window) => {
         sweetview_platform_window::set_title(window, title);
       }
     });
   }
 
   /// Sizes the window the webview lives in, in device-independent pixels.
+  ///
+  /// A window the webview was given (`Host::Fill`) is restyled and resized as
+  /// the C++ library's `set_size` did it, and is not shown; see
+  /// `sweetview_platform_window::apply_given_window_size`. A child webview's
+  /// host window is left alone.
   pub fn set_size(&self, width: u32, height: u32, hint: SizeHint) {
     let shown = self.inner.with_live(|live| {
-      let HostWindow::Own { window, .. } = &live.window else { return false };
+      let window = match &live.window {
+        HostWindow::Own { window, .. } => window,
+        HostWindow::Filled(window) => {
+          sweetview_platform_window::apply_given_window_size(window, width, height, given_hint(hint));
+          return false;
+        }
+        HostWindow::Foreign(_) => return false,
+      };
       let size = LogicalSize::new(f64::from(width), f64::from(height));
       window.set_resizable(hint != SizeHint::Fixed);
       match hint {
@@ -619,10 +626,16 @@ impl Inner {
     let taken = if in_callback { None } else { self.live.try_borrow_mut().ok().and_then(|mut live| live.take()) };
     match taken {
       Some(live) => {
-        if let HostWindow::Own { listener, .. } = &live.window {
+        let Live { extras, webview, window } = live;
+        drop(extras);
+        drop(webview);
+        if let HostWindow::Own { window, listener } = &window {
           self.runtime.remove_event_listener(*listener);
+          // Gone now, as the C++ library's `webview_destroy` closed it: `tao`
+          // alone destroys a dropped window only when its loop next runs.
+          sweetview_platform_window::destroy_now(window);
         }
-        drop(live);
+        drop(window);
       }
       None if self.live.try_borrow().map(|live| live.is_some()).unwrap_or(true) => {
         let inner = self.clone();
@@ -630,6 +643,16 @@ impl Inner {
       }
       None => {}
     }
+  }
+}
+
+fn given_hint(hint: SizeHint) -> sweetview_platform_window::GivenWindowSizeHint {
+  use sweetview_platform_window::GivenWindowSizeHint as Given;
+  match hint {
+    SizeHint::None => Given::None,
+    SizeHint::Min => Given::Min,
+    SizeHint::Max => Given::Max,
+    SizeHint::Fixed => Given::Fixed,
   }
 }
 
@@ -641,15 +664,36 @@ fn wry_rect(bounds: Bounds) -> wry::Rect {
 }
 
 #[cfg(windows)]
-fn configure_for_platform(builder: WebViewBuilder<'_>, debug: bool) -> WebViewBuilder<'_> {
+thread_local! {
+  /// The process's WebView2 environment, made once on the UI thread and shared
+  /// by every webview, as the C++ library's webviews shared theirs.
+  static ENVIRONMENT: std::cell::OnceCell<webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Environment> =
+    const { std::cell::OnceCell::new() };
+}
+
+/// The WebView2 environment, created the way the C++ library created it: the
+/// profile in `%APPDATA%\<executable file name>` (`WEBVIEW2_USER_DATA_FOLDER`
+/// overrides it), no extra browser arguments, so a process on the old library
+/// can share the profile. A failure is not kept: the next webview tries again.
+#[cfg(windows)]
+fn configure_for_platform(builder: WebViewBuilder<'_>) -> Result<WebViewBuilder<'_>> {
   use wry::WebViewBuilderExtWindows;
-  // As the C++ library set them: the default context menu only with `debug`.
-  builder.with_default_context_menus(debug)
+  let environment = ENVIRONMENT.with(|cell| {
+    if let Some(environment) = cell.get() {
+      return Ok(environment.clone());
+    }
+    let folder = sweetview_platform_webview::default_user_data_folder();
+    let environment = sweetview_platform_webview::create_environment(folder.as_deref()).map_err(|code| {
+      Error::os("the WebView2 environment could not be created (is the WebView2 runtime installed?)", format!("webview_error_t {}", code.code()))
+    })?;
+    Ok(cell.get_or_init(|| environment).clone())
+  })?;
+  Ok(builder.with_environment(environment))
 }
 
 #[cfg(not(windows))]
-fn configure_for_platform(builder: WebViewBuilder<'_>, _debug: bool) -> WebViewBuilder<'_> {
-  builder
+fn configure_for_platform(builder: WebViewBuilder<'_>) -> Result<WebViewBuilder<'_>> {
+  Ok(builder)
 }
 
 #[cfg(windows)]
