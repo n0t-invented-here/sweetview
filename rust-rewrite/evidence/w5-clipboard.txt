@@ -1,0 +1,11 @@
+$ bun test packages/sweetview-native/src/clipboard.test.ts
+bun test v1.4.4 (38afee6c8)
+
+packages\sweetview-native\src\clipboard.test.ts:
+(pass) clipboard round-trips Unicode and empty text, and clears [13.54ms]
+
+ 1 pass
+ 0 fail
+ 3 expect() calls
+Ran 1 test across 1 file. [57.00ms]
+exit: 0

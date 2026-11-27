@@ -82,15 +82,38 @@ Source of truth for behaviour: the bindings repository's `docs/` and `test/`, an
 
 - [ ] W5.1 `Tray`: icon, tooltip, click, double click, menu on right click, `setIcon`, `setMenu`, re-added when Explorer restarts.
 - [ ] W5.2 Menus: check marks, icons, submenus, separators, disabled items, the function form rebuilt on each open, `Menu.popup` at a point and at the cursor.
-- [ ] W5.3 `Notifier`: WinRT toasts with click, `appId` and identity registration, per `docs/native/notifications.md`. The fallback when WinRT is unavailable or a toast fails is a balloon on a hidden notification icon of the notifier's own, with or without a `Tray`, as `win32/notifier.ts` does today. The C shim that `winrt-toast.ts` compiles at run time with Bun's `cc` is gone.
+- [x] W5.3 `Notifier`: WinRT toasts with click, `appId` and identity registration, per `docs/native/notifications.md`. The fallback when WinRT is unavailable or a toast fails is a balloon on a hidden notification icon of the notifier's own, with or without a `Tray`, as `win32/notifier.ts` does today. The C shim that `winrt-toast.ts` compiles at run time with Bun's `cc` is gone.
+
+    `rust-rewrite/evidence/w5-notifier.txt`: 9 pass, 0 fail. Real WinRT toasts with an AUMID registered and clicks routed per toast; an explicit `appId`; the fallback to a balloon on the notifier's own hidden icon when `Show` fails and when WinRT is off, with and without a `Tray`; a throwing `onClick` logged with today's message. `win32/winrt-toast.ts` and its C shim are deleted:
+
+    ```
+    $ git ls-files packages/sweetview-native/src/win32/winrt-toast.ts | wc -l
+    0
+    ```
+
 - [ ] W5.4 `pickFolder`, `Clipboard`, `setAppMenu`, `setAppIcon`, `setActivationPolicy`.
 - [ ] W5.5 `notifier.test.ts` passes. `demos/menubar-only` and `demos/menubar-notify` run and compile; the tray icon is clicked by hand and the result written down.
 
 ## W6. Activation
 
-- [ ] W6.1 `registerUrlScheme`, `unregisterUrlScheme`, `onOpenUrl`, `signalReady`, `extractUrlFromArgs`.
-- [ ] W6.2 `singleInstance`: an instance built from tag `pre-rust-rewrite` and one built from the rewrite hand off to each other in both directions.
-- [ ] W6.3 `activation.test.ts` passes.
+- [x] W6.1 `registerUrlScheme`, `unregisterUrlScheme`, `onOpenUrl`, `signalReady`, `extractUrlFromArgs`.
+
+    `rust-rewrite/evidence/w6-activation.txt`: `registerUrlScheme` writes the HKCU keys and `unregisterUrlScheme` removes them; `extractUrlFromArgs` matches declared and custom schemes; early URLs are buffered until `signalReady()` and drained in order.
+
+- [x] W6.2 `singleInstance`: an instance built from tag `pre-rust-rewrite` and one built from the rewrite hand off to each other in both directions.
+
+    `rust-rewrite/evidence/w6-single-instance-interop.txt`: the tree of tag `pre-rust-rewrite` (from `git archive`) and the rewrite, each as primary and as secondary. Old to new and new to old both report `handedOff: true`, and the `{args, cwd, url}` payload arrives unchanged.
+
+- [x] W6.3 `activation.test.ts` passes.
+
+    ```
+    $ bun test packages/sweetview-native/src/activation.test.ts packages/sweetview-native/src/win32/activation.test.ts
+     7 pass
+     0 fail
+    ```
+
+    Per-test output: `rust-rewrite/evidence/w6-activation.txt`.
+
 
 ## W7. Tabs
 
@@ -101,7 +124,15 @@ Source of truth for behaviour: the bindings repository's `docs/` and `test/`, an
 
 - [ ] W8.1 The package holds the prebuilt binding for Windows x64 and the loader finds it after `bun add` from a packed tarball in an empty project.
 - [ ] W8.2 `just compile` builds every demo that has the recipe. `just pack` lists what would publish.
-- [ ] W8.3 `refreshWindowsIcons` and the rest of `packages/sweetview-build` work with no `bun:ffi`.
+- [x] W8.3 `refreshWindowsIcons` and the rest of `packages/sweetview-build` work with no `bun:ffi`.
+
+    `rust-rewrite/evidence/w8-build.txt`: 11 pass, 0 fail, 2 skip (macOS-only signing). `refreshWindowsIcons` goes through the binding (`refreshShellIcons`), does nothing on another OS, and a test asserts no source of `packages/sweetview-build` imports `bun:ffi`.
+
+    ```
+    $ git grep -l "bun:ffi" -- packages/sweetview-build/src ':!*.test.ts' | wc -l
+    0
+    ```
+
 
 ## WT. IPC transports for Tauri 2 and Electron
 

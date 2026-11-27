@@ -1,0 +1,19 @@
+$ bun test packages/sweetview-native/src/activation.test.ts packages/sweetview-native/src/win32/activation.test.ts
+bun test v1.4.4 (38afee6c8)
+
+packages\sweetview-native\src\activation.test.ts:
+(pass) ignores malformed single-instance handoff JSON [0.24ms]
+(pass) parses single-instance handoffs with or without a URL [0.09ms]
+
+packages\sweetview-native\src\win32\activation.test.ts:
+(pass) activation URL buffering & extraction > extractUrlFromArgs matches declared schemes or custom non-web schemes [0.28ms]
+(pass) activation URL buffering & extraction > buffers early URLs until signalReady() and then drains in FIFO order [1.07ms]
+(pass) win32 URL schemes & single-instance > registerUrlScheme writes HKCU keys and unregisterUrlScheme removes them cleanly [92.09ms]
+(pass) win32 URL schemes & single-instance > singleInstance retries when the mutex exists before its message window is discoverable [113.16ms]
+(pass) win32 URL schemes & single-instance > singleInstance hands off args and URL from a real secondary process via WM_COPYDATA [51.13ms]
+
+ 7 pass
+ 0 fail
+ 42 expect() calls
+Ran 7 tests across 2 files. [299.00ms]
+exit: 0
