@@ -12,6 +12,8 @@
 pub mod diagnostics;
 pub mod event_loop;
 pub mod input;
+pub mod notify;
+pub mod shell;
 
 use napi_derive::napi;
 

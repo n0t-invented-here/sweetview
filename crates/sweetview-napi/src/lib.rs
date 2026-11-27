@@ -11,6 +11,8 @@ pub mod diagnostics;
 mod errors;
 pub mod event_loop;
 pub mod input;
+pub mod notify;
+pub mod shell;
 
 /// Runs when the binding is loaded, once per JavaScript thread that loads it.
 /// The first thread to load it is the UI thread.
