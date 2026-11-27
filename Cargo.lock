@@ -2192,8 +2192,10 @@ dependencies = [
 name = "sweetview-platform-webview"
 version = "1.0.0"
 dependencies = [
+ "dirs",
  "serde_json",
  "sweetview-http",
+ "sweetview-platform-loop",
  "tao",
  "webview2-com",
  "windows",

@@ -305,7 +305,8 @@ fn request_path_on_a_real_webview() {
     }
 
     scenario("focus and popup position calls");
-    extras.move_focus();
+    // Focus is `wry`'s own `WebView::focus` (`MoveFocus`, programmatic).
+    let _ = view.webview().focus();
     extras.notify_parent_window_position_changed();
     assert_eq!(extras.call_devtools_protocol_method("Runtime.enable", "{}"), ErrorCode::Ok);
 

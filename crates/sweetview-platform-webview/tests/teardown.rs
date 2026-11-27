@@ -14,7 +14,6 @@ use std::time::{Duration, Instant};
 
 use common::{fetch_js, Ctx};
 use sweetview_platform_webview::{ErrorCode, RawRequest};
-use windows::Win32::System::Threading::{GetCurrentProcess, GetGuiResources, GetProcessHandleCount, GR_GDIOBJECTS, GR_USEROBJECTS};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Counts {
@@ -24,16 +23,8 @@ struct Counts {
 }
 
 fn counts() -> Counts {
-    // SAFETY: the pseudo-handle of the current process is always valid and needs no closing.
-    let process = unsafe { GetCurrentProcess() };
-    // SAFETY: `process` is the current process's pseudo-handle.
-    let user = unsafe { GetGuiResources(process, GR_USEROBJECTS) };
-    // SAFETY: `process` is the current process's pseudo-handle.
-    let gdi = unsafe { GetGuiResources(process, GR_GDIOBJECTS) };
-    let mut handles = 0u32;
-    // SAFETY: `handles` is a local u32 for the call to fill.
-    unsafe { GetProcessHandleCount(process, &mut handles) }.expect("GetProcessHandleCount");
-    Counts { user, gdi, handles }
+    let counts = sweetview_platform_loop::resource_counts();
+    Counts { user: counts.user_objects, gdi: counts.gdi_objects, handles: counts.kernel_handles }
 }
 
 /// One webview's whole life: created, a page loaded, a request answered by

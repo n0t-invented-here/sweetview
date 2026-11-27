@@ -403,7 +403,8 @@ impl Engine {
 
   /// Gives the page the keyboard focus.
   pub fn move_focus(&self) {
-    self.inner.with_live(|live| live.extras.move_focus());
+    // `wry`'s focus is `MoveFocus` with the programmatic reason, as the tabs library calls it.
+    self.inner.with_live(|live| live.webview.focus());
   }
 
   /// Tells the webview its host window moved, so its popups follow.

@@ -195,9 +195,7 @@ impl WebviewExtras {
                 inner.script_registered();
             }
         });
-        // SAFETY: the script text is an owned HSTRING for the call and `handler` is
-        // a live COM object; WebView2 holds its own reference until it completes.
-        let added = unsafe { self.inner.webview.AddScriptToExecuteOnDocumentCreated(&hstring(source), &handler) };
+        let added = self.inner.add_script(source, Some(&handler));
         drop(handler);
         if added.is_ok() {
             self.inner.scripts_outstanding.set(self.inner.scripts_outstanding.get() + 1);
@@ -339,13 +337,6 @@ impl WebviewExtras {
         self.inner.host_epoch.set(self.inner.host_epoch.get() + 1);
     }
 
-    /// Gives the page keyboard focus (`MoveFocus`, programmatic).
-    pub fn move_focus(&self) {
-        // SAFETY: `controller` is this webview's live controller; the reason is a
-        // plain enum value.
-        let _ = unsafe { self.inner.controller.MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC) };
-    }
-
     /// Tells WebView2 its window moved, so popups (select lists, tooltips)
     /// follow it.
     pub fn notify_parent_window_position_changed(&self) {
@@ -479,9 +470,20 @@ impl Inner {
         *self.registrations.borrow_mut() = registrations;
 
         // The drop script is the same in every document and starts disabled.
-        let handler: Option<&ICoreWebView2AddScriptToExecuteOnDocumentCreatedCompletedHandler> = None;
-        // SAFETY: the script is an owned HSTRING for the call; no completion handler.
-        unsafe { self.webview.AddScriptToExecuteOnDocumentCreated(&hstring(FILE_DROP_SCRIPT), handler) }
+        self.add_script(FILE_DROP_SCRIPT, None)
+    }
+
+    /// `AddScriptToExecuteOnDocumentCreated`, with the handler that receives the
+    /// script's id, or none.
+    fn add_script(
+        &self,
+        source: &str,
+        handler: Option<&ICoreWebView2AddScriptToExecuteOnDocumentCreatedCompletedHandler>,
+    ) -> windows::core::Result<()> {
+        // SAFETY: `self.webview` is this webview's live ICoreWebView2; the script is an
+        // owned HSTRING for the call, and `handler`, when present, a live COM object
+        // WebView2 holds its own reference to until it completes.
+        unsafe { self.webview.AddScriptToExecuteOnDocumentCreated(&hstring(source), handler) }
     }
 
     fn execute_script(&self, script: &str) -> windows::core::Result<()> {
@@ -597,19 +599,25 @@ impl Inner {
     /// resort, so a request never goes on to the network. Returns whether a
     /// response was set.
     fn put_fail_closed_response(&self, args: &ICoreWebView2WebResourceRequestedEventArgs) -> bool {
-        let none: Option<&IStream> = None;
-        // SAFETY: the strings are owned HSTRINGs for the call; no body stream.
-        let response = unsafe {
-            self.env.CreateWebResourceResponse(none, 500, &hstring("Internal Server Error"), &hstring("Content-Type: text/plain"))
-        }
-        // SAFETY: as above, with empty strings.
-        .or_else(|_| unsafe { self.env.CreateWebResourceResponse(none, 500, &HSTRING::new(), &HSTRING::new()) });
-        match response {
-            // SAFETY: `args` is live event args held by this webview, and `response` a
-            // live response made by its environment.
-            Ok(response) => unsafe { args.SetResponse(&response) }.is_ok(),
-            Err(_) => false,
-        }
+        let response = self
+            .create_response(None, 500, "Internal Server Error", "Content-Type: text/plain")
+            .or_else(|_| self.create_response(None, 500, "", ""));
+        response.and_then(|response| set_response(args, &response)).is_ok()
+    }
+
+    /// `CreateWebResourceResponse` on this webview's environment: every response
+    /// this crate sets is made here.
+    fn create_response(
+        &self,
+        body: Option<&IStream>,
+        status: i32,
+        reason: &str,
+        headers: &str,
+    ) -> windows::core::Result<ICoreWebView2WebResourceResponse> {
+        // SAFETY: `self.env` is this webview's live environment; the strings are owned
+        // HSTRINGs for the call, and `body`, when present, a live IStream the caller
+        // holds a reference to until the call has taken its own.
+        unsafe { self.env.CreateWebResourceResponse(body, status, &hstring(reason), &hstring(headers)) }
     }
 
     fn try_put_response(
@@ -627,14 +635,8 @@ impl Inner {
             let stream = unsafe { SHCreateMemStream(Some(body)) };
             Some(stream.ok_or(windows::core::Error::from(E_OUTOFMEMORY))?)
         };
-        // SAFETY: the strings are owned HSTRINGs for the call and `stream`, when
-        // present, a live IStream this function owns.
-        let response = unsafe {
-            self.env.CreateWebResourceResponse(stream.as_ref(), status, &hstring(reason_phrase(status)), &hstring(headers))
-        }?;
-        // SAFETY: `args` is live event args held by this webview, and `response` a
-        // live response made by its environment.
-        unsafe { args.SetResponse(&response) }
+        let response = self.create_response(stream.as_ref(), status, reason_phrase(status), headers)?;
+        set_response(args, &response)
     }
 
     /// Sets the response; when it cannot be built (headers WebView2 refuses, no
@@ -694,17 +696,9 @@ impl Inner {
         };
         // Ours only until CreateWebResourceResponse takes its own reference.
         let body = StreamingIStream::create(stream.clone());
-        // SAFETY: the strings are owned HSTRINGs for the call and `body` a live
-        // IStream this function holds a reference to.
-        let response = unsafe {
-            self.env.CreateWebResourceResponse(&body, status, &hstring(reason_phrase(status)), &hstring(&header_lines(headers)))
-        };
+        let response = self.create_response(Some(&body), status, reason_phrase(status), &header_lines(headers));
         drop(body);
-        let set = response.and_then(|response| {
-            // SAFETY: `args` is live event args held by this webview, and `response`
-            // a live response made by its environment.
-            unsafe { args.SetResponse(&response) }
-        });
+        let set = response.and_then(|response| set_response(&args, &response));
         if set.is_err() {
             self.shared.drop_stream(id, stream);
             if !self.put_fail_closed_response(&args) {
@@ -849,6 +843,16 @@ impl Inner {
     }
 }
 
+/// Sets the response of a request: every response this crate sets goes through here.
+fn set_response(
+    args: &ICoreWebView2WebResourceRequestedEventArgs,
+    response: &ICoreWebView2WebResourceResponse,
+) -> windows::core::Result<()> {
+    // SAFETY: `args` is the live event args of a request this webview holds (in the
+    // handler, or kept with its deferral), and `response` a live response its environment made.
+    unsafe { args.SetResponse(response) }
+}
+
 /// The request headers as the request handler receives them.
 fn read_request_headers_json(request: &ICoreWebView2WebResourceRequest) -> String {
     let mut headers = Vec::new();
@@ -899,9 +903,7 @@ fn read_request_body(request: &ICoreWebView2WebResourceRequest) -> Option<Vec<u8
     let mut buf = vec![0u8; 16384];
     loop {
         let mut read = 0u32;
-        // SAFETY: `buf` is an owned buffer of `buf.len()` bytes for the whole call,
-        // and `read` a local u32 for the call to fill.
-        let hr = unsafe { content.Read(buf.as_mut_ptr().cast(), buf.len() as u32, Some(&mut read)) };
+        let hr = istream::read_into(&content, &mut buf, &mut read);
         if hr.is_err() {
             return None;
         }

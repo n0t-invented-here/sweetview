@@ -98,9 +98,6 @@ impl WebviewExtras {
     /// Records that the host is about to navigate.
     pub fn note_host_navigation(&self) {}
 
-    /// Gives the page keyboard focus.
-    pub fn move_focus(&self) {}
-
     /// Tells the webview its window moved.
     pub fn notify_parent_window_position_changed(&self) {}
 

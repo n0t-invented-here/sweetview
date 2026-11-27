@@ -13,6 +13,8 @@ sweetview-http.workspace = true
 wry.workspace = true
 
 [target.'cfg(windows)'.dependencies]
+sweetview-platform-loop.workspace = true
+dirs.workspace = true
 webview2-com.workspace = true
 windows-core.workspace = true
 windows = { workspace = true, features = [
@@ -28,5 +30,5 @@ tao.workspace = true
 serde_json.workspace = true
 
 [target.'cfg(windows)'.dev-dependencies]
+sweetview-platform-loop.workspace = true
 webview2-com.workspace = true
-windows = { workspace = true, features = ["Win32_System_Threading"] }
