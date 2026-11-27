@@ -25,8 +25,8 @@ public static class TC {
     uint pid = 0;
     EnumWindows((h,l)=>{ var sb=new StringBuilder(256); GetWindowTextW(h,sb,256); if (sb.ToString()==title) { Main=h; GetWindowThreadProcessId(h, out pid); return false; } return true; }, IntPtr.Zero);
     if (pid == 0) throw new Exception("no window titled " + title);
-    // sweetnative's tray lives on a NativeShellMessageWindow in the same process.
-    EnumWindows((h,l)=>{ var sb=new StringBuilder(256); GetClassNameW(h,sb,256); uint p; GetWindowThreadProcessId(h, out p); if (p==pid && sb.ToString()=="NativeShellMessageWindow") { Tray=h; return false; } return true; }, IntPtr.Zero);
+    // sweetview's tray lives on a SweetviewMessageWindow in the same process.
+    EnumWindows((h,l)=>{ var sb=new StringBuilder(256); GetClassNameW(h,sb,256); uint p; GetWindowThreadProcessId(h, out p); if (p==pid && sb.ToString()=="SweetviewMessageWindow") { Tray=h; return false; } return true; }, IntPtr.Zero);
     if (Tray == IntPtr.Zero) throw new Exception("no tray message window in that process");
   }
 }

@@ -8,12 +8,13 @@ The recipes clone the two forks into `webview-bun/`, which is git-ignored, and b
 
 | Repo | URL | Branch | Contents |
 |---|---|---|---|
-| webview | https://github.com/n0t-invented-here/sweetview-webview | `sweetview` | The C library at upstream `f1a9d6b`, plus `webview_set_background_color` and `webview_set_asset` in the C API. |
-| webview-bun | https://github.com/n0t-invented-here/sweetview-webview-bun | `sweetview` | The Bun bindings, with the `webview` submodule pointing at the fork above. Its `build/` holds the built library for each platform. Published as `@n1h/sweetview-webview-bun`. |
+| webview | https://github.com/n0t-invented-here/sweetview-webview | `v1-drafting` | The C library at upstream `f1a9d6b`, plus `webview_set_background_color` and `webview_set_asset` in the C API. |
+| webview-bun | https://github.com/n0t-invented-here/sweetview-webview-bun | `v1-drafting` | The Bun bindings, with the `webview` submodule pointing at the fork above. Its `build/` holds the built library for each platform. Published as `@n1h/sweetview-webview-bun`. |
 
 The clone is `webview-bun/`, with the submodule at `webview-bun/webview/`.
 `clone` uses the SSH URL of webview-bun, so it needs an SSH key the remote accepts.
 Both repos are checked out on their branches, so commits can be made and pushed from them.
+The recipes default to the `v1-drafting` branch of both repos, which Sweetview 1.0.0 needs; no manual checkout is required. The published 2.7.0 line is the `sweetview` branch: set `SWEETVIEW_WEBVIEW_BRANCH=sweetview` (or `SWEETVIEW_WEBVIEW_SUB_BRANCH` for the submodule alone) to use it, and `status` then notes `expected branch v1-drafting` for any checkout that is not on the default. See [Rebuilding](../docs/webview-library.md#rebuilding).
 What the two C API additions do is in [`docs/webview-library.md`](../docs/webview-library.md).
 
 ## Recipes
@@ -23,7 +24,7 @@ Run `just webview <recipe>` from the repo root or `just <recipe>` in this folder
 | Recipe | Does | Skipped or refused when |
 |---|---|---|
 | `status` | Prints, for both repos, the branch, commit, ahead and behind counts against origin, changed files, and a shallow-clone note. Then whether webview-bun's submodule pointer matches the webview checkout, and whether the built library is current, stale or from uncommitted changes. | Not cloned: prints how to clone. |
-| `clone` | Full clone of webview-bun on `sweetview` with its submodule, then puts the submodule on `sweetview`. Says when the submodule's branch is ahead of the commit webview-bun records. | Skipped when the clone exists. |
+| `clone` | Full clone of webview-bun on `v1-drafting` with its submodule, then puts the submodule on `v1-drafting`. Says when the submodule's branch is ahead of the commit webview-bun records. | Skipped when the clone exists. |
 | `update` | Runs `clone`, fetches both repos, unshallows a shallow clone, and fast-forwards each. | Per repo, left alone and reported: fetch fails (offline), detached, changed files, no upstream, diverged from origin. Never resets. |
 | `build` | Runs `clone`, builds the library for this OS into `webview-bun/webview/build/core/Release/`, stamps it with the webview commit in a `.commit` file beside it, and restores the fork's tracked binaries under `webview-bun/build/` that the macOS build overwrites. | Skipped when the stamp matches a clean checkout; with uncommitted changes it builds every time. Refused on any OS other than Windows and macOS. |
 | `lib` | `update`, then `build`. | As `update` and `build`. |
@@ -47,4 +48,7 @@ The built file is `webview.dll` on Windows and `libwebview.dylib` on macOS.
 5. Commit in `webview-bun/webview/`, then commit the new submodule pointer in `webview-bun/` (`git add webview`). `status` says when the pointer is behind the checkout.
 6. Run `just webview push`. It pushes webview first, then webview-bun.
 7. In a checkout of the fork, run `just build` on each OS whose library changed. `webview-bun/` is such a checkout; the fork has its own justfile. `just build` there builds the library for that OS and copies it into the fork's `build/`, the folder the npm package ships. Commit those files in the fork and publish a new `@n1h/sweetview-webview-bun`.
-8. In this repo, bump `@n1h/sweetview-webview-bun` to the new version in the root `package.json` (`peerDependencies` and `devDependencies`) and in `demos/desktop-pet/package.json`, `demos/web-app/package.json` and `demos/menubar-notify/package.json`, run `bun install`, and commit.
+8. In this repo, bump `@n1h/sweetview-webview-bun` to the new version in every manifest that names it, run `bun install`, and commit:
+   - `packages/sweetview/package.json` (`peerDependencies`), the range apps install against;
+   - the root `package.json` (`devDependencies`);
+   - the four webview demos: `demos/desktop-pet/package.json`, `demos/web-app/package.json`, `demos/menubar-notify/package.json` and `demos/native-tabs/package.json` (`dependencies`).

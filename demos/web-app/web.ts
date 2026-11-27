@@ -45,7 +45,7 @@ const server = Bun.serve({
 console.log(`${APP_NAME} on http://${HOST}:${server.port}  (Ctrl+C to stop)`);
 
 const shutdown = async () => {
-  host.close();
+  host.dispose();
   await service.dispose();
   server.stop(true);
   process.exit(0);

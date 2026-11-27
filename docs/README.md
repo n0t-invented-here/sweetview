@@ -1,26 +1,33 @@
 # @n1h/sweetview reference
 
-One page per module. Each documents every export of that module: signature,
+Sweetview 1.0.0 reference. Each page documents its module's exports, including
 parameters, return value, errors, platform differences and thread rules. The
-overview, install and quickstart are in the [package README](../README.md).
+native module is split into an overview and topic guides. The overview,
+install and quickstart are in the [package README](../README.md).
 
 | Module | Contents |
 |---|---|
-| [`@n1h/sweetview`](app.md) | `createWebviewApp`: the window, the page, assets, the transport between page, UI thread and worker; `indexHtml`, `assetMime`, `Ring`, and `Webview` from the webview library |
-| [`@n1h/sweetview/worker`](worker.md) | `hostService` |
-| [`@n1h/sweetview/page`](page.md) | `isWebview`, `webviewTransport` |
+| [`@n1h/sweetview`](app.md) | `createApp`, `WebView` (`WebView.attach`, `WebView.openTab`), native tabs (`Tab`, `TabOptions`), dynamic requests, the ready handshake, `windowChromeMethods`, `indexHtml`, `assetMime`, `Ring`, `RawWebview`, and re-exports of the event loop, activation and app identity |
+| [`@n1h/sweetview/worker`](worker.md) | `hostService`, `hostRequestHandler`, chunked IPC and binary responses |
+| [`@n1h/sweetview/page`](page.md) | `isWebview`, `webviewTransport`, `signalReady` |
 | [`@n1h/sweetview/ipc`](ipc.md) | the contract: `defineService`, `createBridge`, `memoryTransport`, the wire frames |
 | [`@n1h/sweetview/ipc-ws`](ipc-ws.md) | the contract over WebSockets: `wsHost` for `Bun.serve`, `wsTransport` and `wsUrl` for the browser; each side alone as `/ipc-ws/server` and `/ipc-ws/client` |
-| [`@n1h/sweetview/native`](native.md) | tray, notifications, windows and overlays, click-through hit regions, folder picker, app menu, the OS event loop for an app with no window, icons; the hit-region helpers alone, without FFI, as `/native/hit-regions` |
-| [`@n1h/sweetview/settings-store`](settings-store.md) | a JSON settings file in the user's application data folder |
+| [`@n1h/sweetview/native`](native.md) | overview of the native module; the hit-region helpers alone, without FFI, as `/native/hit-regions` |
+| [Windows and screens](native/windows.md) | `Window`, `createWindow`, `WindowOptions`, framed / frameless / transparent / tabbed windows, `Window.fromHandle`, closing, file drops, `Screen` |
+| [Overlays and hit regions](native/overlays-and-hit-regions.md) | `setClickThrough`, `setHitRegions`, `HitRelay`, geometry helpers, `colorKey` |
+| [Menus and the tray](native/menus-and-tray.md) | `Menu.popup`, `MenuTemplate`, `resolveMenu`, `Tray`, `setAppMenu`, `setActivationPolicy` |
+| [Notifications](native/notifications.md) | `Notifier`, `NotificationOptions` |
+| [Activation and single instance](native/activation-and-single-instance.md) | `registerUrlScheme`, `unregisterUrlScheme`, `singleInstance`, `onOpenUrl`, `extractUrlFromArgs`, `signalReady` |
+| [Dialogs, clipboard and files](native/dialogs-clipboard-files.md) | `pickFolder`, `Clipboard`, `readTextFile`, `readFileBytes`, chunked file handles |
+| [Event loop and icons](native/event-loop-and-icons.md) | `runEventLoop`, `pumpEvents`, `quitEventLoop`, `setAppIcon`, icon encoders, `decodePng` |
+| [`@n1h/sweetview/settings-store`](settings-store.md) | a JSON settings file in the user's application data folder; `defineAppIdentity` and `validateUrlScheme` |
 | [`@n1h/sweetview/window-chrome`](window-chrome.md) | a page-drawn title bar and resize handles backed by OS moves and resizes |
-| [`@n1h/sweetview/build`](build.md) | `writeIconFiles` and `makeMacApp`; the page also covers the `make-app.ts` script and the `/file-imports` types |
-| [the webview library](webview-library.md) | the two C API additions the package relies on, and how the library is loaded |
+| [`@n1h/sweetview/build`](build.md) | `writeIconFiles`, `makeMacApp` and `refreshWindowsIcons`; the page also covers the `make-app.ts` script and the `/file-imports` types |
+| [the webview library](webview-library.md) | C API additions, intercepted origins, drop control, symbol probing, the `^2.7.0` peer range, companion repositories and rebuilds |
 
-Dependencies between the modules point one way. `ipc` imports nothing.
-`ipc-ws`, `worker` and `page` import `ipc`. `native`, `settings-store` and
-`build` import nothing else in the package. The root module imports `ipc`,
-`native`, `window-chrome` and the webview library.
+The [workspace table](../README.md#documentation) maps each facade subpath
+to its publishing package under `packages/`. Direct package imports are
+available for IPC, WebSocket IPC, native APIs, settings and build tools.
 
 `page`, `window-chrome` and `native/hit-regions` import types only, so a
 page bundle contains no Bun code.

@@ -21,17 +21,122 @@
       "bun"
     ],
     "paths": {
-      "@n1h/sweetview": [
-        "./src/index.ts"
+      "@n1h/sweetview-ipc": [
+        "./packages/sweetview-ipc/src/index.ts"
       ],
-      "@n1h/sweetview/*": [
-        "./src/*"
+      "@n1h/sweetview-ipc-ws": [
+        "./packages/sweetview-ipc-ws/src/index.ts"
+      ],
+      "@n1h/sweetview-ipc-ws/server": [
+        "./packages/sweetview-ipc-ws/src/server.ts"
+      ],
+      "@n1h/sweetview-ipc-ws/client": [
+        "./packages/sweetview-ipc-ws/src/client.ts"
+      ],
+      "@n1h/sweetview-settings": [
+        "./packages/sweetview-settings/src/index.ts"
+      ],
+      "@n1h/sweetview-settings/settings-store": [
+        "./packages/sweetview-settings/src/settings-store.ts"
+      ],
+      "@n1h/sweetview-settings/app-identity": [
+        "./packages/sweetview-settings/src/app-identity.ts"
+      ],
+      "@n1h/sweetview-native": [
+        "./packages/sweetview-native/src/index.ts"
+      ],
+      "@n1h/sweetview-native/hit-regions": [
+        "./packages/sweetview-native/src/hit-regions.ts"
+      ],
+      "@n1h/sweetview-native/internal": [
+        "./packages/sweetview-native/src/internal.ts"
+      ],
+      "@n1h/sweetview-native/win32/api": [
+        "./packages/sweetview-native/src/win32/api.ts"
+      ],
+      "@n1h/sweetview-native/win32/shortcuts": [
+        "./packages/sweetview-native/src/win32/shortcuts.ts"
+      ],
+      "@n1h/sweetview-native/win32/strip-shared": [
+        "./packages/sweetview-native/src/win32/strip-shared.ts"
+      ],
+      "@n1h/sweetview-native/win32/tab-window": [
+        "./packages/sweetview-native/src/win32/tab-window.ts"
+      ],
+      "@n1h/sweetview-native/win32/window": [
+        "./packages/sweetview-native/src/win32/window.ts"
+      ],
+      "@n1h/sweetview-native/win32/menu": [
+        "./packages/sweetview-native/src/win32/menu.ts"
+      ],
+      "@n1h/sweetview-native/win32/message-window": [
+        "./packages/sweetview-native/src/win32/message-window.ts"
+      ],
+      "@n1h/sweetview-native/darwin/objc": [
+        "./packages/sweetview-native/src/darwin/objc.ts"
+      ],
+      "@n1h/sweetview-native/darwin/screen": [
+        "./packages/sweetview-native/src/darwin/screen.ts"
+      ],
+      "@n1h/sweetview-native/darwin/tabs": [
+        "./packages/sweetview-native/src/darwin/tabs.ts"
+      ],
+      "@n1h/sweetview-native/darwin/window": [
+        "./packages/sweetview-native/src/darwin/window.ts"
+      ],
+      "@n1h/sweetview-build": [
+        "./packages/sweetview-build/src/index.ts"
+      ],
+      "@n1h/sweetview-build/make-app": [
+        "./packages/sweetview-build/src/make-app.ts"
+      ],
+      "@n1h/sweetview-build/refresh-icons": [
+        "./packages/sweetview-build/src/refresh-icons.ts"
+      ],
+      "@n1h/sweetview": [
+        "./packages/sweetview/src/index.ts"
+      ],
+      "@n1h/sweetview/worker": [
+        "./packages/sweetview/src/worker.ts"
+      ],
+      "@n1h/sweetview/page": [
+        "./packages/sweetview/src/page.ts"
+      ],
+      "@n1h/sweetview/build": [
+        "./packages/sweetview/src/build.ts"
+      ],
+      "@n1h/sweetview/settings-store": [
+        "./packages/sweetview/src/settings-store.ts"
+      ],
+      "@n1h/sweetview/window-chrome": [
+        "./packages/sweetview/src/window-chrome.ts"
+      ],
+      "@n1h/sweetview/ipc": [
+        "./packages/sweetview/src/ipc/index.ts"
+      ],
+      "@n1h/sweetview/ipc-ws": [
+        "./packages/sweetview/src/ipc-ws/index.ts"
+      ],
+      "@n1h/sweetview/ipc-ws/server": [
+        "./packages/sweetview/src/ipc-ws/server.ts"
+      ],
+      "@n1h/sweetview/ipc-ws/client": [
+        "./packages/sweetview/src/ipc-ws/client.ts"
+      ],
+      "@n1h/sweetview/native": [
+        "./packages/sweetview/src/native/index.ts"
+      ],
+      "@n1h/sweetview/native/hit-regions": [
+        "./packages/sweetview/src/native/hit-regions.ts"
+      ],
+      "@n1h/sweetview/file-imports": [
+        "./packages/sweetview/file-imports.d.ts"
       ]
     }
   },
   "include": [
-    "src",
+    "packages",
     "demos",
-    "file-imports.d.ts"
+    "packages/sweetview/file-imports.d.ts"
   ]
 }

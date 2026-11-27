@@ -1,61 +1,22 @@
 # @n1h/sweetview/worker
 
-The worker module hosts the app's Service behind a sweetview window. It runs inside the Bun Worker that `createWebviewApp` starts from its `worker` option, described in [app.md](app.md). The worker owns the Bun event loop while the UI thread is blocked in the OS loop.
+The worker module runs inside the Bun Worker that `WebView.attach` or
+`createApp` starts from its `worker` option ([app.md](app.md)). It hosts the
+app's IPC `Service`, dynamic HTTP-style routes, or both. The worker owns a
+Bun event loop of its own, which keeps working while the UI thread is blocked
+in the OS loop by `webview.run()`.
 
-```ts
-import { hostService } from "@n1h/sweetview/worker";
-```
+- [hostService](#hostservice)
+- [hostRequestHandler](#hostrequesthandler)
+- [Initialization order](#initialization-order)
+- [Backpressure](#backpressure)
+- [Protocol](#protocol)
+  - [Messages from the UI thread](#messages-from-the-ui-thread)
+  - [Replies and events](#replies-and-events)
+  - [Response frames](#response-frames)
+- [writeWorkerFrame](#writeworkerframe)
 
-- [Reference](#reference)
-  - [hostService](#hostservice)
-- [Example](#example)
-
-## Reference
-
-### hostService
-
-```ts
-export function hostService<M extends MethodMap, E extends EventMap>(service: Service<M, E>): void
-```
-
-Connects `service` to the window that started this worker. It subscribes to the Service's events and sets `self.onmessage`, replacing any handler already there, then returns.
-
-| Field | Type | Default | Meaning |
-|---|---|---|---|
-| `service` | `Service<M, E>` | required | The Service to host. `Service`, `MethodMap` and `EventMap` are documented in [ipc.md](ipc.md). |
-
-Thread: the Bun Worker started by `createWebviewApp`. Call once, at the top level of the worker entry. Writing a frame blocks the worker while the ring is full.
-
-#### Messages from the UI thread
-
-The UI thread posts two kinds of message:
-
-| Message | Shape | Effect |
-|---|---|---|
-| init | `{ kind: "init"; ring: SharedArrayBuffer; webviewHandle: number; drainCallbackPtr: number; libPath: string }` | Sent once, before any call. The worker wraps `ring`, opens the webview library at `libPath`, and writes any frames produced before this message; a frame that cannot be written is logged to the worker console and the rest still go. When `dlopen` fails, the worker throws and the UI thread logs `sweetview: the worker failed: <message>`. |
-| call | `{ kind: "call"; seq: string \| null; method: string; params: unknown }` | Runs `service.call(method, params, ctx)`. A `seq` of `null` means no reply is sent. |
-
-Every call gets the same `ctx`: `{ session: { id: "webview", kind: "webview" } }`. One window is one session.
-
-The worker opens the library with `dlopen` and binds one symbol, `webview_dispatch`. The UI thread runs the OS loop and does not process Bun messages. The worker wakes it with `webview_dispatch`, which queues the UI thread's drain callback on that loop. The worker does not import `@n1h/sweetview-webview-bun`. `libPath` is the library the UI thread loaded, so both threads use the same file.
-
-#### Replies and events
-
-Replies and events go back to the UI thread as JSON frames in the shared ring. After writing a frame, the worker calls `webview_dispatch` only when no wakeup is already pending, so a burst of frames costs one dispatch.
-
-| Outcome | Frame sent |
-|---|---|
-| `service.call` resolves, `seq` set | `{ kind: "reply", seq, ok: true, result }` |
-| `service.call` rejects, `seq` set | `{ kind: "reply", seq, ok: false, error }`, where `error` is the error's `message`, or `String(err)` for a non-`Error` value. |
-| `service.call` rejects, `seq` is `null` | None. The worker logs `"<method> failed:"` and the message with `console.error`. |
-| the Service emits with no `to`, or `to` equal to `"webview"` | `{ kind: "event", name, payload }` |
-| the Service emits with any other `to` | None. The event is dropped. |
-
-`hostService` never calls the Service's `endSession` or `dispose`. The UI thread terminates the worker when `run()` returns, or when `createWebviewApp` throws after starting it.
-
-Writing a frame blocks the worker while the ring is full, until the UI thread drains it. A frame whose UTF-8 JSON is longer than the ring's capacity minus 4 bytes throws `RangeError`. A result or payload that `JSON.stringify` rejects, such as a `BigInt`, throws `TypeError`. For a call with a `seq`, either error becomes an error reply. For an event emitted after the init message, it is thrown out of the Service's emit call. The capacity is `ringBytes` in [app.md](app.md).
-
-## Example
+## hostService
 
 ```ts
 import { defineService } from "@n1h/sweetview/ipc";
@@ -72,5 +33,187 @@ const service = defineService<Methods, Events>((emit) => ({
     },
   },
 }));
+
 hostService(service);
 ```
+
+`hostService(service, options?: { onRequest?: RequestHandler }): void`
+connects `service` to the window that started this worker: page calls not
+answered by a UI-thread method run `service.call(method, params, ctx)`, and
+the Service's events go to the page. `Service`, `MethodMap` and `EventMap`
+are in [ipc.md](ipc.md). `options.onRequest` registers a route handler, the
+same as [`hostRequestHandler`](#hostrequesthandler).
+
+Every call gets the same `ctx`: `{ session: { id: "webview", kind: "webview" } }`.
+Each webview has its own worker, so there is one session per worker.
+`hostService` never calls the Service's `endSession` or `dispose`; the UI
+thread terminates the worker when `run()` returns, when the webview is
+disposed, or when `WebView.attach` fails after starting it.
+
+## hostRequestHandler
+
+A worker entry that serves a JSON route and a streamed export. The notes live
+in memory; `exportStream` yields one `Uint8Array` per line.
+
+```ts
+import { hostRequestHandler } from "@n1h/sweetview/worker";
+
+const notes = ["Buy milk", "Ship v1"];
+
+const loadNotes = async (): Promise<string[]> => notes;
+
+const exportStream = (): ReadableStream<Uint8Array> => {
+  const encoder = new TextEncoder();
+  let i = 0;
+  return new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (i < notes.length) controller.enqueue(encoder.encode(`${notes[i++]}\n`));
+      else controller.close();
+    },
+  });
+};
+
+hostRequestHandler(async (request) => {
+  const { pathname } = new URL(request.url);
+  if (pathname === "/api/notes") return Response.json({ notes: await loadNotes() });
+  if (pathname === "/api/export") {
+    return new Response(exportStream(), { headers: { "content-type": "text/plain; charset=utf-8" } });
+  }
+  return new Response("Not Found", { status: 404 });
+});
+```
+
+The page fetches these at its own origin, for example
+`await (await fetch("/api/notes")).json()`, when its webview sets
+`onRequest: "worker"`.
+
+`hostRequestHandler(handler: RequestHandler): void`, where `RequestHandler`
+is `(request: Request) => Response | Promise<Response>`, registers the
+worker's route handler, with or without a Service. The webview
+must opt in with `onRequest: "worker"` together with `worker`
+([dynamic requests](app.md#dynamic-requests)); otherwise no requests reach
+the worker.
+
+- The handler receives a standard `Request`. `GET`, `HEAD` and requests with
+  zero body bytes have no body.
+- It returns a `Response`, or a promise for one. A thrown error, a rejected
+  promise, or a status outside 100 to 599 becomes a plain 500.
+- A worker with no handler registered answers 404.
+- A response body is read with `getReader()` and forwarded chunk by chunk as
+  it arrives. A `ReadableStream` must yield `Uint8Array` chunks.
+
+A request-only worker (one that calls `hostRequestHandler` and never
+`hostService`) answers IPC calls that reach it with the error
+`This worker has no service`; fire-and-forget notifications are dropped.
+
+## Initialization order
+
+`hostService` and `hostRequestHandler` share one worker host. The first call
+of either sets `self.onmessage`, replacing any handler already there; later
+calls reuse it, so calling both, in either order, works. Make the call
+synchronously at the top level of the worker entry, before any `await`, so
+the handler exists when the UI thread's `init` message arrives.
+
+Frames the Service emits before `init` arrives are queued and sent once the
+ring exists. Requests cannot arrive before `init`.
+
+## Backpressure
+
+The worker writes replies, events and response bytes into a shared-memory
+ring of `ringBytes` (default 1 MiB) that the UI thread drains. Writing is
+synchronous: when the ring is full, the worker thread blocks with
+`Atomics.wait` until the UI thread drains it. Nothing is dropped and the ring
+never holds more than its capacity in flight, but a slow UI thread slows the
+worker. This applies between reads of a streaming response too: the worker
+reads the next chunk from your stream only after the previous one is in the
+ring, so a fast producer is throttled to the speed of the UI thread.
+
+The ring capacity bounds only the bytes in flight between the two threads.
+Two buffers sit outside it:
+
+- **Before `init`.** Frames the Service emits before the UI thread's `init`
+  message arrives wait in an in-memory queue with no size limit (see
+  [Initialization order](#initialization-order)). Emitting a flood of events
+  at the top level of the worker grows that queue.
+- **Without streaming symbols.** A library that has request interception but
+  not the streaming symbols makes the UI thread collect a streamed response's
+  chunks in memory and complete the request once, at the end
+  ([Response frames](#response-frames)). The worker is still throttled by the
+  ring, but the UI thread holds the whole body.
+
+A JSON frame larger than `ringBytes - 4` is split into ordered
+[chunk envelopes](ipc.md#chunkframe) with base64 payloads and reassembled on
+the UI thread before it reaches the page. A reply that cannot be serialized
+(a `BigInt`, a circular reference) or cannot fit becomes an error reply with
+a message clamped to fit, so the page's call never hangs; an event that
+cannot be sent is logged and dropped.
+
+## Protocol
+
+This section describes what crosses between the threads, for debugging and
+for anyone writing a compatible host.
+
+### Messages from the UI thread
+
+| Message | Shape | Effect |
+|---|---|---|
+| init | `{ kind: "init"; ring: SharedArrayBuffer; webviewHandle: number; drainCallbackPtr: number; drainToken: bigint; libPath: string }` | Opens the webview library at the same path as the UI thread and flushes queued frames. |
+| call | `{ kind: "call"; seq: string \| null; method: string; params: unknown }` | Runs the Service method. `seq: null` is a notification: no reply. |
+| http-request | `{ kind: "http-request"; id: bigint; method: string; url: string; headers: [string, string][]; body: Uint8Array }` | Runs the route handler. The UI thread copies the native request and transfers a nonempty body. |
+
+After writing a frame, the worker wakes the UI thread with
+`webview_dispatch` only when no wakeup is already pending, so a burst of
+frames costs one dispatch. The UI thread closes that dispatch gate before it
+destroys the webview.
+
+### Replies and events
+
+| Outcome | Frame |
+|---|---|
+| A call resolves, `seq` set | `{ kind: "reply", seq, ok: true, result }` |
+| A call rejects, `seq` set | `{ kind: "reply", seq, ok: false, error }`, `error` being the error's `message` or `String(err)` |
+| A call rejects, `seq` is `null` | none; logged as `"<method> failed:"` |
+| The Service emits with no `to`, or `to: "webview"` | `{ kind: "event", name, payload }` |
+| The Service emits to any other session | none; dropped |
+
+### Response frames
+
+HTTP responses share the ring with JSON IPC. A response frame starts with a
+`0x00` byte, which JSON never does, then a frame type byte, a little-endian
+32-bit metadata length, UTF-8 JSON metadata, and raw body bytes.
+
+| Type | Meaning |
+|---|---|
+| `0x01` | A whole response. |
+| `0x02` | A numbered part of a response too large for one frame. |
+| `0x03` | Stream begin: status and headers. |
+| `0x04` | Stream chunk. |
+| `0x05` | Stream end. |
+| `0x06` | Stream reader failure. |
+
+Every frame carries the request ID as a decimal string, keeping all 64 bits.
+Chunks larger than the ring are split. If the headers alone cannot fit, the
+worker answers 500.
+
+With the library's streaming symbols, the UI thread forwards each chunk to
+the native response as it arrives; a reader failure after the begin frame
+ends the response with the bytes already sent. With a library that only has
+`webview_complete_request`, the UI thread buffers the body and answers 500 on
+reader failure. Disposal discards partial responses.
+
+WKWebView hands streamed bytes to the page as they arrive. WebView2 delivers
+an intercepted response to the page only at its end, so for real-time push
+on Windows use IPC events (`emit` in the Service, `bridge.on` in the page).
+[WebView2 Feedback #3519](https://github.com/MicrosoftEdge/WebView2Feedback/issues/3519).
+
+## writeWorkerFrame
+
+```ts
+writeWorkerFrame(ring: Ring, frame: Frame, wake: () => void, encoder?: TextEncoder): void
+```
+
+The low-level function `hostService` uses to put one JSON frame into the
+ring, with the chunking and error-reply fallback described in
+[Backpressure](#backpressure). It is exported for Sweetview's own tests and
+for custom hosts; it is a transport internal, not part of the API an app
+needs, and its behaviour may change with the ring protocol.

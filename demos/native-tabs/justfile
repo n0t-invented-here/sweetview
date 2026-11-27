@@ -10,12 +10,12 @@ install:
     bun install --cwd ../..
 
 frontend: install
-    bun build frontend/main.ts frontend/strip.ts --outdir build/frontend --minify
+    bun build frontend/main.ts --outdir build/frontend --minify
 
 app: frontend
     bun run app.ts
 
-# Plays the user against the real app (every way a tab opens and closes) and writes captures of the window into `out`
+# Drives the real tabbed app on the current OS and writes captures into `out`
 drive out="build/drive": frontend
     bun run scripts/{{ if os() == "windows" { "win" } else { "mac" } }}-drive.ts "{{out}}"
 

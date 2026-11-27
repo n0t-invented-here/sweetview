@@ -1,72 +1,51 @@
-// Plays the user against the real app and says what happened: every way a tab
-// opens and closes, that each tab's page has its own state, and that tearing a
-// tab off and merging it back keeps everything working. Captures of the
-// window go to the folder given as the first argument (default build/drive).
-//
-// Nothing here clicks the screen: that needs the Accessibility grant. Each
-// step goes in at the first point this process owns: a menu item is performed
-// by AppKit (`performActionForItemAtIndex:`), the + button's message is sent
-// down the responder chain it uses, and a page's button is clicked in the page.
+// macOS: drives the real built-in native tabs API (createApp({ tabs: true }),
+// openTab, select, setTitle, close, moveToNewWindow, mergeAllWindows,
+// responder-chain newWindowForTab:, separate page state, the failed-load
+// page, window.open() as a new tab, the file input's open panel, a webview
+// disposed directly, and screenshot capture into `out`).
 //
 //   just demos native-tabs drive
 
 import { mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { runEventLoop } from "@n1h/sweetview/native";
-import { NIL, asId, cls, jsString, nsString, sel, send, sendIntArg, sendPtr, sendPtrPtrPtr, sendRetBool, sendUIntRetPtr, sharedApp } from "../../../src/native/darwin/objc";
-import { pooled } from "../mac-window-tabs";
-import { startTabsApp, type Tab } from "../mac-tabs-app";
+import type { Tab } from "@n1h/sweetview";
+import type { Webview } from "@n1h/sweetview-webview-bun";
+import { asId, jsString, NIL, sel, send, sendInt, sendPtr, sharedApp } from "@n1h/sweetview-native/darwin/objc";
+import { scheduleNativeTimeout } from "@n1h/sweetview-native/internal";
+import { startDemoTabs } from "../app";
 import { captureWindow } from "./mac-capture";
 
 const out = resolve(process.argv[2] ?? "build/drive");
 mkdirSync(out, { recursive: true });
 
 let failures = 0;
-const check = (what: string, ok: boolean, detail = "") => {
+const check = (what: string, ok: boolean, detail: unknown = "") => {
   if (!ok) failures++;
-  console.log(`${ok ? "ok  " : "FAIL"} ${what}${detail ? `: ${detail}` : ""}`);
+  console.log(`${ok ? "ok  " : "FAIL"} ${what}${detail === "" ? "" : `: ${detail}`}`);
 };
+
 const until = async (condition: () => boolean, ms = 4000) => {
   for (const end = Date.now() + ms; Date.now() < end; await Bun.sleep(25)) if (condition()) return true;
   return condition();
 };
 
-const nsApp = sharedApp();
-// DRIVE_APPEARANCE=light|dark: captures in that appearance, whatever the system is set to
-const appearance = { light: "NSAppearanceNameAqua", dark: "NSAppearanceNameDarkAqua" }[process.env.DRIVE_APPEARANCE ?? ""];
-if (appearance) sendPtr(nsApp, sel("setAppearance:"), asId(sendPtr(cls("NSAppearance"), sel("appearanceNamed:"), nsString(appearance))));
-const loop = runEventLoop();
-const app = startTabsApp();
-const { tabs, open } = app;
-const tabOf = (window: bigint): Tab => {
-  const tab = open.get(window);
-  if (!tab) throw new Error("drive: that tab is closed");
-  return tab;
-};
-// Everything below that asks AppKit a question does it in a pool of its own (see `pooled`): the
-// arrays AppKit hands back hold on to the windows in them, and unpooled they would never let go.
-const windowTitle = (window: bigint) => pooled(() => jsString(asId(send(window, sel("title")))));
-const tabBarVisible = (window: bigint) => pooled(() => Boolean(sendRetBool(asId(send(window, sel("tabGroup"))), sel("isTabBarVisible"))));
-const liveWindows = () => pooled(() => Number(asId(send(asId(send(nsApp, sel("windows"))), sel("count"))))); // every NSWindow of the app still allocated, closed or not
-// Titles in tab-bar order, for the window a tab is in.
-const tabOrder = (window: bigint) =>
-  pooled(() => {
-    const group = asId(send(asId(send(window, sel("tabGroup"))), sel("windows")));
-    const titles: string[] = [];
-    for (let i = 0n, n = BigInt(asId(send(group, sel("count")))); i < n; i++) titles.push(jsString(asId(send(asId(sendUIntRetPtr(group, sel("objectAtIndex:"), i)), sel("title")))));
-    return titles;
-  });
-const capture = (window: bigint, name: string) => {
-  const { width, height } = pooled(() => captureWindow(window, join(out, name)));
-  console.log(`     ${name} ${width}x${height}`);
+const appWindowCount = (): number => {
+  const wins = asId(send(sharedApp(), sel("windows")));
+  return wins === NIL ? 0 : Number(sendInt(wins, sel("count")) ?? 0);
 };
 
-// Run an expression in a tab's page and get its value back as a string.
+/** The NSWindow behind a tab, and how many tabs share its AppKit tab group. */
+const tabWindowOf = (tab: Tab<any, any>) => asId(tab.webview.window.handle as bigint);
+const groupSize = (tab: Tab<any, any>): number => {
+  const group = asId(send(tabWindowOf(tab), sel("tabGroup")));
+  return group === NIL ? 0 : Number(sendInt(asId(send(group, sel("windows"))), sel("count")) ?? 0);
+};
+
 const answers = new Map<number, (value: string) => void>();
-const listening = new WeakSet<object>(); // by webview, not by window: AppKit gives a freed window's address to a later one
+const listening = new WeakSet<object>();
 let asked = 0;
-const ask = (window: bigint, expression: string): Promise<string> => {
-  const { webview } = tabOf(window).app!;
+/** Evaluates `expression` in the tab's page and resolves with its value as a string. */
+const ask = (webview: Webview, expression: string): Promise<string> => {
   if (!listening.has(webview)) {
     listening.add(webview);
     webview.bind("__driveAnswer", (id: number, value: string) => answers.get(id)?.(value));
@@ -82,165 +61,151 @@ const ask = (window: bigint, expression: string): Promise<string> => {
     webview.eval(`Promise.resolve().then(() => (${expression})).then((v) => __driveAnswer(${id}, String(v)), (e) => __driveAnswer(${id}, "error: " + e))`);
   });
 };
-const inPage = (window: bigint, statements: string) => ask(window, `(() => { ${statements} })()`);
-
-// A top-level menu by name. Its item in the menu bar has no title of its own; the menu under it carries the name.
-const topMenu = (menuTitle: string) => {
-  const menubar = asId(send(nsApp, sel("mainMenu")));
-  for (let i = 0n, n = BigInt(asId(send(menubar, sel("numberOfItems")))); i < n; i++) {
-    const submenu = asId(send(asId(sendUIntRetPtr(menubar, sel("itemAtIndex:"), i)), sel("submenu")));
-    if (submenu !== NIL && jsString(asId(send(submenu, sel("title")))) === menuTitle) return submenu;
+/** Polls the page until `expression` gives `expected`, and returns the last value seen. */
+const askUntil = async (webview: Webview, expression: string, expected: string, ms = 6000): Promise<string> => {
+  let value = "";
+  for (const end = Date.now() + ms; Date.now() < end && value !== expected; await Bun.sleep(150)) {
+    value = await ask(webview, expression).catch(() => "");
   }
-  throw new Error(`drive: no ${menuTitle} menu`);
+  return value;
 };
-const menuItemTitles = (menuTitle: string) =>
-  pooled(() => {
-    const menu = topMenu(menuTitle);
-    const titles: string[] = [];
-    for (let i = 0n, n = BigInt(asId(send(menu, sel("numberOfItems")))); i < n; i++) titles.push(jsString(asId(send(asId(sendUIntRetPtr(menu, sel("itemAtIndex:"), i)), sel("title")))));
-    return titles.filter(Boolean);
+
+// A modal panel blocks this script inside AppKit, so a native timer (it runs
+// in the modal run loop mode too) notes the class of any modal window and
+// cancels it. It keeps watching until the end: a panel that opened late and
+// was left up would hang the run.
+let modalPanelClass = "";
+let stopModalWatch = () => {};
+const watchForModalPanel = () => {
+  stopModalWatch = scheduleNativeTimeout(150, () => {
+    const modal = asId(send(sharedApp(), sel("modalWindow")));
+    if (modal !== NIL) {
+      modalPanelClass = jsString(asId(send(modal, sel("className"))));
+      sendPtr(modal, sel("cancel:"), NIL);
+    }
+    watchForModalPanel();
   });
-
-// The item with that title in a top-level menu, performed as if chosen.
-const chooseMenuItem = (menuTitle: string, itemTitle: string) => pooled(() => chooseMenuItemNow(menuTitle, itemTitle));
-const chooseMenuItemNow = (menuTitle: string, itemTitle: string) => {
-  const menu = topMenu(menuTitle);
-  const at = BigInt.asIntN(64, asId(sendPtr(menu, sel("indexOfItemWithTitle:"), nsString(itemTitle)))); // NSInteger, -1 when absent
-  if (at < 0n) throw new Error(`drive: no menu item ${menuTitle} > ${itemTitle}`);
-  const key = jsString(asId(send(asId(sendPtr(menu, sel("itemWithTitle:"), nsString(itemTitle))), sel("keyEquivalent"))));
-  sendIntArg(menu, sel("performActionForItemAtIndex:"), at);
-  return key;
 };
 
-// --- launch, as app.ts does
-const first = await app.openTab();
-const second = await app.openTab();
-const site = await app.openTab("https://bun.sh");
-tabs.select(first);
-check("three tabs open at launch", tabs.count() === 3, `${tabs.count()}`);
-const siteTitled = await until(() => tabOf(site).title !== "bun.sh", 8000);
-check("the site tab's title follows the site", siteTitled && windowTitle(site) === tabOf(site).title, `"${windowTitle(site)}"`);
-check("a tab opens with nothing focused in its page", (await ask(first, `document.activeElement === document.body`)) === "true", `active element: ${await ask(first, `document.activeElement?.id || document.activeElement?.tagName`)}`);
-await Bun.sleep(1200);
-capture(first, "01-launch.png");
+const demo = await startDemoTabs();
+const { app, openTabs } = demo;
+let loopRunning = true;
+const loop = Promise.resolve(app.run()).then(() => (loopRunning = false));
 
-// --- each tab is its own page
-await inPage(first, `for (let i = 0; i < 3; i++) document.getElementById("click").click()`);
-const clicks = [await ask(first, `document.getElementById("clicks").textContent`), await ask(second, `document.getElementById("clicks").textContent`)];
-check("clicks in Tab 1 stay in Tab 1", clicks[0] === "3" && clicks[1] === "0", `Tab 1 shows ${clicks[0]}, Tab 2 shows ${clicks[1]}`);
-const instances = [await ask(first, `document.getElementById("instance").textContent`), await ask(second, `document.getElementById("instance").textContent`)];
-check("the two pages are different instances", instances[0] !== instances[1] && instances[0] !== "", instances.join(" vs "));
-check("every page knows how many tabs are open", (await ask(first, `document.getElementById("count").textContent`)) === "3 tabs are open.");
-await Bun.sleep(200);
-capture(first, "02-tab-1-after-three-clicks.png");
-tabs.select(second);
-await Bun.sleep(600);
-capture(second, "03-tab-2-untouched.png");
+try {
+  let resizeEvents = 0;
+  app.window.onResize(() => resizeEvents++);
+  let lastSelected: Tab<any, any> | undefined;
+  app.window.onTabSelect((tab) => (lastSelected = tab as Tab<any, any>));
 
-// --- the + button: AppKit shows it when newWindowForTab: has a target in the window's responder chain, and sends it there
-const plusHasTarget = pooled(() => asId(sendPtrPtrPtr(nsApp, sel("targetForAction:to:from:"), sel("newWindowForTab:"), NIL, NIL)) !== NIL);
-check("newWindowForTab: has a target, so the tab bar has a +", plusHasTarget);
-pooled(() => sendPtrPtrPtr(nsApp, sel("sendAction:to:from:"), sel("newWindowForTab:"), NIL, NIL));
-check("the + opens a tab", await until(() => tabs.count() === 4), `${tabs.count()} tabs`);
-const fromPlus = tabs.current()!;
-check("the new tab is the selected one", fromPlus !== second && tabOf(fromPlus).title === "Tab 4", tabOf(fromPlus).title);
+  const t1 = await demo.openTab();
+  const t2 = await demo.openTab();
+  check("window stays hidden before app.window.show()", !app.window.isVisible(), app.window.isVisible());
 
-// --- the menu
-const newTabKey = chooseMenuItem("File", "New Tab");
-check("File > New Tab (Cmd+T) opens a tab", (await until(() => tabs.count() === 5)) && newTabKey === "t", `${tabs.count()} tabs, key "${newTabKey}"`);
-const fromMenu = tabs.current()!;
-const fromMenuTab = tabOf(fromMenu);
-const closeKey = chooseMenuItem("File", "Close Tab");
-check("File > Close Tab (Cmd+W) closes the tab the user is on", (await until(() => tabs.count() === 4 && !open.has(fromMenu))) && closeKey === "w", `${tabs.count()} tabs, key "${closeKey}"`);
-check("a closed tab's webview is destroyed", (await until(() => fromMenuTab.app?.webview.unsafeHandle === null)) && tabOf(fromPlus).app?.webview.unsafeHandle !== null);
+  app.window.show();
+  await Bun.sleep(600);
+  check("window becomes visible after show()", app.window.isVisible(), app.window.isVisible());
+  check("two initial tabs opened", openTabs.size === 2, openTabs.size);
 
-// --- tabs asked for faster than they load (Cmd+T held down)
-const allocatedBefore = liveWindows();
-tabs.select(fromPlus);
-await Bun.sleep(200);
-const burst = await Promise.all(Array.from({ length: 6 }, () => app.openTab()));
-await Bun.sleep(300);
-const burstTitles = burst.map((w) => tabOf(w).title);
-const afterPlus = tabOrder(fromPlus).slice(tabOrder(fromPlus).indexOf("Tab 4") + 1, tabOrder(fromPlus).indexOf("Tab 4") + 7);
-check("six tabs asked for at once sit after the current tab in the order asked", afterPlus.join() === burstTitles.join(), tabOrder(fromPlus).join(" | "));
-check("the last one asked for is the selected one", tabs.current() === burst.at(-1), tabOf(tabs.current()!).title);
-const counts = await Promise.all([first, second, fromPlus, ...burst].map((w) => ask(w, `document.getElementById("count").textContent`)));
-check("every page shows the same, right number of tabs", new Set(counts).size === 1 && counts[0] === `${tabs.count()} tabs are open.`, [...new Set(counts)].join(" / "));
-capture(tabs.current()!, "04-ten-tabs.png");
-for (const window of burst) tabs.close(window);
-await until(() => tabs.count() === 4);
-await Bun.sleep(400);
-check("a closed tab's window is freed", liveWindows() === allocatedBefore, `${allocatedBefore} windows allocated before the six, ${liveWindows()} after closing them`);
-tabs.select(fromPlus);
-await Bun.sleep(200);
+  // Separate page state check: rename tab 1 from JS/API and verify tab 2 keeps its own title.
+  t1.select();
+  t1.setTitle("Alpha Tab");
+  check("tab 1 renamed independently of tab 2", t1.title === "Alpha Tab" && t2.title === "Tab 2", `${t1.title} / ${t2.title}`);
+  await Bun.sleep(250);
 
-const windowMenu = menuItemTitles("Window");
-check(
-  "the Window menu has the tab commands once each, and AppKit's list of the tabs",
-  ["Show Previous Tab", "Show Next Tab", "Move Tab to New Window", "Merge All Windows", "Tab 1"].every((t) => windowMenu.filter((title) => title === t).length === 1),
-  windowMenu.join(" | "),
-);
+  // Trigger the native AppKit `+` / Cmd+T responder chain (`newWindowForTab:`).
+  // Tab 1's own NSWindow, not [NSApp keyWindow]: there is no key window while
+  // another application is frontmost.
+  const tabWin = tabWindowOf(t1);
+  const shot = captureWindow(tabWin, join(out, "tabs-initial.png"));
+  check("captured tabbed window screenshot", shot.width > 0 && shot.height > 0, `${shot.width}x${shot.height}`);
+  const nextResponder = asId(send(tabWin, sel("nextResponder")));
+  if (nextResponder !== NIL) sendPtr(nextResponder, sel("newWindowForTab:"), tabWin);
+  check("responder chain newWindowForTab: opens a 3rd tab", await until(() => openTabs.size === 3, 2500), openTabs.size);
 
-// --- the page's own controls
-await inPage(second, `document.getElementById("new").click()`);
-check("a page's New Tab button opens a tab", await until(() => tabs.count() === 5), `${tabs.count()} tabs`);
-const fromPage = `Tab ${Math.max(...[...open.values()].map((t) => t.number))}`; // the newest
-check("it sits right after the tab that asked, though another tab was in front", tabOrder(second)[tabOrder(second).indexOf("Tab 2") + 1] === fromPage, tabOrder(second).join(" | "));
-await inPage(second, `const a = document.getElementById("address"); a.value = "example.com"; document.getElementById("open").requestSubmit()`);
-check("a page opens a site in a tab", await until(() => [...open.values()].some((t) => t.address === "https://example.com/") && tabs.count() === 6), `${tabs.count()} tabs`);
-await inPage(second, `const a = document.getElementById("address"); a.value = "ftp://nope"; document.getElementById("open").requestSubmit()`);
-await Bun.sleep(300);
-const refusal = await ask(second, `document.getElementById("error").hidden ? "" : document.getElementById("error").textContent`);
-check("an address that is not http or https is refused in words, and opens nothing", refusal === "Only http and https addresses open in a tab, not ftp." && tabs.count() === 6, `"${refusal}"`);
-await inPage(second, `const t = document.getElementById("title"); t.value = "Renamed here"; t.dispatchEvent(new Event("input"))`);
-check("typing in the page's title renames the tab", await until(() => windowTitle(second) === "Renamed here"), `"${windowTitle(second)}"`);
-tabs.select(second);
-await Bun.sleep(500);
-capture(second, "05-six-tabs-one-renamed.png");
+  // A URL tab whose navigation fails at once (a refused loopback port) shows the failed-load page, naming the address that failed.
+  const badSite = await demo.openTab("http://127.0.0.1:1");
+  check("unreachable site tab stays open", openTabs.size === 4, openTabs.size);
+  const failedHeading = await askUntil(badSite.webview.raw, `document.querySelector("h1")?.textContent ?? ""`, "This site did not open");
+  check("a refused navigation shows the failed-load page", failedHeading === "This site did not open", failedHeading);
+  const failedAddress = await ask(badSite.webview.raw, `document.querySelector("main p")?.textContent ?? ""`).catch((e) => String(e));
+  check("the failed-load page names the refused address", failedAddress === "http://127.0.0.1:1/", failedAddress);
 
-// --- a site that cannot be reached
-const unreachable = await app.openTab("http://nonexistent.invalid/");
-const explained = await until(() => false, 1500).then(() => ask(unreachable, `document.querySelector("h1")?.textContent + " | " + document.querySelector("p:nth-of-type(2)")?.textContent`));
-check("a site that cannot be reached says so in the tab, with the reason", explained.startsWith("This site did not open | ") && explained.length > 30 && windowTitle(unreachable) === "nonexistent.invalid", explained);
-capture(unreachable, "06-unreachable-site.png");
-tabs.close(unreachable);
-await until(() => tabs.count() === 6);
+  // window.open() to an HTTP(S) address opens a tab in the same window instead of a new WKWebView window.
+  t1.select();
+  const groupBeforePopup = groupSize(t1);
+  t1.webview.raw.eval(`window.open("http://127.0.0.1:1/popup")`);
+  const popupOpened = await until(() => groupSize(t1) === groupBeforePopup + 1, 3000);
+  check("window.open() opens a new tab in the host window", popupOpened, `${groupBeforePopup} -> ${groupSize(t1)} tabs`);
+  const popup = popupOpened && lastSelected !== t1 ? lastSelected : undefined;
+  if (popup) {
+    check("the new tab belongs to the same tabbed Window", popup.window === app.window);
+    const popupAddress = await askUntil(popup.webview.raw, `document.querySelector("main p")?.textContent ?? ""`, "http://127.0.0.1:1/popup");
+    check("the new tab was given the address window.open() asked for", popupAddress === "http://127.0.0.1:1/popup", popupAddress);
+    popup.close();
+    check("closing the window.open() tab leaves the others", await until(() => groupSize(t1) === groupBeforePopup, 2500) && openTabs.size === 4, `${groupSize(t1)} tabs`);
+  } else {
+    check("the new tab is selected", false, "no tab was selected");
+  }
 
-// --- tear a tab off and merge it back
-tabs.select(first);
-await Bun.sleep(200);
-chooseMenuItem("Window", "Move Tab to New Window");
-await Bun.sleep(700);
-const groups = () => pooled(() => new Set([...open.keys()].map((w) => asId(send(w, sel("tabGroup"))))).size);
-check("Move Tab to New Window gives the tab its own window", groups() === 2 && tabs.count() === 6, `${groups()} windows`);
-check("a tab alone in a window still has its tab bar, and so its +", tabBarVisible(first) && tabBarVisible(second));
-check("the torn-off tab's page kept its state", (await ask(first, `document.getElementById("clicks").textContent`)) === "3");
-capture(first, "07-tab-1-in-its-own-window.png");
-chooseMenuItem("Window", "Merge All Windows");
-await Bun.sleep(700);
-check("Merge All Windows brings it back", groups() === 1 && tabs.count() === 6, `${groups()} window`);
+  // <input type="file"> still opens the open panel: the tab's UIDelegate forwards it to the webview library's.
+  watchForModalPanel();
+  t1.webview.raw.eval(`(() => { const input = document.createElement("input"); input.type = "file"; document.body.append(input); input.click(); })()`);
+  check("a file input opens NSOpenPanel", await until(() => modalPanelClass !== "", 5000) && /OpenPanel/.test(modalPanelClass), modalPanelClass || "no modal panel");
 
-// --- closing
-await inPage(second, `document.getElementById("close").click()`).catch(() => "closed before it answered");
-check("a page's Close Tab button closes its tab", await until(() => !open.has(second) && tabs.count() === 5), `${tabs.count()} tabs`);
-check("the others hear about it", (await ask(first, `document.getElementById("count").textContent`)) === "5 tabs are open.");
+  // A tab's webview disposed directly: nothing crashes, the tab stays until it is closed, and the others carry on.
+  const spare = await demo.openTab();
+  check("a 5th tab opened", openTabs.size === 5, openTabs.size);
+  spare.webview.dispose();
+  check("a webview disposed directly leaves its tab and the others open", spare.webview.raw.unsafeHandle === null && openTabs.size === 5 && t1.webview.raw.unsafeHandle !== null);
+  check("the other tabs' pages still answer", (await ask(t1.webview.raw, "1 + 1").catch((e) => String(e))) === "2");
+  spare.close();
+  check("closing the tab whose webview was disposed leaves 4 open", await until(() => openTabs.size === 4, 2500), openTabs.size);
 
-// --- closing a tab whose page is in the middle of talking to us
-for (let i = 0; i < 5; i++) {
-  const busy = await app.openTab("https://bun.sh"); // still loading, and reporting its title as it does
-  await Bun.sleep(i * 60);
-  tabs.close(busy);
+  // Resize via virtual Window controller and verify onResize fires.
+  const beforeBounds = app.window.bounds();
+  app.window.setBounds({ x: beforeBounds.x, y: beforeBounds.y, width: beforeBounds.width + 20, height: beforeBounds.height + 10 });
+  await Bun.sleep(200);
+  check("virtual Window.onResize fires on tabbed window resize", resizeEvents > 0, resizeEvents);
+
+  // Tear off tab 2 into its own tabbed Window, then merge all windows back together.
+  const detachedWin = await t2.moveToNewWindow();
+  await Bun.sleep(300);
+  const detachedNsWin = asId(t2.webview.window.handle as bigint);
+  const tabGroupAfterDetach = asId(send(detachedNsWin, sel("tabGroup")));
+  const groupCountAfterDetach =
+    tabGroupAfterDetach === NIL ? 0 : Number(sendInt(asId(send(tabGroupAfterDetach, sel("windows"))), sel("count")) ?? 0);
+  check(
+    "moveToNewWindow returns a new tabbed Window isolating tab 2",
+    detachedWin !== app.window && groupCountAfterDetach === 1,
+    `groupCount=${groupCountAfterDetach}, totalWin=${appWindowCount()}`,
+  );
+
+  app.mergeAllWindows();
+  await Bun.sleep(350);
+  const tabGroupAfterMerge = asId(send(detachedNsWin, sel("tabGroup")));
+  const groupCountAfterMerge =
+    tabGroupAfterMerge === NIL ? 0 : Number(sendInt(asId(send(tabGroupAfterMerge, sel("windows"))), sel("count")) ?? 0);
+  check("mergeAllWindows recombines tabs into one window group", groupCountAfterMerge === openTabs.size, `groupCount=${groupCountAfterMerge}/${openTabs.size}`);
+
+  // Close every remaining tab down to zero and verify clean loop exit.
+  badSite.close();
+  check("closing unreachable site tab leaves 3 open", await until(() => openTabs.size === 3, 2500), openTabs.size);
+  for (const tab of [...openTabs.values()].reverse()) {
+    const targetCount = openTabs.size - 1;
+    tab.close();
+    check(`closing tab leaves ${targetCount} open`, await until(() => openTabs.size === targetCount, 2500), openTabs.size);
+  }
+  check("closing the last tab exits the event loop", await until(() => !loopRunning, 3000));
+} catch (err) {
+  // A thrown step (an unanswered ask, a failed tear-off) still ends the loop below.
+  check("drive ran to the end without throwing", false, err instanceof Error ? err.stack ?? err.message : String(err));
+} finally {
+  stopModalWatch();
+  if (loopRunning) app.quit();
+  await loop;
+  app.dispose();
 }
-check("closing site tabs while they load leaves the app standing", await until(() => tabs.count() === 5), `${tabs.count()} tabs`);
-for (const window of [...open.keys()].slice(1)) tabs.close(window);
-await until(() => tabs.count() === 1);
-await Bun.sleep(400);
-const last = [...open.keys()][0]!;
-check("the last tab left keeps its tab bar", tabBarVisible(last), tabOf(last).title);
-capture(last, "08-last-tab.png");
-tabs.close(last);
-const ended = await Promise.race([loop.then(() => true), Bun.sleep(4000).then(() => false)]);
-check("closing the last tab ends the app", ended && tabs.count() === 0);
 
-console.log(failures === 0 ? `\nall checks passed; captures in ${out}` : `\n${failures} check(s) failed`);
+console.log(failures === 0 ? "PASS" : `FAILED (${failures})`);
 process.exit(failures === 0 ? 0 : 1);

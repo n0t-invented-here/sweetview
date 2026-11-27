@@ -5,6 +5,7 @@
   "type": "module",
   "description": "The demo's React + Mantine page. Talks to the backend through a sweetipc Bridge; picks the sweetview transport inside the app and WebSockets in a browser.",
   "dependencies": {
+    "@n1h/sweetview": "workspace:*",
     "@mantine/core": "^9.7.4",
     "@mantine/hooks": "^9.7.4",
     "web-app-backend": "workspace:*",

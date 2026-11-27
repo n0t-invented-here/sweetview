@@ -10,7 +10,7 @@
 
 import { FFIType, dlopen, toArrayBuffer, type Pointer } from "bun:ffi";
 import { deflateSync } from "node:zlib";
-import { gdi32, user32 } from "../../../src/native/win32/api";
+import { gdi32, user32 } from "@n1h/sweetview-native/win32/api";
 
 const { u64, u32, i32 } = FFIType;
 const windows = dlopen("user32.dll", {

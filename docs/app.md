@@ -1,41 +1,51 @@
 # @n1h/sweetview
 
-The root module opens a webview window, serves the page to it, and connects
-the page to a worker that hosts the application's `Service`. It runs on the
-UI thread: the main thread of the Bun process, which `run()` hands to the OS
-event loop. Install and the overview are in the [package README](../README.md).
+The root module mounts a webview inside a native `Window`, serves bundled pages
+or assets to it, connects the page to an optional worker that hosts the
+application's `Service`, and provides built-in native tabs and the Layer 2
+`createApp` helper. It runs on the UI thread: the main thread of the Bun
+process. Install and the overview are in the [package README](../README.md).
 
-```ts
-import { createWebviewApp, type Asset, type UiMethods, type WebviewApp, type WebviewAppOptions, assetMime, indexHtml, indexHtmlText, type IndexHtmlOptions, windowChromeMethods, type WindowChromeInfo, type WindowChromeKind, type WindowChromeMethodTable, type WindowChromeMethods, type WindowChromeOptions, Ring, SizeHint, WEBVIEW_VERSION, Webview } from "@n1h/sweetview";
-```
+Each section below imports what it uses. The root module requires the native
+webview library from the optional peer `@n1h/sweetview-webview-bun`
+([the webview library](webview-library.md)); `WebView.attach` and
+`createApp` support Windows and macOS.
+
+Most apps need one call and one loop: `createApp` with a `page` and a
+`worker`, then `app.window.show()` and `app.run()`, as in the
+[Quickstart](../README.md#quickstart) and the
+[single-window example](#single-window-with-createapp). Read
+[the event loop](#the-event-loop) first: which loop an app runs decides where
+its logic lives. The [Reference](#reference) then covers each export once.
 
 - [The event loop](#the-event-loop)
   - [`run()`: the library's loop](#run-the-librarys-loop)
   - [`runEventLoop`: the loop on a Bun timer](#runeventloop-the-loop-on-a-bun-timer)
   - [Choosing](#choosing)
 - [Reference](#reference)
-  - [createWebviewApp](#createwebviewapp)
+  - [WebView](#webview)
+  - [WebView.attach](#webviewattach)
+  - [WebView.openTab](#webviewopentab)
+  - [WebViewOptions](#webviewoptions)
+  - [Tab and TabOptions](#tab-and-taboptions)
+  - [createApp](#createapp)
+    - [Closing and quitting](#closing-and-quitting)
+  - [App and AppOptions](#app-and-appoptions)
   - [Asset](#asset)
   - [UiMethods](#uimethods)
-  - [WebviewApp](#webviewapp)
-  - [WebviewAppOptions](#webviewappoptions)
   - [assetMime](#assetmime)
-  - [indexHtml](#indexhtml)
-  - [indexHtmlText](#indexhtmltext)
-  - [IndexHtmlOptions](#indexhtmloptions)
+  - [indexHtml, indexHtmlText and IndexHtmlOptions](#indexhtml)
   - [windowChromeMethods](#windowchromemethods)
-  - [WindowChromeInfo](#windowchromeinfo)
-  - [WindowChromeKind](#windowchromekind)
-  - [WindowChromeMethodTable](#windowchromemethodtable)
-  - [WindowChromeMethods](#windowchromemethods-1)
-  - [WindowChromeOptions](#windowchromeoptions)
   - [Ring](#ring)
-  - [SizeHint](#sizehint)
-  - [WEBVIEW_VERSION](#webview_version)
-  - [Webview](#webview)
+  - [Event loop re-exports](#event-loop-re-exports)
+  - [Activation and identity re-exports](#activation-and-identity-re-exports)
+  - [SizeHint, WEBVIEW_VERSION, RawWebview](#sizehint-webview_version-rawwebview)
 - [Page loading](#page-loading)
+  - [The RPC trust boundary](#the-rpc-trust-boundary)
+- [Startup and deferred UI](#startup-and-deferred-ui)
+- [Dynamic requests](#dynamic-requests)
 - [Transport](#transport)
-- [Example](#example)
+- [Examples](#examples)
 
 ## The event loop
 
@@ -43,552 +53,693 @@ One process has one OS event loop, on the UI thread, the main thread of the Bun 
 
 ### `run()`: the library's loop
 
-`app.run()` calls the webview library's `webview_run`, which is the platform's own blocking loop: `[NSApp run]` on macOS, a `GetMessage` loop on Windows. It returns when `quit()` is called (`webview_terminate`) or, when the library made the window, when that window closes. Then it tears the app down: the worker is terminated, the drain callback released, the webview destroyed, in that order.
+`webview.run()` (and `app.run()` on a non-tabbed app) calls the webview library's `webview_run`, which is the platform's own blocking loop: `[NSApp run]` on macOS, a `GetMessage` loop on Windows. It returns when `quit()` is called (`webview_terminate`), or when the window the webview is attached to is disposed (closing a window with no `onClose` listener disposes it). When `run()` returns, it tears the webview down: the worker is terminated, the drain callback released, and the webview destroyed, in that order. How `createApp` decides when to quit is under [Closing and quitting](#closing-and-quitting).
 
-While `run()` runs, Bun's event loop on the UI thread does not turn: no `setTimeout`, no promise continuation, no I/O completes there. That is why a windowed app keeps its logic in a worker, which owns Bun's event loop; the page talks to the worker through the UI thread and the shared ring, and the worker wakes the UI thread with `webview_dispatch`. Code on the UI thread after `run()` starts runs only inside callbacks: `uiMethods`, `onEvent` listeners, tray and menu handlers, notification clicks.
+Calling `app.dispose()`, `view.dispose()` or `win.dispose()` while `run()` is active (from a `uiMethods` handler, a tray or menu click, or a window callback) never tears the native window or webview down re-entrantly inside `webview_run`. It stops the worker and the watchdogs and requests loop exit with `quit()`; the webview is destroyed and the native window released as `run()` unwinds.
+
+While `run()` runs, Bun's event loop on the UI thread does not turn: no `setTimeout`, no promise continuation, no I/O completes there. That is why a single-window app using `run()` keeps its async logic in a worker, which owns Bun's event loop; the page talks to the worker through the UI thread and the shared ring, and the worker wakes the UI thread with `webview_dispatch`. Code on the UI thread after `run()` starts runs only inside callbacks: `uiMethods`, `onEvent` listeners, tray and menu handlers, window callbacks, and notification clicks.
 
 ### `runEventLoop`: the loop on a Bun timer
 
-`runEventLoop` from `@n1h/sweetview/native` (also exported from the root module) never blocks. Every `intervalMs` (default 16) it calls `pumpEvents`, which dispatches every OS event waiting for the thread and returns: `PeekMessage` / `DispatchMessage` on Windows, `nextEventMatchingMask:` / `sendEvent:` on macOS with `finishLaunching` once. Between pumps the thread is Bun's, so `setTimeout`, promises and I/O work on the UI thread and the app needs no worker. The returned promise resolves when `quitEventLoop()` is called, the pair of `run()` and `quit()`, or when the OS ends the loop (`WM_QUIT` on Windows). A click reaches its handler at most one interval late; a menu, once open, tracks at native speed inside the pump.
+`runEventLoop` from `@n1h/sweetview/native` (also re-exported from `@n1h/sweetview`) never blocks. Every `intervalMs` (default 16) it calls `pumpEvents`, which dispatches every OS event waiting for the thread and returns: `PeekMessage` / `DispatchMessage` on Windows, `nextEventMatchingMask:` / `sendEvent:` on macOS with `finishLaunching` once. Between pumps the thread is Bun's, so `setTimeout`, promises and I/O work on the UI thread and the app needs no worker. The returned promise resolves when `quitEventLoop()` is called, or when the OS ends the loop (`WM_QUIT` on Windows). A click reaches its handler at most one interval late; a menu, once open, tracks at native speed inside the pump.
 
-`quitEventLoop()` can be called from anywhere on the UI thread: a menu item, a timer, a page call answered in `uiMethods`, or `process.on("SIGINT", quitEventLoop)`. A menu-bar app with no window uses only this: its tray and notifier, then `await runEventLoop()`. A webview app can be hosted by it too: create the window with `createOverlayWindow`, pass `window: overlay.handle` to `createWebviewApp`, show the window, and `await runEventLoop(...)` instead of calling `run()`. The page loads, `uiMethods` are answered, page calls flow, Bun timers tick on the UI thread (verified on macOS, and on Windows by `demos/native-tabs`, which hosts a webview per tab this way). Nothing is torn down when the loop ends; call `app.dispose()` for `run()`'s cleanup, or exit the process.
+A worker is therefore required for async work in a `run()` app, and optional under `runEventLoop()`: the `worker` option still works there, but the UI thread can also run the app's logic itself.
+
+Tabbed apps (`createApp({ tabs: true })`) use `runEventLoop()` automatically so `openTab()` (which is async) and per-tab `dispose()` work while the app is running. Single-window apps can also host a `Window` + `WebView.attach` under `await runEventLoop()` and call `view.dispose()` and `win.dispose()` afterward.
+
+The page below is two in-memory assets: `index.html` from `indexHtml` (with
+`css: ""`, so it links no stylesheet) and the `main.js` it loads, which
+installs the `__sweetview_emit` receiver that `view.emit` calls. A bundled
+page gets the same receiver from `webviewTransport()` and `bridge.on`
+([page](page.md)).
 
 ```ts
-import { createWebviewApp, indexHtml } from "@n1h/sweetview";
-import { createOverlayWindow, createTray, quitEventLoop, runEventLoop } from "@n1h/sweetview/native";
+import { WebView, indexHtml, quitEventLoop, runEventLoop } from "@n1h/sweetview";
+import { Tray, Window } from "@n1h/sweetview/native";
 
-const win = createOverlayWindow({ frame: true, title: "Hello", topmost: false, hideFromTaskbar: false, noActivate: false });
-const app = await createWebviewApp({ window: win.handle, assets: { "index.html": indexHtml({ title: "Hello", body: "<h1>Hello</h1>" }) }, uiMethods: {} });
-createTray({ tooltip: "Hello", menu: () => [{ label: "Show", click: () => win.show() }, { label: "Quit", click: quitEventLoop }] });
+const mainJs = new Blob([
+  `window.__sweetview_emit = (name, payload) => {
+     if (name === "tick") document.getElementById("tick").textContent = new Date(payload).toLocaleTimeString();
+   };`,
+]);
+
+const win = new Window({ title: "Hello", bounds: { x: 200, y: 200, width: 640, height: 480 } });
+const view = await WebView.attach(win, {
+  assets: {
+    "index.html": indexHtml({ title: "Hello", css: "", body: '<h1>Hello</h1><p id="tick"></p>' }),
+    "main.js": mainJs,
+  },
+});
+const tray = new Tray({
+  tooltip: "Hello",
+  menu: () => [
+    { label: "Show", click: () => win.show() },
+    { label: "Quit", click: quitEventLoop },
+  ],
+});
 win.show();
-setInterval(() => app.emit("tick", Date.now()), 1000); // a plain Bun timer on the UI thread
-await runEventLoop();
-app.dispose();
+const timer = setInterval(() => view.emit("tick", Date.now()), 1000);
+try {
+  await runEventLoop();
+} finally {
+  clearInterval(timer);
+  tray.dispose();
+  view.dispose();
+  win.dispose();
+}
 ```
+
+Bun exits only when nothing keeps its event loop alive. After `runEventLoop()` resolves, clear every timer the app started and dispose every tray, webview and window; a live `setInterval` or native handle keeps the process running after Quit.
 
 ### Choosing
 
-| | `run()` | `runEventLoop` |
+| | `webview.run()` | `runEventLoop()` |
 |---|---|---|
 | Loop | the platform's blocking loop | pumped from a Bun timer |
 | Bun on the UI thread | blocked: timers, promises, I/O wait | alive |
 | App logic | in a worker | on the UI thread, or in a worker if you want one |
-| Ends when | `quit()`, or the library's window closes | `quitEventLoop()`, or `WM_QUIT` |
-| Cleanup | automatic on return | `app.dispose()` |
+| Ends when | `quit()` (or main window closes in `createApp`) | `quitEventLoop()`, or `WM_QUIT` |
+| Cleanup | automatic on return | `view.dispose()` / `app.dispose()` |
 | Idle cost | none | one wake per interval, about 0.5 % CPU at 16 ms |
-| Verified | Windows and macOS | macOS; Windows not yet |
+| Worker | required for async logic | optional |
+| Native tabs | no | yes (`createApp({ tabs: true }).run()` uses this) |
 
 ## Reference
 
-### createWebviewApp
+### WebView
 
 ```ts
-export async function createWebviewApp<M extends MethodMap, E extends EventMap>(options: WebviewAppOptions<M>): Promise<WebviewApp<M, E>>
+import { WebView } from "@n1h/sweetview";
+import { Window } from "@n1h/sweetview/native";
+import page from "./index.html";
+
+const win = new Window({ title: "Notes", bounds: { x: 120, y: 120, width: 960, height: 640 } });
+const view = await WebView.attach(win, { page, worker: "./worker.ts" });
+win.show();
+view.run();
 ```
 
-Opens a window, serves the page in it and connects the page to the worker
-that hosts the application's `Service`. `M` and `E` are the method and event
-maps from the [ipc reference](ipc.md). The window loop does not run until
-`run()` is called on the result.
+`WebView<M, E>` is typed by the app's `Methods` and `Events` maps
+([the contract](ipc.md)). Its two static constructors are
+[`WebView.attach`](#webviewattach) and [`WebView.openTab`](#webviewopentab).
 
-What the call does, in order:
+| Member | Meaning |
+|---|---|
+| `raw` | The underlying `RawWebview` instance from `@n1h/sweetview-webview-bun`. |
+| `window` | The `Window` this webview was attached to. For a tab's webview this is the borrowed child window the tab driver created (a pane on Windows, one `NSWindow` of the group on macOS), not the logical tabbed window; use `tab.window` for that. |
+| `emit(name, payload)` | Delivers an event to the page by evaluating `__sweetview_emit(name, payload)`. A `payload` of `undefined` is sent as `null`. Listeners registered with `onEvent` do not see it. |
+| `notify(method, ...params)` | Posts a fire-and-forget call (`seq: null`) to the worker, with `params` sent as `null` when omitted. `uiMethods` are not consulted. Without a worker, logs `sweetview: <method>: this window has no worker` with `console.error` and sends nothing. |
+| `onEvent(fn)` | Registers `fn` for every event the worker sends, called before the page receives it. Returns an unsubscribe function. |
+| `run()` | Runs the blocking OS loop until `quit()` is called, then terminates the worker, closes the drain callback, and destroys the webview. |
+| `quit()` | Calls `webview_terminate`, causing `run()` to return. |
+| `dispose()` | Tears down the worker, drain callback, and webview without running `run()`, for apps hosted under `runEventLoop`. On Windows, consumes the `WM_QUIT` that destroying a webview posts so other windows keep running. Under `runEventLoop`, call it from a Bun turn (timer or after `await`), not from inside a `uiMethods` handler or window procedure. While `run()` is active it is safe from any callback: it stops the worker and watchdogs and calls `quit()`, and the webview is destroyed as `run()` unwinds (see [`run()`](#run-the-librarys-loop)). Idempotent. Disposing the `Window` does the same for its webview, see [Lifecycle](#lifecycle). |
 
-1. Refuses any platform other than Windows and macOS, before anything is
-   created.
-2. Resolves the webview library path, from `WEBVIEW_PATH` or the peer
-   dependency.
-3. Resolves the page. With `page`: bundles the HTML import under `bun run`,
-   or takes the embedded outputs inside a compiled executable, and reads the
-   `<title>` of the index. Without an index in `assets`, generates one with
-   `indexHtml`.
-4. Creates the webview, in the caller's window when `window` is given, and
-   sets the title.
-5. Sets the background to transparent when `transparent` is set.
-6. Allocates the ring and the drain callback.
-7. Starts the worker and posts it the ring, the webview handle, the drain
-   callback pointer and the library path.
-8. Binds `__sweetview_rpc` into the page, with `uiMethods` consulted first.
-9. Registers every asset with the library and navigates to the index.
+### WebView.attach
 
-When a step after the webview exists throws, the webview is destroyed and
-the error rethrown. When the step is one after the worker started (binding,
-asset registration, navigation), the worker is terminated and the drain
-callback released first: worker, drain callback, webview.
+`WebView.attach(window, options: WebViewOptions<M>): Promise<WebView<M, E>>`
 
-#### Options
+Mounts a webview inside an existing `Window` created by `new Window(...)` or `Window.fromHandle(...)`. Geometry (in DIPs), DPI scale, `resizable`, `transparent`, and default `title` are read directly from `window`, so callers never duplicate window options. The window stays hidden; call `win.show()`, or set `showOnReady`.
 
-```ts
-export type WebviewAppOptions<M extends MethodMap> = {
-  page?: HTMLBundle;
-  title?: string;
-  assets?: Record<string, Asset>;
-  index?: string;
-  worker?: URL | string;
-  width?: number;
-  height?: number;
-  debug?: boolean;
-  transparent?: boolean;
-  window?: WindowHandle;
-  resizable?: boolean;
-  uiMethods?: UiMethods<M>;
-  ringBytes?: number;
-};
-```
+What `WebView.attach` does, in order:
 
-| Field | Type | Default | Meaning |
-|---|---|---|---|
-| `page` | `HTMLBundle` | none | An HTML import, `import index from "./index.html"`. Under `bun run` the host bundles it at start-up with `Bun.build` for the browser target, minified. Inside a `bun build --compile` executable the outputs are embedded and listed on the import's `files`; each is read with `Bun.file`. Every output is served at the page's origin by its file name. The output with the `.html` extension is the index. |
-| `title` | `string` | the `<title>` of the index, else the file name of `Bun.main` without its extension | The window title. The `<title>` is read only when `page` is given, with `&amp;`, `&lt;`, `&gt;`, `&quot;` and `&#39;` decoded and surrounding whitespace trimmed; an empty `<title>` falls through to the file name. |
-| `assets` | `Record<string, Asset>` | `{}` | Files served at the page's origin by asset path, in addition to the page's outputs: models, images, data the page fetches by relative URL. Without `page`, the whole page goes here, by convention `main.js` and `main.css`. A page output replaces an asset of the same path. |
-| `index` | `string` | the page's HTML output, else `"index.html"` | The asset path the webview navigates to. When it is absent from `assets` and the page's outputs, `indexHtml({ title, css })` generates it, with `css` set to `main.css` only when that asset is present. |
-| `worker` | `URL \| string` | none | The worker entry, which must call `hostService` from the [worker reference](worker.md). A `URL` is used as given. A string with a scheme is parsed as a URL. A string without one is resolved against `pathToFileURL(Bun.main)`, so `"./worker.ts"` names the file beside the UI-thread entry. Pass that file to `bun build --compile` as the second entry point; the same string then resolves inside the executable. Without `worker`, a page call to a method not in `uiMethods` is rejected. |
-| `width` | `number` | `1100`, or `320` with `window` | Client width. |
-| `height` | `number` | `800`, or `240` with `window` | Client height. |
-| `debug` | `boolean` | `false` | Enables devtools and the context menu. |
-| `transparent` | `boolean` | `false` | Sets the browser's background colour to alpha 0, so a page with `background: transparent` shows what is behind the window. Pair it with `createOverlayWindow({ transparent: true })` from the [native reference](native.md). With a library that lacks `webview_set_background_color`, a warning is logged with `console.warn` and the page stays opaque. |
-| `window` | `WindowHandle` | none | Hosts the browser in a window created by the caller, such as `createOverlayWindow` from the [native reference](native.md), instead of a window the library creates. The caller shows the window and ends the run loop when the window is destroyed. On Windows, COM must be initialised as an STA on this thread; `createOverlayWindow` does that. |
-| `resizable` | `boolean` | `false` | With `window`, keeps the window resizable. Ignored without `window`. |
-| `uiMethods` | `UiMethods<M>` | `{}` | Methods answered on the UI thread. A method listed here never reaches the worker. |
-| `ringBytes` | `number` | `1048576` | Capacity of the ring that carries worker frames to the UI thread. It must be an integer power of two between 16 and 1073741824. A frame longer than `ringBytes - 4` bytes cannot be sent. The worker blocks while the ring is full. |
+1. Refuses any platform other than Windows and macOS before creating anything.
+2. Validates the options: no method name in both `uiMethods` and `deferredUiMethods`, and a `worker` when `onRequest` is `"worker"`.
+3. Resolves the webview library path from `WEBVIEW_PATH` or `@n1h/sweetview-webview-bun` (caching the `dlopen` handle per path) and, when `onRequest` is set, checks for the request symbols.
+4. Chooses the loading mode. Direct-URL mode applies only when `url` is set and both `page` and `assets` are undefined: the webview navigates to `url` and no asset is registered. Otherwise it is asset mode: `page` is bundled, its `<title>` read, and an `index.html` generated with `indexHtml` when `index` names no asset. In asset mode `url` is ignored.
+5. Refuses a disposed window, or one whose handle is null, and checks `ringBytes`.
+6. Creates the `RawWebview` inside `window.handle` using the window's bounds, scale and `resizable` hint, then restores the window's styles and outer bounds in case the library changed them.
+7. Applies `title` (and mirrors it onto an untitled owned `window`).
+8. Clears the browser background when `window` was created with `transparent: true`, and applies `allowExternalDrop` when it is set.
+9. Allocates the shared `Ring`, subscribes webview file drops to the window's `onFileDrop` listeners, and starts `worker` if configured.
+10. Registers the request handler when `onRequest` is set.
+11. Binds `__sweetview_rpc`: the reserved ready method first, then `uiMethods`, then `deferredUiMethods`, then the worker. The binding exists before the first navigation and dispatches by method name only; see [the trust boundary](#the-rpc-trust-boundary). A direct-URL webview with no UI methods, no worker and no ready options gets no binding.
+12. Registers every asset with `webview_set_asset` and navigates to `${ASSET_ORIGIN}/${index}`, or navigates to `url` in direct-URL mode.
+13. Arms the `readyTimeoutMs` watchdog when it is positive.
 
-The size hint passed to the library follows from `window` and `resizable`:
+If any step after creating the webview throws, the worker is terminated, the drain callback and request handler are released, and the webview is destroyed before rethrowing.
 
-| `window` | `resizable` | Size hint |
-|---|---|---|
-| not given | any | `SizeHint.NONE` |
-| given | `false` | `SizeHint.FIXED` |
-| given | `true` | `SizeHint.NONE` |
+#### Lifecycle
 
-Platforms: with `window`, Windows applies `width` and `height` to the window
-as DIPs. For an overlay, pass the window's size divided by its scale. For a
-framed window, they are the client area and the library sizes the frame
-around it. macOS ignores them.
+A webview lives until one of these happens, each of which runs the same teardown (cancel the watchdog and queued deferred calls, detach file drops, release the request handler, stop the ring's native wakeups, terminate the worker, destroy the webview):
 
-Platforms: `transparent` works on Windows and macOS with the library from
-`@n1h/sweetview-webview-bun`. See the [webview library](webview-library.md).
+- `run()` returns.
+- `webview.dispose()` (or `app.dispose()`) is called. Inside `run()`, this stops the worker and watchdogs and calls `quit()`; the webview is destroyed when `webview_run` returns.
+- The `Window` it is attached to is disposed directly, with `win.dispose()` or by closing a window that has no `onClose` listener. Inside `run()`, disposing the window ends the loop, and `run()` finishes the teardown when `webview_run` returns.
 
-#### The returned app
-
-```ts
-export type WebviewApp<M extends MethodMap, E extends EventMap> = {
-  readonly webview: Webview;
-  readonly window: NativeWindow;
-  readonly windowHandle: WindowHandle;
-  emit<N extends keyof E & string>(name: N, payload: E[N]): void;
-  call<K extends keyof M & string>(method: K, ...params: M[K][0] extends void ? [] : [M[K][0]]): void;
-  onEvent(fn: (event: AnyEvent<E>) => void): () => void;
-  run(): void;
-  quit(): void;
-  dispose(): void;
-};
-```
-
-| Field | Type | Meaning |
-|---|---|---|
-| `webview` | `Webview` | The underlying webview instance. |
-| `window` | `NativeWindow` | Visibility, show, hide, toggle, the window icon and close handling for `windowHandle`, from the [native reference](native.md). |
-| `windowHandle` | `WindowHandle` | `options.window` when given. Otherwise the window the library created: an HWND on Windows, an `NSWindow*` on macOS. |
-| `emit(name, payload)` | `void` | Delivers an event to the page by evaluating `__sweetview_emit(name, payload)`. A `payload` of `undefined` is sent as `null`. Listeners registered with `onEvent` do not see it. |
-| `call(method, ...params)` | `void` | Posts a call with no reply to the worker, with `params` sent as `null` when omitted. `uiMethods` are not consulted. Whatever the `Service` emits in response arrives as events. Without a worker, it logs `sweetview: <method>: this window has no worker` with `console.error` and sends nothing. |
-| `onEvent(fn)` | `() => void` | Registers `fn` for every event the worker sends, called before the page receives it. Returns a function that removes `fn`. |
-| `run()` | `void` | Runs the OS loop. Returns when `quit()` is called or, without `window`, when the window closes. With `window`, the caller ends the loop; on Windows `createOverlayWindow` ends it when its window is destroyed. This app's worker is then terminated, the drain callback released and the webview destroyed, in that order. The alternative is not calling `run()` at all and hosting the window under [`runEventLoop`](native.md#runeventloop) from the native module, which keeps Bun's event loop alive on the UI thread, so the app needs no worker; see the thread note there. |
-| `quit()` | `void` | Calls `webview_terminate`, which makes `run()` return. |
-| `dispose()` | `void` | `run()`'s teardown without the loop, for an app hosted under `runEventLoop`: the worker is terminated, the drain callback released and the webview destroyed, in that order. The loop goes on, so one window of several can be disposed: on Windows, where destroying a webview posts `WM_QUIT`, the messages already waiting are dispatched until that one comes out, and it is dropped. Call it from a turn of Bun's loop (a timer, after an `await`), not from inside a `uiMethods` call or a window procedure. Safe to call twice; `run()` does the same teardown itself on return. |
-
-Thread: every member runs on the UI thread. `run()` blocks that thread and
-Bun's event loop until it returns, so promises, timers and other asynchronous
-callbacks on the UI thread do not run in the meantime.
-
-Code on the UI thread after `run()` starts runs only inside callbacks from
-the OS loop: `uiMethods`, `onEvent` listeners and native callbacks. After
-`run()` returns, `webview`, `emit` and `quit` must not be used.
-
-One process has one OS loop. With several windows, call `createWebviewApp`
-once per window and `run()` on one of them. The other windows live in the
-same loop. `run()` terminates the worker and destroys the webview of the app
-it was called on only.
+A webview on a borrowed window (a tab's child window, or a `Window.fromHandle` wrapper) is torn down by its owner instead: disposing that window stops the webview's watchdog, deferred calls and file drops, and the tab driver (or your code) disposes the webview. After teardown, `emit` and RPC replies are dropped silently.
 
 #### Errors
 
-Throws:
+Before anything is created, `WebView.attach` throws:
 
-- `Error` `sweetview: <platform> is not supported (win32 and darwin are): the native module has no backend for it and the webview library does not serve assets there` on any platform other than Windows and macOS, before anything is created.
-- `Error` `sweetview: the page bundle has no HTML output` when `page` yields no output with the `.html` extension.
-- `Error` `sweetview: webview_create failed for the given window (is COM initialised as an STA on this thread? createOverlayWindow in @n1h/sweetview/native does that)` when `webview_create` fails with `window`.
-- `Error` `sweetview: webview_create failed (is the WebView2 runtime installed?)` when `webview_create` fails without `window`.
-- `Error` `sweetview: webview_set_background_color failed (<code>)` when `transparent` is set and the call returns a non-zero code.
-- `RangeError` `ring capacity must be a power of two between 16 and 2^30, got <value>` when `ringBytes` is out of range.
-- `Error` `sweetview: this webview library has no webview_set_asset; it needs the library @n1h/sweetview-webview-bun ships (is WEBVIEW_PATH pointing at a stock one?)` when the library lacks the symbol. The page cannot load without it.
-- `Error` `sweetview: webview_set_asset(<path>) failed (<code>)` when the library rejects an asset.
-- The read error when a string or `Blob` asset, or the index read for the title, cannot be read, such as a missing file.
-- The build error from `Bun.build` when the page fails to bundle under `bun run`.
-- `TypeError` from `new URL` when `worker` is a string with a scheme that is not a valid URL.
-- The import error when the webview library file is missing from `@n1h/sweetview-webview-bun`.
+- `Error` `sweetview: <platform> is not supported (win32 and darwin are): the native module has no backend for it and the webview library does not serve assets there` on unsupported OSes.
+- `Error` `sweetview: <name> is defined in both uiMethods and deferredUiMethods` for a duplicate local method name.
+- `Error` `sweetview: onRequest: "worker" requires a worker entry point` when `onRequest: "worker"` is set without `worker`.
+- `Error` `sweetview: onRequest requires webview_set_request_handler and webview_complete_request from @n1h/sweetview-webview-bun >= 2.8.0 or a compatible WEBVIEW_PATH` when `onRequest` is set and the library lacks the request symbols.
+- `Error` `sweetview: the page bundle has no HTML output` when `page` has no `.html` output.
+- `Error` `sweetview: cannot attach WebView to a disposed window`.
+- `Error` `sweetview: cannot attach WebView to a window with a NULL handle` when `window.handle` is null or 0. That includes a macOS tabbed `Window`; open tabs with `openTab` instead.
+- `RangeError` `sweetview: ringBytes must be a power of two between 128 and 2^30, got <value>`.
+- `Error` `sweetview: webview_create failed for the given window (is the WebView2 runtime installed?)` on Windows, or `sweetview: webview_create failed for the given window` on macOS.
 
-Platforms: Windows and macOS. The page is served at the origin listed under
-[Page loading](#page-loading).
+After the webview is created (it is destroyed before the error propagates):
 
-Thread: call on the UI thread, before `run()`. Every asynchronous step of the
-setup happens inside this call. Tray icons, notifications, dialogs and other
-windows from the [native reference](native.md) are created on the same
-thread, between this call and `run()`.
+- `Error` `sweetview: webview_set_background_color failed (<code>)` when transparency setup fails.
+- `Error` `sweetview: webview_set_allow_external_drop failed (<code>)`.
+- `Error` `sweetview: webview_set_request_handler failed (<code>)`.
+- `Error` `sweetview: this webview library has no webview_set_asset; it needs the library @n1h/sweetview-webview-bun ships (is WEBVIEW_PATH pointing at a stock one?)`, in asset mode only.
+- `Error` `sweetview: webview_set_asset(<path>) failed (<code>)` when an asset is rejected.
+- `Error` `sweetview: the window was disposed during WebView.attach` when the window is disposed while assets are being registered.
+- `RangeError` `sweetview: native timeout must be greater than 0 and at most 2147483647 ms, got <value>` when `readyTimeoutMs` is positive but above 2147483647, or `Infinity`.
+
+### WebView.openTab
+
+`WebView.openTab(window, options: TabOptions<M>): Promise<Tab<M, E>>`
+
+Start the loop before opening tabs: a tab's webview finishes initializing
+while the loop turns. Closing the window ends the loop here, and disposing the
+tabbed window afterwards closes its tabs. A tab the user tore off lives in a
+window of its own, reached through `tab.window`, so it is disposed separately.
+
+```ts
+import { WebView, quitEventLoop, runEventLoop, type Tab } from "@n1h/sweetview";
+import { Window } from "@n1h/sweetview/native";
+import tabPage from "./tab.html";
+
+const win = new Window({ title: "Browser", bounds: { x: 100, y: 100, width: 1040, height: 760 }, tabs: true });
+win.onClose(() => quitEventLoop());
+
+const loop = runEventLoop();
+const tab: Tab = await WebView.openTab(win, { page: tabPage, title: "New Tab" });
+win.show();
+await loop;
+
+if (tab.window !== win) tab.window.dispose(); // the tab was torn off
+win.dispose(); // closes every tab still in this window
+```
+
+Opens a new native tab hosting its own webview inside a tabbed `Window` created with `{ tabs: true }`:
+
+- **Windows**: creates a child pane inside the custom Windows 11 tab-strip frame, attaches a WebView2 instance, hooks accelerator keys (`Ctrl+T`, `Ctrl+W`, `Ctrl+Tab`, `Ctrl+1..9`, etc.), `NewWindowRequested` and `NavigationCompleted`, and wires native right-click menus (`Menu.popup`), tear-off dragging, and window merging.
+- **macOS**: creates an `NSWindow` participating in AppKit window tabbing (`addTabbedWindow:ordered:`), attaches a `WKWebView`, keeps the tab bar visible, hooks new-window requests and load errors, and detaches message handlers cleanly on close.
+
+Both platforms behave the same inside a tab:
+
+- An HTTP(S) `target="_blank"` link or `window.open()` call opens the address as a new tab right after the current one, in the tab's current tabbed window. Other schemes are dropped.
+- A URL tab (one opened with `url`) whose navigation fails, for example on an unreachable host or a certificate error, shows a "This site did not open" page with the address, the reason, and a Try Again link. A navigation cancelled by a newer one is not a failure, and on Windows neither is an HTTP error response, whose page the server supplies (as on macOS).
+
+Run the app under `runEventLoop()` (or `createApp({ tabs: true }).run()`). `WebViewOptions` apply per tab, so set `worker`, `onRequest`, `uiMethods` and the rest on each `openTab()` call. Opening a tab does not show a hidden tabbed window unless that tab sets `showOnReady` (see [Tab and TabOptions](#tab-and-taboptions)); otherwise call `show()` on it.
+
+Throws `sweetview: WebView.openTab requires a Window created with { tabs: true }`, `sweetview: cannot open tab in a disposed window`, `sweetview: native tabs are not supported on <platform> (win32 and darwin only)`, or any `WebView.attach` error for the tab's webview.
+
+### WebViewOptions
+
+Every field is optional. `uiMethods` and `worker` grant the page native and
+backend access; give them only to a webview whose top-level document is
+trusted ([the RPC trust boundary](#the-rpc-trust-boundary)).
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `page` | `HTMLBundle` | none | HTML import (`import index from "./index.html"`). Bundled with `Bun.build` under `bun run`, or read from embedded `files` in a compiled executable. |
+| `url` | `string` | none | Direct URL to navigate to (such as `https://example.com`). Used only when `page` and `assets` are both undefined; otherwise ignored. An external site gets the RPC binding too; open it without `uiMethods`, `deferredUiMethods` or `worker`. |
+| `title` | `string` | `window`'s title, else `<title>` of `page`, else `Bun.main` basename | Window / tab title. |
+| `assets` | `Record<string, Asset>` | `{}` | Extra files served at the page's origin by asset path. |
+| `index` | `string` | the page's HTML output, else `"index.html"` | Asset path to navigate to. Generated via `indexHtml` if missing. |
+| `worker` | `URL \| string` | none | Worker entry calling `hostService` or `hostRequestHandler`. Relative strings resolve against `pathToFileURL(Bun.main)`. |
+| `onRequest` | `"worker" \| ((request: NativeRequest) => NativeResponse)` | none | Handles dynamic requests through the worker or a synchronous UI handler. |
+| `allowExternalDrop` | `boolean` | engine default (allowed) | Whether the webview accepts drags from other applications. `false` refuses them on Windows (`ICoreWebView2Controller4::AllowExternalDrop`) and on macOS (`SweetviewWKWebView` refuses drags whose `draggingSource` is `nil`, which AppKit reports for drags from other apps); drag-and-drop within the page keeps working. A library without `webview_set_allow_external_drop` logs a warning once per library path and keeps the engine default; on a WebView2 Runtime without `ICoreWebView2Controller4` the call fails and `WebView.attach` throws `webview_set_allow_external_drop failed (<code>)`. |
+| `debug` | `boolean` | `false` | Enables devtools and the context menu. |
+| `uiMethods` | `UiMethods<M>` | `{}` | Synchronous handlers answered on the UI thread before consulting the worker. |
+| `deferredUiMethods` | `UiMethods<M>` | `{}` | Synchronous handlers invoked on a later native UI tick. |
+| `showOnReady` | `boolean` | `false` | Reveals the window when the page signals readiness or the watchdog fires. |
+| `readyTimeoutMs` | `number` | disabled | A positive value up to 2147483647 arms a native startup watchdog; zero, a negative value or `NaN` leaves it off. |
+| `onReady`, `onReadyTimeout` | `() => void` | none | UI-thread hooks for the first ready handshake and for watchdog expiry. |
+| `readyFallbackHtml` | `string` | built-in error page | HTML shown on watchdog expiry. |
+| `ringBytes` | `number` | `1048576` | Capacity of the worker-to-UI shared-memory ring (power of two, `128..2^30`). |
+
+`Window.onFileDrop` receives OS file drops on the native window and on an
+attached webview whose library exports `webview_set_file_drop_handler`.
+Subscribe before or after attaching. The first listener turns webview drop
+handling on and removing the last one restores the engine's default. Drops
+over the webview need external drops enabled, on Windows and macOS alike:
+`allowExternalDrop: false` refuses the very drags that carry files from
+Explorer or Finder. See [file drops](native/windows.md#file-drops).
+
+### Tab and TabOptions
+
+`TabOptions<M>` is `WebViewOptions<M>` plus `after`. `Tab<M, E>` is the
+`TabHandle` that `WebView.openTab` and `app.openTab` resolve with.
+
+| Member | Meaning |
+|---|---|
+| `after` (`TabOptions`) | Optional `TabHandle` to insert the new tab after. Honored only when that tab is open in the same tabbed window the new tab opens in; otherwise, as when omitted, the tab opens after the selected tab. |
+| `webview` | The `WebView` mounted inside this tab. |
+| `window` | The logical tabbed `Window` (`tabs: true`) currently hosting this tab. It changes when the tab is torn off into a new window or merged into another. Compare `tab.webview.window`, the borrowed child window the webview is attached to, which never changes and is rarely what app code wants. |
+| `title` | Current tab title. |
+| `setTitle(title)` | Updates the tab's title in the tab strip / title bar. |
+| `select()` | Focuses and activates this tab (and its hosting window). |
+| `close()` | Closes the tab, the window's last tab included: `onTabClose` fires, and when no tab is left the window's `onClose` listeners run, or with none the window is disposed. A close the user asks for on a macOS window's last tab (the close button, Close Tab) is offered to the `onClose` listeners first and closes nothing while one is registered. |
+| `moveToNewWindow()` | Detaches the tab into its own tabbed window (keeping its webview state intact) and resolves with the new `Window`. |
+| `dispose()` | Tears down the tab and its webview. |
+
+Tabs are host-aware: `showOnReady` and the ready watchdog reveal the tab's
+current logical host (its tabbed window) if that host is hidden, not the
+borrowed child window. They do not force the tab to be selected; call
+`tab.select()` when a specific tab should be in front. File drops over a tab's webview go to the `onFileDrop` listeners of the tab's
+current `tab.window`. After a tear-off or merge, drops go to the new host
+only.
+
+### createApp
+
+`createApp<M, E>(options: AppOptions<M>): Promise<App<M, E>>`
+
+```ts
+import { createApp } from "@n1h/sweetview";
+import index from "./index.html";
+
+const app = await createApp({ title: "Notes", page: index, worker: "./worker.ts" });
+app.window.show();
+app.run();
+```
+
+Layer 2 declarative helper that combines `new Window(options)` with `WebView.attach` (or native tab setup when `options.tabs` is `true`). `options` is both `WindowOptions` and `WebViewOptions`.
+
+- The window is created hidden. Call `app.window.show()` once it is wired, or set `showOnReady: true`. In a tabbed app, opening a tab does not show the window either, unless that tab sets `showOnReady`.
+- When the app quits on its own is under [Closing and quitting](#closing-and-quitting).
+- If `WebView.attach` throws during `createApp`, the newly created `Window` is disposed before rethrowing.
+- On a non-tabbed app, `app.openTab` throws `sweetview: openTab() requires createApp({ tabs: true })`.
+
+#### Closing and quitting
+
+The two kinds of app end differently.
+
+- **Single-window app, blocking `app.run()`.** Without an `onClose` option, closing the window disposes it. Disposing the window `app.webview` is attached to always ends `app.run()`: the webview's own window-dispose hook stops the worker and calls `quit()`, even when another owned window (a settings window, say) is still visible. To keep the process running after the main window closes, pass `onClose` (for example `onClose: () => app.window.hide()`) and call `app.quit()` yourself when the app should end. With `onClose`, nothing quits automatically.
+- **Tabbed app, `runEventLoop()`.** Without an `onClose` option, disposing `app.window` calls `quitEventLoop()` only when `Window.visibleWindows()` is empty afterwards, so a visible torn-off window or any other visible owned window keeps the loop running. With `onClose`, nothing quits automatically; the [multi-tab example](#multi-tab-app) quits from it.
+
+### App and AppOptions
+
+`AppOptions<M>` is [`WindowOptions`](native/windows.md#windowoptions) and
+[`WebViewOptions<M>`](#webviewoptions) in one object. On a tabbed app,
+`onNewTab` is `(origin: Window) => void`: `origin` is the window that asked
+for the tab (the main window or a torn-off one), so a multi-window handler can
+call `WebView.openTab(origin, ...)` to open the tab there
+([example](#multi-tab-app)). `App<M, E>`:
+
+| Member | Single-window app | Tabbed app (`tabs: true`) |
+|---|---|---|
+| `window` | The app's `Window`. | The tabbed host `Window`. |
+| `webview` | The attached `WebView<M, E>`. | `undefined`. Each tab has its own `tab.webview`. |
+| `openTab(options)` | Throws `sweetview: openTab() requires createApp({ tabs: true })`. | Opens a tab in `app.window`, resolving with a `Tab`. |
+| `mergeAllWindows()` | Nothing to merge. | Merges torn-off windows back into `app.window`. |
+| `emit(name, payload)`, `notify(method, ...params)` | `webview.emit` and `webview.notify`. | Send nothing; they log `sweetview: app.emit() is unavailable on a tabbed app; emit on a specific tab.webview instead` (or the `app.notify()` equivalent) with `console.error`. |
+| `onEvent(fn)` | `webview.onEvent(fn)`. | Registers nothing and returns an inert unsubscribe function; subscribe on each `tab.webview` instead. |
+| `run()` | Blocks in `webview.run()`; returns `void`. After a `dispose()` made inside the loop, it disposes the window once the loop unwinds. | Returns the promise of `runEventLoop()`; `await` it. |
+| `quit()` | `webview.quit()`. | `quitEventLoop()`. |
+| `dispose()` | Disposes the webview, then the window (inside `run()`, the window waits for `run()` to return). Idempotent. | Closes `app.window` and the tabs in it. Torn-off windows created by `moveToNewWindow()` or tab tear-off have their own lifetime; dispose them (or their tabs) separately, or merge them back first with `mergeAllWindows()`. Idempotent. |
 
 ### Asset
 
 ```ts
-export type Asset = string | Uint8Array | Blob;
+import type { Asset } from "@n1h/sweetview";
 ```
 
-The bytes served at one path of the page's origin. The Content-Type comes
-from the path's extension through `assetMime`.
+The bytes served at one path of the page's origin: a `string`, a
+`Uint8Array` or a `Blob`. The Content-Type comes from the path's extension
+through `assetMime`.
 
 | Variant | Served as |
 |---|---|
-| `string` | A file path. The file is read with `Bun.file` during `createWebviewApp`. A path imported `with { type: "file" }` is embedded by `bun build --compile`, so the import's value is the usual asset. |
-| `Uint8Array` | The bytes as given. |
-| `Blob` | The blob's bytes, read during `createWebviewApp`. `Bun.file(path)`, the outputs of `Bun.build` and the value `indexHtml` returns are Blobs. Inline text is `new Blob([text])`. |
+| `string` | File path read with `Bun.file`. A path imported `with { type: "file" }` is embedded by `bun build --compile`. |
+| `Uint8Array` | Raw bytes as given. |
+| `Blob` | Blob bytes (`Bun.file(path)`, `Bun.build` outputs, `indexHtml(...)`, or `new Blob([text])`). |
 
 ### UiMethods
 
 ```ts
-export type UiMethods<M extends MethodMap> = { [K in keyof M & string]?: (params: M[K][0]) => M[K][1] };
+import type { UiMethods } from "@n1h/sweetview";
 ```
 
-Methods of `M` answered on the UI thread instead of by the worker. Native
-dialogs and window state belong here.
-
-| Field | Type | Meaning |
-|---|---|---|
-| any method name of `M` | `(params: M[K][0]) => M[K][1]` | Called with the page's `params`. The return value is sent to the page as JSON, with `undefined` sent as `null`. A thrown error rejects the page's call with the error's message. |
-
-Thread: runs on the UI thread, inside the OS loop, and must return
-synchronously. A method that returns a Promise is not awaited; the page's
-call rejects with `<method>: a UI-thread method must return synchronously;
-this one returned a Promise`.
-
-### WebviewApp
-
-The window `createWebviewApp` returns; documented under
-[the returned app](#the-returned-app).
-
-### WebviewAppOptions
-
-The options of `createWebviewApp`; documented under [Options](#options).
+`UiMethods<M>` maps any subset of the contract's method names to a function
+from that method's params to its result: `{ [K in keyof M]?: (params: M[K][0]) => M[K][1] }`.
+Synchronous methods answered on the UI thread instead of by the worker. Returning a Promise is rejected with `<method>: a UI-thread method must return synchronously; this one returned a Promise`. Throwing rejects the page's call with the error's message.
 
 ### assetMime
 
 ```ts
-export const assetMime = (path: string): string
+import { assetMime, indexHtml, indexHtmlText, type IndexHtmlOptions } from "@n1h/sweetview";
 ```
 
-Returns the Content-Type for an asset path, from the text after the path's
-last `.`, compared in lower case. A path without `.` is compared whole.
-
-| Extension | Content-Type |
-|---|---|
-| `html` | `text/html; charset=utf-8` |
-| `js`, `mjs` | `text/javascript; charset=utf-8` |
-| `css` | `text/css; charset=utf-8` |
-| `json`, `map` | `application/json` |
-| `txt` | `text/plain; charset=utf-8` |
-| `svg` | `image/svg+xml` |
-| `png` | `image/png` |
-| `jpg`, `jpeg` | `image/jpeg` |
-| `gif` | `image/gif` |
-| `webp` | `image/webp` |
-| `ico` | `image/x-icon` |
-| `woff` | `font/woff` |
-| `woff2` | `font/woff2` |
-| `ttf` | `font/ttf` |
-| `wasm` | `application/wasm` |
-| `glb` | `model/gltf-binary` |
-| `gltf` | `model/gltf+json` |
-| `mp3` | `audio/mpeg` |
-| `ogg` | `audio/ogg` |
-| `wav` | `audio/wav` |
-| anything else | `application/octet-stream` |
-
-Returns: the Content-Type string.
+`assetMime(path: string): string` returns the Content-Type for an asset path from its lowercased extension (`html`, `js`, `mjs`, `css`, `json`, `map`, `txt`, `svg`, `png`, `jpg`, `jpeg`, `gif`, `webp`, `ico`, `woff`, `woff2`, `ttf`, `wasm`, `glb`, `gltf`, `mp3`, `ogg`, `wav`; fallback `application/octet-stream`).
 
 ### indexHtml
 
-```ts
-export function indexHtml({ title, js = "main.js", css = "main.css", head = "", body = '<div id="root"></div>' }: IndexHtmlOptions): Blob
-```
+`indexHtml(options: IndexHtmlOptions): Blob` builds an HTML5 index document
+as a `Blob` (`text/html; charset=utf-8`). `indexHtmlText(options): string`
+returns the same document as a string.
 
-Builds an index document that links one stylesheet and loads one module
-script, both by asset path, as a `Blob` of type `text/html; charset=utf-8`,
-ready for the asset map. Nothing is inlined, so the document stays small
-whatever the bundle's size.
+The document always loads `js` as a module script, so register an asset at
+that path (or pass the path of one you do register). `title`, `js` and `css`
+are HTML-escaped; `head` and `body` are inserted verbatim.
 
-| Field | Type | Default | Meaning |
-|---|---|---|---|
-| options | `IndexHtmlOptions` | required | See `IndexHtmlOptions` below. |
-
-Returns: an HTML5 document with `lang="en"`, a UTF-8 charset and a
-device-width viewport. `title`, `js` and `css` are HTML-escaped (`&`, `<`,
-`>`, `"`); `head` and `body` are inserted as given. The module script is the
-last element of `<body>`.
-
-### indexHtmlText
-
-```ts
-export function indexHtmlText({ title, js = "main.js", css = "main.css", head = "", body = '<div id="root"></div>' }: IndexHtmlOptions): string
-```
-
-The same document as `indexHtml` builds, returned as a string instead of a
-`Blob`.
-
-| Field | Type | Default | Meaning |
-|---|---|---|---|
-| options | `IndexHtmlOptions` | required | See `IndexHtmlOptions` below. |
-
-Returns: the document as a string.
-
-### IndexHtmlOptions
-
-```ts
-export type IndexHtmlOptions = {
-  title: string;
-  js?: string;
-  css?: string;
-  head?: string;
-  body?: string;
-};
-```
-
-| Field | Type | Default | Meaning |
-|---|---|---|---|
-| `title` | `string` | required | The document title. |
-| `js` | `string` | `"main.js"` | Asset path of the page bundle, loaded as a module. |
-| `css` | `string` | `"main.css"` | Asset path of the stylesheet. `""` omits the `<link>`. |
-| `head` | `string` | `""` | Extra markup for `<head>`. |
-| `body` | `string` | `'<div id="root"></div>'` | Markup for `<body>`, placed before the script. |
+| `IndexHtmlOptions` field | Default | Meaning |
+|---|---|---|
+| `title` | required | The `<title>`. |
+| `js` | `"main.js"` | Asset path of the module script. |
+| `css` | `"main.css"` | Asset path of the stylesheet; `""` links none. |
+| `head` | `""` | Extra markup inside `<head>`. |
+| `body` | `'<div id="root"></div>'` | The `<body>` content. |
 
 ### windowChromeMethods
 
-```ts
-export function windowChromeMethods(window: Overlay, options: WindowChromeOptions = {}): WindowChromeMethodTable
-```
-
-The same function as [`windowChromeMethods`](window-chrome.md#windowchromemethods-1)
-in `@n1h/sweetview/window-chrome`. Its return type `WindowChromeMethodTable`
-is exported from both modules.
-
-### WindowChromeInfo
-
-```ts
-export type WindowChromeInfo = { chrome: WindowChromeKind; maximized: boolean };
-```
-
-Documented in the [window-chrome reference](window-chrome.md#windowchromeinfo).
-
-### WindowChromeKind
-
-```ts
-export type WindowChromeKind = "page" | "os";
-```
-
-Documented in the [window-chrome reference](window-chrome.md#windowchromekind).
-
-### WindowChromeMethodTable
-
-```ts
-export type WindowChromeMethodTable = { [K in keyof WindowChromeMethods]: (params: WindowChromeMethods[K][0]) => WindowChromeMethods[K][1] };
-```
-
-The `uiMethods` table `windowChromeMethods` returns: one synchronous handler
-per method of `WindowChromeMethods`. Documented in the
-[window-chrome reference](window-chrome.md#windowchromemethodtable).
-
-### WindowChromeMethods
-
-```ts
-export type WindowChromeMethods = {
-  "window.info": [void, WindowChromeInfo];
-  "window.drag": [void, void];
-  "window.resize": [ResizeEdge, void];
-  "window.minimize": [void, void];
-  "window.maximize": [void, void];
-  "window.close": [void, void];
-};
-```
-
-Documented in the [window-chrome reference](window-chrome.md#windowchromemethods).
-`ResizeEdge` is documented in the [native reference](native.md).
-
-### WindowChromeOptions
-
-```ts
-export type WindowChromeOptions = {
-  chrome?: WindowChromeKind;
-  close?: () => void;
-};
-```
-
-Documented in the [window-chrome reference](window-chrome.md#windowchromeoptions).
+Re-exported from [`@n1h/sweetview/window-chrome`](window-chrome.md) together with `WindowChromeInfo`, `WindowChromeKind`, `WindowChromeMethodTable`, `WindowChromeMethods`, and `WindowChromeOptions`.
 
 ### Ring
+
+```ts
+import { Ring } from "@n1h/sweetview";
+```
 
 ```ts
 export class Ring {
   static create(capacity: number): SharedArrayBuffer;
   constructor(sab: SharedArrayBuffer);
-  get capacity();
+  get capacity(): number;
   write(bytes: Uint8Array): void;
   claimWakeup(): boolean;
   acknowledgeWakeup(): void;
+  dispatch(wake: () => void): void;
+  stopDispatch(): void;
   *drain(): Generator<Uint8Array>;
 }
 ```
 
-A single-producer, single-consumer byte ring over a `SharedArrayBuffer`. The
-worker writes frames and the UI thread drains them.
+Single-producer, single-consumer byte ring over a `SharedArrayBuffer` (16-byte header + power-of-two capacity `16..2^30`). Each frame has a 4-byte little-endian length prefix. `write` blocks with `Atomics.wait` while full; `drain` yields frames without blocking.
 
-Each frame is stored as a 4-byte little-endian length followed by its bytes.
-The buffer holds a 16-byte header before the data: the write cursor, the
-read cursor and the wakeup flag.
+`dispatch(wake)` guards the producer's native wake call. `stopDispatch()`
+blocks new calls and waits for an active native wake to return before the host
+can destroy the webview.
 
-| Field | Type | Meaning |
-|---|---|---|
-| `Ring.create(capacity)` | `SharedArrayBuffer` | Allocates a buffer of `16 + capacity` bytes. |
-| `new Ring(sab)` | `Ring` | Wraps a buffer from `Ring.create`. Producer and consumer each wrap the same buffer. |
-| `capacity` | `number` | Data bytes, excluding the header. |
-| `write(bytes)` | `void` | Producer side. Appends one frame. Blocks with `Atomics.wait` while the ring lacks room for it. |
-| `claimWakeup()` | `boolean` | Producer side. Sets the wakeup flag. Returns `true` when it was clear, so the caller sends one wakeup per burst. |
-| `acknowledgeWakeup()` | `void` | Consumer side. Clears the wakeup flag. Call it first in the wakeup, before draining. |
-| `drain()` | `Generator<Uint8Array>` | Consumer side. Yields every complete frame present when it starts, in write order, and frees each frame's space as it is yielded. Never blocks. |
-
-Throws:
-
-- `RangeError` `ring capacity must be a power of two between 16 and 2^30, got <value>` from `Ring.create` and the constructor.
-- `RangeError` `frame of <n> bytes exceeds ring capacity <capacity>` from `write` when `4 + bytes.length` exceeds `capacity`.
-
-Thread: `write` blocks the calling thread while the ring is full. Exactly one
-thread writes and exactly one thread drains.
-
-### SizeHint
+### Event loop re-exports
 
 ```ts
-export const enum SizeHint { NONE, MIN, MAX, FIXED }
+import { pumpEvents, quitEventLoop, runEventLoop, setActivationPolicy } from "@n1h/sweetview";
 ```
 
-Re-exported from `@n1h/sweetview-webview-bun`. The size hint of a webview
-window.
+`pumpEvents`, `quitEventLoop`, `runEventLoop`, `setActivationPolicy`, `ActivationPolicy` and `EventLoopOptions` are re-exported from `@n1h/sweetview/native`, so a webview app needs one import. They are documented in [Event loop and icons](native/event-loop-and-icons.md#the-event-loop) and [`setActivationPolicy`](native/menus-and-tray.md#setactivationpolicy).
 
-| Value | Number | Meaning |
-|---|---|---|
-| `NONE` | 0 | Width and height are the default size. |
-| `MIN` | 1 | Width and height are the minimum bounds. |
-| `MAX` | 2 | Width and height are the maximum bounds. |
-| `FIXED` | 3 | The user cannot change the size. |
-
-### WEBVIEW_VERSION
+### Activation and identity re-exports
 
 ```ts
-export const WEBVIEW_VERSION = "0.12.0";
+import { defineAppIdentity, onOpenUrl, registerUrlScheme, singleInstance } from "@n1h/sweetview";
 ```
 
-Re-exported from `@n1h/sweetview-webview-bun`: the webview library version
-the bindings declare.
+The root re-exports `defineAppIdentity`, `AppIdentity` and `AppIdentityInput`
+([app identity](settings-store.md#app-identity)) and the activation API:
+`registerUrlScheme`, `unregisterUrlScheme`, `singleInstance`,
+`extractUrlFromArgs`, `onOpenUrl`, `signalReady`, `RegisterUrlSchemeOptions`,
+`SecondInstanceEvent`, `SingleInstanceLock` and `SingleInstanceOptions`
+([activation and single instance](native/activation-and-single-instance.md)).
+The root `signalReady` is the native, UI-thread one; a page calls its own
+from [`@n1h/sweetview/page`](page.md#signalready).
 
-### Webview
+### SizeHint, WEBVIEW_VERSION, RawWebview
 
 ```ts
-export class Webview
+import { RawWebview, SizeHint, WEBVIEW_VERSION } from "@n1h/sweetview";
 ```
 
-Re-exported from `@n1h/sweetview-webview-bun`, which documents it at
-https://github.com/n0t-invented-here/sweetview-webview-bun. `WebviewApp.webview`
-is an instance.
-
-The root module imports `@n1h/sweetview-webview-bun` at load time, which
-opens the library, so importing `@n1h/sweetview` fails when that optional
-peer dependency is not installed.
-
-Thread: UI thread. Call `run()` on the `WebviewApp`, not on its `webview`:
-`Webview.run()` destroys the webview without terminating the worker.
+Re-exported from `@n1h/sweetview-webview-bun` (`Webview` is re-exported as `RawWebview` to avoid colliding with sweetview's `WebView`). `webview.raw` is the `RawWebview` behind a `WebView`.
 
 ## Page loading
 
-The page is never passed to `webview_set_html`. `createWebviewApp` hands each
-asset to the library's `webview_set_asset`, with the path, `assetMime(path)`
-and the bytes. The library copies the bytes. After the last asset it
-navigates the webview to the origin followed by `/` and `index`.
+```ts
+import { ASSET_ORIGIN, WebView } from "@n1h/sweetview";
+```
 
-Relative URLs in the page resolve against that origin, so scripts, styles,
-`fetch` and images load from the page's outputs and `assets`.
+In asset mode `WebView.attach` registers every asset with `webview_set_asset`
+and navigates to `${ASSET_ORIGIN}/${index}`. Direct-URL mode applies only when
+`url` is set and `page` and `assets` are both undefined; then nothing is
+registered and the webview navigates to `url`. To serve the initial page
+dynamically, set `` url: `${ASSET_ORIGIN}/dynamic` `` together with
+`onRequest`, and leave `page` and `assets` unset.
 
 | OS | Origin | Served by |
 |---|---|---|
-| Windows | `http://webview.localhost` | A `WebResourceRequested` filter. Nothing reaches the network. |
-| macOS | `webview://localhost` | A `WKURLSchemeHandler` for the `webview` scheme. |
-| Linux | `http://webview.localhost` | Nothing. `createWebviewApp` throws on Linux before any asset is registered. |
+| Windows | `http://webview.localhost` | `WebResourceRequested` filter (nothing reaches the network) |
+| macOS | `webview://localhost` | `WKURLSchemeHandler` for the `webview` scheme |
+| Linux | `http://webview.localhost` | Unsupported (`WebView.attach` throws before creating anything) |
 
-The webview library is the file at the `WEBVIEW_PATH` environment variable
-when it is set. Otherwise it is the file `@n1h/sweetview-webview-bun` ships
-for the platform:
+The native library path comes from `WEBVIEW_PATH` or `@n1h/sweetview-webview-bun/build/`, and `dlopen` handles are cached per path so repeated windows/tabs never leak library handles. See [the webview library](webview-library.md#library-selection-and-symbol-probing).
 
-| OS | Library file |
-|---|---|
-| Windows | `@n1h/sweetview-webview-bun/build/libwebview.dll` |
-| macOS | `@n1h/sweetview-webview-bun/build/libwebview.dylib` |
-| Linux | `@n1h/sweetview-webview-bun/build/libwebview-<arch>.so` |
+### The RPC trust boundary
 
-The `Webview` class resolves the same path, and `createWebviewApp` sends it
-to the worker, so the process loads one library. `bun build --compile`
-embeds the shipped file. `createWebviewApp` probes for the two symbols that
-the shipped library adds to the stock one:
+When `WebView.attach` binds `__sweetview_rpc`, it does so before the first
+navigation, and the dispatcher checks only the method name: it answers the reserved ready method,
+then `uiMethods`, `deferredUiMethods` and the worker, whatever document is
+loaded at the top level. It does not check the document's origin. A page at
+`ASSET_ORIGIN`, a `url` you navigated to, and any top-level page a link or
+redirect leads to all get the same methods.
 
-| Symbol | When absent | When it returns non-zero |
-|---|---|---|
-| `webview_set_asset` | Throws `Error`. A `WEBVIEW_PATH` that points at a stock library ends here. | Throws `Error` naming the asset path. |
-| `webview_set_background_color` | Only probed with `transparent`. Logs a warning with `console.warn` and the page stays opaque. | Throws `Error`. |
+The hardened native library (2.8.0, the `v1-drafting` branch) refuses RPC
+from subframes (`window !== window.top`, and on macOS a `WKScriptMessage` that
+is not from the main frame), so a cross-origin iframe on `FRAMES_ORIGIN` or any
+other foreign origin cannot call in ([dynamic requests](#dynamic-requests)).
+The published 2.7.0 library lacks these native subframe checks. Even on 2.8.0
+the isolation covers cross-origin frames only: a same-origin iframe can reach
+`window.top`'s globals under the browser's ordinary same-origin policy, so do
+not embed untrusted content at your own origin.
 
-The C API of both symbols is in the [webview library](webview-library.md).
+- Give `uiMethods`, `deferredUiMethods` and `worker` only to a webview whose
+  top-level document is your own: bundled `page` or `assets`, or a `url` you
+  control.
+- Show external sites in a separate webview or tab created without those
+  options. A direct-URL webview (`url` with no `page` or `assets`) that also
+  sets none of `showOnReady`, `readyTimeoutMs` or `onReady` gets no
+  `__sweetview_rpc` binding at all. One that sets a ready option gets a
+  binding that answers only the ready method and rejects every other call
+  with `<method>: this window has no worker and no UI-thread method of that
+  name`.
+
+## Startup and deferred UI
+
+```ts
+import { createApp } from "@n1h/sweetview";
+import index from "./index.html";
+
+const app = await createApp({
+  page: index,
+  showOnReady: true,
+  readyTimeoutMs: 15000,
+  onReadyTimeout: () => console.error("the page did not start"),
+});
+app.run();
+```
+
+For a page-controlled reveal, set `showOnReady: true` and call
+`await signalReady()` from [`@n1h/sweetview/page`](page.md#the-ready-handshake)
+after you install listeners and render the initial UI. The first signal from
+a webview cancels that webview's watchdog, calls the native `signalReady()`,
+calls its `onReady`, then shows its window. Later signals resolve without
+doing anything again.
+
+Two scopes are involved. The native `signalReady()` is process-wide: the
+first webview to become ready drains the buffered URL activations for the
+whole app ([activation](native/activation-and-single-instance.md#onopenurl-and-startup-buffering)),
+and later webviews find it already done. `onReady`, `onReadyTimeout`,
+`showOnReady` and the watchdog are per webview.
+
+With a positive `readyTimeoutMs`, the watchdog uses a Win32 timer or a macOS
+`NSTimer`, so it also runs inside the blocking `app.run()`. If it fires
+first, it replaces the page with `readyFallbackHtml` (or a built-in "The app
+took too long to start" page), calls `onReadyTimeout`, and reveals the
+window when `showOnReady` is set. It does not mark the webview ready and does
+not call the native `signalReady()`, so buffered activation URLs stay queued
+until a page signals ready or the app calls `signalReady()` itself.
+Disposal cancels the timer.
+
+Use `deferredUiMethods` for modal native UI that needs the current bridge
+callback to return first. These handlers still return synchronously from their
+own invocation. The native dispatch queue runs them in order and defers any
+calls received by a modal loop until the active handler returns. Duplicate
+method names across the two UI tables throw during attach.
+
+## Dynamic requests
+
+```ts
+import { ASSET_ORIGIN, FRAMES_ORIGIN, type NativeRequest, type NativeResponse } from "@n1h/sweetview";
+```
+
+`ASSET_ORIGIN` and `FRAMES_ORIGIN` are exports from `@n1h/sweetview`. The
+frames origin is `http://frames.webview.localhost` on Windows and
+`webview-frames://localhost` on macOS. The browser applies its cross-origin
+DOM boundary to iframes loaded there. The native library exposes RPC only
+when `window === window.top`. On macOS it also checks
+`WKScriptMessage.frameInfo.isMainFrame` before dispatching. The native handler receives every
+request to that origin and any request at the asset origin that misses the
+static table. With no handler, those requests return 404.
+
+- Set `onRequest: "worker"` together with `worker`. Use an ordinary
+  `Request => Response | Promise<Response>` handler in that worker. See
+  [worker routes](worker.md#hostrequesthandler).
+- Pass a synchronous `onRequest(request)` for short UI-thread work.
+  `NativeRequest` contains `id: bigint`, `method`, `url`, ordered header pairs
+  and a copied `Uint8Array` body. An empty request has zero body bytes.
+  `NativeResponse` takes optional `status` (default 200), `headers` (object or
+  pairs, with repeated names supported), and `body` (UTF-8 string,
+  `Uint8Array`, `ArrayBuffer` or `null`). A throw returns 500. Returning a
+  Promise gives an immediate 500 with instructions for worker mode.
+
+On macOS a request body that is a `Blob`, or a `FormData` containing a
+`File` or `Blob`, reaches the handler empty: WebKit hands its scheme handler
+only the body parts the page holds in memory. Strings, `ArrayBuffer` and
+typed arrays, `URLSearchParams`, and a `FormData` of text fields arrive
+whole. A page that uploads files reads them first, which works on both
+platforms: send `await blob.arrayBuffer()`, or for a form
+`const encoded = new Response(formData)` and post
+`await encoded.arrayBuffer()` with `encoded.headers.get("Content-Type")` as
+the `Content-Type`.
+
+Both modes use native interception and zero TCP. They require the request
+symbols that arrive with `@n1h/sweetview-webview-bun` 2.8.0, which the
+`^2.7.0` peer range accepts; before 2.8.0 is published, set `WEBVIEW_PATH`
+to a library rebuilt from the `v1-drafting` branches
+([the webview library](webview-library.md#where-it-comes-from)). In tabbed
+apps, set these options on each `openTab()` call.
+
+A worker can return a `Response` with a `ReadableStream<Uint8Array>` body.
+With the streaming symbols, Sweetview forwards each chunk through the shared
+ring without collecting the whole body in the worker or UI thread. A library
+with request interception but without streaming symbols buffers on the UI
+thread and completes the request once. WKWebView can deliver bytes
+incrementally. WebView2 buffers intercepted responses until EOF, as observed
+in the live Windows test. For real-time SSE-style updates and other desktop
+push, use Sweetview IPC events (`emit` and `onEvent`, or `bridge.on` in the
+page). [WebView2 Feedback #3519](https://github.com/MicrosoftEdge/WebView2Feedback/issues/3519).
 
 ## Transport
 
-`run()` blocks the UI thread and Bun's event loop with it, so the worker owns
-the event loop and the `Service`. Three parties talk over five paths:
-
 | Direction | Mechanism |
 |---|---|
-| page to UI thread | The page calls `__sweetview_rpc(method, params)`, bound with `webview_bind`. It returns a Promise. |
-| UI thread to worker | `worker.postMessage`: one init message carrying the ring, the webview handle, the drain callback pointer and the library path, then one call frame per call. It is a synchronous enqueue, so it works while the UI thread is in the OS loop. |
-| worker to UI thread | Reply and event frames as JSON in the shared `Ring`. The worker wakes the UI thread with `webview_dispatch`, at most once per burst, and the dispatched callback drains the ring inside the OS loop. |
-| UI thread to page, replies | `webview_return(seq, status, json)`. Status 0 resolves the page's Promise with the result. Status 1 rejects it with `{ message }`. |
-| UI thread to page, events | `webview_eval` of `__sweetview_emit(name, payload)`. |
+| page to UI thread | `__sweetview_rpc(method, params)` bound via `webview_bind` |
+| UI thread to worker | `worker.postMessage` (synchronous enqueue) |
+| worker to UI thread | Chunkable JSON IPC and binary HTTP response frames in shared `Ring` + `webview_dispatch` wakeup |
+| UI thread to page (replies) | `webview_return(seq, status, json)` |
+| UI thread to page (events) | `webview_eval` of `__sweetview_emit(name, payload)` |
 
-A page call goes to the first of these that applies:
+## Examples
 
-| Condition | Answer |
-|---|---|
-| `uiMethods` has the method as an own property with a truthy value | The function runs on the UI thread and its result or error goes straight back with `webview_return`. |
-| `worker` was given | A call frame with the page's `seq` goes to the worker. The worker's reply frame is returned with `webview_return`. |
-| neither | The call is rejected with `<method>: this window has no worker and no UI-thread method of that name`. |
+### Single window with `createApp`
 
-Each event frame from the worker goes to every `onEvent` listener first and
-then to the page. The worker side is in the [worker reference](worker.md),
-the page side in the [page reference](page.md), and the frame types in the
-[ipc reference](ipc.md).
+Three files: the page, the worker entry and the app entry.
 
-## Example
+`index.html` (loaded by `import index from "./index.html"`; it only needs a
+module script, which Bun bundles):
+
+```html
+<!doctype html>
+<html>
+  <head><title>Notes</title></head>
+  <body>
+    <ul id="notes"></ul>
+    <script type="module">
+      import { createBridge } from "@n1h/sweetview/ipc";
+      import { webviewTransport } from "@n1h/sweetview/page";
+
+      const bridge = createBridge(webviewTransport());
+      bridge.on("notes.changed", ({ count }) => console.log("notes:", count));
+      const notes = await bridge.rpc("notes.list");
+      document.getElementById("notes").innerHTML = notes.map((n) => `<li>${n}</li>`).join("");
+    </script>
+  </body>
+</html>
+```
+
+`app-worker.ts`:
 
 ```ts
-import { createWebviewApp } from "@n1h/sweetview";
+import { defineService } from "@n1h/sweetview/ipc";
+import { hostService } from "@n1h/sweetview/worker";
+
+type Methods = { "notes.list": [void, string[]] };
+type Events = { "notes.changed": { count: number } };
+
+const notes = ["first note"];
+
+hostService(
+  defineService<Methods, Events>((emit) => ({
+    methods: {
+      "notes.list": () => {
+        emit("notes.changed", { count: notes.length });
+        return notes;
+      },
+    },
+  })),
+);
+```
+
+`app.ts`:
+
+```ts
+import { createApp } from "@n1h/sweetview";
 import index from "./index.html";
 
 type Methods = { "notes.list": [void, string[]]; "window.size": [void, number] };
 type Events = { "notes.changed": { count: number } };
 
-const app = await createWebviewApp<Methods, Events>({
+const app = await createApp<Methods, Events>({
+  title: "Notes",
+  bounds: { x: 120, y: 120, width: 1000, height: 720 },
   page: index,
   worker: "./app-worker.ts",
   uiMethods: { "window.size": () => 800 },
 });
 
 app.onEvent((event) => console.log(event.name, event.payload.count));
-app.call("notes.list");
+app.notify("notes.list");
+app.window.show();
 app.run();
+```
+
+### Multi-tab app
+
+The app keeps every tab it opens, because a tab the user tears off moves to a
+window of its own (`tab.window`) that `app.dispose()` does not close. At
+shutdown it disposes each of those windows, which closes their tabs, then the
+app. The loop starts before the first tab opens, since a tab's webview
+finishes initializing while the loop turns.
+
+```ts
+import { WebView, createApp, type Tab } from "@n1h/sweetview";
+import type { Window } from "@n1h/sweetview/native";
+import tabPage from "./tab.html";
+
+const tabs = new Set<Tab>();
+
+const app = await createApp({
+  title: "Tabbed App",
+  bounds: { x: 100, y: 100, width: 1040, height: 760 },
+  tabs: true,
+  onNewTab: (origin) => void open(origin).catch(console.error),
+  onTabClose: (closed) => {
+    for (const tab of tabs) if (tab === closed) tabs.delete(tab);
+  },
+  onClose: () => app.quit(),
+});
+
+async function open(origin?: Window): Promise<Tab> {
+  // origin is the window that asked for the tab (main or torn-off); without it, the main window
+  const tab = origin
+    ? await WebView.openTab(origin, { page: tabPage, title: "New Tab" })
+    : await app.openTab({ page: tabPage, title: "New Tab" });
+  tabs.add(tab);
+  return tab;
+}
+
+const loop = app.run();
+await open();
+app.window.show(); // opening a tab without showOnReady does not show the window
+await loop;
+
+for (const tab of tabs) if (tab.window !== app.window) tab.window.dispose(); // torn-off windows
+app.dispose(); // app.window and its tabs
 ```

@@ -1,6 +1,6 @@
 # 🥐 Sweetview
 
-Desktop applications for **Bun**.
+Desktop applications for **Bun**. This documentation covers Sweetview 1.0.0.
 
 <img width="400" height="55" alt="DesktopPet-MacOS" src="https://github.com/user-attachments/assets/a77f1b5f-dd96-43cd-a01f-5d46cf5861cc" />
 
@@ -16,44 +16,112 @@ Written in TypeScript. Apps are shipped as one executable.
 
 ## Install
 
-Requires Bun 1.4.2 or later. A desktop application installs the package and
-its optional peer dependency, the native [webview library](docs/webview-library.md):
+Requires Bun 1.4.2 or later.
+
+> **1.0.0 is not on npm yet.** It lives on the `v1-drafting` branch of this
+> repository. npm's `latest` for `@n1h/sweetview` is `0.2.1`, which has no
+> `createApp` and little of what these pages document, and the five
+> standalone workspace packages (`@n1h/sweetview-ipc`, `-ipc-ws`, `-native`,
+> `-settings`, `-build`) are not published at all. A plain
+> `bun add @n1h/sweetview` installs 0.2.1. Until 1.0.0 is released, use it
+> from source.
+
+### From source
+
+Clone the repository on `v1-drafting` and install the workspace:
 
 ```bash
-bun add @n1h/sweetview @n1h/sweetview-webview-bun
+git clone https://github.com/n0t-invented-here/sweetview.git
+cd sweetview
+git checkout v1-drafting
+bun install
+just demos web-app app   # optional: a demo opens in a window
+```
+
+Every folder under `demos/` is a workspace member, so an app of your own
+goes in a new folder there and links the packages from the checkout. Create
+`demos/hello/package.json`:
+
+```json
+{
+  "name": "hello",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@n1h/sweetview": "workspace:*",
+    "@n1h/sweetview-webview-bun": "^2.7.0"
+  }
+}
+```
+
+Run `bun install` again at the repository root, then follow the
+[Quickstart](#quickstart) inside `demos/hello/`.
+
+### From npm, once 1.0.0 is published
+
+A desktop application installs the package and its optional peer
+dependency, the native [webview library](docs/webview-library.md). Name the
+major version, so the command cannot fall back to 0.2.1:
+
+```bash
+bun add @n1h/sweetview@^1.0.0 @n1h/sweetview-webview-bun
 ```
 
 Only the root module `@n1h/sweetview` loads the library, when it is
-imported. Every other module works without it, so a browser page or a web
-server installs the package alone:
+imported. Every other module works without it, so a browser page, a web
+server or a tray-only app installs the package alone:
 
 ```bash
-bun add @n1h/sweetview
+bun add @n1h/sweetview@^1.0.0
 ```
+
+### The webview library version
+
+The peer range is `^2.7.0`. A 2.7.0 library runs windows, bundled pages,
+assets, transparency, tabs and IPC. Four features need the additions that
+arrive with `@n1h/sweetview-webview-bun` 2.8.0, which the range accepts:
+dynamic requests (`onRequest`), streamed worker responses,
+`allowExternalDrop`, and file drops onto the webview (`Window.onFileDrop`
+over a page). Sweetview checks for each one separately when it is used: a
+missing request symbol throws with instructions, missing streaming symbols
+fall back to buffered responses, and the drop features log a warning or fall
+back to drops on the native window. Until 2.8.0 is published, set
+`WEBVIEW_PATH` to a library built from the `v1-drafting` branches; see
+[the webview library](docs/webview-library.md#where-it-comes-from).
 
 ## Documentation
 
 One reference page per module, indexed in the [reference index](docs/README.md).
-Each documents every export: signature, parameters, return value, errors,
+The native module has an overview page and seven topic guides. The pages
+document each export's signature, parameters, return value, errors,
 platform differences and thread rules.
 
 | Module | Contents |
 |---|---|
-| [`@n1h/sweetview`](docs/app.md) | `createWebviewApp`: the window, the page, assets, the transport between page, UI thread and worker; `runEventLoop` and `quitEventLoop` for an app with no window, or a window with no worker; `indexHtml`, `assetMime`, `Ring`, and `Webview` from the webview library |
-| [`@n1h/sweetview/worker`](docs/worker.md) | `hostService` |
-| [`@n1h/sweetview/page`](docs/page.md) | `isWebview`, `webviewTransport` |
+| [`@n1h/sweetview`](docs/app.md) | `createApp`, `WebView` (`WebView.attach`, `WebView.openTab`), native tabs (`Tab`, `TabOptions`), `runEventLoop` and `quitEventLoop`, `windowChromeMethods`, `indexHtml`, `assetMime`, `Ring`, and `RawWebview` from the webview library |
+| [`@n1h/sweetview/worker`](docs/worker.md) | `hostService`, `hostRequestHandler` |
+| [`@n1h/sweetview/page`](docs/page.md) | `isWebview`, `webviewTransport`, `signalReady` |
 | [`@n1h/sweetview/ipc`](docs/ipc.md) | the contract: `defineService`, `createBridge`, `memoryTransport`, the wire frames |
 | [`@n1h/sweetview/ipc-ws`](docs/ipc-ws.md) | the contract over WebSockets: `wsHost` for `Bun.serve`, `wsTransport` and `wsUrl` for the browser; each side alone as `/ipc-ws/server` and `/ipc-ws/client` |
-| [`@n1h/sweetview/native`](docs/native.md) | tray, notifications, windows and overlays, click-through hit regions, folder picker, app menu, the OS event loop for an app with no window, icons; the hit-region helpers alone, without FFI, as `/native/hit-regions` |
-| [`@n1h/sweetview/settings-store`](docs/settings-store.md) | a JSON settings file in the user's application data folder |
+| [`@n1h/sweetview/native`](docs/native.md) | overview, then guides: [windows and screens](docs/native/windows.md), [overlays and hit regions](docs/native/overlays-and-hit-regions.md), [menus and the tray](docs/native/menus-and-tray.md), [notifications](docs/native/notifications.md), [activation and single instance](docs/native/activation-and-single-instance.md), [dialogs, clipboard and files](docs/native/dialogs-clipboard-files.md), [event loop and icons](docs/native/event-loop-and-icons.md); the hit-region helpers alone, without FFI, as `/native/hit-regions` |
+| [`@n1h/sweetview/settings-store`](docs/settings-store.md) | a JSON settings file in the user's application data folder, and the shared app identity (`defineAppIdentity`) |
 | [`@n1h/sweetview/window-chrome`](docs/window-chrome.md) | a page-drawn title bar and resize handles backed by OS moves and resizes |
-| [`@n1h/sweetview/build`](docs/build.md) | `writeIconFiles` and `makeMacApp`; the page also covers the `make-app.ts` script and the `/file-imports` types |
-| [the webview library](docs/webview-library.md) | the two C API additions the package relies on, and how the library is loaded |
+| [`@n1h/sweetview/build`](docs/build.md) | `writeIconFiles`, `makeMacApp` and `refreshWindowsIcons`; the page also covers the `make-app.ts` script and the `/file-imports` types |
+| [the webview library](docs/webview-library.md) | native assets and dynamic requests, transparency, the frames origin, and external drop control |
 
-Dependencies between the modules point one way. `ipc` imports nothing.
-`ipc-ws`, `worker` and `page` import `ipc`. `native`, `settings-store` and
-`build` import nothing else in the package. The root module imports `ipc`,
-`native`, `window-chrome` and the webview library.
+The workspace publishes six packages. The facade includes the application,
+page and worker entry points and re-exports the standalone packages.
+
+| Workspace directory | Package | Facade entry points |
+|---|---|---|
+| `packages/sweetview` | `@n1h/sweetview` | root, `/page`, `/worker`, `/window-chrome`, `/file-imports` |
+| `packages/sweetview-ipc` | `@n1h/sweetview-ipc` | `/ipc` |
+| `packages/sweetview-ipc-ws` | `@n1h/sweetview-ipc-ws` | `/ipc-ws`, `/ipc-ws/client`, `/ipc-ws/server` |
+| `packages/sweetview-native` | `@n1h/sweetview-native` | `/native`, `/native/hit-regions` |
+| `packages/sweetview-settings` | `@n1h/sweetview-settings` | `/settings-store` |
+| `packages/sweetview-build` | `@n1h/sweetview-build` | `/build` |
+
+`@n1h/sweetview-ipc-ws` depends on IPC. Native and build helpers depend on settings.
 
 `page`, `window-chrome` and `native/hit-regions` import types only, so a
 page bundle contains no Bun code.
@@ -62,7 +130,9 @@ page bundle contains no Bun code.
 
 An application has three parts, each importing its own module: the UI
 thread, which owns the window; a Worker, which hosts the backend; and the
-page. They share one typed contract. Six files and two commands:
+page. They share one typed contract. Six files and two commands. Until 1.0.0
+is published, create the files in `demos/hello/` of a source checkout
+([From source](#from-source)) and run the commands there:
 
 1. [Declare the contract in `protocol.ts`](#1-declare-the-contract-in-protocolts)
 2. [Write the backend in `service.ts`](#2-write-the-backend-in-servicets)
@@ -167,19 +237,21 @@ closes or `quit()` is called.
   `Bun.main`, which is this file. The same path works under `bun run` and
   inside an executable from `bun build --compile`.
 - `title` defaults to the page's `<title>`; `assets` adds files the page
-  fetches, such as models or images. All options:
-  [`createWebviewApp`](docs/app.md#createwebviewapp).
+  fetches, such as models or images. Windows are created hidden so you can
+  wire trays, menus, or bounds before calling `app.window.show()`. All options:
+  [`createApp`](docs/app.md#createapp).
 
 ```ts
-import { createWebviewApp } from "@n1h/sweetview";
+import { createApp } from "@n1h/sweetview";
 import index from "./index.html";
 import type { Events, Methods } from "./protocol";
 
-const app = await createWebviewApp<Methods, Events>({
+const app = await createApp<Methods, Events>({
   page: index,
   worker: "./worker.ts",
 });
 
+app.window.show();
 app.run();
 ```
 
@@ -213,25 +285,47 @@ shared-memory ring; in a browser, the same call goes over a WebSocket.
 The contract is the same `Methods` and `Events` types on both sides. The
 mechanism is described under [Transport](docs/app.md#transport).
 
-The loop can instead be run from a Bun timer with `runEventLoop`, which keeps
-Bun's event loop alive on the UI thread, so an app needs no worker and a
-menu-bar app needs no window; [The event loop](docs/app.md#the-event-loop)
-explains both ways and when to use which.
+Desktop assets and dynamic routes use the browser engine's native interception
+with zero TCP. Static files win at `ASSET_ORIGIN`. Set `onRequest: "worker"` on
+the webview and use `hostService(service, { onRequest })` or
+`hostRequestHandler(onRequest)` for asynchronous routes. Large IPC messages
+and binary responses cross the shared ring in chunks. Use `FRAMES_ORIGIN`
+for iframe content that needs a different origin from the app page.
+[Dynamic requests](docs/app.md#dynamic-requests).
+
+The shell can wait for the page's ready handshake, run modal UI commands on a
+later native tick, and hide the last window to the tray. A shared app identity
+ties settings, packaging and native URL activation together. The native package
+also provides clipboard, bounded and chunked file reads, and OS file drops.
+[Startup and deferred UI](docs/app.md#startup-and-deferred-ui), [native APIs](docs/native.md).
+
+`run()` blocks the UI thread inside the OS loop, so Bun's event loop does not
+turn there: an app that uses `run()` needs a worker for any asynchronous
+logic. The loop can instead be run from a Bun timer with `runEventLoop`,
+which keeps Bun's event loop alive on the UI thread. There the worker is
+optional, and a menu-bar app needs no window, page or worker at all.
+Tabbed apps always use `runEventLoop`.
+[The event loop](docs/app.md#the-event-loop) explains both ways and when to
+use which.
 
 ## Platforms
 
-| | Windows x64 | macOS arm64 | Linux x64 |
+Sweetview targets Windows and macOS. Some modules are pure TypeScript and
+run wherever Bun runs:
+
+| | Windows x64 | macOS arm64 | Other OSes Bun runs on |
 |---|---|---|---|
-| Window, asset serving, transparency | yes | yes | no: `createWebviewApp` throws |
-| `native` (tray, notifications, overlays, folder picker, app menu, event loop) | yes | yes | throws on first call; icons and hit regions work |
+| Window, asset serving, transparency, native tabs (`WebView.attach`, `createApp`) | yes | yes | no: throws before creating anything |
+| Native OS entry points in `native` (`Window`, `Screen`, `Menu.popup`, `Tray`, `Notifier`, `pickFolder`, `Clipboard`, `setAppMenu`, `setAppIcon`, `runEventLoop`, `singleInstance`, ...) | yes | yes | importing works; the first call throws |
+| Pure TypeScript: icon encoders and PNG decoder, hit-region geometry, menu templates, file-read helpers, IPC, WebSocket IPC, settings, app identity, build helpers | yes | yes | yes |
 | Build host that can embed the Windows exe file icon | yes | no, Bun's stock icon | no, Bun's stock icon |
 
 - Bun accepts `--windows-icon` only on a Windows host; the demos pass it
   only there.
 - The macOS `.app` bundle is assembled on any OS by `makeMacApp` or
-  `src/make-app.ts`, and signed ad-hoc when assembled on macOS. macOS shows
-  no notifications from an unsigned bundle, or from one in a temporary
-  folder.
+  the [`make-app` command](docs/build.md#make-app-command-line), and signed
+  ad-hoc when assembled on macOS. macOS shows no notifications from an unsigned
+  bundle, or from one in a temporary folder.
 - On a Mac that reports a copied bundle as damaged, these commands remove the
   quarantine flag, restore the executable bit and add an ad-hoc signature:
 
@@ -245,31 +339,30 @@ codesign --sign - --force --deep "App.app"
 
 | Path | Contents |
 |---|---|
-| `src/` | the package: `ipc/`, `ipc-ws/`, `native/`, and at the top level the window host, `worker`, `page`, `settings-store`, `window-chrome`, `build` and the `make-app.ts` command line |
+| `packages/` | the Sweetview facade, IPC, WebSocket transport, native helpers, settings and build packages |
 | `docs/` | the reference pages, indexed by the [reference index](docs/README.md) |
-| `demos/web-app/` | one backend and one React page run two ways: a desktop window with tray and notifications, or `Bun.serve` with WebSockets |
+| [`demos/web-app/`](demos/web-app/README.md) | one backend and one React page run two ways: a desktop window with tray and notifications, or `Bun.serve` with WebSockets |
 | [`demos/desktop-pet/`](demos/desktop-pet/README.md) | a transparent always-on-top pet rendered with Babylon.js, with click-through hit regions and a page-drawn settings window |
 | [`demos/menubar-only/`](demos/menubar-only/README.md) | a menu-bar app with no window, no webview and no worker: a status item, its menu and a tooltip clock on a plain `setInterval`, on `runEventLoop` |
 | [`demos/menubar-notify/`](demos/menubar-notify/README.md) | a menu-bar app whose menu sends a system notification now or five seconds later, with a window listing what was sent and clicked; a notification click opens it |
 | [`demos/native-tabs/`](demos/native-tabs/README.md) | tabs with one webview per tab. macOS: every tab is its own `NSWindow` hosting its own `WKWebView`, behind the tab bar AppKit draws. Windows: a window whose title bar is a tab strip, every tab a child window hosting its own `WebView2` |
 | [`webview/`](webview/README.md) | recipes that clone the webview-bun fork, with the webview fork as its submodule, and build the library from it, for working on the library itself; not needed to build the demos |
 
-Inside this repository `@n1h/sweetview` resolves to `src/` through the
-`paths` mapping in `tsconfig.json`, which Bun honours at run time and in
-`bun build`.
+Bun links the packages and demos through the root workspace. The `paths`
+mapping in `tsconfig.json` mirrors the package entry points for typechecking.
 
 Recipes run with [just](https://github.com/casey/just) and PowerShell 7,
 from the repository root:
 
 | Recipe | Does |
 |---|---|
-| `just check` | `tsc --noEmit` over `src/` and `demos/`, then `bun test` |
+| `just check` | `tsc --noEmit` over `packages/` and `demos/`, then `bun test` |
 | `just demos web-app serve` | the web build on `http://127.0.0.1:4747` (`PORT`, `HOST`) |
 | `just demos web-app app`, `just demos desktop-pet app`, `just demos menubar-only app`, `just demos menubar-notify app`, `just demos native-tabs app` | the desktop application from source, with `bun run` (`WEBVIEW_DEBUG=1` opens devtools) |
 | `just demos web-app compile`, `just demos desktop-pet compile`, `just demos menubar-only compile`, `just demos menubar-notify compile` | Windows exe, macOS arm64 binary and `.app` into each demo's `dist/` |
 | `just compile`, `just clean` | every demo that has that recipe (`native-tabs` has no `compile`) |
-| `just pack` | what `bun publish` would upload |
-| `just publish` | publishes `@n1h/sweetview`; needs a registry login |
+| `just pack` | what `bun publish` would upload for each of the six packages |
+| `just publish` | publishes all six packages in dependency order, with a registry login |
 
 ## License
 
