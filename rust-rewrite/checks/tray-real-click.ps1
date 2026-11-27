@@ -1,19 +1,24 @@
 # Clicks a running app's tray icon with real mouse input (checklist item W5.5).
 #
-#   pwsh -NoProfile -File rust-rewrite/checks/tray-real-click.ps1 -Tooltip "Menubar Only" -ProcessId <pid>
+#   pwsh -NoProfile -File rust-rewrite/checks/tray-real-click.ps1 -Tooltip "Menubar Only" -ProcessId <pid> [-Action menu|click|double]
 #
 # The icon is found through UI Automation by its tooltip, in the taskbar's notification area or,
 # when it sits there, in the overflow flyout (opened by a real click on its chevron). The cursor
-# is moved onto the icon and a right click is injected with SendInput, so the click travels
-# through Explorer exactly as a person's does: the shell posts the icon's callback message, the
-# app opens its menu. The script then presses End and Return, which chooses the menu's last item.
+# is moved onto the icon and the click is injected with SendInput, so it travels through Explorer
+# exactly as a person's does: the shell posts the icon's callback message to the app.
+#
+#   -Action menu (the default): a right click; the script waits for the app's popup menu, then
+#     presses Up and Return, which chooses the menu's last item.
+#   -Action click: one left click.   -Action double: two left clicks inside the double-click time.
+#
 # It restores the cursor and never leaves a button or key down.
 #
 # This is injected input, not a hand: it is what an unattended session can do. A person clicking
 # the icon exercises the same path from the shell onwards.
 param(
   [Parameter(Mandatory = $true)][string]$Tooltip,
-  [Parameter(Mandatory = $true)][int]$ProcessId
+  [Parameter(Mandatory = $true)][int]$ProcessId,
+  [ValidateSet("menu", "click", "double")][string]$Action = "menu"
 )
 $ErrorActionPreference = "Stop"
 Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
@@ -38,15 +43,8 @@ public static class RC {
     var i = new INPUT[1]; i[0].type = 0; i[0].u.mi.dwFlags = flags; SendInput(1, i, Marshal.SizeOf(typeof(INPUT)));
   }
   [DllImport("user32.dll")] public static extern IntPtr WindowFromPoint(POINT p);
-  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
-  [DllImport("user32.dll")] public static extern short GetAsyncKeyState(int vk);
   public static string ClassAt(int x, int y) {
     POINT p; p.X = x; p.Y = y; var sb = new StringBuilder(128); GetClassNameW(WindowFromPoint(p), sb, 128); return sb.ToString();
-  }
-  public static string Under() {
-    POINT p; GetCursorPos(out p); var h = WindowFromPoint(p); var sb = new StringBuilder(128); GetClassNameW(h, sb, 128);
-    var f = GetForegroundWindow(); var sf = new StringBuilder(128); GetClassNameW(f, sf, 128);
-    return "cursor " + p.X + "," + p.Y + " over window class " + sb + "; foreground " + sf;
   }
   public static void Move(int dx, int dy) {
     var i = new INPUT[1]; i[0].type = 0; i[0].u.mi.dx = dx; i[0].u.mi.dy = dy; i[0].u.mi.dwFlags = 0x0001; SendInput(1, i, Marshal.SizeOf(typeof(INPUT)));
@@ -97,11 +95,8 @@ function Click-At($rect, [uint32]$down, [uint32]$up) {
   # Real relative moves onto the point, so the element under the cursor sees the pointer arrive.
   foreach ($step in 1..3) { [RC]::Move(1, 0); Start-Sleep -Milliseconds 40 }
   Start-Sleep -Milliseconds 250
-  if ($env:SV_TRAY_TRACE) { Write-Host "  before press: $([RC]::Under())" }
   [RC]::Mouse($down); Start-Sleep -Milliseconds 90
-  if ($env:SV_TRAY_TRACE) { Write-Host "  while down: left=$([RC]::GetAsyncKeyState(1) -lt 0) right=$([RC]::GetAsyncKeyState(2) -lt 0)" }
   [RC]::Mouse($up)
-  if ($env:SV_TRAY_TRACE) { Start-Sleep -Milliseconds 200; Write-Host "  after release: $([RC]::Under())" }
   "$x,$y"
 }
 
@@ -127,10 +122,6 @@ try {
   if (-not $icon) { throw "no notification icon whose tooltip starts with '$Tooltip'" }
   $r = $icon.Current.BoundingRectangle
   "icon found in ${where}: '$($icon.Current.Name)' ($($icon.Current.ControlType.ProgrammaticName), class $($icon.Current.ClassName), at $([int]$r.Left),$([int]$r.Top) size $([int]$r.Width)x$([int]$r.Height))"
-  if ($env:SV_TRAY_INVOKE) {
-    $pattern = $icon.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
-    $pattern.Invoke(); "invoked the icon through UI Automation (diagnostic)"; Start-Sleep -Milliseconds 1500; return
-  }
   # Something else can sit over the flyout for a few seconds (a toast banner appears in the same
   # corner): wait until the window under the icon's centre is the shell's own.
   $cx = [int]($r.Left + $r.Width / 2); $cy = [int]($r.Top + $r.Height / 2)
@@ -139,8 +130,17 @@ try {
   for ($i = 0; $i -lt 60 -and $shellClasses -notcontains $under; $i++) { Start-Sleep -Milliseconds 500; $under = [RC]::ClassAt($cx, $cy) }
   "window under the icon's centre: $under"
   if ($shellClasses -notcontains $under) { throw "another window ($under) covers the icon" }
-  if ($env:SV_TRAY_LEFT) {
-    "left click (SendInput) at $(Click-At $icon.Current.BoundingRectangle 0x0002 0x0004)"; Start-Sleep -Milliseconds 1500; return
+  if ($Action -eq "click") {
+    "left click (SendInput) at $(Click-At $icon.Current.BoundingRectangle 0x0002 0x0004)"
+    Start-Sleep -Milliseconds 300; [RC]::Key(0x1B)  # Escape closes the overflow flyout if it is still open
+    return
+  }
+  if ($Action -eq "double") {
+    "left click (SendInput) at $(Click-At $icon.Current.BoundingRectangle 0x0002 0x0004)"
+    [RC]::Mouse(0x0002); Start-Sleep -Milliseconds 60; [RC]::Mouse(0x0004)
+    "second left click at the same point, inside the double-click time"
+    Start-Sleep -Milliseconds 300; [RC]::Key(0x1B)
+    return
   }
   "right click (SendInput) at $(Click-At $icon.Current.BoundingRectangle 0x0008 0x0010)"
   $opened = $false
@@ -148,11 +148,11 @@ try {
   if (-not $opened) { "popup menu windows on screen, by process: $([RC]::Menus())" }
   "the app's popup menu is on screen: $opened"
   if (-not $opened) { throw "the real click did not open the app's menu" }
-  [RC]::Key(0x23)  # End: the last item
-  Start-Sleep -Milliseconds 120
+  [RC]::Key(0x26)  # Up: from no selection it wraps to the last item
+  Start-Sleep -Milliseconds 150
   [RC]::Key(0x0D)  # Return
   Start-Sleep -Milliseconds 300
-  "End, Return pressed; the menu is on screen: $([RC]::MenuOpen([uint32]$ProcessId))"
+  "Up, Return pressed; the menu is on screen: $([RC]::MenuOpen([uint32]$ProcessId))"
 } catch {
   # Close whatever this script opened (the overflow flyout, a menu) before reporting.
   [RC]::Key(0x1B)
