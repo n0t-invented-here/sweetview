@@ -22,7 +22,7 @@ use std::collections::HashMap;
 use std::rc::{Rc, Weak};
 use std::sync::Once;
 
-use sweetview_platform_window::{double_click_time_ms, small_icon_size, OwnerWindow, PopupAt};
+use sweetview_platform_window::{double_click_time_ms, small_icon_size, ForeignWindow, PopupAt};
 use tray_icon::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent, TrayIconId};
 
 use crate::error::{Error, Result};
@@ -373,7 +373,7 @@ impl TrayState {
   }
 
   /// The hidden window that owns the menu, made on first use.
-  fn menu_owner(&self) -> Result<OwnerWindow> {
+  fn menu_owner(&self) -> Result<ForeignWindow> {
     if self.menu_owner.borrow().is_none() {
       let runtime = Runtime::get()?;
       let window = runtime
@@ -382,7 +382,7 @@ impl TrayState {
       *self.menu_owner.borrow_mut() = Some(window);
     }
     let handle = self.menu_owner.borrow().as_ref().map_or(0, window_handle_value);
-    OwnerWindow::from_handle_value(handle).ok_or_else(|| Error::state("sweetview: the tray menu's window is gone"))
+    ForeignWindow::from_handle_value(handle).ok_or_else(|| Error::state("sweetview: the tray menu's window is gone"))
   }
 }
 

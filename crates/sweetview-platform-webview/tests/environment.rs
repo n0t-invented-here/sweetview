@@ -1,6 +1,7 @@
 //! `create_environment`: an environment made the C++ fork's way serves `wry`
 //! webviews, one environment is shared by several webviews, and the C++
-//! fork's default folder is `%APPDATA%\<exe file name>`.
+//! fork's default folder is `%APPDATA%\<exe file name>`. Passes with
+//! `WEBVIEW2_USER_DATA_FOLDER` set or unset: the variable is read, never set.
 #![cfg(windows)]
 
 mod common;
@@ -50,6 +51,17 @@ fn environment_created_the_cpp_way() {
         let ready = ctx.load_index(view);
         assert_eq!(ready["origin"], "http://webview.localhost", "{ready}");
     }
-    assert!(data.join("EBWebView").exists(), "the given user data folder is the one in use");
+    // WebView2 gives `WEBVIEW2_USER_DATA_FOLDER` precedence over the folder an
+    // environment is created with (documented for
+    // `CreateCoreWebView2EnvironmentWithOptions`): with the variable set, its
+    // folder is the one in use and the given folder is left untouched.
+    match std::env::var_os("WEBVIEW2_USER_DATA_FOLDER").filter(|value| !value.is_empty()) {
+        None => assert!(data.join("EBWebView").exists(), "the given user data folder is the one in use"),
+        Some(variable) => {
+            let variable = std::path::PathBuf::from(variable);
+            assert!(variable.join("EBWebView").exists(), "with WEBVIEW2_USER_DATA_FOLDER set, its folder is the one in use");
+            assert!(!data.join("EBWebView").exists(), "with WEBVIEW2_USER_DATA_FOLDER set, the given folder is not used");
+        }
+    }
     drop((a, b, c));
 }

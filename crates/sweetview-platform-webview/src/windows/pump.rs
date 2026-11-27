@@ -1,33 +1,28 @@
-//! The nested message pumps the C++ fork runs while it waits for WebView2:
-//! `run_event_loop_while` (around `AddScriptToExecuteOnDocumentCreated`) and
-//! the wait loop of `embed` (around environment creation). Both dispatch with
-//! the wide-character calls, as the C++ does.
+//! The nested message pump the C++ fork's `embed` runs while it waits for
+//! WebView2 to create the environment. It dispatches with the wide-character
+//! calls, as the C++ does.
+//!
+//! Adding a user script does not wait here (as the C++ fork's
+//! `add_user_script_impl` did): WebView2 reports that completion only once a
+//! navigation in flight has its response, and the response may have to come
+//! from this thread's own JavaScript, which cannot run inside this pump.
 
-use windows::Win32::UI::WindowsAndMessaging::{DispatchMessageW, GetMessageW, PostQuitMessage, TranslateMessage, MSG, WM_QUIT};
+use windows::Win32::UI::WindowsAndMessaging::{DispatchMessageW, GetMessageW, TranslateMessage, MSG, WM_QUIT};
 
 /// How a pump ended.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum PumpEnd {
     /// The condition was met.
     Done,
-    /// A `WM_QUIT` arrived first.
+    /// A `WM_QUIT` arrived first; it is kept, and the wait ends cancelled.
     Quit,
     /// `GetMessageW` failed.
     Failed,
 }
 
-/// What happens to a `WM_QUIT` the pump takes from the queue.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum OnQuit {
-    /// Posted again, so the outer loop still receives it (`run_event_loop_while`).
-    Repost,
-    /// Kept: the wait ends cancelled (`embed`).
-    Consume,
-}
-
 /// Dispatches this thread's messages while `more()` is true. Every callback
 /// the thread serves can run inside it, WebView2's and the loop's alike.
-pub(super) fn pump_while(mut more: impl FnMut() -> bool, on_quit: OnQuit) -> PumpEnd {
+pub(super) fn pump_while(mut more: impl FnMut() -> bool) -> PumpEnd {
     let mut msg = MSG::default();
     while more() {
         // SAFETY: `msg` is a local MSG for the call to fill; no window filter.
@@ -36,10 +31,6 @@ pub(super) fn pump_while(mut more: impl FnMut() -> bool, on_quit: OnQuit) -> Pum
             return PumpEnd::Failed;
         }
         if got.0 == 0 || msg.message == WM_QUIT {
-            if on_quit == OnQuit::Repost {
-                // SAFETY: posts WM_QUIT with the exit code it carried; no pointer.
-                unsafe { PostQuitMessage(msg.wParam.0 as i32) };
-            }
             return PumpEnd::Quit;
         }
         // SAFETY: `msg` was filled by the GetMessageW call just above.

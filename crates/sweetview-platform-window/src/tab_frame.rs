@@ -15,12 +15,12 @@ use windows::core::PCWSTR;
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::UI::Input::KeyboardAndMouse::ReleaseCapture;
 use windows::Win32::UI::WindowsAndMessaging::{
-  AppendMenuW, CreatePopupMenu, DestroyMenu, EnableMenuItem, GetForegroundWindow, GetSystemMenu,
-  PostMessageW, SendMessageW, SetForegroundWindow, SetMenuDefaultItem, TrackPopupMenu, HMENU, MENU_ITEM_FLAGS, MF_ENABLED,
+  AppendMenuW, CreatePopupMenu, DestroyMenu, EnableMenuItem, GetForegroundWindow, GetSystemMenu, SendMessageW, SetForegroundWindow, SetMenuDefaultItem, TrackPopupMenu, HMENU, MENU_ITEM_FLAGS, MF_ENABLED,
   MF_GRAYED, MF_SEPARATOR, MF_STRING, SC_CLOSE, SC_MAXIMIZE, SC_MINIMIZE, SC_MOVE, SC_RESTORE, SC_SIZE, TPM_RETURNCMD,
-  TPM_RIGHTBUTTON, WM_CLOSE, WM_NCLBUTTONDOWN, WM_NULL, WM_SYSCOMMAND, WS_CLIPCHILDREN,
+  TPM_RIGHTBUTTON, WM_CLOSE, WM_NCLBUTTONDOWN, WM_SYSCOMMAND, WS_CLIPCHILDREN,
 };
 
+use crate::platform::{after_popup_menu, post_message};
 use crate::{is_zoomed, NativeWindow, Point};
 
 /// The style bit a frame keeps on, so painting its background never draws
@@ -73,11 +73,6 @@ pub fn request_close(window: &impl NativeWindow) {
   let _result = unsafe { SendMessageW(window.hwnd(), WM_CLOSE, None, None) };
 }
 
-fn post(hwnd: HWND, message: u32, wparam: usize) {
-  // SAFETY: a posted message with plain integer parameters to a handle named by `NativeWindow`.
-  let _posted = unsafe { PostMessageW(Some(hwnd), message, WPARAM(wparam), LPARAM(0)) };
-}
-
 /// Shows `menu` at `at` (screen pixels) for `hwnd` and returns the chosen
 /// command, 0 when it was dismissed. The window is made foreground first and
 /// sent a `WM_NULL` after, so the menu closes when the user clicks elsewhere
@@ -89,7 +84,7 @@ fn track(menu: HMENU, hwnd: HWND, at: Point) -> u32 {
   // SAFETY: `menu` is alive for the whole call (the caller owns or borrows it
   // from the window), `hwnd` is named by `NativeWindow`, and no rectangle is passed.
   let chosen = unsafe { TrackPopupMenu(menu, TPM_RIGHTBUTTON | TPM_RETURNCMD, at.x, at.y, None, hwnd, None) };
-  post(hwnd, WM_NULL, 0);
+  after_popup_menu(hwnd);
   u32::try_from(chosen.0).unwrap_or(0)
 }
 
@@ -114,7 +109,7 @@ pub fn show_system_menu(window: &impl NativeWindow, at: Point) {
   let _set = unsafe { SetMenuDefaultItem(menu, SC_CLOSE, 0) };
   let chosen = track(menu, hwnd, at);
   if chosen != 0 {
-    post(hwnd, WM_SYSCOMMAND, chosen as usize);
+    post_message(hwnd, WM_SYSCOMMAND, chosen as usize);
   }
 }
 

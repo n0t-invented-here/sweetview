@@ -1,6 +1,6 @@
 //! The folder dialog, through `rfd`.
 
-use sweetview_platform_window::OwnerWindow;
+use sweetview_platform_window::ForeignWindow;
 
 use crate::error::Result;
 use crate::runtime::Runtime;
@@ -15,7 +15,7 @@ pub fn pick_folder(owner: Option<isize>, title: &str) -> Result<Option<String>> 
   // apartment, which the dialog needs, and sets the DPI awareness every window shares.
   Runtime::get()?;
   let mut dialog = rfd::FileDialog::new().set_title(title);
-  let owner = owner.and_then(OwnerWindow::from_handle_value);
+  let owner = owner.and_then(ForeignWindow::from_handle_value);
   if let Some(owner) = &owner {
     dialog = dialog.set_parent(owner);
   }

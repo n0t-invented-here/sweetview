@@ -40,6 +40,17 @@ impl WebviewExtras {
     /// Removes a script added with [`add_user_script`](Self::add_user_script).
     pub fn remove_user_script(&self, script: UserScript) {}
 
+    /// Whether a script registration is still waiting.
+    pub fn scripts_pending(&self) -> bool {
+        false
+    }
+
+    /// Sets or clears the handler for the last script registration completing.
+    pub fn set_scripts_registered_handler(&self, handler: Option<Rc<dyn Fn()>>) {}
+
+    /// Cancels the navigation in flight.
+    pub fn stop_navigation(&self) {}
+
     /// Serves `data` at `path` of the page's own origin.
     pub fn set_asset(&self, path: &str, mime: &str, data: Vec<u8>) -> ErrorCode {
         ErrorCode::Unspecified
