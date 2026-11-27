@@ -1,12 +1,14 @@
 # Sweetview restart proposal
 
-Status: proposal, awaiting decisions C and D at the end. No code has been written for it.
+Status: proposal, awaiting decisions C and D at the end.
+
+Basis: the npm registry, the `webviewjs/webview` repository and its documentation, as of 2026-11-27.
 
 The current tree (`main` and `v1-drafting`) is reference material only. Its native layer is about 6,900 lines of TypeScript calling Win32 and Objective-C through `bun:ffi`, plus two C++ forks. None of that ships.
 
 ## What this delivers
 
-One package an app developer adds with `bun add`. TypeScript only on their side. Compiled with `bun build --compile`. All native code is one Rust library shipped prebuilt inside the package. Targets are Windows, macOS and, minimally, desktop Linux.
+One package an app developer adds with `bun add`. TypeScript only on their side. Compiled with `bun build --compile`. All native code is one Rust library shipped prebuilt. Targets are Windows, macOS and, minimally, desktop Linux.
 
 Each of these works alone, in a single `.ts` file:
 
@@ -18,17 +20,54 @@ Each of these works alone, in a single `.ts` file:
 
 An app that grows stays on this stack. An app that wants to leave can move to Tauri 2 (or Electron) without changing its page code.
 
-## Layer 1: native engine (Rust, prebuilt)
+## Layer 1: native engine
 
-- One N-API addon. JavaScript never holds a pointer.
-- Built on `tao` (windows and the OS event loop) and `wry` (WebView2 on Windows, WKWebView on macOS, WebKitGTK on Linux). Both are the Tauri team's libraries and are usable without Tauri.
-- Starting point: a fork of `webviewjs/webview` (MIT), owned by this project.
-- It works in Bun. Its README says "It works with Node.js, Bun, and Deno", its examples run with Bun, and the project itself is developed with Bun.
-- It already has windows, several webviews per window, tray with click events, menus, notifications, page messaging without TCP, custom protocols, and an event loop driven by a Bun timer that does not block JavaScript.
-- Rust added to the fork:
-  - hit-region click-through for transparent windows (regions, plus cursor tracking so the page still sees hover)
-  - checkmarks, item icons and per-item updates on tray and app menus
-- Crate rule: `#![forbid(unsafe_code)]` everywhere except one small module holding the OS hit-testing code. The compiler enforces it.
+A fork of `webviewjs/webview` (MIT), owned by this project.
+
+### What `webviewjs/webview` is
+
+| Fact | Value |
+|---|---|
+| What it is | a Rust library exposed to JavaScript through N-API; JavaScript holds no pointers |
+| Runtimes | Bun, Node.js, Deno. Its own build and CI run on Bun 1.4.2 |
+| Published | on npm as `@webviewjs/webview` since October 2024; 27 versions; `0.6.0` on 2026-10-29, `1.0.0-rc.4` on 2026-10-30 |
+| Use | 1,846 npm downloads in the week ending 2026-11-26; repository last pushed 2026-11-19 |
+| Prebuilt binaries | 12 platform packages installed automatically by `bun add`, including Windows x64 and arm64, macOS x64 and arm64, Linux x64 and arm64 |
+| Size | about 6,100 lines of Rust in 13 files; the word `unsafe` appears 5 times |
+| Built on | `tao` 0.37 (windows, event loop), `wry` 0.55 (webview), `muda` 0.19 (menus), `tray-icon` 0.24 (tray), `notify-rust` 4.18 (notifications), `rfd` (file dialogs) |
+| Tests | runtime tests for application, window, webview, IPC, custom protocol, tray and notification |
+| Maintainer | one person, `twlite`, with 202 of the roughly 215 commits |
+
+`tao`, `wry`, `muda` and `tray-icon` are the Tauri team's libraries, the ones Tauri 2 itself runs on, usable without Tauri.
+
+### What it already does
+
+Each row has a runnable example in the repository under `apps/examples/`.
+
+| Capability | Example file |
+|---|---|
+| Tray icon with left, right and middle click events, menu, dynamic icon and menu | `tray.ts` |
+| Application and window menus with submenus, separators, shortcuts | `menu-system.ts`, `window-menus.ts` |
+| Notifications with action buttons and click events | `notification.ts` |
+| Multiple windows | `multiple.ts` |
+| Several webviews in one window, each with its own bounds | `multi-webview.ts` |
+| Transparent windows | `transparent.ts` |
+| Page-to-host calls with no TCP | `expose.ts` |
+| Serving page assets from a custom protocol | `custom-protocol.ts` |
+| Frameless windows and drag regions | `undecorated.ts`, `drag-region.ts` |
+| Native file drop | `native-file-drop.ts` |
+
+It also has macOS native tabs through a window tabbing identifier, whole-window click-through on Windows and macOS (`setIgnoreCursorEvents`), always-on-top, fullscreen, and an event loop that runs on a Bun timer without blocking JavaScript.
+
+### What the fork adds
+
+| Addition | Why | Size |
+|---|---|---|
+| Checkmarks and icons on menu items, per-item updates | the binding's `menu.rs` (193 lines) exposes only plain items; `muda` underneath already has check items and icon items | extends one small file |
+| Hit-region click-through for transparent windows | it has only a whole-window on/off switch; the games need "click the sprite, pass through elsewhere" | new module with OS hit-testing code |
+| All target binaries inside one package | it ships one package per platform, which blocks compiling a Windows executable on a Mac | packaging change |
+
+Rule for the fork: `#![forbid(unsafe_code)]` on every file except the hit-testing module. The compiler enforces it.
 
 ## Layer 2: TypeScript API
 
@@ -39,11 +78,11 @@ What app developers import. One entry point per journey, each usable without the
 | `/tray` | menu bar or system tray, icon clicks, dynamic menus | full | full | right-click menu only |
 | `/notify` | native notifications with click events | full | needs a signed `.app` | basic |
 | `/webview` | a window rendering a page, N windows | full | full | full |
-| `/webview` tabs | tabs in one window | polyfill: tab strip plus one child webview per tab | native tabs | polyfill |
+| `/webview` tabs | tabs in one window | tab strip plus one child webview per tab | native tabs | tab strip plus one child webview per tab |
 | `/overlay` | transparent, always on top, hit-region click-through | full | full | not planned |
 | `/build` | `.app` bundle helper, compile helper | n/a | n/a | n/a |
 
-The API is this project's own shape and small. It is not Electron's `BrowserWindow`. The engine stays hidden behind it so it can be replaced.
+The API is this project's own shape and small. It is not Electron's `BrowserWindow`. The engine stays behind it.
 
 ## Layer 3: IPC
 
@@ -78,27 +117,25 @@ All pure TypeScript, no FFI:
 ## Distribution
 
 - One npm package holding the TypeScript and one prebuilt binary per target: Windows x64, macOS arm64, Linux x64.
-- CI builds the binaries on one runner per OS. Consumers never install Rust.
-- The binary is loaded with a literal `require`, which is what makes `bun build --compile` embed it. All targets ship in the one package so a Windows executable can be compiled on a Mac.
+- CI builds the binaries on one runner per OS, the same way the upstream `Build.yml` workflow does. Consumers never install Rust.
+- The binary is loaded with a literal `require`, which is the form `bun build --compile` embeds.
 
 ## Order of work
 
-1. Build the five journeys on `webviewjs/webview` as it is, to list exactly what the fork has to add. This includes compiling with plain `bun build --compile` in place of its own `webview build` command.
-2. Fork it and set up CI that produces the prebuilt binaries.
-3. `/tray` and `/notify`.
-4. `/webview` with the IPC port.
-5. Multiple windows and tabs.
-6. Hit-region click-through in Rust, then port one game.
-7. Tauri 2 and Electron transports.
-8. Linux minimal pass.
+1. Fork `webviewjs/webview`; CI produces the three prebuilt binaries in one package.
+2. `/tray` and `/notify`, with checkmarks and icons added to menus.
+3. `/webview` with the IPC port.
+4. Multiple windows and tabs.
+5. Hit-region click-through, then port one game.
+6. Tauri 2 and Electron transports.
+7. Linux minimal pass.
 
-## Risks
+## Fixed constraints
 
-- The feature list for `webviewjs/webview` in this document comes from its docs. This project has not yet built anything on it, so gaps beyond the two named in Layer 1 may appear in step 1.
-- Upstream has one maintainer and open bugs in basics (file inputs on macOS, tray events without a window). Owning the fork removes the dependency.
-- Hit-region click-through is new native code in OS hit-testing, the one place unsafe Rust is unavoidable.
-- macOS shows no notifications from an unsigned bundle. That is an OS rule and stays.
-- Linux tray support in the underlying libraries is limited to a right-click menu.
+- macOS shows no notifications from an unsigned bundle. That is an OS rule.
+- The Linux tray gives a right-click menu and no click events. That is a limit of the Linux tray backend.
+- Hit-testing code is the one place unsafe Rust is required.
+- Upstream has one maintainer, which is why this is a fork that this project owns and not a dependency.
 
 ## Alternatives ruled out
 
@@ -113,13 +150,14 @@ All pure TypeScript, no FFI:
 
 ## Open decisions
 
-C. Native engine: fork `webviewjs/webview` and own the fork (recommended), or write a Rust crate on `tao` and `wry` from zero? The fork has windows, tray, menus, notifications and the Bun event loop on day one. From zero, nothing is inherited and every feature is written and debugged by this project's agents.
+C. Native engine: fork `webviewjs/webview` and own the fork (recommended), or write a Rust crate on `tao` and `wry` from zero? The fork starts with about 6,100 lines of working Rust covering windows, tray, menus, notifications and the event loop. From zero, all of that is written again.
 
 D. Is losing streamed responses acceptable, with large payloads sent as chunked IPC messages instead?
 
 ## Sources
 
 - https://github.com/webviewjs/webview
+- https://www.npmjs.com/package/@webviewjs/webview
 - https://webview.js.org/api/browser-window/
 - https://webview.js.org/api/tray/
 - https://webview.js.org/api/menu/
