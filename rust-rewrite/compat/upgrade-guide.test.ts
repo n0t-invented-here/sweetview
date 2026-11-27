@@ -38,10 +38,23 @@
 //
 // What a row's change is more than a rename of is run for real in
 // behaviour.test.ts.
+//
+// And every row runs (R2): the spans after the import name the row's
+// targets (`new Name`, `Name.member`, `Name#member`, a call `Name`, a
+// constant `Name` or `Name.member`; a row with nothing after its import is
+// the export itself), and fixtures/row-runners.ts has a runner for each,
+// which calls it once in its new form with real arguments and checks what
+// comes back. A row added to the guide whose target has no runner fails
+// "every row's new form has a runner". Runners that need the desktop run in
+// fixtures/rows-desktop.ts, a process of its own. Type rows (`import type`,
+// `type X = …`) are checked by tsc through upgrade-types.ts; rows of a
+// `/darwin/` module are macOS-only and are not run on Windows.
 
 import { describe, expect, test } from "bun:test";
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { ROWS_OF_ANOTHER_CHANGE, RUNNERS, scratch } from "./fixtures/row-runners";
 
 const root = join(import.meta.dir, "..", "..");
 const guidePath = join(root, "docs", "upgrading.md");
@@ -204,6 +217,50 @@ async function checkRow(row: Row, ownLibraries: Set<string>): Promise<string[]> 
   return problems;
 }
 
+/** What a span of the "Write now" column names: the target its runner is filed under. */
+function targetOf(span: string, name: string): string | undefined {
+  const esc = name.replace(/\$/g, "\\$");
+  let m: RegExpExecArray | null;
+  if (new RegExp(`^new ${esc}\\(`).test(span)) return `new ${name}`;
+  if ((m = new RegExp(`^${esc}(\\.\\w+)? === `).exec(span))) return `${name}${m[1] ?? ""}`;
+  if ((m = new RegExp(`^${esc}([.#]\\w+)`).exec(span))) return `${name}${m[1]}`;
+  if (new RegExp(`^${esc}\\(`).test(span)) return name;
+  return undefined;
+}
+
+/** The rows whose new form is a value of a module that loads on this platform, with their targets. */
+function valueRows(): { row: Row; name: string; spec: string; targets: string[] }[] {
+  const out: { row: Row; name: string; spec: string; targets: string[] }[] = [];
+  for (const row of rows) {
+    const m = IMPORT.exec(row.spans[0] ?? "");
+    if (!m || m[1] || m[3] === "bun:ffi" || m[3]!.includes("/darwin/")) continue;
+    if ([...ROWS_OF_ANOTHER_CHANGE].some((old) => row.old === `\`${old}\``)) continue;
+    const [name, spec] = [m[2]!, m[3]!];
+    const checks = row.spans.slice(1);
+    const targets = checks.length === 0 ? [name] : [...new Set(checks.map((c) => targetOf(c, name) ?? `?${c}`))];
+    out.push({ row, name, spec, targets });
+  }
+  return out;
+}
+
+/** A row's kind, from its first span after the import (or the import alone). */
+function rowKind(row: Row): string {
+  const first = row.spans[0] ?? "";
+  if (first.startsWith("type ")) return "type";
+  const m = IMPORT.exec(first);
+  if (!m) return "other";
+  if (m[1]) return "type";
+  if (m[3] === "bun:ffi") return "own bun:ffi table";
+  if (m[3]!.includes("/darwin/")) return "macOS-only";
+  if ([...ROWS_OF_ANOTHER_CHANGE].some((old) => row.old === `\`${old}\``)) return "another change's";
+  const check = row.spans[1];
+  if (check === undefined) return "export alone";
+  if (check.startsWith("new ")) return "class";
+  if (check.includes(" === ")) return "constant";
+  if (/^[\w$]+[.#]\w+/.test(check)) return "method or member";
+  return "function";
+}
+
 describe("docs/upgrading.md", () => {
   test("has the three parts and their tables", () => {
     for (const heading of ["## Part A: published 0.x packages", "## Part B: the `v1-drafting` API", "## Part C: the bindings package", "## Reading the tables", "## Steps for each kind of application"]) {
@@ -239,6 +296,100 @@ describe("docs/upgrading.md", () => {
     expect(Object.keys(result.calls).sort()).toEqual([...own].sort());
     for (const [lib, outcome] of Object.entries(result.calls)) expect(`${lib}: ${outcome}`).toBe(`${lib}: ok`);
   }, 120_000);
+
+  test("every row's new form has a runner", () => {
+    const missing = [...new Set(valueRows().flatMap((r) => r.targets.filter((t) => RUNNERS[t] === undefined).map((t) => `${t} (docs/upgrading.md:${r.row.line}, ${r.row.old})`)))];
+    expect(missing).toEqual([]);
+    // The rows of another change still exist under their Old names; their runners come with that change.
+    for (const old of ROWS_OF_ANOTHER_CHANGE) expect(rows.some((r) => r.old === `\`${old}\``)).toBe(true);
+  });
+
+  test.skipIf(process.platform !== "win32")("every row's new form runs", async () => {
+    const jobs = new Map<string, { key: string; target: string; name: string; spec: string; where: "here" | "desktop" }>();
+    for (const r of valueRows()) {
+      for (const target of r.targets) {
+        const runner = RUNNERS[target];
+        if (!runner) continue; // reported by the test above
+        const key = `${target} @ ${r.spec}`;
+        jobs.set(key, { key, target, name: r.name, spec: r.spec, where: runner.where });
+      }
+    }
+    const results: Record<string, string> = {};
+
+    // In this process: the runners with no window, webview or OS input.
+    const work = scratch();
+    const ranWith = new Map<string, { value: unknown; key: string }[]>();
+    try {
+      for (const job of [...jobs.values()].filter((j) => j.where === "here")) {
+        try {
+          const value = (await load(job.spec))[job.name];
+          const earlier = ranWith.get(job.target)?.find((r) => r.value === value);
+          if (earlier) {
+            results[job.key] = results[earlier.key]!.startsWith("ok") ? `ok: the same ${job.name} as ${earlier.key.split(" @ ")[1]}` : results[earlier.key]!;
+            continue;
+          }
+          const runner = RUNNERS[job.target]!;
+          const note = await (runner.run as (v: unknown, c: { tmp: string }) => unknown)(value, { tmp: work.tmp });
+          results[job.key] = typeof note === "string" ? `ok: ${note}` : "ok";
+          ranWith.set(job.target, [...(ranWith.get(job.target) ?? []), { value, key: job.key }]);
+        } catch (err) {
+          results[job.key] = `error: ${err instanceof Error ? err.message : String(err)}`;
+        }
+      }
+    } finally {
+      work.dispose();
+    }
+
+    // In a process of its own, on a WebView2 profile of its own: the desktop runners.
+    const desktopJobs = [...jobs.values()].filter((j) => j.where === "desktop");
+    const dir = mkdtempSync(join(tmpdir(), "sweetview-compat-desktop-"));
+    let output = "";
+    try {
+      const jobFile = join(dir, "jobs.json");
+      writeFileSync(jobFile, JSON.stringify(desktopJobs));
+      const child = Bun.spawn([process.execPath, join(import.meta.dir, "fixtures", "rows-desktop.ts"), jobFile], {
+        cwd: root,
+        env: { ...process.env, WEBVIEW2_USER_DATA_FOLDER: join(dir, "profile") },
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: 280_000,
+      });
+      const [stdout, stderr, exit] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+      output = `exit ${exit}\n${stderr.split(/\r?\n/).filter((l) => l.startsWith("FAIL")).join("\n")}`;
+      const line = stdout.split(/\r?\n/).find((l) => l.startsWith("RESULT "));
+      Object.assign(results, line ? JSON.parse(line.slice("RESULT ".length)) : { "(desktop run)": `error: no result\n${stdout.slice(-2000)}\n${stderr.slice(-2000)}` });
+    } finally {
+      // WebView2's browser processes can hold the profile a moment after the child exits.
+      try {
+        rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 300 });
+      } catch {}
+    }
+
+    // Per kind of row: how many there are and how many ran (every target of the row ran).
+    const counts: Record<string, { rows: number; ran: number }> = {};
+    const count = (kind: string, ran: boolean) => {
+      const c = (counts[kind] ??= { rows: 0, ran: 0 });
+      c.rows++;
+      if (ran) c.ran++;
+    };
+    const byRow = new Map(valueRows().map((r) => [r.row, r]));
+    for (const row of rows) {
+      const value = byRow.get(row);
+      let kind = rowKind(row);
+      // An import with nothing after it: a function, or a constant (an object or a value).
+      if (kind === "export alone" && value) kind = typeof (await load(value.spec))[value.name] === "function" ? "function" : "constant";
+      // Run elsewhere: an own-table row by fixtures/own-ffi.ts (the test above), a type row by tsc (the test below).
+      if (kind === "own bun:ffi table") count("own bun:ffi table (run by fixtures/own-ffi.ts)", true);
+      else if (kind === "type") count("type (checked by tsc in upgrade-types.ts)", false);
+      else if (value === undefined) count(kind, false);
+      else count(kind, value.targets.length > 0 && value.targets.every((t) => results[`${t} @ ${value.spec}`]?.startsWith("ok") === true));
+    }
+    console.log(`docs/upgrading.md rows by kind (rows / run): ${Object.entries(counts).map(([k, c]) => `${k} ${c.rows}/${c.ran}`).join(", ")}`);
+
+    const failures = Object.entries(results).filter(([, v]) => !v.startsWith("ok")).map(([k, v]) => `${k}: ${v}`);
+    expect(failures, output).toEqual([]);
+    expect(Object.keys(results).filter((k) => jobs.has(k)).length).toBe(jobs.size);
+  }, 300_000);
 
   test("upgrade-types.ts and the compat fixtures typecheck", () => {
     const tsc = join(root, "node_modules", "typescript", "bin", "tsc");

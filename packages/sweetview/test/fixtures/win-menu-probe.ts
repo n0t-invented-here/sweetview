@@ -1,12 +1,14 @@
 // Probe for win-tabs.ts: waits for a popup menu of process <pid> to open,
 // reports its items, then works it from outside, as nothing on the menu's
 // own thread can while the menu's modal loop runs: with "pick:<n>" it selects
-// item n and presses Enter, with "close" it cancels it. Keys are posted to the menu window only; nothing reaches the
-// keyboard or another program.
+// item n and presses Enter, with "pick-id:<id>" the item whose command id is
+// <id> (the system menu's SC_ values), with "close" it cancels it. Keys are
+// posted to the menu window only; nothing reaches the keyboard or another
+// program.
 //
-//   bun win-menu-probe.ts <pid> <pick:n|close>
+//   bun win-menu-probe.ts <pid> <pick:n|pick-id:id|close>
 //
-// Prints one line: {"items":[{"label","enabled"}...]} or {"error"}.
+// Prints one line: {"items":[{"label","enabled","id","default"}...]} or {"error"}.
 
 import { FFIType, dlopen, ptr } from "bun:ffi";
 
@@ -19,12 +21,14 @@ const user32 = dlopen("user32.dll", {
   GetMenuItemCount: { args: [u64], returns: i32 },
   GetMenuStringW: { args: [u64, u32, FFIType.ptr, i32, u32], returns: i32 },
   GetMenuState: { args: [u64, u32, u32], returns: u32 },
+  GetMenuItemID: { args: [u64, i32], returns: u32 },
 }).symbols;
 
 const MN_GETHMENU = 0x01e1;
 const MF_BYPOSITION = 0x400;
 const MF_GRAYED = 0x1;
 const MF_SEPARATOR = 0x800;
+const MF_DEFAULT = 0x1000;
 const WM_KEYDOWN = 0x0100;
 const WM_CANCELMODE = 0x001f;
 const MN_SELECTITEM = 0x01e5;
@@ -53,22 +57,39 @@ if (menuWindow === 0n) {
 }
 await Bun.sleep(100);
 const menu = BigInt(user32.SendMessageW(menuWindow, MN_GETHMENU, 0n, 0n));
-const items: { label: string; enabled: boolean; separator: boolean }[] = [];
+const items: { label: string; enabled: boolean; separator: boolean; id: number; isDefault: boolean }[] = [];
 for (let i = 0; i < user32.GetMenuItemCount(menu); i++) {
   const text = Buffer.alloc(512);
   const length = user32.GetMenuStringW(menu, i, ptr(text), 256, MF_BYPOSITION);
   const state = user32.GetMenuState(menu, i, MF_BYPOSITION);
-  items.push({ label: text.toString("utf16le", 0, length * 2), enabled: (state & MF_GRAYED) === 0, separator: (state & MF_SEPARATOR) !== 0 });
+  items.push({
+    label: text.toString("utf16le", 0, length * 2),
+    enabled: (state & MF_GRAYED) === 0,
+    separator: (state & MF_SEPARATOR) !== 0,
+    id: user32.GetMenuItemID(menu, i),
+    isDefault: (state & MF_DEFAULT) !== 0,
+  });
 }
-if (action.startsWith("pick:")) {
+const position = action.startsWith("pick-id:")
+  ? items.findIndex((item) => !item.separator && item.id === Number(action.slice(8)))
+  : action.startsWith("pick:")
+    ? Number(action.slice(5))
+    : -1;
+if (position >= 0) {
   // The menu's own message selects the item by position (the cursor may be hot-tracking
   // another), and Enter chooses the selected item.
-  user32.SendMessageW(menuWindow, MN_SELECTITEM, BigInt(action.slice(5)), 0n);
+  user32.SendMessageW(menuWindow, MN_SELECTITEM, BigInt(position), 0n);
   await Bun.sleep(60);
   user32.PostMessageW(menuWindow, WM_KEYDOWN, BigInt(VK_RETURN), 0n);
 } else {
+  // "close", or a pick-id that names no item: cancel the menu.
   user32.PostMessageW(menuWindow, WM_KEYDOWN, 0x1bn, 0n); // Escape
   await Bun.sleep(60);
   if (findMenu() !== 0n) user32.PostMessageW(menuWindow, WM_CANCELMODE, 0n, 0n);
 }
-console.log(JSON.stringify({ items: items.map(({ label, enabled, separator }) => (separator ? { separator } : { label, enabled })) }));
+console.log(
+  JSON.stringify({
+    items: items.map(({ label, enabled, separator, id, isDefault }) => (separator ? { separator } : { label, enabled, id, default: isDefault })),
+    ...(action.startsWith("pick") && position < 0 ? { error: `no item for ${action}` } : {}),
+  }),
+);

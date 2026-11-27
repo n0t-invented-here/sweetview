@@ -51,3 +51,21 @@ test("a tab dropped on a strip goes before the tab whose left half it lands on, 
   expect(dropIndex(STRIP, 3, TABS_LEFT + width * 2.6)).toBe(3);
   expect(dropIndex(STRIP, 3, STRIP)).toBe(3);
 });
+
+test("on a strip whose tabs are scrolled, the drop index counts the tabs scrolled out of view", () => {
+  const count = 40;
+  const width = tabWidth(STRIP, count);
+  const scrolled = scrollToShow(STRIP, count, count - 1); // the last tab shown: scrolled as far as it goes
+  expect(scrolled).toBeGreaterThan(0);
+  // The left half of the first tab in view goes before it; that tab is the one scrolled to the left edge.
+  const firstInView = Math.ceil(scrolled / width);
+  const xOfFirstInView = TABS_LEFT + firstInView * width - scrolled;
+  expect(dropIndex(STRIP, count, xOfFirstInView + width * 0.4, scrolled)).toBe(firstInView);
+  expect(dropIndex(STRIP, count, xOfFirstInView + width * 0.6, scrolled)).toBe(firstInView + 1);
+  // The same point on an unscrolled strip is a different index.
+  expect(dropIndex(STRIP, count, xOfFirstInView + width * 0.4)).toBe(Math.round((xOfFirstInView + width * 0.4 - TABS_LEFT) / width));
+  expect(dropIndex(STRIP, count, xOfFirstInView + width * 0.4)).not.toBe(firstInView);
+  // A point at the strip's left edge, scrolled by exactly one tab, is before the second tab; far right is the end.
+  expect(dropIndex(STRIP, count, TABS_LEFT, width)).toBe(1);
+  expect(dropIndex(STRIP, count, STRIP, scrolled)).toBe(count);
+});

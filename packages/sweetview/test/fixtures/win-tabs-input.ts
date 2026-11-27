@@ -310,7 +310,7 @@ const waitStrip = async (win: Window, titles: string) => {
 const loop = runEventLoop({ intervalMs: 5 });
 // A stuck step ends the run with what it has. A native timeout: it fires inside a modal loop too,
 // where Bun's own timers do not run.
-scheduleNativeTimeout(180_000, () => {
+scheduleNativeTimeout(210_000, () => {
   letGo();
   check("fixture ran to the end", false, "timed out");
   console.log(`RESULT ${JSON.stringify(results)}`);
@@ -612,6 +612,61 @@ try {
         await until(() => user32.IsWindow(h3) === 0, 2000);
         check(name, run.looped && r1.window === w1 && titles === want && user32.IsWindow(h3) === 0 && kept === instance, { titles, want, wantIndex, page: kept, instance, looped: run.looped, settled: run.settled, cursorAtRead: run.cursorAtRead, ...screenNote });
       }
+    });
+    await Bun.sleep(DOUBLE_CLICK_GAP);
+  }
+
+  // ---- strip.detach (d): the drop index on a strip whose tabs are scrolled (strip.scrolled) ---------------
+  {
+    const name = "strip.scrolled: a tab dropped on a strip whose tabs are scrolled joins it at the index the scrolled offset gives";
+    await section(name, async () => {
+      // w1 out of the way: a hidden window's strip takes no drop.
+      w1.hide();
+      // A narrow window with more tabs than fit; the last is selected, so the strip scrolls to show it and reports how far (strip.scrolled).
+      const w4 = make({ tabs: true, bounds: { x: area.x + 40, y: area.y + 80, width: px(600), height: Math.min(px(400), Math.round(area.height / 2)) } });
+      const titles = ["s1", "s2", "s3", "s4", "s5", "s6", "s7"];
+      for (const t of titles) await WebView.openTab(w4, page(t));
+      w4.show();
+      await waitStrip(w4, titles.join("|"));
+      await Bun.sleep(300);
+      const h4 = handle(w4);
+      const w4Strip = stripWidthDip(h4);
+      const s4 = _debugWinTabs.strip(w4);
+      const scrolledBy = -Number.parseFloat(((await ask(s4, `document.querySelector(".tab").style.transform`)).match(/-?[\d.]+/) ?? ["0"])[0]);
+      const dropDip = TABS_LEFT + 30;
+      const wantIndex = dropIndex(w4Strip, titles.length, dropDip, scrolledBy);
+      const unscrolledIndex = dropIndex(w4Strip, titles.length, dropDip, 0);
+      const want = titles.toSpliced(wantIndex, 0, "u1").join("|");
+      // Bottom left of the work area: dragged up onto w4's strip.
+      const size = { width: Math.min(px(700), Math.round(area.width / 2)), height: Math.min(px(360), Math.round(area.height / 3)) };
+      const w5 = make({ tabs: true, bounds: { x: area.x + 60, y: area.y + area.height - size.height - 40, ...size } });
+      const u1 = await WebView.openTab(w5, page("u1"));
+      w5.show();
+      await waitStrip(w5, "u1");
+      await Bun.sleep(300);
+      const h5 = handle(w5);
+      const held = { x: TABS_LEFT + 60, y: 20 };
+      const press = onScreen(h5, held.x, held.y);
+      const nudge = { x: press.x + 12, y: press.y };
+      const to = onScreen(h4, dropDip, 20);
+      const mid = { x: Math.round((press.x + to.x) / 2), y: Math.round((press.y + to.y) / 2) };
+      const followed = () => {
+        const at = onScreen(h5, held.x, held.y);
+        return near(at.x, to.x) && near(at.y, to.y);
+      };
+      if (scrolledBy <= 0 || wantIndex === unscrolledIndex) check(name, false, { reason: "the strip did not scroll far enough to tell the indexes apart", scrolledBy, wantIndex, unscrolledIndex, w4Strip });
+      else if (fits(name, [press, nudge, mid, to])) {
+        const run = await gestureOrSkip(name, { press, owner: h5, before: [nudge], inLoop: [{ to: mid }, { to }], settled: followed });
+        if (run === undefined || !run.ran || run.watchdog !== undefined) misfired(name, run);
+        else {
+          await until(() => u1.window === w4, 2000);
+          const got = await waitStrip(w4, want);
+          check(name, run.looped && u1.window === w4 && got === want, { got, want, scrolledBy, wantIndex, unscrolledIndex, w4Strip, looped: run.looped, settled: run.settled, cursorAtRead: run.cursorAtRead, ...screenNote });
+        }
+      }
+      w5.dispose();
+      w4.dispose();
+      w1.show();
     });
     await Bun.sleep(DOUBLE_CLICK_GAP);
   }
