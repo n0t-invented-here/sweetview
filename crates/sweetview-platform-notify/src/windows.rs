@@ -1291,11 +1291,12 @@ mod tests {
     assert!(idle.1 == before.1 && shown.1 == 0, "GDI objects returned to the starting count: {before:?} -> {idle:?} -> {first:?} -> {second:?}");
     assert_eq!(idle.2, before.2, "kernel handles returned to the starting count with nothing shown: {before:?} -> {idle:?}");
     // The one allowance: the notification platform's client side opens kernel handles of its own
-    // on its threads at moments of its choosing after a toast is shown (measured on this machine:
-    // the smaller growth of the two showing runs was 0, 0, 0 and 2 handles over four runs; the
-    // hosted runner's once-only handles are D20's). A notifier's own leak would repeat in every
-    // round, 32 per run, and show in both runs far above this.
-    assert!(shown.2 <= 4, "kernel handles returned to the starting count: {idle:?} -> {first:?} -> {second:?}");
+    // on its threads at moments of its choosing after toasts are shown, and keeps them. Measured on
+    // this machine over eleven runs (five of them on the code before this change), the growth of a
+    // 32-round showing run was between 0 and 15 handles, and the smaller of the two runs up to 9.
+    // A handle the notifier leaked would leak in every round: at least 32 in each run. So the
+    // smaller growth must stay below half the rounds.
+    assert!(shown.2 < 16, "no kernel handle is leaked per notifier: {idle:?} -> {first:?} -> {second:?}");
     assert_eq!(live_toast_handlers(), 0);
   }
 }
