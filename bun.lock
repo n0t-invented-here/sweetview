@@ -162,6 +162,12 @@
       "dependencies": {
         "@n1h/sweetview-settings": "workspace:*",
       },
+      "peerDependencies": {
+        "@n1h/sweetview-webview-bun": "^2.7.0",
+      },
+      "optionalPeers": [
+        "@n1h/sweetview-webview-bun",
+      ],
     },
     "packages/sweetview-settings": {
       "name": "@n1h/sweetview-settings",

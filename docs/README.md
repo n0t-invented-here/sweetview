@@ -5,6 +5,8 @@ parameters, return value, errors, platform differences and thread rules. The
 native module is split into an overview and topic guides. The overview,
 install and quickstart are in the [package README](../README.md).
 
+Moving an application from an earlier version: [Upgrading to Sweetview 1.0](upgrading.md) maps every earlier export to what you write now.
+
 | Module | Contents |
 |---|---|
 | [`@n1h/sweetview`](app.md) | `createApp`, `WebView` (`WebView.attach`, `WebView.openTab`), native tabs (`Tab`, `TabOptions`), dynamic requests, the ready handshake, `windowChromeMethods`, `indexHtml`, `assetMime`, `Ring`, `RawWebview`, and re-exports of the event loop, activation and app identity |

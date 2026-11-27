@@ -1,0 +1,4 @@
+{
+  "extends": "../../tsconfig.json",
+  "include": ["../../packages", "../../demos", "../../packages/sweetview/file-imports.d.ts", "upgrade-types.ts", "upgrade-guide.test.ts", "behaviour.test.ts", "fixtures/*.ts"]
+}
