@@ -146,8 +146,8 @@ export function WatchCard() {
             </>
           ) : (
             <>
-              <Code>fs.watch</Code> runs on the server for this tab only and pushes every change down the WebSocket.
-              Other tabs have their own watcher.
+              The backend watches the folder for this page only and pushes every change to it as an event. Other pages
+              have their own watcher.
             </>
           )}
         </Text>

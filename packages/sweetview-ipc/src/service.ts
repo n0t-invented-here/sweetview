@@ -6,7 +6,7 @@ export type MethodMap = Record<string, [params: unknown, result: unknown]>;
 /** event name -> payload */
 export type EventMap = Record<string, unknown>;
 
-export type SessionKind = "webview" | "web";
+export type SessionKind = "webview" | "web" | "electron" | "tauri";
 export type Session = { id: string; kind: SessionKind };
 export type Ctx = { session: Session };
 

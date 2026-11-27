@@ -18,7 +18,7 @@ import {
 } from "@mantine/core";
 import type { ColorScheme, Info, Note } from "web-app-backend/protocol";
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
-import { inApp, notify, on, onDisconnect, rpc } from "./bridge";
+import { bridge, inApp, notify, on, onDisconnect, rpc, transportLabel } from "./bridge";
 import { NotificationsCard } from "./NotificationsCard";
 import { WatchCard } from "./WatchCard";
 
@@ -27,6 +27,23 @@ const platformLabel: Record<string, string> = {
   darwin: "macOS",
   linux: "Linux",
 };
+
+const roundTrip: Record<Info["host"], string> = { webview: "the worker", web: "the WebSocket", electron: "Electron IPC", tauri: "the Tauri command" };
+const badgeColor: Record<Info["host"], string> = { webview: "violet", web: "teal", electron: "indigo", tauri: "orange" };
+
+function hostLabel(info: Info): string {
+  const sessions = `${info.sessions} session${info.sessions === 1 ? "" : "s"}`;
+  switch (info.host) {
+    case "webview":
+      return "sweetview window, service in a worker";
+    case "electron":
+      return `Electron main process, ${sessions}`;
+    case "tauri":
+      return `Tauri 2, Rust backend, ${sessions}`;
+    default:
+      return `Bun.serve, ${sessions}`;
+  }
+}
 
 export function App() {
   const { colorScheme, toggleColorScheme, setColorScheme } = useMantineColorScheme();
@@ -45,8 +62,8 @@ export function App() {
         <Group h="100%" px="lg" justify="space-between">
           <Group gap="sm">
             <Title order={3}>Web App</Title>
-            <Badge variant="light" color={inApp ? "violet" : "teal"}>
-              {inApp ? "sweetview · IPC" : "Bun.serve · WebSocket"}
+            <Badge variant="light" color={badgeColor[bridge.kind]}>
+              {transportLabel[bridge.kind]}
             </Badge>
           </Group>
           <Button variant="default" size="xs" onClick={toggleColorScheme}>
@@ -98,8 +115,8 @@ function RuntimeCard() {
       {info && (
         <Table variant="vertical" layout="fixed" withTableBorder>
           <Table.Tbody>
-            <Row label="Host" value={info.host === "webview" ? "sweetview window, service in a worker" : `Bun.serve, ${info.sessions} session${info.sessions === 1 ? "" : "s"}`} />
-            <Row label="Bun" value={info.bun} />
+            <Row label="Host" value={hostLabel(info)} />
+            <Row label="Runtime" value={info.runtime} />
             <Row label="Platform" value={`${platformLabel[info.platform] ?? info.platform} / ${info.arch}`} />
             <Row label="PID" value={String(info.pid)} />
             <Row label="cwd" value={<Code>{info.cwd}</Code>} />
@@ -152,7 +169,7 @@ function NotesCard() {
         <Group align="flex-end" mb="md" wrap="nowrap">
           <TextInput
             label="New note"
-            placeholder={inApp ? "Round-trips through the worker" : "Round-trips through the WebSocket"}
+            placeholder={`Round-trips through ${roundTrip[bridge.kind]}`}
             value={text}
             onChange={(e) => setText(e.currentTarget.value)}
             style={{ flex: 1 }}

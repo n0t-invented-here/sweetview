@@ -1,14 +1,17 @@
 // The demo's contract. The frontend imports only this file (as types).
 
+import type { SessionKind } from "@n1h/sweetview/ipc";
+
 export type Info = {
-  bun: string;
+  /** What runs the service: "Bun 1.x", "Electron 3x, Node 2x", or the Rust backend of the Tauri demo */
+  runtime: string;
   platform: string;
   arch: string;
   pid: number;
   compiled: boolean;
   cwd: string;
-  /** "webview" inside the app, "web" in a browser */
-  host: "webview" | "web";
+  /** "webview" inside the app, "web" in a browser, "electron" or "tauri" in those shells */
+  host: SessionKind;
   sessions: number;
 };
 

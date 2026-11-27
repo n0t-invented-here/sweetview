@@ -3,7 +3,7 @@
 
 import type { EventMap, MethodMap } from "./service";
 
-export type TransportKind = "webview" | "web";
+export type TransportKind = "webview" | "web" | "electron" | "tauri";
 
 export interface Transport {
   readonly kind: TransportKind;

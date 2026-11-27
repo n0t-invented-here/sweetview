@@ -39,7 +39,7 @@ pack:
 publish:
     $ErrorActionPreference = 'Stop'
     $PSNativeCommandUseErrorActionPreference = $true
-    foreach ($package in @('sweetview-ipc', 'sweetview-ipc-ws', 'sweetview-settings', 'sweetview-native', 'sweetview-build', 'sweetview')) {
+    foreach ($package in @('sweetview-ipc', 'sweetview-ipc-ws', 'sweetview-ipc-electron', 'sweetview-ipc-tauri', 'sweetview-settings', 'sweetview-native', 'sweetview-build', 'sweetview')) {
         Push-Location (Join-Path packages $package)
         try { bun publish --access public } finally { Pop-Location }
     }

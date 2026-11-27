@@ -29,6 +29,12 @@
     "./ipc-ws": "./src/ipc-ws/index.ts",
     "./ipc-ws/server": "./src/ipc-ws/server.ts",
     "./ipc-ws/client": "./src/ipc-ws/client.ts",
+    "./ipc-electron": "./src/ipc-electron/index.ts",
+    "./ipc-electron/client": "./src/ipc-electron/client.ts",
+    "./ipc-electron/preload": "./src/ipc-electron/preload.ts",
+    "./ipc-electron/server": "./src/ipc-electron/server.ts",
+    "./ipc-tauri": "./src/ipc-tauri/index.ts",
+    "./ipc-tauri/client": "./src/ipc-tauri/client.ts",
     "./native": "./src/native/index.ts",
     "./native/hit-regions": "./src/native/hit-regions.ts",
     "./file-imports": {
@@ -41,6 +47,8 @@
   "dependencies": {
     "@n1h/sweetview-ipc": "workspace:*",
     "@n1h/sweetview-ipc-ws": "workspace:*",
+    "@n1h/sweetview-ipc-electron": "workspace:*",
+    "@n1h/sweetview-ipc-tauri": "workspace:*",
     "@n1h/sweetview-native": "workspace:*",
     "@n1h/sweetview-settings": "workspace:*",
     "@n1h/sweetview-build": "workspace:*"

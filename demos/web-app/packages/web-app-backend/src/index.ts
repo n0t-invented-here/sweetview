@@ -50,12 +50,15 @@ export function createService(): Service<Methods, Events> {
       methods: {
         "info.get": (_, ctx) => {
           sessions.add(ctx.session.id);
+          // The Electron demo runs this service in Electron's main process, which is Node: no Bun global there.
+          const bun = typeof Bun === "undefined" ? undefined : Bun;
+          const electron = process.versions.electron;
           return {
-            bun: Bun.version,
+            runtime: bun ? `Bun ${bun.version}` : electron ? `Electron ${electron}, Node ${process.versions.node}` : `Node ${process.versions.node}`,
             platform: process.platform,
             arch: process.arch,
             pid: process.pid,
-            compiled: Bun.embeddedFiles.length > 0,
+            compiled: bun ? bun.embeddedFiles.length > 0 : false,
             cwd: process.cwd(),
             host: ctx.session.kind,
             sessions: sessions.size,

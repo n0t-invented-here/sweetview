@@ -33,6 +33,24 @@
       "@n1h/sweetview-ipc-ws/client": [
         "./packages/sweetview-ipc-ws/src/client.ts"
       ],
+      "@n1h/sweetview-ipc-electron": [
+        "./packages/sweetview-ipc-electron/src/index.ts"
+      ],
+      "@n1h/sweetview-ipc-electron/client": [
+        "./packages/sweetview-ipc-electron/src/client.ts"
+      ],
+      "@n1h/sweetview-ipc-electron/preload": [
+        "./packages/sweetview-ipc-electron/src/preload.ts"
+      ],
+      "@n1h/sweetview-ipc-electron/server": [
+        "./packages/sweetview-ipc-electron/src/server.ts"
+      ],
+      "@n1h/sweetview-ipc-tauri": [
+        "./packages/sweetview-ipc-tauri/src/index.ts"
+      ],
+      "@n1h/sweetview-ipc-tauri/client": [
+        "./packages/sweetview-ipc-tauri/src/client.ts"
+      ],
       "@n1h/sweetview-settings": [
         "./packages/sweetview-settings/src/index.ts"
       ],
@@ -122,6 +140,24 @@
       ],
       "@n1h/sweetview/ipc-ws/client": [
         "./packages/sweetview/src/ipc-ws/client.ts"
+      ],
+      "@n1h/sweetview/ipc-electron": [
+        "./packages/sweetview/src/ipc-electron/index.ts"
+      ],
+      "@n1h/sweetview/ipc-electron/client": [
+        "./packages/sweetview/src/ipc-electron/client.ts"
+      ],
+      "@n1h/sweetview/ipc-electron/preload": [
+        "./packages/sweetview/src/ipc-electron/preload.ts"
+      ],
+      "@n1h/sweetview/ipc-electron/server": [
+        "./packages/sweetview/src/ipc-electron/server.ts"
+      ],
+      "@n1h/sweetview/ipc-tauri": [
+        "./packages/sweetview/src/ipc-tauri/index.ts"
+      ],
+      "@n1h/sweetview/ipc-tauri/client": [
+        "./packages/sweetview/src/ipc-tauri/client.ts"
       ],
       "@n1h/sweetview/native": [
         "./packages/sweetview/src/native/index.ts"
