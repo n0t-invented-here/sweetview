@@ -52,6 +52,10 @@ impl Notifier {
     0
   }
 
+  pub fn balloons_shown(&self) -> u32 {
+    0
+  }
+
   pub fn pending_balloons(&self) -> usize {
     0
   }

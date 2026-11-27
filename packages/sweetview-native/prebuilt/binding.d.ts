@@ -98,7 +98,7 @@ export declare class Notifier {
   setIcon(iconIco?: Uint8Array | undefined | null): void
   /** Releases the notifier. Safe to call twice. */
   dispose(): void
-  /** Test hook: `"auto"`, `"balloonOnly"` or `"toastShowFails"`. */
+  /** Test hook: `"auto"`, `"balloonOnly"`, `"toastShowFails"` or `"toastHeld"`. */
   debugForcePath(path: string): void
   /** Test hook: `notify`, reporting `"toast:<cookie>"`, `"balloon:<uid>"` or `null`. */
   debugShow(id: string, title: string, body: string, silent: boolean, dataJson?: string | undefined | null): string | null
@@ -110,6 +110,8 @@ export declare class Notifier {
   debugPendingToasts(): number
   /** Test hook: balloons shown that have not been clicked, timed out or hidden. */
   debugPendingBalloons(): number
+  /** Test hook: balloons the shell accepted since the notifier was made. */
+  debugBalloonsShown(): number
   /** Test hook: whether WinRT toasts are in use. */
   debugToastsAvailable(): boolean
 }

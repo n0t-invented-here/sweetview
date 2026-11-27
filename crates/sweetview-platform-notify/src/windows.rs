@@ -528,6 +528,9 @@ impl Toasts {
     if forced == ForcedPath::ToastShowFails {
       return Err(NotifyError("sweetview: IToastNotifier.Show failed (forced by ForcedPath::ToastShowFails)".into()));
     }
+    if forced == ForcedPath::ToastHeld {
+      return Ok(());
+    }
     self.notifier.Show(toast).map_err(hresult_error("IToastNotifier.Show"))
   }
 
@@ -961,7 +964,18 @@ mod tests {
     let _cleanup = AppIdKey(app_id.clone());
     let (clicks, on_click) = recorder();
     let options = NotifierOptions { app_id: Some(app_id.clone()), app_name: Some("Sweetview <test> & \"toast\"".into()), icon_ico: None };
+    // A real IToastNotifier.Show under this app id, on a notifier of its own: a toast, not a fallback.
+    {
+      let real = Notifier::new(options.clone(), |_, _| {}).expect("notifier");
+      let Some(Shown::Toast(_)) = real.show(&note("really shown")) else { panic!("WinRT toasts are unavailable on this machine") };
+      assert!(real.toasts_available());
+      assert_eq!(real.balloons_shown(), 0, "the real toast did not fall back");
+    }
+    // The toasts whose events are routed below are built and subscribed the same way and held back
+    // from the platform, so its own events (a machine that shows no toasts dismisses each at once)
+    // cannot arrive between the ones this test delivers.
     let notifier = Notifier::new(options, on_click).expect("notifier");
+    notifier.force_path(ForcedPath::ToastHeld);
     let first = Notification { id: "first<&>\"".into(), data_json: Some("{\"index\":1}".into()), ..note("") };
     let second = Notification { id: "second".into(), data_json: Some("[\"different\",2]".into()), ..note("") };
     let Some(Shown::Toast(first_cookie)) = notifier.show(&first) else { panic!("WinRT toasts are unavailable on this machine") };
@@ -1102,21 +1116,37 @@ mod tests {
     for _ in 0..8 {
       round(true);
     }
-    pump();
-    let before = counts();
+    // The platform works on each toast after `Show` and `Hide` return, on its own threads, and
+    // holds kernel handles while it does: counts are read once they have stopped moving.
+    let settled = || {
+      let mut last = counts();
+      let deadline = Instant::now() + Duration::from_secs(10);
+      let mut steady_since = Instant::now();
+      while Instant::now() < deadline && steady_since.elapsed() < Duration::from_millis(400) {
+        std::thread::sleep(Duration::from_millis(50));
+        pump();
+        let now = counts();
+        if now != last {
+          last = now;
+          steady_since = Instant::now();
+        }
+      }
+      last
+    };
+    let before = settled();
     for _ in 0..100 {
       round(false);
     }
-    let idle = counts();
+    let idle = settled();
     for _ in 0..32 {
       round(true);
     }
-    pump();
-    let after = counts();
+    let after = settled();
     eprintln!("(USER, GDI, kernel) before {before:?}, after 100 notifiers that show nothing {idle:?}, after 32 that show {after:?}");
     // `<=`: an earlier test's thread may still be exiting, freeing its own USER objects.
     assert!(after.0 <= before.0, "USER objects returned to the starting count: {before:?} -> {after:?}");
     assert!(after.1 <= before.1, "GDI objects returned to the starting count: {before:?} -> {after:?}");
+    assert!(idle.2 <= before.2 + 4, "kernel handles returned to the starting count with nothing shown: {before:?} -> {idle:?}");
     assert!(after.2 <= before.2 + 4, "kernel handles returned to the starting count: {before:?} -> {after:?}");
     assert_eq!(live_toast_handlers(), 0);
   }

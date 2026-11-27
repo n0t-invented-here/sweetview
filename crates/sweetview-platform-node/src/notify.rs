@@ -48,7 +48,7 @@ impl Notifier {
     self.inner.dispose()
   }
 
-  /// Test hook: `"auto"`, `"balloonOnly"` or `"toastShowFails"`.
+  /// Test hook: `"auto"`, `"balloonOnly"`, `"toastShowFails"` or `"toastHeld"`.
   #[napi]
   pub fn debug_force_path(&self, path: String) -> napi::Result<()> {
     self.inner.debug_force_path(path)
@@ -82,6 +82,12 @@ impl Notifier {
   #[napi]
   pub fn debug_pending_balloons(&self) -> u32 {
     self.inner.debug_pending_balloons()
+  }
+
+  /// Test hook: balloons the shell accepted since the notifier was made.
+  #[napi]
+  pub fn debug_balloons_shown(&self) -> u32 {
+    self.inner.debug_balloons_shown()
   }
 
   /// Test hook: whether WinRT toasts are in use.

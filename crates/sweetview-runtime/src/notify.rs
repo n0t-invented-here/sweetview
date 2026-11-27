@@ -77,6 +77,11 @@ impl Notifier {
   pub fn pending_balloons(&self) -> usize {
     self.inner.pending_balloons()
   }
+
+  /// Balloons the shell accepted since the notifier was made, whatever became of them.
+  pub fn balloons_shown(&self) -> u32 {
+    self.inner.balloons_shown()
+  }
 }
 
 /// How many toast event handlers exist in the process; zero once every

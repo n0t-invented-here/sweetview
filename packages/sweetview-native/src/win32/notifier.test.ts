@@ -51,6 +51,16 @@ describe.if(process.platform === "win32")("Windows notifier", () => {
     const appId = `Sweetview.NotifierTest.${crypto.randomUUID()}`;
     const identity = defineAppIdentity({ appId, appName: 'Sweetview <test> & "toast"' });
     const clicks: NotificationClick[] = [];
+    // A real IToastNotifier.Show under this identity, on a notifier of its own: a toast, not a fallback.
+    const real = createNotifier({ identity, onClick: () => {} });
+    try {
+      const realNative = debugNativeNotifier(real)!;
+      cookieOf(realNative.debugShow("really shown", '<Title> & "quotes"', "It’s <body> & 'more'", true, "null"), "toast");
+      expect(realNative.debugToastsAvailable()).toBe(true);
+      expect(realNative.debugBalloonsShown()).toBe(0);
+    } finally {
+      real.dispose();
+    }
     const backend = createNotifier({ identity, onClick: (click) => clicks.push(click) });
     const native = debugNativeNotifier(backend)!;
     try {
@@ -58,7 +68,10 @@ describe.if(process.platform === "win32")("Windows notifier", () => {
       const second = { id: "second", data: ["different", 2] };
       const show = (click: { id: string; data: unknown }) =>
         native.debugShow(click.id, '<Title> & "quotes"', "It’s <body> & 'more'", true, JSON.stringify(click.data));
-      // Real IToastNotifier.Show calls: each is a toast, none fell back.
+      // The toasts whose events are routed below are built and subscribed the same way and held
+      // back from the platform, so its own events (a machine that shows no toasts dismisses each
+      // at once) cannot arrive between the ones this test delivers.
+      native.debugForcePath("toastHeld");
       const firstCookie = cookieOf(show(first), "toast");
       const secondCookie = cookieOf(show(second), "toast");
       const outstanding = cookieOf(show({ id: "outstanding", data: null }), "toast");
@@ -84,9 +97,11 @@ describe.if(process.platform === "win32")("Windows notifier", () => {
       native.debugSimulateToastEvent(dismissed, "dismissed");
       native.debugSimulateToastEvent(failed, "activated");
       native.debugSimulateToastEvent(dismissed, "activated");
-      pumpUntil(() => native.debugPendingToasts() === 1 && native.debugPendingBalloons() === 1);
+      pumpUntil(() => native.debugPendingToasts() === 1 && native.debugBalloonsShown() === 1);
       expect(clicks).toEqual([second, first]);
-      expect(native.debugPendingBalloons()).toBe(1);
+      // Counted as shown, not as still pending: a shell that shows no balloons hides one at once.
+      expect(native.debugBalloonsShown()).toBe(1);
+      expect(native.debugPendingBalloons()).toBeLessThanOrEqual(1);
       expect(native.debugPendingToasts()).toBe(1);
 
       backend.dispose();

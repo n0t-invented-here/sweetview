@@ -97,6 +97,24 @@ function leftButton(down: boolean): void {
   probe!.SendInput(1, input, 40);
 }
 
+/**
+ * Moves the cursor to a screen point as a mouse would: an injected absolute move, which is what the
+ * OS's own move loop follows, then SetCursorPos so the point is exact (the injected move is rounded
+ * to 1/65535 of the desktop). SetCursorPos alone moves the cursor but, in a session with nobody at
+ * it, does not reach a modal move loop.
+ */
+function moveCursorAsInput(x: number, y: number): void {
+  const desk = Screen.bounds();
+  const input = new Uint8Array(40); // INPUT, x64, as in leftButton
+  const view = new DataView(input.buffer);
+  view.setUint32(0, 0, true); // INPUT_MOUSE
+  view.setInt32(8, Math.round(((x - desk.x) * 65535) / Math.max(1, desk.width - 1)), true);
+  view.setInt32(12, Math.round(((y - desk.y) * 65535) / Math.max(1, desk.height - 1)), true);
+  view.setUint32(20, 0x1 | 0x8000 | 0x4000, true); // MOUSEEVENTF_MOVE | ABSOLUTE | VIRTUALDESK
+  probe!.SendInput(1, input, 40);
+  probe!.SetCursorPos(x, y);
+}
+
 const handleOf = (win: Window) => BigInt(win.handle!);
 
 describe.if(onWindows)("Window on the binding: options read back from the OS", () => {
@@ -352,7 +370,7 @@ describe.if(onWindows)("Window on the binding: click-through, hit regions, the r
       // The OS runs its own move loop from here until the button is released, so the cursor is
       // moved and the button released from native timeouts, which fire inside that loop.
       let duringDrag: ReturnType<Window["bounds"]> | undefined;
-      native.scheduleTimeout(120, () => probe!.SetCursorPos(grip.x + 60, grip.y + 45));
+      native.scheduleTimeout(120, () => moveCursorAsInput(grip.x + 60, grip.y + 45));
       native.scheduleTimeout(320, () => {
         duringDrag = win.bounds();
         leftButton(false);

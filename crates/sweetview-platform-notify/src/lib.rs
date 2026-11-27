@@ -93,6 +93,12 @@ pub enum ForcedPath {
   /// As if `IToastNotifier.Show` failed: the toast is built and subscribed,
   /// then torn down, and the balloon shows the notification.
   ToastShowFails,
+  /// The toast is built and subscribed exactly as usual and then not handed to
+  /// the notification platform, so the only events it reports are the ones a
+  /// test delivers. A platform that shows no toasts (notifications turned off,
+  /// a session with nobody at it) dismisses each one at once, and its own
+  /// event would race a test's.
+  ToastHeld,
 }
 
 /// Why a notifier could not be made or configured.

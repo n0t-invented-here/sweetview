@@ -58,13 +58,16 @@ impl Notifier {
 
   // ---- test hooks ---------------------------------------------------------------
 
-  /// Test hook: `"auto"`, `"balloonOnly"` (as if WinRT were unavailable) or
-  /// `"toastShowFails"` (as if `IToastNotifier.Show` failed).
+  /// Test hook: `"auto"`, `"balloonOnly"` (as if WinRT were unavailable),
+  /// `"toastShowFails"` (as if `IToastNotifier.Show` failed) or `"toastHeld"`
+  /// (toasts are built and subscribed but not handed to the platform, so only
+  /// simulated events arrive).
   pub fn debug_force_path(&self, path: String) -> napi::Result<()> {
     let path = match path.as_str() {
       "auto" => ForcedPath::Auto,
       "balloonOnly" => ForcedPath::BalloonOnly,
       "toastShowFails" => ForcedPath::ToastShowFails,
+      "toastHeld" => ForcedPath::ToastHeld,
       other => return Err(napi::Error::from_reason(format!("sweetview: unknown notifier path {other:?}"))),
     };
     if let Some(n) = &self.inner {
@@ -114,6 +117,11 @@ impl Notifier {
   /// Test hook: balloons shown that have not been clicked, timed out or hidden.
   pub fn debug_pending_balloons(&self) -> u32 {
     self.inner.as_ref().map_or(0, |n| n.pending_balloons() as u32)
+  }
+
+  /// Test hook: balloons the shell accepted since the notifier was made.
+  pub fn debug_balloons_shown(&self) -> u32 {
+    self.inner.as_ref().map_or(0, notify::Notifier::balloons_shown)
   }
 
   /// Test hook: whether WinRT toasts are in use.
