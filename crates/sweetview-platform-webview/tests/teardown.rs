@@ -146,8 +146,10 @@ fn teardown() {
     let bare = growth(&mut ctx, lives, bare_life);
     let with_extras = growth(&mut ctx, lives, one_life);
     eprintln!("   over {lives} lives: without the extras {bare:?}, with them {with_extras:?}");
-    assert_eq!(with_extras.user, 0, "USER objects return to their start");
-    assert_eq!(with_extras.gdi, 0, "GDI objects return to their start");
+    // Measured against the same loop without the extras, as the kernel handles are: on some
+    // machines WebView2 itself keeps a USER object across these lives, extras or not.
+    assert!(with_extras.user <= bare.user, "USER objects return to their start: {with_extras:?} against {bare:?} without the extras");
+    assert!(with_extras.gdi <= bare.gdi, "GDI objects return to their start: {with_extras:?} against {bare:?} without the extras");
     assert!(
         with_extras.handles <= bare.handles,
         "the extras add no kernel handle to what a webview without them keeps: {with_extras:?} vs {bare:?}"

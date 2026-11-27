@@ -31,6 +31,7 @@ jobs:
       - name: Build the binding
         run: just native
 
+      # Each check below runs whether or not an earlier one failed, so one run reports them all.
       - name: cargo test
         shell: pwsh
         run: |
@@ -45,14 +46,17 @@ jobs:
           }
 
       - name: cargo clippy
+        if: ${{ !cancelled() }}
         run: cargo clippy --workspace --all-targets -- -D warnings
 
       - name: bun run typecheck
+        if: ${{ !cancelled() }}
         run: bun run typecheck
 
       # A failure is repeated as annotations (failing tests first, then the tail of the output),
       # so it can be read from the run's summary page.
       - name: bun test
+        if: ${{ !cancelled() }}
         shell: pwsh
         run: |
           bun test 2>&1 | Tee-Object -FilePath test-output.txt

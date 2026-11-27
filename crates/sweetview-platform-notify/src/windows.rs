@@ -614,6 +614,8 @@ struct Inner {
   window: RefCell<Option<NotifyWindow>>,
   toasts: RefCell<ToastSlot>,
   forced: Cell<ForcedPath>,
+  /// Balloons the shell accepted, over this notifier's whole life.
+  balloons_shown: Cell<u32>,
   disposed: Cell<bool>,
 }
 
@@ -660,7 +662,9 @@ impl Inner {
     }
     let icon = self.icon.borrow().clone();
     let window = self.window.borrow();
-    window.as_ref()?.show_balloon(notification, icon.as_deref())
+    let uid = window.as_ref()?.show_balloon(notification, icon.as_deref())?;
+    self.balloons_shown.set(self.balloons_shown.get() + 1);
+    Some(uid)
   }
 
   fn click(&self, notification: &Notification) {
@@ -743,6 +747,7 @@ impl Notifier {
       window: RefCell::new(None),
       toasts: RefCell::new(ToastSlot::Untried),
       forced: Cell::new(ForcedPath::Auto),
+      balloons_shown: Cell::new(0),
       disposed: Cell::new(false),
     });
     let window = NotifyWindow::new(Rc::downgrade(&inner))?;
@@ -820,6 +825,14 @@ impl Notifier {
   /// Balloons shown that have not been clicked, timed out or hidden.
   pub fn pending_balloons(&self) -> usize {
     self.inner.window.borrow().as_ref().map_or(0, |window| window.balloons.borrow().len())
+  }
+
+  /// Balloons the shell accepted since this notifier was made, whatever became
+  /// of them since. A shell that shows no balloons (notifications turned off,
+  /// a session with nobody at it) hides each one at once, so
+  /// [`pending_balloons`](Self::pending_balloons) may never see it.
+  pub fn balloons_shown(&self) -> u32 {
+    self.inner.balloons_shown.get()
   }
 }
 
@@ -982,10 +995,12 @@ mod tests {
     assert!(notifier.simulate_toast_event(dismissed, ToastEvent::Dismissed));
     assert!(notifier.simulate_toast_event(failed, ToastEvent::Activated));
     assert!(notifier.simulate_toast_event(dismissed, ToastEvent::Activated));
-    pump_until(|| notifier.pending_toasts() == 1 && notifier.pending_balloons() == 1);
+    pump_until(|| notifier.pending_toasts() == 1 && notifier.balloons_shown() == 1);
     pump();
     assert_eq!(clicks.borrow().len(), 2, "no click from a failed or dismissed toast");
-    assert_eq!(notifier.pending_balloons(), 1, "one fallback balloon for the failed toast");
+    // Counted as shown, not as still pending: a shell that shows no balloons hides one at once.
+    assert_eq!(notifier.balloons_shown(), 1, "one fallback balloon for the failed toast");
+    assert!(notifier.pending_balloons() <= 1);
     assert_eq!(notifier.pending_toasts(), 1);
 
     // After the notifier is gone, a late event clicks nothing and every handler is released.
@@ -1082,18 +1097,23 @@ mod tests {
         assert!(matches!(notifier.show(&note("balloon")), Some(Shown::Balloon(_))));
       }
     };
-    // One round first, so one-time costs (the window class, WinRT's modules and factories) are paid.
-    round(true);
+    // Rounds first, so one-time costs are paid: the window class, WinRT's modules and factories,
+    // and the threads and ports WinRT's calls to the notification platform start as they go.
+    for _ in 0..8 {
+      round(true);
+    }
     pump();
     let before = counts();
     for _ in 0..100 {
       round(false);
     }
-    for _ in 0..8 {
+    let idle = counts();
+    for _ in 0..32 {
       round(true);
     }
     pump();
     let after = counts();
+    eprintln!("(USER, GDI, kernel) before {before:?}, after 100 notifiers that show nothing {idle:?}, after 32 that show {after:?}");
     // `<=`: an earlier test's thread may still be exiting, freeing its own USER objects.
     assert!(after.0 <= before.0, "USER objects returned to the starting count: {before:?} -> {after:?}");
     assert!(after.1 <= before.1, "GDI objects returned to the starting count: {before:?} -> {after:?}");
