@@ -599,7 +599,12 @@ impl Inner {
     match hold {
       Some(true) => {
         self.held_loads.borrow_mut().push_back(load);
-        self.with_live(|live| live.extras.stop_navigation());
+        self.with_live(|live| {
+          // The host has asked for another navigation: the stopped one's end
+          // is no longer current, as it would not be had the load started now.
+          live.extras.note_host_navigation();
+          live.extras.stop_navigation();
+        });
       }
       Some(false) => self.start_load(&load),
       None => {}
