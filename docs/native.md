@@ -36,16 +36,17 @@ input hooks it exports for macOS do.
 
 ## Windows start-up initialization
 
-The Windows entry points (`Window`, `Screen`, `Tray`, `Notifier`,
-`Clipboard`, the event loop, single-instance activation, and the hidden
-message windows) run one shared, idempotent initialization on first use.
-`Menu.popup` does not: it uses the owner `HWND` it is given directly, and a
-`Window` owner has already run the initialization. The initialization is `SetProcessDpiAwarenessContext(PER_MONITOR_AWARE_V2)`, COM in a
-single-threaded apartment, and the hidden first window Windows 11 needs as a
-z-order anchor. Creation order therefore does not matter: querying `Screen`
-or creating a `Tray` before the first `Window` does not lose DPI awareness or
-topmost behaviour. macOS needs no equivalent; AppKit is initialized when the
-shared `NSApplication` is first touched.
+The Windows entry points that live on the UI thread (`Window`, `Screen`,
+`Tray`, `Notifier`, `Menu.popup`, the event loop and single-instance
+activation) start the binding's runtime on first use. Starting it is
+idempotent and does three things: `tao`'s event loop declares the process
+per-monitor DPI aware (`PER_MONITOR_AWARE_V2`), COM is entered in a
+single-threaded apartment, and `tao` creates a hidden top-level window of its
+own before any window of Sweetview's, which is the first window Windows 11
+needs as a z-order anchor. Creation order therefore does not matter: querying
+`Screen` or creating a `Tray` before the first `Window` does not lose DPI
+awareness or topmost behaviour. macOS needs no equivalent; AppKit is
+initialized when the shared `NSApplication` is first touched.
 
 ## Guides
 
