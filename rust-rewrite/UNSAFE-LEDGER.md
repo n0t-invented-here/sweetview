@@ -18,7 +18,7 @@ Rewritten by `bun rust-rewrite/verify.ts <platform> --ledger`. 217 uses in 20 fi
 | `crates/sweetview-platform-webview/src/windows/istream.rs` | 11 |
 | `crates/sweetview-platform-webview/src/windows/mod.rs` | 43 |
 | `crates/sweetview-platform-window/src/metrics.rs` | 1 |
-| `crates/sweetview-platform-window/src/popup.rs` | 4 |
+| `crates/sweetview-platform-window/src/popup.rs` | 3 |
 | `crates/sweetview-platform-window/src/size_hint.rs` | 1 |
 | `crates/sweetview-platform-window/src/tab_frame.rs` | 16 |
 | `crates/sweetview-platform-window/src/tab_frame_tests.rs` | 12 |
@@ -139,10 +139,10 @@ All of it reaches WebView2 through the objects `wry` 0.58.2 hands out (`WebViewE
 - **Buttons and work area** (2: `GetAsyncKeyState`, `GetMonitorInfoW`). `tao`'s `MonitorHandle` has no work area; button state outside `tao`'s handler has no API.
 - **The subclass** (6: `SetWindowSubclass`, `RemoveWindowSubclass`, one `DefSubclassProc` in `forward`, which the tab frame's procedure also forwards through, `DragQueryFileW` in `Drop_::query`, `DragFinish`, the `STYLESTRUCT` borrow in `style_change`). No crate offers subclassing. Contained by `WindowSubclass` (removed in `Drop` or on `WM_NCDESTROY`; state found by handle in a thread-local table), `Drop_` (the `HDROP` finished once in `Drop`), and `style_change` (the borrow is tied to the procedure's own `lParam`). `subclass_proc` is a safe `extern "system"` function whose body runs inside `catch_unwind`.
 
-### `crates/sweetview-platform-window/src/popup.rs` (4)
+### `crates/sweetview-platform-window/src/popup.rs` (3)
 
-- **Showing a `muda` menu for a window** (2: `ScreenToClient`, `ContextMenu::show_context_menu_for_hwnd`). `muda` 0.22.0 `show_context_menu_for_hwnd` is `unsafe` (`muda-0.22.0/src/context_menu.rs:30`; https://docs.rs/muda/0.22.0/muda/trait.ContextMenu.html) and takes a client point. The window is a `ForeignWindow`.
-- **A check mark on an icon item** (2: `GetSubMenu`, `SetMenuItemInfoW`). `muda` has no item with both (D14). The menus are `muda`'s, borrowed for the call.
+- **Tracking a `muda` menu for a window** (1: `TrackPopupMenu`). Looked for: `muda` 0.22.0 `ContextMenu::show_context_menu_for_hwnd` (https://docs.rs/muda/0.22.0/muda/trait.ContextMenu.html), which is itself `unsafe` (`muda-0.22.0/src/context_menu.rs:30`), passes `TPM_LEFTALIGN | TPM_RETURNCMD` only (`src/platform_impl/windows/mod.rs:951`), so a right-button release does not choose and the tray's menu cannot open above the cursor, and reports the item through the process-wide `MenuEvent` rather than as the call's result. The menu is `muda`'s popup menu, borrowed for the call; the window is a `ForeignWindow`. The `ScreenToClient` the old call needed is gone: `TrackPopupMenu` takes the screen point.
+- **The state and command id of an item** (2: `GetSubMenu`, `SetMenuItemInfoW`, shared by `check_item` and `set_command_id`). `muda` has no item with both an icon and a check mark (D14), and no API sets an item's command id; the caller's number is the id so `TrackPopupMenu` answers with it, and an application tracking a handed-out menu gets ids from 1 as before. The menus are `muda`'s, borrowed for the call.
 
 ### `crates/sweetview-platform-window/src/metrics.rs` (1)
 
