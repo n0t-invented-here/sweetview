@@ -11,11 +11,13 @@ Rule: no functionality is removed. Everything Sweetview, the bindings and the C+
 | Steps 1 and 2 of the order of work: the binding skeleton and the `Webview` API on `wry` | ready to start | nothing |
 | JavaScript called from native code while the UI thread is inside the loop, under Bun's N-API | unproven | step 1 builds it |
 | `tao`'s loop pumped from a Bun timer delivering tray events with no window | unproven | step 1 builds it |
-| The additions inside the `wry` fork: streaming, request source kinds, drag routing, top-level-only IPC | where they go in `wry`'s source is not located; `wry`'s source has not been read | reading `wry`'s `webview2` and `wkwebview` modules before step 3 |
+| The four additions inside the `wry` fork: streaming on Windows and macOS, macOS drag routing, macOS top-level-only IPC | located, file and function each; see "Fork additions, located" | nothing |
+| A navigation-failed event from `wry`, needed by tabs | not located | reading `wry`'s navigation delegate before step 7 |
 | The balloon addition inside the `tray-icon` fork | located: see "Fork additions, located" | nothing |
 | `objc2` and `windows` calls in the "this project writes" rows | named from their OS documentation; the crates' pages for them have not been read | reading each before the step that uses it |
 | `muda` `IconMenuItem`, `rfd` `MessageDialog`, `notify-rust` | not read | reading each before step 6 |
-| Native tabs, every `v1-drafting` feature, Linux | not designed | see "Not designed yet" |
+| Native tabs and every `v1-drafting` feature | designed from a full reading of their files; see "Tabs" and "The `v1-drafting` features" | nothing |
+| Linux | scoped, not designed | its own step, last |
 
 Every crate API named in "Every behaviour, and what provides it" is marked in "API references" as read or not read.
 
@@ -202,13 +204,37 @@ Read in `src/platform_impl/windows/mod.rs` on the crate's `dev` branch.
 
 The file has no `NIF_INFO`, no `NIN_*` constant and no notification code today.
 
-### `wry`: streaming, request source kinds, drag routing, top-level-only IPC
+### `wry`: what it already does, and the four additions
 
-Not located: `wry`'s source has not been read. What is known from its API pages:
+Read on the crate's `dev` branch: `src/webview2/mod.rs`, `src/webview2/drag_drop.rs`, `src/wkwebview/mod.rs`, `src/wkwebview/drag_drop.rs`, `src/wkwebview/class/url_scheme_handler.rs`, `src/wkwebview/class/wry_web_view.rs`, `src/wkwebview/class/wry_web_view_delegate.rs`.
 
-- `WebViewExtWindows` gives the live COM objects: `controller() -> ICoreWebView2Controller`, `webview() -> ICoreWebView2`, `environment() -> ICoreWebView2Environment`. `AllowExternalDrop` on the controller and `AddWebResourceRequestedFilterWithRequestSourceKinds` on the webview are reachable through them.
-- The custom protocol handlers take and return whole bodies: `Request<Vec<u8>>` in, `Response<Cow<'static, [u8]>>` out. Streaming changes that path.
-- The C++ fork's own implementations are the reference: `streaming_istream.hh`, and the request, drag and script-message code in `win32_edge.hh` and `cocoa_webkit.hh`.
+Already in `wry`, so no addition is needed:
+
+| Fork behaviour | Where `wry` has it |
+|---|---|
+| Requests from service workers, shared workers and cross-origin iframes reach the handler on Windows | `attach_custom_protocol_handler` in `src/webview2/mod.rs` calls `AddWebResourceRequestedFilterWithRequestSourceKinds` with `COREWEBVIEW2_WEB_RESOURCE_REQUEST_SOURCE_KINDS_ALL` when `ICoreWebView2_22` is present, and falls back to `AddWebResourceRequestedFilter` |
+| Requests held open until answered | the same function takes `args.GetDeferral()` and completes it from the responder, on the UI thread through `dispatch_handler` |
+| Windows page messages from the top-level document only | `attach_ipc_handler` subscribes `add_WebMessageReceived` on the top-level `ICoreWebView2` only |
+| Custom scheme mapped to an `http://` origin on Windows | `custom_protocol_workaround` |
+
+The four additions, each with the function it changes:
+
+| Addition | File and function in `wry` | Change | Reference in the C++ fork |
+|---|---|---|---|
+| Streamed response bodies, Windows | `src/webview2/mod.rs`: `prepare_web_request_response`, which builds the body with `SHCreateMemStream` over the whole response | a second responder that passes an `IStream` whose `Read` blocks until a chunk or the end arrives | `streaming_istream.hh` |
+| Streamed response bodies, macOS | `src/wkwebview/class/url_scheme_handler.rs`: the nested `fn response` inside `start_task`, which calls `didReceiveResponse`, one `didReceiveData`, `didFinish` | a second responder that calls `didReceiveData` per chunk, behind the existing `check_task_is_valid` guard | `begin_response_impl`, `write_response_chunk_impl`, `end_response_impl` in `cocoa_webkit.hh` |
+| Drag routing, macOS: drags from other apps only, file drags to the handler, everything else to WebKit, one route per drag session | `src/wkwebview/drag_drop.rs`: `dragging_entered`, `dragging_updated`, `perform_drag_operation`, `dragging_exited`, which today call the handler for every drag and never read `draggingSource`; and `src/wkwebview/class/wry_web_view.rs`, which does not override `prepareForDragOperation:` or `draggingEnded:` | the fork's session routing | `get_webview_class` in `cocoa_webkit.hh` |
+| Page messages from the top-level document only, macOS | `src/wkwebview/class/wry_web_view_delegate.rs`: `did_receive`, which reads `msg.frameInfo()` for the URL and does not check the frame | return early unless `frameInfo().isMainFrame()` | the script message handler in `cocoa_webkit.hh` |
+
+Done outside `wry`, in Sweetview's `platform` code, through `WebViewExtWindows::controller()`, `webview()` and `environment()`:
+
+| Fork behaviour | How |
+|---|---|
+| External drop control, Windows | `ICoreWebView2Controller4::SetAllowExternalDrop` on `controller()` |
+| File drop paths, Windows, with WebView2's own drop target left in place | the C++ fork's method: an initialization script that posts the dropped `File` objects with `postMessageWithAdditionalObjects`, and a `WebMessageReceived` handler on `webview()` that reads each `ICoreWebView2File` path. `wry`'s own `with_drag_drop_handler` is not used on Windows, because `DragDropController` in `src/webview2/drag_drop.rs` revokes WebView2's drop targets and rejects non-file drags |
+| Bridge and drop scripts in the top-level document only, Windows | each script starts with `if (window !== window.top) return`, as the C++ fork's do. `wry` adds scripts to every frame on Windows |
+
+Still to locate: where `wry` sets its own `WKNavigationDelegate` and its WebView2 navigation handlers. The tabs feature needs a "navigation failed" event from both, and on macOS the delegate slot the tabs demo uses today is taken by `wry`.
 
 ## API references
 
@@ -454,21 +480,74 @@ Today a `JSCallback` lets the OS call JavaScript on the UI thread while that thr
 
 Kept as TypeScript, untouched: `hit-regions.ts`, `icon.ts`, `menu.ts`, `ring.ts`, the IPC modules, `html.ts`, `build.ts`, `make-app.ts`, `settings-store.ts`, `window-chrome.ts`, `page.ts`.
 
-## Not designed yet
+## Tabs
 
-Their native calls are counted; their files have not been read line by line.
+Every file of `demos/native-tabs` on `main` and of the tabs library on `v1-drafting` was read in full for this section. The public API is `v1-drafting`'s: `new Window({ tabs: true })`, `WebView.openTab`, `Tab`, `TabOptions`, `createApp({ tabs: true })`.
 
-| Part | Size |
+### Windows
+
+| Behaviour today | Provided by |
 |---|---|
-| `demos/native-tabs` on `main` | 2,004 lines, 3 files with FFI, 6 `JSCallback`s |
-| `v1-drafting`: URL schemes and single instance | 431 lines |
-| `v1-drafting`: clipboard | 98 lines |
-| `v1-drafting`: WinRT toast notifications | 398 lines |
-| `v1-drafting`: screen information | 316 lines |
-| `v1-drafting`: tabs as library API | 1,763 lines |
-| Linux | none exists |
+| One frame window per tabbed window, caption removed in `WM_NCCALCSIZE`, system border, shadow, snap and maximise kept | `tao` window with `with_decorations(false)` and `with_undecorated_shadow(true)` |
+| A 40 DIP strip webview across the top, drawing tabs, `+` and the caption buttons | a `wry` child webview from `build_as_child` with `with_bounds`; the strip's HTML, CSS and script (`win-strip-assets.ts`) and its 15 `strip.*` methods stay TypeScript |
+| One WebView2 per tab in a child pane; one shown at a time | one `wry` child webview per tab; `WebView::set_visible`, `set_bounds` |
+| Tear-off and merge: a tab moves to another window without reloading | `WebViewExtWindows::reparent(hwnd)` |
+| Shortcuts while a page has focus: Ctrl+T, Ctrl+W, Ctrl+F4, Ctrl+Tab, Ctrl+Shift+Tab, Ctrl+PageUp, Ctrl+PageDown, Ctrl+1 to 9, Alt+F4 | `add_AcceleratorKeyPressed` on `controller()`, through the typed handler of `webview2-com`. The mapping in `shortcuts.ts` stays TypeScript |
+| `target="_blank"` and `window.open` become a tab | `wry` `with_new_window_req_handler` |
+| Keyboard returned to the page after a strip action | `MoveFocus` on `controller()` |
+| Popups follow the window when it moves | `NotifyParentWindowPositionChanged` on `controller()` |
+| "This site did not open" page on a failed load | a navigation-failed event from the `wry` fork; the rules for which failures count stay as `win-webview2.ts` has them |
+| Tab context menu and the window's system menu | `muda` context menu; `GetSystemMenu` and `TrackPopupMenu` in `platform` |
+| Strip drag moves the window; top edge and corners resize it | `tao` `drag_window`, `drag_resize_window` |
+| Minimum size, DPI change, dark title bar following the system | `tao` `with_inner_size_constraints`, `ScaleFactorChanged`, `set_theme` |
+| File drops on the frame | `tao` `WindowEvent::DroppedFile` |
 
-Each is designed at its own step by the same method: what provides each behaviour, its N-API functions, its module map row.
+What goes away: the eight hand-built COM vtables in `win-webview2.ts`, their slot numbers from `WebView2.h`, and the callbacks that are never freed. `webview2-com` generates those handlers.
+
+### macOS
+
+| Behaviour today | Provided by |
+|---|---|
+| One `NSWindow` per tab inside AppKit window tabbing | `tao` windows with `set_tabbing_identifier` |
+| A new tab placed after a given tab | `platform`: `NSWindow::addTabbedWindow_ordered` |
+| The `+` button | `platform`: an `NSResponder` subclass implementing `newWindowForTab:` set as each window's next responder, defined with `define_class!` |
+| Tab bar kept visible with one tab | `platform`: `NSWindowTabGroup::isTabBarVisible`, `toggleTabBar:` |
+| File, View and Window menus with the tab items and key equivalents | `muda` |
+| Close, become-main, resize and move per tab window | `tao` window events |
+| Popups become a tab | `wry` `with_new_window_req_handler` |
+| Failed-load page | the navigation-failed event from the `wry` fork |
+| Every native call inside an autorelease pool | `objc2::rc::autoreleasepool` |
+| Draining the main dispatch queue twice before a tab's webview is destroyed | not needed: it exists because the C++ engine queues replies holding a plain pointer to itself. `wry` guards each task with `check_task_is_valid` |
+
+### Rule kept from today
+
+Showing, hiding, moving and destroying a webview is deferred to its own turn of the loop. A webview is never destroyed inside its own callback.
+
+## The `v1-drafting` features
+
+Every file of each feature on `v1-drafting` was read in full for this section. Names, limits and wire formats stay exactly as they are, so an old build and a new build of the same app still find each other.
+
+| Feature | What stays identical | Provided by |
+|---|---|---|
+| Single instance, Windows | mutex `Local\sweetview.instance.<id>`; message-only window class `SweetviewSingleInstanceWindow`, title `sweetview.instance.<id>`; `WM_COPYDATA` with magic `0x53575631`; JSON `{args, cwd, url?}`; 10 lookups 25 ms apart; 5000 ms send timeout | `platform` on `windows`: `CreateMutexW`, `FindWindowExW`, `SendMessageTimeoutW` |
+| Single instance, macOS | port name `sweetview.<sha256 of appId>`; message id 1; 1.5 s send timeout; no reply | `platform` on `objc2-core-foundation`: `CFMessagePort` |
+| URL opened while running, macOS | URLs buffered until `signalReady()`, then delivered in arrival order | `tao`: `Event::Opened` |
+| `registerUrlScheme`, Windows | `HKCU\Software\Classes\<scheme>` with `URL Protocol`, `DefaultIcon`, `shell\open\command` | `platform` on `windows`: registry calls |
+| Clipboard text | Windows: 5 attempts 5 ms apart, a hidden owner window for writes, read bounded by `GlobalSize`. macOS: `public.utf8-plain-text` | `platform` on `windows` and `objc2-app-kit` |
+| Screen information | physical pixels and effective DPI on Windows; points with y flipped on macOS | `tao` monitors; `platform` for the work area |
+| Native file reading | all of it | unchanged: it is `node:fs`, with no native code |
+| WinRT toasts | AUMID key under `HKCU\Software\Classes\AppUserModelId`; the toast XML; balloon as the fallback | `windows` crate WinRT types: `ToastNotificationManager`, `ToastNotification`, `XmlDocument`, `TypedEventHandler`. This removes the C shim compiled at run time with Bun's `cc`, the hand-built delegate objects and the vtable slot numbers |
+| Notifier, macOS | one shared delegate; clicks routed by notification id through a map capped at 256; the per-process tag that stops old notifications counting as cold-launch clicks | `platform::notify` |
+| `Menu.popup` at a point | ids from 1; `&` doubled on Windows; menu built fresh each time | `muda`: `show_context_menu_for_hwnd`, `show_context_menu_for_nsview`, both `unsafe` calls made from `platform` |
+| App identity | all of it | unchanged: pure TypeScript |
+| `Window` file drops | paths delivered to `onFileDrop` | `tao` `WindowEvent::DroppedFile` |
+| Shared Win32 start-up: STA, per-monitor DPI, the hidden first window | all three | `tao` sets DPI awareness and initialises OLE; the hidden first window is a hidden `tao` window created first |
+
+One disagreement between docs and code found while reading, kept as the code behaves: on Windows `tab.close()` on a window's last tab is offered to `onClose` listeners first and the tab stays when one intercepts; `docs/app.md` says it always closes.
+
+## Linux
+
+No Linux code exists in Sweetview today, and the C++ fork's additions do nothing there. Scope for the last step: a `tao` window with a `wry` webview on WebKitGTK, assets and IPC, a tray menu and left click through `tray-icon`'s `ksni` feature, a notification through `notify-rust`. Overlays, hit regions, input hooks and tabs are not in scope on Linux.
 
 ## Order of work
 
