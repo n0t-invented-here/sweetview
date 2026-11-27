@@ -196,14 +196,6 @@ impl Drop for ButtonsUp {
   }
 }
 
-fn user_objects() -> u32 {
-  sweetview_platform_loop::resource_counts().user_objects
-}
-
-fn kernel_handles() -> u32 {
-  sweetview_platform_loop::resource_counts().kernel_handles
-}
-
 type Seen<T> = Rc<RefCell<Vec<T>>>;
 
 // ---- mouse ----------------------------------------------------------------------
