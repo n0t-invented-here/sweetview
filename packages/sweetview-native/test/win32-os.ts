@@ -8,10 +8,15 @@
 // system-wide or touches the clipboard, and every input is a message to one of
 // this process's own windows, except the move-loop control
 // (`moveLoopControl`): it moves the cursor and presses the left button with
-// SendInput, only over a window of its own, and always lets go. Listed in
-// rust-rewrite/ffi-allowlist.txt as a probe.
+// SendInput, only over a window of its own, and always lets go; the right
+// button over this process's own popup menu (`injectRightButton`), only when
+// that menu is under the cursor; and the shell reader (`trayFromShell`), which
+// opens the notification area's overflow flyout with a click when the icon
+// sits there, under the same guards. Listed in rust-rewrite/ffi-allowlist.txt
+// as a probe.
 
 import { FFIType, JSCallback, dlopen, ptr, toArrayBuffer } from "bun:ffi";
+import { fileURLToPath } from "node:url";
 import { binding } from "../src/binding";
 import { pumpEvents } from "../src/event-loop";
 
@@ -47,6 +52,12 @@ export const user32 = dlopen("user32.dll", {
   GetMenuStringW: { args: [u64, u32, FFIType.ptr, i32, u32], returns: i32 },
   GetSubMenu: { args: [u64, i32], returns: u64 },
   GetMenuItemInfoW: { args: [u64, u32, i32, FFIType.ptr], returns: i32 },
+  GetMenuItemID: { args: [u64, i32], returns: u32 },
+  // (HWND or 0, HMENU, UINT item, RECT*) -> BOOL; with no window, the popup menu window showing hMenu
+  GetMenuItemRect: { args: [u64, u64, u32, FFIType.ptr], returns: i32 },
+  IsMenu: { args: [u64], returns: i32 },
+  // An application's own call on a menu Sweetview handed it (buildMenu): (HMENU, flags, x, y, reserved, HWND, RECT*) -> command
+  TrackPopupMenu: { args: [u64, u32, i32, i32, i32, u64, FFIType.ptr], returns: i32 },
   GetClassNameW: { args: [u64, FFIType.ptr, i32], returns: i32 },
   GetWindowTextW: { args: [u64, FFIType.ptr, i32], returns: i32 },
   EnumChildWindows: { args: [u64, FFIType.ptr, i64], returns: i32 },
@@ -278,6 +289,15 @@ export function injectLeftButton(down: boolean): void {
   user32.SendInput(1, ptr(input), 40);
 }
 
+/** Presses or releases the right button with SendInput. */
+export function injectRightButton(down: boolean): void {
+  const input = new Uint8Array(40);
+  const view = new DataView(input.buffer);
+  view.setUint32(0, 0, true); // INPUT_MOUSE
+  view.setUint32(20, down ? 0x8 : 0x10, true); // MOUSEEVENTF_RIGHTDOWN / RIGHTUP
+  user32.SendInput(1, ptr(input), 40);
+}
+
 export type Desk = { x: number; y: number; width: number; height: number };
 
 /**
@@ -467,9 +487,54 @@ export function readMenu(hmenu: bigint): MenuEntry[] {
 /** The menu shown in a popup menu window. */
 export const menuOfWindow = (menuWindow: bigint): bigint => BigInt.asUintN(64, user32.SendMessageW(menuWindow, MN_GETHMENU, 0n, 0n));
 
+/** The screen rectangle of the item at `position` of `hmenu`, while a popup menu window shows it. */
+export function menuItemRect(hmenu: bigint, position: number): { left: number; top: number; right: number; bottom: number } {
+  const rect = new Int32Array(4);
+  if (user32.GetMenuItemRect(0n, hmenu, position, ptr(rect)) === 0) throw new Error("GetMenuItemRect failed");
+  return { left: rect[0]!, top: rect[1]!, right: rect[2]!, bottom: rect[3]! };
+}
+
+/** The command id the OS keeps for the item at `position` of `hmenu` (0xffffffff for a submenu). */
+export const menuItemId = (hmenu: bigint, position: number): number => user32.GetMenuItemID(hmenu, position);
+
 /** Posts key presses to a popup menu window, which its menu loop takes as the keyboard. */
 export function pressKeys(menuWindow: bigint, ...keys: number[]): void {
   for (const key of keys) post(menuWindow, WM_KEYDOWN, BigInt(key), 1n);
+}
+
+// ---- the notification area, as the shell shows it ---------------------------------------
+
+/** A notification icon as Explorer shows it: its UI Automation name and the middle pixel of its image. */
+export type ShellIcon =
+  | { found: true; name: string; where: "taskbar" | "overflow"; pixel: [number, number, number]; rect: [number, number, number, number] }
+  | { found: false; where: string }
+  | { skip: string };
+
+/**
+ * Reads the notification icon whose tooltip is `tooltip` back from Explorer, in a second process
+ * (`tray-shell.ps1`: UI Automation and a screen pixel), pumping this thread's loop meanwhile.
+ * When the icon sits in the overflow flyout the script opens it with a click and closes it again,
+ * only when the shared desktop's mouse is free; otherwise the answer is `{ skip }`.
+ */
+export async function trayFromShell(tooltip: string): Promise<ShellIcon> {
+  const script = fileURLToPath(new URL("./tray-shell.ps1", import.meta.url));
+  const child = Bun.spawn(["pwsh", "-NoProfile", "-NonInteractive", "-File", script, "-Tooltip", tooltip], { stdout: "pipe", stderr: "pipe" });
+  const killer = setTimeout(() => child.kill(), 30_000);
+  try {
+    while (child.exitCode === null && child.signalCode === null) {
+      pumpEvents();
+      await Bun.sleep(20);
+    }
+  } finally {
+    clearTimeout(killer);
+  }
+  const out = (await new Response(child.stdout).text()).trim().split(/\r?\n/).at(-1) ?? "";
+  try {
+    return JSON.parse(out) as ShellIcon;
+  } catch {
+    const err = (await new Response(child.stderr).text()).slice(0, 400);
+    return { skip: `the shell reader printed no answer (exit ${child.exitCode}): ${out.slice(0, 200)} ${err}` };
+  }
 }
 
 // ---- dialogs ------------------------------------------------------------------------------

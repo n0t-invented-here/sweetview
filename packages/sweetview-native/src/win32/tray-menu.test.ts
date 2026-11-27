@@ -1,19 +1,35 @@
 // The tray, popup menus, the folder dialog and icon decoding, through the native
-// binding, driven the way the shell and the user would: every input is a message
+// binding, driven the way the shell and the user would: most input is a message
 // posted to one of this process's own windows (the tray icon's window, the popup
-// menu, the dialog). Nothing moves the cursor or presses a key system-wide.
+// menu, the dialog). Three things use the shared desktop, each only when it is
+// free and putting back what it moved: the right-button test injects a right
+// click over this process's own popup menu; the tray-alignment test places the
+// cursor; and the shell reader (`trayFromShell`) opens the notification area's
+// overflow flyout with a click. When the desktop is not free they log a skip.
+// Nothing presses a key system-wide.
 
 import { describe, expect, test } from "bun:test";
 import { binding } from "../binding";
 import { dotIco, dotPng } from "../icon";
 import { Menu, type MenuTemplate } from "../menu";
 import { Tray } from "../tray";
+import { Screen } from "../screen";
+import { Window } from "../window";
 import {
   TRAY,
   VK,
   WM_CLOSE,
+  buttonsDown,
   chooseInFolderDialog,
   cursor,
+  guiObjects,
+  injectCursorMove,
+  injectRightButton,
+  menuItemId,
+  menuItemRect,
+  trayFromShell,
+  user32,
+  windowAt,
   doubleClickTime,
   endMenu,
   isWindow,
@@ -30,6 +46,8 @@ import {
   windowRect,
   type MenuEntry,
 } from "../../test/win32-os";
+import { buildMenu, destroyMenu, popupMenuAtCursor } from "./menu";
+import { windowMenu } from "./tab-window";
 import { createTray, currentTray } from "./tray";
 
 const onWindows = process.platform === "win32";
@@ -222,6 +240,173 @@ describe.if(onWindows)("Menu.popup (binding: muda)", () => {
     expect(Menu.popup(1n, [])).toBe(false);
     expect(() => Menu.popup(null, [{ label: "x" }])).toThrow("sweetview: window handle is NULL");
   });
+
+  test("letting go of the right button over an item chooses it (real input over the menu's own window)", () => {
+    const owner = ownWindow();
+    const saved = cursor();
+    const desk = Screen.bounds();
+    const area = Screen.primary().workArea;
+    let skipped = "";
+    let clicked = "";
+    let target = { x: 0, y: 0 };
+    try {
+      whenMenuOpens((menuWindow) => {
+        // The second item's middle, on this process's own menu window, read from the OS.
+        const item = menuItemRect(menuOfWindow(menuWindow), 1);
+        target = { x: (item.left + item.right) >> 1, y: (item.top + item.bottom) >> 1 };
+        if (buttonsDown()) skipped = "a mouse button was already down on the shared desktop";
+        else {
+          injectCursorMove(target.x, target.y, desk);
+          if (windowAt(target.x, target.y) !== menuWindow) skipped = "another window is over the menu on the shared desktop";
+        }
+        if (skipped) {
+          endMenu();
+          return;
+        }
+        // Pressed and let go over the item: with TPM_RIGHTBUTTON the release chooses it.
+        injectRightButton(true);
+        injectRightButton(false);
+      });
+      const chosen = Menu.popup(
+        owner.hwnd,
+        [
+          { label: "One", click: () => (clicked = "one") },
+          { label: "Two", click: () => (clicked = "two") },
+          { label: "Three", click: () => (clicked = "three") },
+        ],
+        { x: area.x + 80, y: area.y + 80 },
+      );
+      if (skipped) {
+        console.warn(`tray-menu.test: right-button choice skipped: ${skipped}`);
+        return;
+      }
+      expect({ chosen, clicked }).toEqual({ chosen: true, clicked: "two" });
+    } finally {
+      user32.SetCursorPos(saved.x, saved.y);
+      owner.destroy();
+    }
+  });
+
+  test("popupMenuAtCursor opens the menu above the cursor (its bottom-left corner there), where a menu at a point opens below it", async () => {
+    const owner = ownWindow();
+    const saved = cursor();
+    const area = Screen.primary().workArea;
+    // The middle of the primary screen's work area: room above and below, so the OS moves neither menu.
+    const point = { x: area.x + (area.width >> 1), y: area.y + (area.height >> 1) };
+    try {
+      user32.SetCursorPos(point.x, point.y);
+      let above = { left: 0, top: 0, right: 0, bottom: 0 };
+      let at = { x: 0, y: 0 };
+      whenMenuOpens((menuWindow) => {
+        above = windowRect(menuWindow);
+        at = cursor();
+        pressKeys(menuWindow, VK.ESCAPE);
+      });
+      expect(popupMenuAtCursor(owner.hwnd, [{ label: "One" }, { label: "Two" }, { label: "Three" }])).toBe(false);
+      if (at.x !== point.x || at.y !== point.y) {
+        console.warn(`tray-menu.test: alignment skipped: the cursor was moved on the shared desktop (${JSON.stringify(at)})`);
+        return;
+      }
+      expect({ left: above.left, bottom: above.bottom }).toEqual({ left: point.x, bottom: point.y });
+      expect(above.top).toBeLessThan(point.y);
+
+      let below = { left: 0, top: 0, right: 0, bottom: 0 };
+      whenMenuOpens((menuWindow) => {
+        below = windowRect(menuWindow);
+        pressKeys(menuWindow, VK.ESCAPE);
+      });
+      expect(Menu.popup(owner.hwnd, [{ label: "One" }, { label: "Two" }, { label: "Three" }], point)).toBe(false);
+      expect({ left: below.left, top: below.top }).toEqual({ left: point.x, top: point.y });
+      expect(below.bottom).toBeGreaterThan(point.y);
+    } finally {
+      user32.SetCursorPos(saved.x, saved.y);
+      owner.destroy();
+    }
+  });
+
+  test("buildMenu hands the application a menu for its own TrackPopupMenu: ids count from 1 in template order, a key chooses, destroyMenu frees it", () => {
+    const owner = ownWindow();
+    const icon = { windows: { ico: dotIco(RED) } };
+    let clicked = "";
+    const template: MenuTemplate = [
+      { label: "A & B", click: () => (clicked = "a") },
+      {
+        label: "Sub",
+        submenu: [
+          { label: "B", click: () => (clicked = "b") },
+          { label: "C", checked: true, icon, click: () => (clicked = "c") },
+        ],
+      },
+      { type: "separator" },
+      { label: "D", enabled: false, click: () => (clicked = "d") },
+    ];
+    try {
+      const built = buildMenu(template);
+      expect(typeof built.hmenu).toBe("bigint");
+      expect(user32.IsMenu(built.hmenu)).not.toBe(0);
+      expect([...built.commands.keys()]).toEqual([1, 2, 3, 4]);
+      expect(built.bitmaps).toEqual([]);
+      // The menu as the OS holds it, and the command id of each item.
+      const shown = readMenu(built.hmenu);
+      expect(shown.map((e) => e.label)).toEqual(["A && B", "Sub", "", "D"]);
+      expect(shown[1]!.submenu?.[1]).toMatchObject({ label: "C", checked: true, hasBitmap: true });
+      expect(shown[3]).toMatchObject({ disabled: true });
+      const sub = user32.GetSubMenu(built.hmenu, 1);
+      expect([menuItemId(built.hmenu, 0), menuItemId(sub, 0), menuItemId(sub, 1), menuItemId(built.hmenu, 3)]).toEqual([1, 2, 3, 4]);
+
+      // The application tracks it itself; Down, Down, Right, Down, Return chooses "C" in the submenu.
+      whenMenuOpens((menuWindow) => pressKeys(menuWindow, VK.DOWN, VK.DOWN, VK.RIGHT, VK.DOWN, VK.RETURN));
+      const TPM_RETURNCMD = 0x0100;
+      const TPM_RIGHTBUTTON = 0x0002;
+      const id = user32.TrackPopupMenu(built.hmenu, TPM_RETURNCMD | TPM_RIGHTBUTTON, 150, 150, 0, owner.hwnd, null);
+      expect(id).toBe(3);
+      built.commands.get(id)?.();
+      expect(clicked).toBe("c");
+
+      destroyMenu(built);
+      expect(user32.IsMenu(built.hmenu)).toBe(0);
+      expect(user32.IsMenu(sub)).toBe(0);
+      destroyMenu(built); // twice is safe
+
+      // Building and freeing gives every GDI and USER object back (the item bitmaps included).
+      destroyMenu(buildMenu(template));
+      const before = guiObjects();
+      for (let i = 0; i < 30; i++) destroyMenu(buildMenu(template));
+      const after = guiObjects();
+      expect(after.gdi).toBeLessThanOrEqual(before.gdi);
+      expect(after.user).toBeLessThanOrEqual(before.user);
+    } finally {
+      owner.destroy();
+    }
+  });
+
+  test("windowMenu shows the system menu of an ordinary framed Window, read from a second process, and choosing Minimize minimises it", async () => {
+    const area = Screen.primary().workArea;
+    const win = new Window({ title: unique("system menu"), bounds: { x: area.x + 60, y: area.y + 60, width: 420, height: 300 }, noActivate: true });
+    try {
+      win.show();
+      const hwnd = BigInt(win.handle!);
+      expect(user32.IsIconic(hwnd)).toBe(0);
+      // A second process reads the menu while this thread is inside its modal loop, then selects
+      // the fourth item (Minimize) and presses Enter on the menu window.
+      const probe = new URL("../../../sweetview/test/fixtures/win-menu-probe.ts", import.meta.url);
+      const child = Bun.spawn([process.execPath, require("node:url").fileURLToPath(probe), String(process.pid), "pick:3"], { stdout: "pipe", stderr: "pipe" });
+      windowMenu(hwnd);
+      await child.exited;
+      const report = JSON.parse((await new Response(child.stdout).text()).trim()) as { items?: { label?: string; enabled?: boolean; separator?: boolean }[]; error?: string };
+      expect(report.error).toBeUndefined();
+      // Restore, Move, Size, Minimize, Maximize, a separator, Close: Restore is greyed while the window is not maximised.
+      expect(report.items?.map((item) => (item.separator ? "-" : item.enabled))).toEqual([false, true, true, true, true, "-", true]);
+      await pumpUntil(() => user32.IsIconic(hwnd) !== 0, 3000);
+      expect(user32.IsIconic(hwnd)).not.toBe(0);
+
+      // A value that names no window shows nothing and throws nothing.
+      windowMenu(0x7fff_fff0n);
+      expect(openPopupMenu()).toBe(0n);
+    } finally {
+      win.dispose();
+    }
+  }, 30_000);
 });
 
 describe.if(onWindows)("Tray (binding: tray-icon)", () => {
@@ -264,12 +449,44 @@ describe.if(onWindows)("Tray (binding: tray-icon)", () => {
     expect(after.user).toBeLessThanOrEqual(before.user);
   }, 60_000);
 
-  test("a tray with no icon shows the stock icon, and the public Tray works the same", () => {
-    const tray = new Tray({ tooltip: unique("tray") });
-    expect(currentTray()?.windowHandle()).not.toBe(0n);
-    tray.dispose();
-    tray.dispose();
-  });
+  test("a tray with no icon shows the stock icon, and the public Tray works the same", async () => {
+    const tooltip = unique("tray");
+    const tray = new Tray({ tooltip });
+    try {
+      expect(currentTray()?.windowHandle()).not.toBe(0n);
+      // What Explorer shows for the icon: its tooltip, and the stock icon's image.
+      const stock = await trayFromShell(tooltip);
+      if ("skip" in stock) return console.warn(`tray-menu.test: the shell read skipped: ${stock.skip}`);
+      expect(stock).toMatchObject({ found: true });
+      if (!stock.found) return;
+      expect(stock.name.endsWith(tooltip)).toBe(true);
+
+      // setIcon and setTooltip reach the shell: the new tooltip, and a green image where the stock icon was.
+      const changed = unique("tooltip");
+      tray.setIcon({ windows: { ico: dotIco({ color: "#00ff00", sizes: [16, 20, 24, 32, 40, 48] }) } });
+      tray.setTooltip(changed);
+      const green = await trayFromShell(changed);
+      if ("skip" in green) return console.warn(`tray-menu.test: the shell read skipped: ${green.skip}`);
+      expect(green).toMatchObject({ found: true });
+      if (!green.found) return;
+      expect(green.name.endsWith(changed)).toBe(true);
+      const [r, g, b] = green.pixel;
+      expect(g > 200 && r < 60 && b < 60).toBe(true);
+      expect(green.pixel).not.toEqual(stock.pixel);
+      expect((await trayFromShell(tooltip)) as { found?: boolean }).toMatchObject({ found: false }); // the old tooltip is gone
+
+      // Back to the stock icon: the shell shows the first image again.
+      tray.setIcon({});
+      const back = await trayFromShell(changed);
+      if ("skip" in back) return console.warn(`tray-menu.test: the shell read skipped: ${back.skip}`);
+      expect(back).toMatchObject({ found: true });
+      if (!back.found) return;
+      back.pixel.forEach((channel, i) => expect(Math.abs(channel - stock.pixel[i]!)).toBeLessThanOrEqual(8));
+    } finally {
+      tray.dispose();
+      tray.dispose();
+    }
+  }, 120_000);
 
   test("a left click is a click once the double-click time has passed; a double click is a double click and no click", async () => {
     const seen: string[] = [];
@@ -369,7 +586,12 @@ describe.if(onWindows)("Tray (binding: tray-icon)", () => {
       tray.setIcon({}); // back to the stock icon
       expect(currentTray()?.iconBytes()).toBeUndefined();
       expect(() => tray.setIcon({ windows: { ico: new Uint8Array([0, 1]) } })).toThrow("sweetview: the tray icon could not be decoded");
-      tray.setTooltip(unique("tooltip ").padEnd(200, "x")); // longer than the shell keeps: truncated, not refused
+      const long = unique("tooltip ").padEnd(200, "x");
+      tray.setTooltip(long); // longer than the shell keeps: truncated, not refused
+      // The shell shows the first 127 characters (NOTIFYICONDATAW's szTip holds 128 with its NUL).
+      const shown = await trayFromShell(long.slice(0, 127));
+      if ("skip" in shown) console.warn(`tray-menu.test: the shell read skipped: ${shown.skip}`);
+      else expect(shown).toMatchObject({ found: true });
 
       // No menu yet: a right click opens nothing.
       postTrayMouse(tray.windowHandle(), TRAY.RBUTTONUP);
@@ -392,7 +614,7 @@ describe.if(onWindows)("Tray (binding: tray-icon)", () => {
     } finally {
       tray.dispose();
     }
-  }, 20_000);
+  }, 60_000);
 
   test("the icon is re-added when the taskbar is recreated (the registered TaskbarCreated message, as Explorer broadcasts it)", async () => {
     // Restarting Explorer is not safe on a shared desktop; its broadcast is posted to the tray's window instead.

@@ -78,9 +78,8 @@ this page: it imports each new form and checks that it is what the row says.
   frameless. A window moved to a monitor with another DPI is rescaled by the
   standard `WM_DPICHANGED` handling.
 - **Menus, the tray and the folder dialog.** A popup menu chooses an item
-  on a left click or from the keyboard; letting go of the right button over
-  an item does not choose it. The tray menu opens at the cursor, and the OS
-  flips it upward near the taskbar. Menu item icons are drawn at 16 px. Tray
+  on a left or right click or from the keyboard, as before. The tray menu
+  opens upward from the cursor, as before. Menu item icons are drawn at 16 px. Tray
   click handlers run one loop turn after the click. A tray icon that is not a
   valid `.ico` throws `sweetview: the tray icon could not be decoded: …`.
   `pickFolder` returns `null` for a virtual folder such as "This PC" and when
@@ -1164,9 +1163,9 @@ in it, so an import of either by file path follows these rows too.
 | `getTabFrame` | `import { getTabFrame } from "@n1h/sweetview-native/win32/tab-window"`; `getTabFrame(hwnd)` | takes the handle of a `new Window({ tabs: true })` as a bigint, `getTabFrame(BigInt(win.handle))`; `undefined` for any other window |
 | `leftButtonDown` | `import { installMouseHook } from "@n1h/sweetview-native"`; `installMouseHook(handler)` | button state from `LeftDown` and `LeftUp` events |
 | `setDarkWindows` | `import { Window } from "@n1h/sweetview-native"`; `new Window(options)` | `appearance: "system"` follows the system's setting |
-| `showTabPopupMenu` | `import { showTabPopupMenu } from "@n1h/sweetview-native/win32/tab-window"`; `showTabPopupMenu(owner, template)` | the same call; `owner` must be a tab frame (any other window shows nothing and returns `false`), and items are flat: a submenu shows as a disabled item, without icons or check marks; for any window, `Menu.popup(owner, menu)` |
+| `showTabPopupMenu` | `import { showTabPopupMenu } from "@n1h/sweetview-native/win32/tab-window"`; `showTabPopupMenu(owner, template)` | unchanged: the menu `Menu.popup(owner, menu)` shows, at the cursor, for any window of the thread |
 | `windowExists` | `import { Window } from "@n1h/sweetview-native"`; `Window.fromHandle(handle)` | throws `sweetview: not a window: 0x…` for a handle that names no window |
-| `windowMenu` | `import { windowMenu } from "@n1h/sweetview-native/win32/tab-window"`; `windowMenu(hwnd)` | the same call, for tab frames only (any other window shows nothing); `FrameWindow#showSystemMenu()` is the same menu |
+| `windowMenu` | `import { windowMenu } from "@n1h/sweetview-native/win32/tab-window"`; `windowMenu(hwnd)` | unchanged: the system menu of any window of the thread; for a tab frame, `FrameWindow#showSystemMenu()` is the same menu |
 
 #### `FrameWindow` and `FrameCallbacks` members that changed
 
@@ -1214,8 +1213,8 @@ engine of the webview moves, shows, hides and re-parents it.
 | `MII_MASK` | `import { Menu } from "@n1h/sweetview-native"`; `Menu.popup(owner, menu, at)` | an item's picture is the `icon` field of its menu item |
 | `MII_SIZE` | `import { Menu } from "@n1h/sweetview-native"`; `Menu.popup(owner, menu, at)` | an item's picture is the `icon` field of its menu item |
 | `bitmapItemInfo` | `import { Menu } from "@n1h/sweetview-native"`; `Menu.popup(owner, menu, at)` | an item's picture is the `icon` field of its menu item |
-| `buildMenu` | `import { Menu } from "@n1h/sweetview-native"`; `Menu.popup(owner, menu, at)` | no raw `HMENU` is handed out: Sweetview builds and frees the menu; `menuData(template)` of this subpath gives `{ data, handlers }`; for an `HMENU` for your own `TrackPopupMenu`, build it with your own `bun:ffi` table |
-| `destroyMenu` | `import { Menu } from "@n1h/sweetview-native"`; `Menu.popup(owner, menu, at)` | no raw `HMENU` is handed out: Sweetview builds and frees the menu; `menuData(template)` of this subpath gives `{ data, handlers }`; for an `HMENU` for your own `TrackPopupMenu`, build it with your own `bun:ffi` table |
+| `buildMenu` | `import { buildMenu } from "@n1h/sweetview-native/win32/menu"`; `buildMenu(template)` | unchanged: `{ hmenu, commands, bitmaps }` for your own `TrackPopupMenu`, command ids from 1 in template order; `bitmaps` is empty, as `destroyMenu` frees the item bitmaps itself |
+| `destroyMenu` | `import { destroyMenu } from "@n1h/sweetview-native/win32/menu"`; `destroyMenu(built)` | unchanged: frees the menu, its submenus and its item bitmaps; safe to call twice |
 | `escapeLabel` | `import { Menu } from "@n1h/sweetview-native"`; `Menu.popup(owner, menu, at)` | nothing to call: the native layer doubles `&` in a label itself |
 | `popupMenu` | `import { popupMenu } from "@n1h/sweetview-native/win32/menu"`; `popupMenu(owner, template, at)` | unchanged (internal; the public form is `Menu.popup(owner, menu, at)`) |
 | `popupMenuAtCursor` | `import { popupMenuAtCursor } from "@n1h/sweetview-native/win32/menu"`; `popupMenuAtCursor(owner, template)` | unchanged (internal; the public form is `Menu.popup(owner, menu, at)`) |
