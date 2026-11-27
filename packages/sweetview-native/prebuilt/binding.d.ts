@@ -47,6 +47,8 @@ export declare class Engine {
   moveFocus(): void
   /** Tells the webview its host window moved, so its popups follow. */
   notifyMoved(): void
+  /** Test hook: how many times `notifyMoved` reached the live webview. */
+  movesTold(): number
   /** Moves the webview into another window without reloading it. */
   reparent(window: bigint): void
   navigate(url: string): void

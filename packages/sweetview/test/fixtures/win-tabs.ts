@@ -7,11 +7,15 @@
 // process's window to be the foreground window and it is not.
 
 import { FFIType, dlopen, ptr, toArrayBuffer } from "bun:ffi";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { WebView, type Tab } from "../../src/index";
-import { Window, quitEventLoop, runEventLoop, type TabHandle } from "@n1h/sweetview-native";
+import { Screen, Window, quitEventLoop, runEventLoop, type TabHandle } from "@n1h/sweetview-native";
 import { getTabFrame } from "@n1h/sweetview-native/win32/tab-window";
-import { engineOf } from "@n1h/sweetview-native/internal";
+import { engineOf, scheduleNativeTimeout } from "@n1h/sweetview-native/internal";
+import { writeSync } from "node:fs";
+import { buttonsDown, endMenu, injectCursorMove, injectLeftButton, openPopupMenu } from "../../../sweetview-native/test/win32-os";
 import type { Key } from "@n1h/sweetview-native/win32/shortcuts";
 import { STRIP_HEIGHT } from "@n1h/sweetview-native/win32/strip-shared";
 import { _debugWinTabs, mergeAllWindows } from "../../src/tabs/win-tabs";
@@ -37,7 +41,12 @@ const user32 = dlopen("user32.dll", {
   GetMonitorInfoW: { args: [u64, FFIType.ptr], returns: i32 },
   GetForegroundWindow: { args: [], returns: u64 },
   GetLayeredWindowAttributes: { args: [u64, FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: i32 },
+  WindowFromPoint: { args: [u64], returns: u64 },
+  GetAncestor: { args: [u64, u32], returns: u64 },
+  GetDC: { args: [u64], returns: u64 },
+  ReleaseDC: { args: [u64, u64], returns: i32 },
 }).symbols;
+const gdi32 = dlopen("gdi32.dll", { GetPixel: { args: [u64, i32, i32], returns: u32 } }).symbols;
 const kernel32 = dlopen("kernel32.dll", {
   GlobalAlloc: { args: [u32, u64], returns: u64 },
   GlobalLock: { args: [u64], returns: FFIType.ptr },
@@ -59,15 +68,21 @@ const WS_EX_NOACTIVATE = 0x08000000n;
 const WM_GETMINMAXINFO = 0x0024;
 const WM_NCHITTEST = 0x0084;
 const WM_DROPFILES = 0x0233;
+const WM_DPICHANGED = 0x02e0;
 
 type Rect = { x: number; y: number; width: number; height: number };
 type Check = { ok: boolean; detail?: unknown } | { skipped: string };
 const results: Record<string, Check> = {};
+/** One line per check as it happens, written straight to stderr, so a killed run shows where it was. */
+const say = (line: string) => void writeSync(2, `${line}\n`);
 const check = (name: string, ok: boolean, detail?: unknown) => {
   results[name] = { ok, detail };
-  console.error(`${ok ? "ok  " : "FAIL"} ${name}`);
+  say(`${ok ? "ok  " : "FAIL"} ${name}`);
 };
-const skip = (name: string, why: string) => void (results[name] = { skipped: why });
+const skip = (name: string, why: string) => {
+  results[name] = { skipped: why };
+  say(`skipped ${name}: ${why}`);
+};
 
 const until = async (condition: () => boolean, ms = 5000) => {
   for (const end = Date.now() + ms; Date.now() < end; await Bun.sleep(20)) if (condition()) return true;
@@ -153,6 +168,19 @@ function webviewChildren(frame: bigint): { rect: Rect; visible: boolean }[] {
   return out;
 }
 
+/** The top-level window under a screen point. */
+function windowAt(x: number, y: number): bigint {
+  const hit = user32.WindowFromPoint(BigInt.asUintN(32, BigInt(x)) | (BigInt.asUintN(32, BigInt(y)) << 32n));
+  return hit === 0n ? 0n : user32.GetAncestor(hit, 2); // GA_ROOT
+}
+/** A pixel on the screen, as "#rrggbb". */
+function screenPixel(x: number, y: number): string {
+  const screen = user32.GetDC(0n);
+  const c = gdi32.GetPixel(screen, x, y);
+  user32.ReleaseDC(0n, screen);
+  return `#${[c & 0xff, (c >> 8) & 0xff, (c >> 16) & 0xff].map((v) => v.toString(16).padStart(2, "0")).join("")}`;
+}
+
 const html = (n: string) =>
   new TextEncoder().encode(`<!doctype html><title>${n}</title><script>window.count = 0; window.instance = Math.random().toString(36).slice(2);</script><body>${n}</body>`);
 const page = (n: string) => ({ title: n, assets: { "index.html": html(n) } });
@@ -187,13 +215,46 @@ const unique = `w7-tabs-${process.pid}`;
 
 const loop = runEventLoop({ intervalMs: 5 });
 // A stuck step ends the run with what it has, rather than leaving the test to kill a process that hosts webviews.
-setTimeout(() => {
+// A native timeout: it fires inside a modal loop (a popup menu's) too, where Bun's own timers do not run.
+scheduleNativeTimeout(120_000, () => {
+  endMenu();
   check("fixture ran to the end", false, "timed out");
   console.log(`RESULT ${JSON.stringify(results)}`);
   server.kill();
   process.exit(1);
-}, 120_000).unref();
+});
 const windows: Window[] = [];
+const windowsOfOurs = () => windows.flatMap((w) => (w.handle ? [BigInt(w.handle)] : []));
+
+// ---- a guard on every popup menu this process opens ----------------------------------------------
+// A popup menu runs its own modal loop on this thread: nothing else here runs until it closes. A
+// native timeout fires inside that loop; every quarter second it looks for a menu of this process,
+// and one open longer than MENU_LIMIT_MS is ended (EndMenu) and recorded with what the OS showed,
+// so a menu nobody closes fails its check instead of hanging the run.
+const MENU_LIMIT_MS = 8000;
+const menuHangs: Record<string, unknown>[] = [];
+let menuContext: () => Record<string, unknown> = () => ({});
+let menuOpenSince = 0;
+let menusOpened = 0;
+let guarding = true;
+const guardMenus = () => {
+  if (!guarding) return;
+  if (openPopupMenu() === 0n) menuOpenSince = 0;
+  else if (menuOpenSince === 0) {
+    menuOpenSince = Date.now();
+    menusOpened++;
+  }
+  else if (Date.now() - menuOpenSince > MENU_LIMIT_MS) {
+    const hang = { menuWindowOfThisProcessOnScreen: true, openForMs: Date.now() - menuOpenSince, foregroundIsOurs: windowsOfOurs().includes(user32.GetForegroundWindow()), ...menuContext() };
+    menuHangs.push(hang);
+    say(`watchdog: a popup menu stayed open for ${MENU_LIMIT_MS} ms; ended it: ${JSON.stringify(hang)}`);
+    endMenu();
+    menuOpenSince = 0;
+  }
+  scheduleNativeTimeout(250, guardMenus);
+};
+scheduleNativeTimeout(250, guardMenus);
+
 const make = (options: ConstructorParameters<typeof Window>[0]) => {
   const win = new Window({ title: unique, noActivate: true, ...options });
   windows.push(win);
@@ -201,6 +262,32 @@ const make = (options: ConstructorParameters<typeof Window>[0]) => {
 };
 
 try {
+  // ---- the backdrop: the strip's and the page's colours where no webview covers them -----------------
+  // Frames with no tab yet have no webview: what shows is what the frame paints. Read from the
+  // screen, only where the frame is the window on top (another session's window may cover it).
+  for (const appearance of ["light", "dark"] as const) {
+    const name = `backdrop: the strip and the page areas in their own colours (${appearance})`;
+    const bare = make({ tabs: true, appearance, topmost: true, bounds: { x: 60, y: 60, width: 640, height: 420 } });
+    bare.show();
+    const bareHwnd = BigInt(bare.handle!);
+    const bareScale = user32.GetDpiForWindow(bareHwnd) / 96;
+    const o = clientOrigin(bareHwnd);
+    const c = clientRect(bareHwnd);
+    const stripAt = { x: o.x + 30, y: o.y + Math.round((STRIP_HEIGHT - 4) * bareScale) };
+    const pageAt = { x: o.x + 30, y: o.y + c.height - 10 };
+    const want = appearance === "light" ? { strip: "#e9eaee", page: "#f9f9fb" } : { strip: "#292a30", page: "#15161a" };
+    let seen = { strip: "", page: "" };
+    let ours = false;
+    await until(() => {
+      ours = windowAt(stripAt.x, stripAt.y) === bareHwnd && windowAt(pageAt.x, pageAt.y) === bareHwnd;
+      seen = { strip: screenPixel(stripAt.x, stripAt.y), page: screenPixel(pageAt.x, pageAt.y) };
+      return ours && seen.strip === want.strip && seen.page === want.page;
+    }, 2000);
+    if (!ours) skip(name, "another window covers the frame on the shared desktop");
+    else check(name, seen.strip === want.strip && seen.page === want.page, { seen, want, stripAt, pageAt });
+    bare.dispose();
+  }
+
   // ---- the frame, read back from the OS ----------------------------------------------
   const win = make({ tabs: true, appearance: "dark" });
   const hwnd = BigInt(win.handle!);
@@ -261,6 +348,46 @@ try {
     { scale, kids },
   );
   check("a new tab is selected", selects.at(-1) === t3 && selects.length === 3);
+
+  // ---- moving the window tells the strip's and every tab's webview, hidden tabs included -------------
+  // (NotifyParentWindowPositionChanged: WebView2 keeps the position to itself, so the engine counts the calls.)
+  const moveTold = async (target: Window, views: WebView<any, any>[]) => {
+    const engines = views.map((v) => engineOf(v.raw)!);
+    const before = engines.map((e) => e.movesTold());
+    let moves = 0;
+    const off = target.onMove(() => moves++);
+    const start = target.bounds();
+    target.setBounds({ ...start, x: start.x + 15, y: start.y + 10 });
+    await until(() => moves > 0, 1000);
+    off();
+    const told = engines.map((e, i) => e.movesTold() - before[i]!);
+    target.setBounds(start);
+    return { moves, told };
+  };
+  const moved = await moveTold(win, [strip, t1.webview, t2.webview, t3.webview]);
+  check("moving the window tells the strip's and every tab's webview", moved.moves > 0 && moved.told.every((n) => n === moved.moves), moved);
+
+  // ---- a DPI change: the suggested rectangle is taken; the strip and the minimum follow the window's DPI ----
+  // One monitor: the scale itself does not change, only the message and its rectangle are real.
+  const beforeDpi = windowRect(hwnd);
+  const suggested = new Int32Array([beforeDpi.x + 24, beforeDpi.y + 16, beforeDpi.x + 24 + beforeDpi.width + 40, beforeDpi.y + 16 + beforeDpi.height + 30]);
+  user32.SendMessageW(hwnd, WM_DPICHANGED, BigInt((dpi << 16) | dpi), BigInt(ptr(suggested)));
+  const afterDpi = windowRect(hwnd);
+  const clientAfterDpi = clientRect(hwnd);
+  const scaleAfterDpi = user32.GetDpiForWindow(hwnd) / 96;
+  const stripAfterDpi = Math.round(STRIP_HEIGHT * scaleAfterDpi);
+  const kidsAfterDpi = webviewChildren(hwnd).filter((k) => k.visible).map((k) => k.rect);
+  const trackAfterDpi = minTrack(hwnd);
+  const wantTrackAfterDpi = [Math.round(560 * scaleAfterDpi) + (afterDpi.width - clientAfterDpi.width), Math.round((420 + STRIP_HEIGHT) * scaleAfterDpi) + (afterDpi.height - clientAfterDpi.height)];
+  check(
+    "DPI change: the frame takes the suggested rectangle; the strip height and the default minimum follow the window's DPI",
+    afterDpi.x === suggested[0] && afterDpi.y === suggested[1] && afterDpi.width === suggested[2]! - suggested[0]! && afterDpi.height === suggested[3]! - suggested[1]! &&
+      kidsAfterDpi.some((r) => r.y === 0 && r.height === stripAfterDpi && r.width === clientAfterDpi.width) &&
+      kidsAfterDpi.some((r) => r.y === stripAfterDpi && r.height === clientAfterDpi.height - stripAfterDpi) &&
+      Math.abs(trackAfterDpi[0] - wantTrackAfterDpi[0]!) <= 1 && Math.abs(trackAfterDpi[1] - wantTrackAfterDpi[1]!) <= 1,
+    { dpi, suggested: [...suggested], afterDpi, kidsAfterDpi, trackAfterDpi, wantTrackAfterDpi },
+  );
+  win.setBounds(beforeDpi);
   t1.select();
   await until(() => selects.at(-1) === t1);
   const shown = [await ask(t1.webview, "document.visibilityState"), await ask(t2.webview, "document.visibilityState"), await ask(t3.webview, "document.visibilityState")];
@@ -314,7 +441,52 @@ try {
     closes.at(-1) === r1 && sel() !== r1 && webviewChildren(hwnd).filter((k) => k.visible).length === 2 && user32.IsWindow(hwnd) !== 0,
     webviewChildren(hwnd),
   );
+  // ---- titles; the strip's select, close and + -------------------------------------------------------
+  const s1 = await WebView.openTab(win, { assets: { "index.html": html("untitled") } });
+  const untitled = s1.title;
+  check("a tab opened with no title is called Tab <id>", /^Tab \d+$/.test(untitled), untitled);
+  s1.setTitle("  Spaced  ");
+  const trimmed = s1.title;
+  s1.setTitle("   ");
+  check(
+    "renaming a tab trims the title; an empty one becomes Tab <id>",
+    trimmed === "Spaced" && s1.title === untitled && getTitle(hwnd) === `${untitled} - ${unique}`,
+    { trimmed, now: s1.title, window: getTitle(hwnd) },
+  );
+  const idOf = async (title: string) => Number(await ask(strip, `window.__sweetview_rpc("strip.state", null).then((s) => s.tabs.find((t) => t.title === ${JSON.stringify(title)}).id)`));
+  await ask(strip, `window.__sweetview_rpc("strip.select", ${await idOf("r2")})`);
+  check("strip.select selects that tab", await until(() => sel() === r2, 2000), (sel() as Tab<any, any> | undefined)?.title);
+  await ask(strip, `window.__sweetview_rpc("strip.close", ${await idOf(untitled)})`);
+  check("strip.close closes that tab", await until(() => closes.at(-1) === s1, 2000) && s1.webview.raw.unsafeHandle === null);
+  const newBefore = newTabs.length;
+  await ask(strip, `window.__sweetview_rpc("strip.new", null)`);
+  check("strip.new asks the window for a new tab", await until(() => newTabs.length === newBefore + 1 && newTabs.at(-1) === win, 2000));
   r2.dispose();
+
+  // ---- concurrent openTab calls while the host is being made; a retry after a failed host ----------
+  const conc = make({ tabs: true });
+  const [ca, cb] = await Promise.all([WebView.openTab(conc, page("ca")), WebView.openTab(conc, page("cb"))]);
+  const concStrip = _debugWinTabs.strip(conc)!;
+  const concTabs = await askUntil(concStrip, "document.querySelectorAll('.tab').length", "2");
+  const concKids = webviewChildren(BigInt(conc.handle!));
+  check("concurrent openTab calls wait for one host: both tabs open in the window under one strip", ca.window === conc && cb.window === conc && concTabs === "2" && concKids.length === 3, { concTabs, concKids });
+  conc.dispose();
+
+  const retry = make({ tabs: true });
+  const retryHwnd = BigInt(retry.handle!);
+  _debugWinTabs.failNextStrip();
+  const failedOpens = await Promise.allSettled([WebView.openTab(retry, page("x1")), WebView.openTab(retry, page("x2"))]);
+  const strippedBack = await until(() => webviewChildren(retryHwnd).length === 0, 3000);
+  const x3 = await WebView.openTab(retry, page("x3"));
+  const retryStrip = _debugWinTabs.strip(retry)!;
+  // One strip, one tab, and the frame callbacks of the failed host are gone: one move tells each webview once.
+  const retryMoved = await moveTold(retry, [retryStrip, x3.webview]);
+  check(
+    "a failed host attach is forgotten: the waiting openTab fails with it, a later openTab makes the host again",
+    failedOpens.every((r) => r.status === "rejected") && strippedBack && x3.window === retry && webviewChildren(retryHwnd).length === 2 && retryMoved.moves > 0 && retryMoved.told.every((n) => n === retryMoved.moves),
+    { failed: failedOpens.map((r) => (r.status === "rejected" ? String(r.reason) : "opened")), retryMoved },
+  );
+  retry.dispose();
 
   // ---- the strip's close button -------------------------------------------------------------------------
   const closing = make({ tabs: true });
@@ -378,27 +550,51 @@ try {
   const h2 = await WebView.openTab(home, page("h2"));
 
   // ---- the tab menu and the system menu ----------------------------------------------------------
+  // Opens the menu from the strip and has the probe (a second process) read and work it. What the
+  // probe did and any watchdog report ride along, for a check that fails.
   const menu = async (id: number | null, action: string) => {
+    const hangsBefore = menuHangs.length;
+    const openedBefore = menusOpened;
     const helper = Bun.spawn([process.execPath, probe, String(process.pid), action], { stdout: "pipe", stderr: "pipe" });
+    const probeRun = { started: helper.pid > 0, action, out: "", exitCode: null as number | null };
+    menuContext = () => ({ probe: { ...probeRun, exitCode: helper.exitCode } });
+    const out = new Response(helper.stdout).text().then((t) => (probeRun.out = t.trim()));
     await Bun.sleep(50);
     void strip.raw.eval(`window.__sweetview_rpc("strip.menu", ${id === null ? "null" : await stripId(strip, id)})`);
-    const [out] = await Promise.all([new Response(helper.stdout).text(), helper.exited]);
-    return JSON.parse(out.trim().split(/\r?\n/).at(-1) || "{}");
+    const exited = await Promise.race([helper.exited.then(() => true), Bun.sleep(MENU_LIMIT_MS + 4000).then(() => false)]);
+    if (!exited) helper.kill(); // the probe this fixture started, through its own handle
+    await Promise.race([out, Bun.sleep(500)]);
+    probeRun.exitCode = helper.exitCode;
+    let parsed: { items?: any[] } = {};
+    try {
+      parsed = JSON.parse(probeRun.out.split(/\r?\n/).at(-1) || "{}");
+    } catch {}
+    // When the probe did not see the menu, it may still be on its way: wait for it, and for it to
+    // be gone (the guard ends it), so whatever happens to it belongs to this step.
+    if (parsed.items === undefined) await until(() => menusOpened > openedBefore, 3000);
+    await until(() => openPopupMenu() === 0n, MENU_LIMIT_MS + 1000);
+    const hangs = menuHangs.slice(hangsBefore);
+    return { ...parsed, probe: probeRun, ...(hangs.length > 0 ? { hangs } : {}) } as { items?: any[]; probe: typeof probeRun; hangs?: unknown[] };
   };
+  const failedMenu = (m: { probe: unknown; hangs?: unknown[] }, detail: unknown) => (m.hangs ? { hangs: m.hangs, probe: m.probe } : { detail, probe: m.probe });
   const tabMenu = await menu(0, "close");
   const labels = (tabMenu.items ?? []).map((i: { label?: string; enabled?: boolean; separator?: boolean }) => (i.separator ? "-" : `${i.label}${i.enabled ? "" : " (off)"}`));
   check(
     "tab menu items",
-    JSON.stringify(labels) === JSON.stringify(["New tab\tCtrl+T", "-", "Move tab to new window", "Merge all windows", "-", "Close tab\tCtrl+W", "Close other tabs"]),
-    labels,
+    !tabMenu.hangs && JSON.stringify(labels) === JSON.stringify(["New tab\tCtrl+T", "-", "Move tab to new window", "Merge all windows", "-", "Close tab\tCtrl+W", "Close other tabs"]),
+    tabMenu.hangs ? failedMenu(tabMenu, labels) : labels,
   );
   const sysMenu = await menu(null, "close");
   const sysLabels = (sysMenu.items ?? []).filter((i: { separator?: boolean }) => !i.separator).map((i: { label: string; enabled: boolean }) => `${i.label.replace(/\t.*/, "")}${i.enabled ? "" : " (off)"}`);
-  check("system menu on the strip: Restore off and Move, Size, Minimize, Maximize, Close on while not maximised", sysLabels.length >= 6 && sysLabels[0].endsWith("(off)") && sysLabels.slice(1).every((l: string) => !l.endsWith("(off)")), sysLabels);
+  check(
+    "system menu on the strip: Restore off and Move, Size, Minimize, Maximize, Close on while not maximised",
+    !sysMenu.hangs && sysLabels.length >= 6 && sysLabels[0]!.endsWith("(off)") && sysLabels.slice(1).every((l: string) => !l.endsWith("(off)")),
+    sysMenu.hangs ? failedMenu(sysMenu, sysLabels) : sysLabels,
+  );
   const countBefore = closes.length;
   const picked = await menu(0, "pick:5"); // Close tab
   await until(() => closes.length > countBefore, 2000);
-  check("choosing Close tab in the tab menu closes that tab", picked.items !== undefined && closes.length === countBefore + 1);
+  check("choosing Close tab in the tab menu closes that tab", !picked.hangs && picked.items !== undefined && closes.length === countBefore + 1, failedMenu(picked, { closes: closes.length - countBefore }));
 
   // ---- the strip's window buttons -------------------------------------------------------------------
   const rpc = (method: string) => strip.raw.eval(`window.__sweetview_rpc("${method}", null)`);
@@ -427,7 +623,29 @@ try {
   const f1 = await WebView.openTab(focusWin, page("focus"));
   focusWin.show();
   await Bun.sleep(300);
-  if (user32.GetForegroundWindow() !== BigInt(focusWin.handle!)) skip("focus returns to the page after a strip action", "the window is not the foreground window");
+  // A process started in the background is not given the foreground. A click of the user's (here
+  // injected, only over this window's own selected tab, with no button down) gives it, and is
+  // itself a strip action: the strip hands the focus back to the page when the press ends.
+  const focusHwnd = BigInt(focusWin.handle!);
+  for (let attempt = 0; attempt < 3 && user32.GetForegroundWindow() !== focusHwnd; attempt++) {
+    const o = clientOrigin(focusHwnd);
+    const s = user32.GetDpiForWindow(focusHwnd) / 96;
+    const at = { x: o.x + Math.round(60 * s), y: o.y + Math.round(20 * s) };
+    injectCursorMove(at.x, at.y, Screen.bounds());
+    await Bun.sleep(60);
+    if (buttonsDown() || windowAt(at.x, at.y) !== focusHwnd) {
+      await Bun.sleep(500);
+      continue;
+    }
+    try {
+      injectLeftButton(true);
+      await Bun.sleep(40);
+    } finally {
+      injectLeftButton(false);
+    }
+    await until(() => user32.GetForegroundWindow() === focusHwnd, 1500);
+  }
+  if (user32.GetForegroundWindow() !== focusHwnd) skip("focus returns to the page after a strip action", "the window is not the foreground window");
   else {
     const focusStrip = _debugWinTabs.strip(focusWin)!;
     await ask(focusStrip, "(document.body.focus(), 1)");
@@ -492,6 +710,23 @@ try {
     h2.window === torn && torn !== home && torn.isVisible() && afterTear[0] === "7" && afterTear[1] === instance && tornKids.length === 2 && tornKids.every((k) => k.visible),
     { afterTear, instance, tornKids },
   );
+  // A file dropped on the tab's webview goes to the window the tab is in now, and only to it.
+  const dropFile = join(process.env.WEBVIEW2_USER_DATA_FOLDER ?? tmpdir(), `dropped on a tab ${process.pid}.txt`);
+  await Bun.write(dropFile, "drop");
+  const tabDrops: Record<string, string[][]> = { home: [], torn: [] };
+  const offHomeDrop = home.onFileDrop((files) => tabDrops.home!.push(files));
+  const offTornDrop = torn.onFileDrop((files) => tabDrops.torn!.push(files));
+  const dragFile = (view: WebView<any, any>) => {
+    const engine = engineOf(view.raw)!;
+    for (const type of ["dragEnter", "dragOver", "drop"]) {
+      engine.callDevToolsProtocolMethod("Input.dispatchDragEvent", JSON.stringify({ type, x: 60, y: 60, data: { items: [], files: [dropFile], dragOperationsMask: 1 } }));
+    }
+  };
+  dragFile(h2.webview);
+  await until(() => tabDrops.torn!.length > 0, 3000);
+  await Bun.sleep(100);
+  check("a file dropped on a torn-off tab's webview goes to its new window", JSON.stringify(tabDrops) === JSON.stringify({ home: [], torn: [[dropFile]] }), tabDrops);
+
   mergeAllWindows(home);
   await until(() => user32.IsWindow(tornHwnd) === 0, 2000);
   const afterMerge = [await ask(h2.webview, "(window.count += 1)"), await ask(h2.webview, "window.instance")];
@@ -499,10 +734,21 @@ try {
   // The target window's selection before the merge stays selected; the merged tab is hidden behind it.
   const merged = [await ask(h1.webview, "document.visibilityState"), await ask(h2.webview, "document.visibilityState")];
   check("merge: the window keeps its selected tab on show", JSON.stringify(merged) === JSON.stringify(["visible", "hidden"]), merged);
+  // Back in `home`: a drop on the tab goes to `home` now.
+  tabDrops.torn = [];
+  h2.select();
+  await askUntil(h2.webview, "document.visibilityState", "visible", 2000);
+  dragFile(h2.webview);
+  await until(() => tabDrops.home!.length > 0, 3000);
+  await Bun.sleep(100);
+  check("a file dropped on a merged tab's webview goes to the window it joined", JSON.stringify(tabDrops) === JSON.stringify({ home: [[dropFile]], torn: [] }), tabDrops);
+  offHomeDrop();
+  offTornDrop();
 
 } catch (err) {
   check("fixture ran to the end", false, err instanceof Error ? err.stack : String(err));
 } finally {
+  guarding = false;
   for (const w of windows) w.dispose();
   server.kill();
   quitEventLoop();

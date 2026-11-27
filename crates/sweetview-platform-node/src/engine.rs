@@ -84,6 +84,12 @@ impl Engine {
     self.0.notify_moved()
   }
 
+  /// Test hook: how many times `notifyMoved` reached the live webview.
+  #[napi]
+  pub fn moves_told(&self) -> u32 {
+    self.0.moves_told()
+  }
+
   /// Moves the webview into another window without reloading it.
   #[napi]
   pub fn reparent(&self, window: BigInt) -> napi::Result<()> {

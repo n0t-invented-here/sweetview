@@ -292,8 +292,38 @@ Source of truth for behaviour: the bindings repository's `docs/` and `test/`, an
 
 ## W7. Tabs
 
-- [ ] W7.1 `new Window({ tabs: true })`, `WebView.openTab`, `Tab`, `createApp({ tabs: true })`: every behaviour in `rust-rewrite/reference/v1-drafting-tabs-and-window.md` under "Behaviour: tabs on Windows".
-- [ ] W7.2 `demos/native-tabs` runs; its `scripts/win-drive.ts` passes.
+- [x] W7.1 `new Window({ tabs: true })`, `WebView.openTab`, `Tab`, `createApp({ tabs: true })`: every behaviour in `rust-rewrite/reference/v1-drafting-tabs-and-window.md` under "Behaviour: tabs on Windows".
+
+    `rust-rewrite/evidence/w7-native-tabs.txt`: a table with one row for each of the 27 bullets of "Behaviour: tabs on Windows" in `rust-rewrite/reference/v1-drafting-tabs-and-window.md`, in the reference's order, and the check or checks that prove it; then the runs. The checks are in `packages/sweetview/src/tabs/win-tabs.test.ts`, which runs two fixtures in processes of their own, each on its own WebView2 profile: `packages/sweetview/test/fixtures/win-tabs.ts` (frame styles and metrics read back from the OS, tabs opened, selected, renamed, reordered, closed, the last-tab rule, tear-off and merge keeping the page, shortcuts, popups, the failed-load page, the tab menu and the system menu read and chosen from a second process, the two-colour backdrop read as pixels, a DPI change, window moves, file drops on the frame and on a moved tab) and `win-tabs-input.ts` (real input: the strip dragged and resized with a held mouse button, a tab dragged out, the only tab dragging its window, a tab dropped on another window's strip, Ctrl+T and Ctrl+W typed).
+
+    ```
+    $ bun test packages/sweetview/src/tabs
+     76 pass
+     0 fail
+    ```
+
+    Nothing was skipped in that run: the control that tells whether this session's OS runs a move loop for an injected press (`moveLoopControl()` in `packages/sweetview-native/test/win32-os.ts`) succeeded, so every gesture check was mandatory. Not run, as the evidence file's last section says: a real change of scale (one monitor at one scale; the suggested rectangle of `WM_DPICHANGED` is applied and tested), and a check of its own for `strip.scrolled` (its use in the drop index is unit-tested in `strip-shared.test.ts`).
+
+- [x] W7.2 `demos/native-tabs` runs; its `scripts/win-drive.ts` passes.
+
+    `rust-rewrite/evidence/w7-native-tabs.txt`, section "Runs": `just demos native-tabs drive <TEMP>/...` builds the demo's page and runs `scripts/win-drive.ts`, which starts the demo's own app code, drives it and reads it back:
+
+    ```
+    ok   three tabs opened: 3
+    ok   window is visible
+    ok   tab 1 renamed: Alpha Tab
+    ok   captured tabbed window screenshot: 1040x760
+    ok   tabbed window maximizes
+    ok   tabbed window restores
+    ok   moveToNewWindow returns a new visible Window
+    ok   mergeAllWindows moves tab back into primary window
+    ok   a refused initial navigation shows the failed-load page: This site did not open
+    ok   closing the last tab exits the event loop
+    PASS
+    ```
+
+    (15 lines of `ok` in the file; the ten above are quoted.)
+
 
 ## W8. Packaging
 

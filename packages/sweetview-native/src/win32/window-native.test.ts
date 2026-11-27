@@ -21,23 +21,22 @@ const probe = onWindows
       GetActiveWindow: { args: [], returns: FFIType.u64 },
       WindowFromPoint: { args: [FFIType.u64], returns: FFIType.u64 },
       GetAncestor: { args: [FFIType.u64, FFIType.u32], returns: FFIType.u64 },
-      GetGUIThreadInfo: { args: [FFIType.u32, FFIType.ptr], returns: FFIType.i32 },
       GetAsyncKeyState: { args: [FFIType.i32], returns: FFIType.i16 },
       GetKeyState: { args: [FFIType.i32], returns: FFIType.i16 },
       GetCursorPos: { args: [FFIType.ptr], returns: FFIType.i32 },
     }).symbols
   : undefined;
 
+const { inMoveSize: inMoveSizeOfThisThread } = onWindows ? await import("../../test/win32-os") : { inMoveSize: () => false };
+
 /** What the OS says about a drag in progress on this thread: read from inside the move loop when a drag test fails. */
 function dragState(): { inMoveSize: boolean; leftDown: boolean; leftDownForThisThread: boolean; cursor: { x: number; y: number } } {
-  const info = new Uint8Array(72); // GUITHREADINFO, x64: cbSize, flags, six handles, the caret rectangle
-  const view = new DataView(info.buffer);
-  view.setUint32(0, 72, true);
-  probe!.GetGUIThreadInfo(0, ptr(info)); // 0: the calling thread
   const point = new Int32Array(2);
   probe!.GetCursorPos(ptr(point));
   return {
-    inMoveSize: (view.getUint32(4, true) & 0x2) !== 0, // GUI_INMOVESIZE
+    // This thread's GUI_INMOVESIZE, read by thread id (test/win32-os.ts): GetGUIThreadInfo(0, ...)
+    // names the foreground thread, which may be another process's.
+    inMoveSize: inMoveSizeOfThisThread(),
     leftDown: probe!.GetAsyncKeyState(0x01) < 0,
     leftDownForThisThread: probe!.GetKeyState(0x01) < 0,
     cursor: { x: point[0]!, y: point[1]! },
@@ -136,6 +135,14 @@ function moveCursorAsInput(x: number, y: number): void {
 }
 
 const handleOf = (win: Window) => BigInt(win.handle!);
+
+// The move-loop control (test/win32-os.ts), run once before the gesture that needs the OS's move
+// loop: when the session's OS runs no move loop for a plain window of the test's own either, the
+// startDrag test is skipped for that reason rather than failed.
+const moveLoop = onWindows ? await (await api()).moveLoopControl(Screen.bounds()) : undefined;
+if (moveLoop?.ok === false) {
+  console.log(`window-native.test: startDrag skipped: the session's OS started no move loop for the control window either (${moveLoop.why}): ${JSON.stringify(moveLoop.readings)}`);
+}
 
 describe.if(onWindows)("Window on the binding: options read back from the OS", () => {
   test("bounds, title, frame, resizable and the minimum size", async () => {
@@ -368,7 +375,7 @@ describe.if(onWindows)("Window on the binding: click-through, hit regions, the r
     }
   });
 
-  test("startDrag hands the window to the OS, which moves it with the cursor until the button is released", async () => {
+  test.skipIf(moveLoop?.ok === false)("startDrag hands the window to the OS, which moves it with the cursor until the button is released", async () => {
     const native = binding();
     const original = await cursorNow();
     const bounds = { x: 320, y: 320, width: 300, height: 200 };
