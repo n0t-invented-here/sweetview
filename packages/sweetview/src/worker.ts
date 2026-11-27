@@ -66,8 +66,8 @@ function encodeClampedErrorReply(seq: string, message: string, maxBytes: number,
 /**
  * Writes the fatal `{ kind: "workerError", message }` frame and wakes the UI
  * thread. The UI thread fails every pending RPC and native request when it
- * drains this frame, which works even while webview_run() blocks its event
- * loop. Returns false when the frame could not be written.
+ * drains this frame, which works even while the blocking native loop holds
+ * its event loop. Returns false when the frame could not be written.
  */
 export function writeWorkerCrash(ring: Ring, message: string, wake: () => void, encoder: TextEncoder = new TextEncoder()): boolean {
   const encoded = encodeClamped(
@@ -219,9 +219,9 @@ function createWorkerHost() {
     }
   }
 
-  // Worker.onerror on the UI side cannot fire while webview_run() blocks the
-  // main thread's event loop, so a crash is also reported through the ring,
-  // whose drain runs on the UI thread via webview_dispatch. Before init the
+  // Worker.onerror on the UI side cannot fire while the blocking native loop
+  // holds the main thread's event loop, so a crash is also reported through
+  // the ring, whose drain runs on the UI thread after a wake (worker-wake.ts). Before init the
   // UI side's Worker.onerror / onmessageerror remain the fallback.
   let crashReported = false;
   function installCrashReporting(ring: Ring, wake: () => void) {

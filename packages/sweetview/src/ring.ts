@@ -1,7 +1,7 @@
 // Single-producer / single-consumer byte ring over a SharedArrayBuffer.
 //
-// Producer: the worker (Bun event loop). Consumer: the UI thread, inside a
-// webview_dispatch callback. Frames are length-prefixed. The producer blocks
+// Producer: the worker (Bun event loop). Consumer: the UI thread, inside the
+// drain the worker's wake runs (worker-wake.ts). Frames are length-prefixed. The producer blocks
 // (Atomics.wait) only when the ring is full; the consumer never blocks.
 //
 // Header (Int32, shared): [0] write cursor, [1] read cursor, [2] wakeup pending,
