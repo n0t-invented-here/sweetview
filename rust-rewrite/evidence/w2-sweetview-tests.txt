@@ -1,0 +1,66 @@
+$ bun test packages/sweetview/src/request-handler.test.ts packages/sweetview/src/app.test.ts packages/sweetview/src/worker.test.ts packages/sweetview/src/webview-lib.test.ts
+bun test v1.4.4 (38afee6c8)
+
+packages\sweetview\src\app.test.ts:
+(pass) desktop startup & deferred RPC > a native watchdog fires during pumpEvents, loads fallback HTML, and reveals the window [324.51ms]
+(pass) desktop startup & deferred RPC > a native watchdog also fires while webview_run blocks Bun [313.63ms]
+(pass) desktop startup & deferred RPC > the ready handshake drains activation, acknowledges duplicates, and cancels the watchdog [1457.66ms]
+(pass) desktop startup & deferred RPC > keeps startup behavior opt-in and cancels an armed watchdog on disposal [307.95ms]
+(pass) desktop startup & deferred RPC > dispatches deferred RPCs without reentering a running UI handler [179.15ms]
+(pass) desktop startup & deferred RPC > rejects duplicate UI method names before attaching [2.67ms]
+(pass) WebView & createApp (win32) > close-to-tray can intercept the default close on a createApp window [107.83ms]
+(pass) WebView & createApp (win32) > WebView.attach rejects invalid ringBytes (below 128, non-power-of-two, > 2^30) without poisoning later attaches [98.93ms]
+(pass) WebView & createApp (win32) > failed WebView.attach (missing asset) discards WM_QUIT so subsequent attaches succeed [312.80ms]
+(pass) WebView & createApp (win32) > WebView.attach preserves exact outer bounds and GWL_STYLE for framed, frameless-resizable, and Window.fromHandle windows [488.22ms]
+(pass) WebView & createApp (win32) > Layer 1 tabbed Window.dispose() disposes child tab webviews and blocks later openTab calls [286.06ms]
+(pass) WebView & createApp (win32) > closing a tabbed Window via WM_CLOSE with no onClose disposes all child tab webviews [249.82ms]
+(skip) WebView, createApp & tabs (darwin) > WebView.attach rejects invalid ringBytes without poisoning later attaches
+(skip) WebView, createApp & tabs (darwin) > WebView.attach preserves outer bounds and the NSWindow styleMask for framed, frameless, and Window.fromHandle windows
+(skip) WebView, createApp & tabs (darwin) > a tabbed Window shown before its first tab reveals the tabs, and setTopmost and Screen.of follow the tab windows
+(skip) WebView, createApp & tabs (darwin) > startResize and startDrag act only while the left mouse button is down
+(skip) WebView, createApp & tabs (darwin) > tab.close() closes a window's last tab, fires onTabClose, then asks the window's onClose listeners
+(skip) WebView, createApp & tabs (darwin) > a tab survives its webview being disposed directly, and the library's UIDelegate is restored first
+(skip) WebView, createApp & tabs (darwin) > tabbed Window.dispose() disposes its tabs' webviews, leaves a torn-off tab alone, and blocks later openTab calls
+
+packages\sweetview\src\request-handler.test.ts:
+(pass) a synchronous handler that returns a rejected Promise gets an immediate 500 [1.05ms]
+(pass) binary response frames preserve uint64 IDs, repeated headers and arbitrary bytes [1.81ms]
+(pass) forwards stream frames before EOF and splits oversized chunks, with a legacy buffering fallback [1.28ms]
+(pass) serves worker routes and isolates the frames origin in a real desktop webview [6984.03ms]
+(pass) registers and clears file drops on a live WebView2 as Window listeners change [506.83ms]
+(skip) registers and clears file drops on a live WKWebView as Window listeners change, and delivers a dropped file
+(pass) returns clean errors for synchronous Promises and absent worker handlers [20565.00ms]
+
+packages\sweetview\src\webview-lib.test.ts:
+(pass) webview origins > the asset and frames origins are this platform's, and differ [0.03ms]
+(skip) webview library symbol caching (macOS) > caches core, backgroundColor, and setAsset symbol lookups per libPath
+
+packages\sweetview\src\worker.test.ts:
+(pass) writeWorkerFrame > writes valid reply and event frames and wakes the consumer [0.31ms]
+(pass) writeWorkerFrame > chunks oversized valid JSON reply frames across the ring and reassembles them intact [1.32ms]
+(pass) writeWorkerFrame > falls back to a clamped error reply when ring is too small even for chunk envelopes [0.29ms]
+(pass) writeWorkerFrame > turns unserializable replies (BigInt and circular) into error replies [1.29ms]
+(pass) writeWorkerFrame > clamps error message when even the error reason is larger than a tiny ring [0.10ms]
+(pass) writeWorkerFrame > clamps error messages containing quotes, NUL bytes, and multibyte UTF-8 accurately by byte length [0.10ms]
+sweetview worker: event bigint could not be sent: JSON.stringify cannot serialize BigInt.
+(pass) writeWorkerFrame > swallows unserializable event frames without crashing and chunks oversized valid events [0.18ms]
+(pass) writeWorkerCrash > writes the workerError frame and wakes the consumer [0.28ms]
+(pass) writeWorkerCrash > clamps a message larger than the ring so the crash still gets through [0.14ms]
+
+9 tests skipped:
+(skip) WebView, createApp & tabs (darwin) > WebView.attach rejects invalid ringBytes without poisoning later attaches
+(skip) WebView, createApp & tabs (darwin) > WebView.attach preserves outer bounds and the NSWindow styleMask for framed, frameless, and Window.fromHandle windows
+(skip) WebView, createApp & tabs (darwin) > a tabbed Window shown before its first tab reveals the tabs, and setTopmost and Screen.of follow the tab windows
+(skip) WebView, createApp & tabs (darwin) > startResize and startDrag act only while the left mouse button is down
+(skip) WebView, createApp & tabs (darwin) > tab.close() closes a window's last tab, fires onTabClose, then asks the window's onClose listeners
+(skip) WebView, createApp & tabs (darwin) > a tab survives its webview being disposed directly, and the library's UIDelegate is restored first
+(skip) WebView, createApp & tabs (darwin) > tabbed Window.dispose() disposes its tabs' webviews, leaves a torn-off tab alone, and blocks later openTab calls
+(skip) registers and clears file drops on a live WKWebView as Window listeners change, and delivers a dropped file
+(skip) webview library symbol caching (macOS) > caches core, backgroundColor, and setAsset symbol lookups per libPath
+
+ 28 pass
+ 9 skip
+ 0 fail
+ 143 expect() calls
+Ran 37 tests across 4 files. [32.24s]
+exit: 0

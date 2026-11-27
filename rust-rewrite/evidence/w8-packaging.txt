@@ -1,0 +1,177 @@
+$ bun rust-rewrite/checks/pack-install.ts
+packed 8 packages: n1h-sweetview-1.0.0.tgz, n1h-sweetview-build-1.0.0.tgz, n1h-sweetview-ipc-1.0.0.tgz, n1h-sweetview-ipc-electron-1.0.0.tgz, n1h-sweetview-ipc-tauri-1.0.0.tgz, n1h-sweetview-ipc-ws-1.0.0.tgz, n1h-sweetview-native-1.0.0.tgz, n1h-sweetview-settings-1.0.0.tgz
+prebuilt files inside n1h-sweetview-native-1.0.0.tgz:
+  package/prebuilt/binding.d.ts
+  package/prebuilt/sweetview.win32-x64-msvc.node
+$ bun install (in the empty project): exit 0
+$ bun probe.ts (in the empty project): exit 0
+PROBE {"platform":"win32-x64","bindingInstalled":true,"primaryScreenHasSize":true,"windowHandleIsBigint":true,"windowBounds":{"x":80,"y":80,"width":320,"height":200},"clipboardIsCallable":true,"rawWebviewIsAClass":true,"assetOrigin":"http://webview.localhost"}
+removing <TEMP>/pack
+OK: the packed native package carries the binding and the loader finds it after install
+exit: 0
+
+$ just pack   (the lines that name a tarball or the prebuilt binding)
+[30m[43m WARNING [49m[39m Filesystem transaction committed but recovery-state cleanup failed at D:\Repos\GitHub\n0t-invented-here\sweetview\packages\sweetview-native\prebuilt\.napi-rs-filesystem-transaction.swp: EPERM: operation not permitted, unlink 'D:\Repos\GitHub\n0t-invented-here\sweetview\packages\sweetview-native\prebuilt\..sweetview.win32-x64-msvc.node.e2c83885-d49f-49c1-8564-e5664fe792d0.1.retired.tmp.10904.67d5b205-02fc-4fea-8000-277dcd7b024d.tmp'
+bun pack v1.4.4 (38afee6c8)
+packed 2.11KB package.json
+packed 0.61KB file-imports.d.ts
+packed 41.45KB src/app.ts
+packed 39B src/build.ts
+packed 7.37KB src/darwin-webview-host.ts
+packed 9.46KB src/darwin-webview-lib.ts
+packed 0.64KB src/darwin-worker-wake.ts
+packed 2.52KB src/html.ts
+packed 1.41KB src/index.ts
+packed 53B src/ipc-electron/client.ts
+packed 46B src/ipc-electron/index.ts
+packed 54B src/ipc-electron/preload.ts
+packed 53B src/ipc-electron/server.ts
+packed 50B src/ipc-tauri/client.ts
+packed 43B src/ipc-tauri/index.ts
+packed 47B src/ipc-ws/client.ts
+packed 40B src/ipc-ws/index.ts
+packed 47B src/ipc-ws/server.ts
+packed 37B src/ipc/index.ts
+packed 1.37KB src/messages.ts
+packed 52B src/native/hit-regions.ts
+packed 40B src/native/index.ts
+packed 2.28KB src/page.ts
+packed 8.52KB src/request-response.ts
+packed 4.79KB src/ring.ts
+packed 57B src/settings-store.ts
+packed 26.34KB src/tabs/darwin-tabs.ts
+packed 13.30KB src/tabs/darwin-webview.ts
+packed 1.53KB src/tabs/index.ts
+packed 0.96KB src/tabs/load-failed.ts
+packed 16.45KB src/tabs/win-strip-assets.ts
+packed 31.44KB src/tabs/win-tabs.ts
+packed 4.76KB src/tabs/win-webview2.ts
+packed 4.97KB src/webview-host.ts
+packed 0.66KB src/webview-lib.ts
+packed 6.55KB src/window-chrome.ts
+packed 0.71KB src/worker-wake.ts
+packed 11.18KB src/worker.ts
+n1h-sweetview-1.0.0.tgz
+Total files: 38
+Unpacked size: 202.1KB
+bun pack v1.4.4 (38afee6c8)
+packed 0.86KB package.json
+packed 11.87KB src/build.ts
+packed 26B src/index.ts
+packed 5.1KB src/make-app.ts
+packed 0.53KB src/refresh-icons.ts
+n1h-sweetview-build-1.0.0.tgz
+Total files: 5
+Unpacked size: 18.37KB
+bun pack v1.4.4 (38afee6c8)
+packed 0.65KB package.json
+packed 1.80KB src/bridge.ts
+packed 2.71KB src/frame.ts
+packed 511B src/index.ts
+packed 1.45KB src/memory.ts
+packed 3.1KB src/service.ts
+n1h-sweetview-ipc-1.0.0.tgz
+Total files: 6
+Unpacked size: 10.18KB
+bun pack v1.4.4 (38afee6c8)
+packed 0.86KB package.json
+packed 1.13KB src/channel.ts
+packed 3.42KB src/client.ts
+packed 0.77KB src/index.ts
+packed 2.48KB src/preload.ts
+packed 6.50KB src/server.ts
+n1h-sweetview-ipc-electron-1.0.0.tgz
+Total files: 6
+Unpacked size: 15.16KB
+bun pack v1.4.4 (38afee6c8)
+packed 0.79KB package.json
+packed 5.86KB src/client.ts
+packed 337B src/index.ts
+n1h-sweetview-ipc-tauri-1.0.0.tgz
+Total files: 3
+Unpacked size: 6.99KB
+bun pack v1.4.4 (38afee6c8)
+packed 0.79KB package.json
+packed 3.62KB src/client.ts
+packed 347B src/index.ts
+packed 5.88KB src/server.ts
+n1h-sweetview-ipc-ws-1.0.0.tgz
+Total files: 4
+Unpacked size: 10.63KB
+bun pack v1.4.4 (38afee6c8)
+packed 1.74KB package.json
+packed 20.47KB prebuilt/binding.d.ts
+packed 2.67MB prebuilt/sweetview.win32-x64-msvc.node
+packed 8.85KB src/activation.ts
+packed 1.27KB src/app-icon.ts
+packed 0.68KB src/app-menu.ts
+packed 2.13KB src/binding.ts
+packed 0.52KB src/clipboard.ts
+packed 7.78KB src/darwin/activation.ts
+packed 442B src/darwin/app-icon.ts
+packed 3.1KB src/darwin/app-menu.ts
+packed 0.81KB src/darwin/clipboard.ts
+packed 1.18KB src/darwin/core-foundation.ts
+packed 4.29KB src/darwin/event-loop.ts
+packed 1.49KB src/darwin/folder-picker.ts
+packed 2.31KB src/darwin/image.ts
+packed 0.64KB src/darwin/input.ts
+packed 1.1KB src/darwin/library.ts
+packed 4.0KB src/darwin/menu.ts
+packed 10.28KB src/darwin/notifier.ts
+packed 15.66KB src/darwin/objc.ts
+packed 6.99KB src/darwin/screen.ts
+packed 17.14KB src/darwin/tabs.ts
+packed 5.1KB src/darwin/tray.ts
+packed 1.20KB src/darwin/webview.ts
+packed 37.28KB src/darwin/window.ts
+packed 4.50KB src/event-loop.ts
+packed 0.66KB src/folder-picker.ts
+packed 4.0KB src/fs.ts
+packed 6.67KB src/hit-regions.ts
+packed 23.37KB src/icon.ts
+packed 2.61KB src/index.ts
+packed 6.21KB src/input-hooks.ts
+packed 0.65KB src/internal.ts
+packed 2.1KB src/menu.ts
+packed 2.1KB src/notifications.ts
+packed 2.94KB src/permissions.ts
+packed 0.85KB src/platform.ts
+packed 1.61KB src/screen.ts
+packed 0.70KB src/shell-icons.ts
+packed 2.22KB src/tray.ts
+packed 1.00KB src/types.ts
+packed 1.69KB src/ui-thread.ts
+packed 30.62KB src/webview.ts
+packed 2.31KB src/win32/activation.ts
+packed 15.97KB src/win32/api.ts
+packed 309B src/win32/app-icon.ts
+packed 0.77KB src/win32/app-menu.ts
+packed 460B src/win32/clipboard.ts
+packed 1.57KB src/win32/event-loop.ts
+packed 0.71KB src/win32/folder-picker.ts
+packed 2.41KB src/win32/icon.ts
+packed 2.21KB src/win32/init.ts
+packed 2.93KB src/win32/menu.ts
+packed 3.16KB src/win32/message-window.ts
+packed 3.80KB src/win32/notifier.ts
+packed 1.23KB src/win32/notify-icon.ts
+packed 0.89KB src/win32/screen.ts
+packed 1.83KB src/win32/shortcuts.ts
+packed 2.75KB src/win32/strip-shared.ts
+packed 24.45KB src/win32/tab-window.ts
+packed 8.1KB src/win32/tabbed-window.ts
+packed 3.22KB src/win32/tray.ts
+packed 7.26KB src/win32/window.ts
+packed 21.73KB src/window.ts
+n1h-sweetview-native-1.0.0.tgz
+Total files: 65
+Unpacked size: 3.0MB
+bun pack v1.4.4 (38afee6c8)
+packed 0.76KB package.json
+packed 3.1KB src/app-identity.ts
+packed 68B src/index.ts
+packed 4.92KB src/settings-store.ts
+n1h-sweetview-settings-1.0.0.tgz
+Total files: 4
+Unpacked size: 8.81KB

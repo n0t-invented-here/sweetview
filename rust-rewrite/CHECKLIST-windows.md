@@ -62,15 +62,49 @@ Source of truth for behaviour: the bindings repository's `docs/` and `test/`, an
 
 `wry` creates the webview, runs scripts and carries page messages. Assets, the request handler, the frames origin and streamed responses are served by this project's own `WebResourceRequested` handler on the `ICoreWebView2` that `wry` hands out, as the proposal's section "What `wry` lacks, and where each is built" describes; `wry`'s custom protocols are not used.
 
-- [ ] W2.1 Every capability of `RawWebview` (the bindings' `Webview` class) is available: constructor forms, `title`, `size`, `navigate`, `setHTML`, `init`, `eval`, `bind`, `bindRaw`, `unbind`, `return`, `run`, `destroy`, `unsafeHandle`, `unsafeWindowHandle`, and `unload`.
-- [ ] W2.2 `setAsset` and `assetOrigin`: `http://webview.localhost`, path matching and validation exactly as `assets.md` states.
-- [ ] W2.3 `setBackgroundColor`: alpha 0 and 255, the error for any other alpha, transparency through to the desktop.
-- [ ] W2.4 `setRequestHandler`, `completeRequest`, `completeWebviewRequest` from a worker, `framesOrigin` equal to `http://frames.webview.localhost`, header validation, the 404 and 500 rules, requests from service workers.
-- [ ] W2.5 Streaming: `beginResponse`, `writeResponseChunk`, `endResponse` and the worker forms, with the duplicate-begin error and the chunk rules of `request-handler.md`.
-- [ ] W2.6 `setAllowExternalDrop` and `setFileDropHandler`, with HTML drops inside the page still reaching the page.
-- [ ] W2.7 The bindings' `test/request-handler.test.ts` and its fixtures are brought into this repository and pass, rewritten for the new API where it changed and asserting the same behaviour.
-- [ ] W2.8 Sweetview's own webview tests pass: `request-handler.test.ts`, `app.test.ts`, `worker.test.ts`, `webview-lib.test.ts`.
-- [ ] W2.9 Teardown: destroying a webview with requests open, from inside a handler, and from a worker racing the destroy, each behave as `requests.md` states. A test covers each.
+- [x] W2.1 Every capability of `RawWebview` (the bindings' `Webview` class) is available: constructor forms, `title`, `size`, `navigate`, `setHTML`, `init`, `eval`, `bind`, `bindRaw`, `unbind`, `return`, `run`, `destroy`, `unsafeHandle`, `unsafeWindowHandle`, and `unload`.
+
+    `rust-rewrite/evidence/w2-webview.txt`, "W2.1 the Webview class", 5 tests on real webviews: `new Webview(debug, size)` with its own window (the real `HWND`, checked with `IsWindow` and `GetWindowTextW`), `title`, `size` with each `SizeHint`; `new Webview(debug, size, hwnd)` mounted in a given window; `new Webview(handle)`; `navigate`, `setHTML`, `init`, `eval`, `bind`, `bindRaw`, `return`, `unbind`, `run`, `destroy` (also from inside a binding), `unsafeHandle`, `unsafeWindowHandle`, `unload`.
+
+- [x] W2.2 `setAsset` and `assetOrigin`: `http://webview.localhost`, path matching and validation exactly as `assets.md` states.
+
+    `rust-rewrite/evidence/w2-webview.txt`, "W2.2 setAsset and assetOrigin: raw path, trailing slash, query and fragment, leading slashes, replacement, validation", against `http://webview.localhost`. The same rules as pure logic, with the C++ library's tests: `cargo test -p sweetview-http`, 15 passed.
+
+- [x] W2.3 `setBackgroundColor`: alpha 0 and 255, the error for any other alpha, transparency through to the desktop.
+
+    `rust-rewrite/evidence/w2-webview.txt`: "W2.3 setBackgroundColor: alpha 0 and 255 accepted, any other alpha -1, a bad channel -2, a destroyed webview -3" and "W2.3 alpha 0 shows the window behind a transparent window on the screen; alpha 255 hides it" (pixels read from the screen: the green window behind shows through the transparent one, and the page's own red square is drawn over it).
+
+- [x] W2.4 `setRequestHandler`, `completeRequest`, `completeWebviewRequest` from a worker, `framesOrigin` equal to `http://frames.webview.localhost`, header validation, the 404 and 500 rules, requests from service workers.
+
+    `rust-rewrite/evidence/w2-webview.txt`: "W2.4 the 404 and 500 rules ..." and the live test "W2.7 dynamic HTML, POST echo, binary image, cross-origin iframe, static assets, streaming, service worker, teardown" (answers from a `Worker` through `completeWebviewRequest`, the frames origin `http://frames.webview.localhost` cross-origin from the page, a service worker's request reaching the handler). Header validation: "W2.7 argument checks in the bindings" and `cargo test -p sweetview-http`.
+
+- [x] W2.5 Streaming: `beginResponse`, `writeResponseChunk`, `endResponse` and the worker forms, with the duplicate-begin error and the chunk rules of `request-handler.md`.
+
+    `rust-rewrite/evidence/w2-webview.txt`: "W2.5 beginResponse, writeResponseChunk, endResponse on the UI thread: chunks in order, duplicate begin 1, the chunk rules, -3 after destroy"; the worker forms in the W2.7 live test and in "W2.9 a worker answering and streaming while the UI thread destroys the webview".
+
+- [x] W2.6 `setAllowExternalDrop` and `setFileDropHandler`, with HTML drops inside the page still reaching the page.
+
+    `rust-rewrite/evidence/w2-webview.txt`: "W2.6 a file dropped from the OS reaches setFileDropHandler with its real path; an in-page drag and drop still reaches the page" (the drop is driven through DevTools with a real file) and "W2.7 the file drop handler replaces itself, clears itself, and destroys the webview from inside its call". `setAllowExternalDrop` is read back from WebView2's controller in `crates/sweetview-platform-webview/tests/requests.rs` (`allows_external_drop()` is `Some(true)` by default, `Some(false)` after `set_allow_external_drop(false)`, `Some(true)` again after `true`):
+
+    ```
+    $ cargo test -p sweetview-platform-webview --test requests
+    test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+    ```
+
+    A drag from Explorer itself was not run: no unattended session can perform one.
+
+- [x] W2.7 The bindings' `test/request-handler.test.ts` and its fixtures are brought into this repository and pass, rewritten for the new API where it changed and asserting the same behaviour.
+
+    `rust-rewrite/evidence/w2-webview.txt`, 11 tests named "W2.7 ...": `packages/sweetview-native/src/request-handler.test.ts` with the fixtures `live-request-handler.ts`, `complete-worker.ts`, `live-callback-teardown.ts`, `live-bind.ts` under `packages/sweetview-native/test/fixtures/`. Assertions about the old package's `JSCallback` bookkeeping (`pendingCallbackCloses`, `fileDropCallbackPtr`) have no counterpart; what they guarded (replace, clear and destroy from inside a call) is asserted on real requests and drops.
+
+- [x] W2.8 Sweetview's own webview tests pass: `request-handler.test.ts`, `app.test.ts`, `worker.test.ts`, `webview-lib.test.ts`.
+
+    `rust-rewrite/evidence/w2-sweetview-tests.txt`: `request-handler.test.ts`, `app.test.ts`, `worker.test.ts`, `webview-lib.test.ts`: 28 pass, 0 fail, 9 skip (the macOS-only tests). The three live tests that were skipped at the baseline for want of a library with the request handler now run and pass: "serves worker routes and isolates the frames origin in a real desktop webview", "registers and clears file drops on a live WebView2 as Window listeners change", "returns clean errors for synchronous Promises and absent worker handlers". `webview-lib.test.ts` asserts the origins on every platform; its `dlopen` caching test, which tested `bun:ffi` plumbing that no longer exists on Windows, runs on macOS only.
+
+- [x] W2.9 Teardown: destroying a webview with requests open, from inside a handler, and from a worker racing the destroy, each behave as `requests.md` states. A test covers each.
+
+    `rust-rewrite/evidence/w2-webview.txt`, "W2.9 teardown", one test each: "destroying a webview with requests open (one pending, one streaming) releases them; run() returns; late answers are -3", "destroying a webview from inside its request handler", "a worker answering and streaming while the UI thread destroys the webview: accepted before, -3 after, no crash".
+
 
 ## W3. Input hooks
 
@@ -90,7 +124,10 @@ Source of truth for behaviour: the bindings repository's `docs/` and `test/`, an
 
     `rust-rewrite/evidence/w3-input.txt`: `cargo test -p sweetview-keycodes`, 23 passed. Both tables of `key_codes.hh` are ported (Windows 149 entries, macOS 121, each count asserted), with the C++ fork's table tests and its "scan code from a bare virtual key" test.
 
-- [ ] W3.5 The bindings' `examples/input-hooks.ts` runs against the new package, edited only for API changes that `docs/upgrading.md` records.
+- [x] W3.5 The bindings' `examples/input-hooks.ts` runs against the new package, edited only for API changes that `docs/upgrading.md` records.
+
+    `rust-rewrite/evidence/w3-input-hooks-example.txt`: the bindings' `examples/input-hooks.ts` is at `packages/sweetview-native/examples/input-hooks.ts` with no edit at all (its import, `../src/index`, names this package's index); it starts, shows its window, and exits with code 0 when the window is closed.
+
 - [x] W3.6 The hooks, `permissions` and every other name in `rust-rewrite/reference/bindings-exports.txt` are exported by a Sweetview package. Today an application imports them from `@n1h/sweetview-webview-bun`, which Sweetview does not re-export; `docs/upgrading.md` gives the new import for each.
 
     ```
@@ -110,8 +147,14 @@ Source of truth for behaviour: the bindings repository's `docs/` and `test/`, an
 
     `rust-rewrite/evidence/w4-windows.txt`: `event-loop.test.ts` (`pumpEvents`, `runEventLoop`/`quitEventLoop`, a second loop refused), "both loop modes serve a window" (a close request and the hit-region poll under the blocking loop and under the Bun-timer loop), and `discardQuit`. Bun timers and promises between pumps: `rust-rewrite/evidence/w1-boundary.txt`, "the pumped loop delivers native timeouts while Bun timers and promises keep running". `run()` on an app: `packages/sweetview/src/app.test.ts` passes on the Rust loop in the full run of `bun test`.
 
-- [ ] W4.2 `Window`: every option of `WindowOptions` and every method, per `docs/native/windows.md`. `handle` is the real `HWND`. `Window.fromHandle` wraps a window this process did not create through Sweetview (an application's own `HWND`), with `onResize`, `onMove`, `onClose` and `onFileDrop` working on it, and `WebView.attach` mounts a webview inside it.
-- [ ] W4.2a A webview is mounted inside a window that already exists (`WebView.attach(window, options)`), and the window keeps its styles and outer bounds across the mount, as `preserveGeometry` ensures today.
+- [x] W4.2 `Window`: every option of `WindowOptions` and every method, per `docs/native/windows.md`. `handle` is the real `HWND`. `Window.fromHandle` wraps a window this process did not create through Sweetview (an application's own `HWND`), with `onResize`, `onMove`, `onClose` and `onFileDrop` working on it, and `WebView.attach` mounts a webview inside it.
+
+    `rust-rewrite/evidence/w4-windows.txt`, "Window on the binding: options read back from the OS" (bounds, title, frame, resizable, minimum size, appearance, topmost, `hideFromTaskbar`, `noActivate`, layering, show, minimise, maximise), "win32 Window" (15 tests), and "Window.fromHandle on an application's own window (made here through bun:ffi) > onResize, onMove, onClose and onFileDrop arrive; dispose leaves the window alive". `handle` is the real `HWND`: the tests pass it to `user32` calls of their own. A webview mounted in a wrapped window: `rust-rewrite/evidence/w2-sweetview-tests.txt`, "WebView.attach preserves exact outer bounds and GWL_STYLE for framed, frameless-resizable, and Window.fromHandle windows".
+
+- [x] W4.2a A webview is mounted inside a window that already exists (`WebView.attach(window, options)`), and the window keeps its styles and outer bounds across the mount, as `preserveGeometry` ensures today.
+
+    `rust-rewrite/evidence/w2-sweetview-tests.txt`: "WebView.attach preserves exact outer bounds and GWL_STYLE for framed, frameless-resizable, and Window.fromHandle windows" passes on the Rust engine.
+
 - [x] W4.3 Overlays: transparent, colour key, opacity, topmost above the taskbar, hidden from the taskbar, no-activate, the hidden first window.
 
     `rust-rewrite/evidence/w4-windows.txt`: "topmost, hideFromTaskbar, noActivate and layering, kept through a style rewrite", "show() leaves a noActivate window inactive and activates any other", the `colorKey` and opacity tests of `overlay.test.ts`. The hidden first window: `tao` creates a hidden top-level tool window with its event loop, before any window of Sweetview's (`tao` 0.38.0, `src/platform_impl/windows/event_loop.rs`), so Sweetview's own first window is never the process's first.
@@ -189,7 +232,15 @@ Source of truth for behaviour: the bindings repository's `docs/` and `test/`, an
 
 ## W8. Packaging
 
-- [ ] W8.1 The package holds the prebuilt binding for Windows x64 and the loader finds it after `bun add` from a packed tarball in an empty project.
+- [x] W8.1 The package holds the prebuilt binding for Windows x64 and the loader finds it after `bun add` from a packed tarball in an empty project.
+
+    `rust-rewrite/evidence/w8-packaging.txt`, `bun rust-rewrite/checks/pack-install.ts`: all eight packages packed; the native tarball holds `package/prebuilt/sweetview.win32-x64-msvc.node` and `binding.d.ts`; `bun install` of the tarballs in an empty project in the temp directory exits 0; a script there imports `@n1h/sweetview/native` and `@n1h/sweetview`, creates a window and reports:
+
+    ```
+    PROBE {"platform":"win32-x64","bindingInstalled":true,"primaryScreenHasSize":true,"windowHandleIsBigint":true,"windowBounds":{"x":80,"y":80,"width":320,"height":200},"clipboardIsCallable":true,"rawWebviewIsAClass":true,"assetOrigin":"http://webview.localhost"}
+    OK: the packed native package carries the binding and the loader finds it after install
+    ```
+
 - [ ] W8.2 `just compile` builds every demo that has the recipe. `just pack` lists what would publish.
 - [x] W8.3 `refreshWindowsIcons` and the rest of `packages/sweetview-build` work with no `bun:ffi`.
 

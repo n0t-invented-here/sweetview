@@ -271,8 +271,12 @@ fn request_path_on_a_real_webview() {
     view.eval(drop_probe);
     let r = ctx.wait(&view, "probe");
     assert_eq!((r["flag"].as_bool(), r["prevented"].as_bool()), (Some(false), Some(false)), "{r}");
+    // External drops are allowed by default; the setting is read back from WebView2 itself.
+    assert_eq!(extras.allows_external_drop(), Some(true));
     assert_eq!(extras.set_allow_external_drop(false), ErrorCode::Ok);
+    assert_eq!(extras.allows_external_drop(), Some(false));
     assert_eq!(extras.set_allow_external_drop(true), ErrorCode::Ok);
+    assert_eq!(extras.allows_external_drop(), Some(true));
 
     scenario("navigation failures are reported; HTTP error responses are not");
     let failures: Rc<RefCell<Vec<NavigationFailure>>> = Rc::default();

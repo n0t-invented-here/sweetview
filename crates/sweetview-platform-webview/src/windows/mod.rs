@@ -253,6 +253,18 @@ impl WebviewExtras {
         }
     }
 
+    /// Whether WebView2 currently accepts drags that start outside the app:
+    /// what [`set_allow_external_drop`](Self::set_allow_external_drop) last set,
+    /// read back from the controller. `None` without the interface.
+    pub fn allows_external_drop(&self) -> Option<bool> {
+        let controller4 = self.inner.controller.cast::<ICoreWebView2Controller4>().ok()?;
+        let mut allowed = windows::core::BOOL::default();
+        // SAFETY: `controller4` is a live interface of this webview's controller, and
+        // `allowed` is a valid BOOL for the call to fill.
+        unsafe { controller4.AllowExternalDrop(&mut allowed) }.ok()?;
+        Some(allowed.as_bool())
+    }
+
     /// Sets or clears the handler that receives the real paths of files dropped
     /// on the top-level document from the OS, instead of the page. It runs from
     /// [`drain`](Self::drain), after the drop event has returned, and is never

@@ -61,6 +61,10 @@ impl WebviewExtras {
     }
 
     /// Allows or refuses drops from outside the app.
+    pub fn allows_external_drop(&self) -> Option<bool> {
+        None
+    }
+
     pub fn set_allow_external_drop(&self, allow: bool) -> ErrorCode {
         ErrorCode::Unspecified
     }
