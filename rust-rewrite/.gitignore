@@ -1,0 +1,5 @@
+local/
+spike/target/
+spike/*.node
+spike/*.exe
+spike/Cargo.lock
