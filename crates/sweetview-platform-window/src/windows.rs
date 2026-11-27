@@ -297,9 +297,7 @@ pub fn bring_to_front(window: &impl NativeWindow) {
   let flags = SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE;
   set_window_pos(hwnd, Some(HWND_TOPMOST), Rect::default(), flags);
   set_window_pos(hwnd, Some(HWND_NOTOPMOST), Rect::default(), flags);
-  // SAFETY: a window function on a handle named by `NativeWindow`. The OS may
-  // refuse the foreground to a process that does not hold it; that is not an error.
-  let _granted = unsafe { SetForegroundWindow(hwnd) };
+  set_foreground(hwnd);
 }
 
 /// `show()` for a window `tao` did not make: a minimised window is restored;
@@ -339,17 +337,23 @@ pub fn set_title(window: &impl NativeWindow, title: &str) -> bool {
 
 /// Hands the press of the left button to the OS move loop, as a press on the title bar.
 pub fn start_os_drag(window: &impl NativeWindow) {
-  // SAFETY: `ReleaseCapture` has no preconditions; it fails only when nothing holds the capture.
+  press_frame(window.hwnd(), HTCAPTION);
+}
+
+/// Hands the left button's press to the OS as a press on the part of the
+/// frame whose `HT*` code is `hit`; returns when the OS move or size loop ends.
+pub(crate) fn press_frame(hwnd: HWND, hit: u32) {
+  // SAFETY: `ReleaseCapture` takes nothing and has no preconditions; it fails only when nothing holds the capture.
   let _released = unsafe { ReleaseCapture() };
-  // SAFETY: a window message with plain integer parameters to a handle named by `NativeWindow`.
-  let _result = unsafe { SendMessageW(window.hwnd(), WM_NCLBUTTONDOWN, Some(WPARAM(HTCAPTION as usize)), Some(LPARAM(0))) };
+  // SAFETY: a window message with plain integer parameters (no pointer in either) to a handle
+  // the OS validates; a stale one makes the call fail.
+  let _result = unsafe { SendMessageW(hwnd, WM_NCLBUTTONDOWN, Some(WPARAM(hit as usize)), Some(LPARAM(0))) };
 }
 
 /// Sends `WM_CLOSE`, as the close button does. For tests of what a close request does.
 #[doc(hidden)]
 pub fn send_close_for_tests(window: &impl NativeWindow) {
-  // SAFETY: a plain message with no parameters to a handle named by `NativeWindow`.
-  let _result = unsafe { SendMessageW(window.hwnd(), WM_CLOSE, None, None) };
+  crate::request_close(window);
 }
 
 /// Resizes the window's first child to fill its client area, as a window
@@ -728,7 +732,16 @@ fn deliver(state: &SubclassState, event: &WindowEvent) -> bool {
   catch_unwind(AssertUnwindSafe(|| (state.handler)(event))).unwrap_or(false)
 }
 
-fn forward(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+/// Makes `hwnd` the foreground window. The OS may refuse the foreground to a
+/// process that does not hold it; that is not an error.
+pub(crate) fn set_foreground(hwnd: HWND) {
+  // SAFETY: takes the handle by value and reads no memory of ours; the OS validates the handle.
+  let _granted = unsafe { SetForegroundWindow(hwnd) };
+}
+
+/// Passes a message the OS gave a subclass procedure on to the next procedure
+/// in the window's chain, whichever subclass of this crate received it.
+pub(crate) fn forward(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
   // SAFETY: passes the message the OS gave the subclass procedure on to the next procedure in the chain.
   unsafe { DefSubclassProc(hwnd, message, wparam, lparam) }
 }

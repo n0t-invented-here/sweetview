@@ -2,49 +2,13 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::PoisonError;
 
-use windows::core::w;
 use windows::Win32::Graphics::Gdi::{CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, GetDC, GetPixel, ReleaseDC, SelectObject, HBITMAP, HGDIOBJ};
-use windows::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows::Win32::UI::HiDpi::GetDpiForWindow;
-use windows::Win32::UI::WindowsAndMessaging::{
-  CreateWindowExW, DestroyWindow, GetWindowLongPtrW, GetWindowRect, SetWindowLongPtrW, GWL_STYLE, WA_ACTIVE, WA_INACTIVE, WINDOW_EX_STYLE,
-  WM_ACTIVATE, WS_OVERLAPPEDWINDOW,
-};
+use windows::Win32::UI::WindowsAndMessaging::{GetWindowRect, GWL_STYLE, WA_ACTIVE, WA_INACTIVE, WM_ACTIVATE, WS_OVERLAPPEDWINDOW};
 
 use super::*;
-use crate::{handle_counts, outer_bounds, ForeignWindow, WindowEvent, WindowSubclass};
-
-/// A plain hidden top-level window of this thread, destroyed on drop.
-struct TestWindow(HWND);
-
-impl TestWindow {
-  fn new() -> Self {
-    // SAFETY: a null module name asks for the handle of the process's own executable.
-    let module = unsafe { GetModuleHandleW(None) }.expect("module handle");
-    // SAFETY: the class is the system's STATIC class and every string is static.
-    let hwnd = unsafe {
-      CreateWindowExW(WINDOW_EX_STYLE(0), w!("STATIC"), w!("sweetview tab-frame test"), WS_OVERLAPPEDWINDOW, 40, 40, 300, 200, None, None, Some(module.into()), None)
-    }
-    .expect("CreateWindowExW");
-    Self(hwnd)
-  }
-
-  fn foreign(&self) -> ForeignWindow {
-    ForeignWindow::from_handle_value(self.0 .0 as isize).expect("a live window")
-  }
-
-  fn style(&self) -> u32 {
-    // SAFETY: reads the style of this test's own window.
-    unsafe { GetWindowLongPtrW(self.0, GWL_STYLE) as u32 }
-  }
-}
-
-impl Drop for TestWindow {
-  fn drop(&mut self) {
-    // SAFETY: the window was made by `new` on this thread and is destroyed only here.
-    let _ = unsafe { DestroyWindow(self.0) };
-  }
-}
+use crate::platform::tests::TestWindow;
+use crate::platform::{client_size, dpi_of, set_style_of};
+use crate::{handle_counts, outer_bounds, style, WindowEvent, WindowSubclass};
 
 fn serial() -> std::sync::MutexGuard<'static, ()> {
   crate::TEST_SERIAL.lock().unwrap_or_else(PoisonError::into_inner)
@@ -69,21 +33,19 @@ fn the_subclass_reports_activation_and_keeps_forced_style_bits() {
   })
   .expect("subclass");
   for state in [WA_ACTIVE, WA_INACTIVE] {
-    // SAFETY: a plain message with integer parameters to this test's own window.
-    unsafe { SendMessageW(window.0, WM_ACTIVATE, Some(WPARAM(state as usize)), Some(LPARAM(0))) };
+    window.send(WM_ACTIVATE, state as usize);
   }
   // The default procedure may report a state again (focus moves inside it); the order is what counts.
   let mut events = seen.borrow().clone();
   events.dedup();
   assert_eq!(events, vec![WindowEvent::Activated(true), WindowEvent::Activated(false)]);
 
-  assert_eq!(window.style() & FRAME_STYLE, 0);
+  assert_eq!(style(&window.foreign()) & FRAME_STYLE, 0);
   subclass.force_style(FRAME_STYLE);
-  assert_eq!(window.style() & FRAME_STYLE, FRAME_STYLE);
+  assert_eq!(style(&window.foreign()) & FRAME_STYLE, FRAME_STYLE);
   // A later rewrite of the whole style, as `tao` makes, keeps the bit.
-  // SAFETY: writes the style of this test's own window.
-  unsafe { SetWindowLongPtrW(window.0, GWL_STYLE, WS_OVERLAPPEDWINDOW.0 as isize) };
-  assert_eq!(window.style() & FRAME_STYLE, FRAME_STYLE);
+  set_style_of(window.0, GWL_STYLE, WS_OVERLAPPEDWINDOW.0 as isize);
+  assert_eq!(style(&window.foreign()) & FRAME_STYLE, FRAME_STYLE);
 }
 
 #[test]
@@ -130,23 +92,20 @@ fn colorref((red, green, blue): (u8, u8, u8)) -> u32 {
 /// erases on the screen, and reads back a pixel in the strip (`strip_y`) and
 /// one at the bottom of the client area.
 fn erased_pixels(window: &TestWindow, strip_y: i32) -> (u32, u32) {
-  let mut client = RECT::default();
-  // SAFETY: `client` is owned by this frame for the call to fill.
-  unsafe { GetClientRect(window.0, &mut client) }.expect("client rect");
+  let (width, height) = client_size(window.0).expect("client rect");
   // SAFETY: the screen's device context, released below.
   let screen = unsafe { GetDC(None) };
   // SAFETY: a memory device context compatible with the screen's, deleted below.
   let memory = unsafe { CreateCompatibleDC(Some(screen)) };
   // SAFETY: a bitmap the size of the client area, deleted below.
-  let bitmap: HBITMAP = unsafe { CreateCompatibleBitmap(screen, client.right, client.bottom) };
+  let bitmap: HBITMAP = unsafe { CreateCompatibleBitmap(screen, width, height) };
   // SAFETY: selects this test's bitmap into its memory context; the previous object is put back below.
   let previous: HGDIOBJ = unsafe { SelectObject(memory, bitmap.into()) };
   // SAFETY: the message WM_ERASEBKGND with this test's own device context, to this test's own window.
   unsafe { SendMessageW(window.0, WM_ERASEBKGND, Some(WPARAM(memory.0 as usize)), Some(LPARAM(0))) };
-  // SAFETY: reads a pixel of this test's own bitmap.
-  let strip = unsafe { GetPixel(memory, 4, strip_y) }.0;
-  // SAFETY: as above.
-  let page = unsafe { GetPixel(memory, 4, client.bottom - 2) }.0;
+  // SAFETY: reads a pixel of this test's own bitmap, selected into its own memory context.
+  let pixel = |y| unsafe { GetPixel(memory, 4, y) }.0;
+  let (strip, page) = (pixel(strip_y), pixel(height - 2));
   // SAFETY: puts back the object the context held.
   unsafe { SelectObject(memory, previous) };
   // SAFETY: the bitmap is no longer selected into any context.
@@ -162,8 +121,7 @@ fn erased_pixels(window: &TestWindow, strip_y: i32) -> (u32, u32) {
 fn the_frame_paints_the_strip_and_the_page_in_their_own_colours() {
   let _serial = serial();
   let window = TestWindow::new();
-  // SAFETY: a window function on this test's own window.
-  let scale = f64::from(unsafe { GetDpiForWindow(window.0) }.max(96)) / 96.0;
+  let scale = f64::from(dpi_of(window.0)) / 96.0;
   let strip_bottom = (40.0 * scale).round() as i32;
   let messages = FrameMessages::install(&window.foreign(), LIGHT).expect("frame messages");
   assert_eq!(erased_pixels(&window, strip_bottom - 2), (colorref(LIGHT.strip), colorref(LIGHT.page)), "light");
@@ -181,8 +139,7 @@ fn a_dpi_change_applies_the_suggested_rectangle() {
   let _serial = serial();
   let window = TestWindow::new();
   let _messages = FrameMessages::install(&window.foreign(), LIGHT).expect("frame messages");
-  // SAFETY: a window function on this test's own window.
-  let dpi = unsafe { GetDpiForWindow(window.0) };
+  let dpi = dpi_of(window.0);
   let suggested = RECT { left: 70, top: 90, right: 70 + 420, bottom: 90 + 330 };
   // The scale itself does not change (one monitor): the rectangle must still be taken.
   let wparam = WPARAM(((dpi << 16) | dpi) as usize);

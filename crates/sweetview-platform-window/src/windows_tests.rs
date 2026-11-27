@@ -27,7 +27,7 @@ impl TestWindow {
     ForeignWindow::from_handle_value(self.0 .0 as isize).expect("a live window")
   }
 
-  fn send(&self, message: u32, wparam: usize) -> LRESULT {
+  pub(crate) fn send(&self, message: u32, wparam: usize) -> LRESULT {
     // SAFETY: a plain message with integer parameters to this test's own window.
     unsafe { SendMessageW(self.0, message, Some(WPARAM(wparam)), Some(LPARAM(0))) }
   }
