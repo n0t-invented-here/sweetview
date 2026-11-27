@@ -89,4 +89,22 @@ mod tests {
     .expect("thread");
     assert!(refused.is_some_and(|e| e.0.contains("multi-threaded")));
   }
+
+  #[test]
+  fn entering_and_leaving_returns_every_handle() {
+    let _serial = crate::TEST_SERIAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    // On a thread of its own, so the first enter really initialises COM and the last drop
+    // really uninitialises it, in every round.
+    let growth = std::thread::spawn(|| {
+      crate::testing::smallest_growth(100, || {
+        let outer = ComApartment::enter().expect("an STA");
+        let inner = ComApartment::enter().expect("entered again");
+        drop(inner);
+        drop(outer);
+      })
+    })
+    .join()
+    .expect("thread");
+    assert!(growth.within(0), "{growth:?}");
+  }
 }

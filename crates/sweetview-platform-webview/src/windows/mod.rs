@@ -223,7 +223,9 @@ impl WebviewExtras {
     /// first lets WebView2 report outstanding script registrations without
     /// waiting for that navigation's response.
     pub fn stop_navigation(&self) {
-        // SAFETY: `webview` is this webview's live ICoreWebView2; no arguments.
+        // SAFETY: `Inner` holds a COM reference to this ICoreWebView2 (taken from `wry` in
+        // `attach`), so it is alive for the call; once WebView2 has closed, the call returns
+        // an error rather than touching freed state. No arguments.
         let _ = unsafe { self.inner.webview.Stop() };
     }
 
@@ -264,8 +266,8 @@ impl WebviewExtras {
             return ErrorCode::Unspecified;
         };
         let color = COREWEBVIEW2_COLOR { R: r, G: g, B: b, A: a };
-        // SAFETY: `controller2` is a live interface of this webview's controller,
-        // and the colour is passed by value.
+        // SAFETY: `controller2` is a COM reference this frame holds (from `cast`) to the
+        // controller `Inner` keeps alive; the colour is passed by value.
         match unsafe { controller2.SetDefaultBackgroundColor(color) } {
             Ok(()) => ErrorCode::Ok,
             Err(_) => ErrorCode::Unspecified,
@@ -279,7 +281,8 @@ impl WebviewExtras {
         let Ok(controller4) = self.inner.controller.cast::<ICoreWebView2Controller4>() else {
             return ErrorCode::Unspecified;
         };
-        // SAFETY: `controller4` is a live interface of this webview's controller.
+        // SAFETY: `controller4` is a COM reference this frame holds (from `cast`) to the
+        // controller `Inner` keeps alive; the flag is passed by value.
         match unsafe { controller4.SetAllowExternalDrop(allow) } {
             Ok(()) => ErrorCode::Ok,
             Err(_) => ErrorCode::Unspecified,
@@ -292,8 +295,9 @@ impl WebviewExtras {
     pub fn allows_external_drop(&self) -> Option<bool> {
         let controller4 = self.inner.controller.cast::<ICoreWebView2Controller4>().ok()?;
         let mut allowed = windows::core::BOOL::default();
-        // SAFETY: `controller4` is a live interface of this webview's controller, and
-        // `allowed` is a valid BOOL for the call to fill.
+        // SAFETY: `controller4` is a COM reference this frame holds (from `cast`) to the
+        // controller `Inner` keeps alive, and `allowed` is a BOOL owned by this frame for
+        // the call to fill.
         unsafe { controller4.AllowExternalDrop(&mut allowed) }.ok()?;
         Some(allowed.as_bool())
     }
@@ -340,7 +344,8 @@ impl WebviewExtras {
     /// Tells WebView2 its window moved, so popups (select lists, tooltips)
     /// follow it.
     pub fn notify_parent_window_position_changed(&self) {
-        // SAFETY: `controller` is this webview's live controller.
+        // SAFETY: `Inner` holds a COM reference to the controller (taken from `wry` in
+        // `attach`), so it is alive for the call; a closed one returns an error. No arguments.
         let _ = unsafe { self.inner.controller.NotifyParentWindowPositionChanged() };
     }
 
@@ -368,7 +373,8 @@ impl Drop for WebviewExtras {
         // torn down its network stack: a deferral released unanswered can then
         // never send its request to the network. `wry`'s own drop closes it again,
         // which does nothing.
-        // SAFETY: `controller` is this webview's live controller.
+        // SAFETY: `Inner` holds a COM reference to the controller until it drops, after this
+        // call; closing an already closed controller (as `wry` does again later) is a no-op.
         let _ = unsafe { inner.controller.Close() };
         drop(inner.pending.take());
         drop(inner.registrations.take());
@@ -652,7 +658,8 @@ impl Inner {
     fn complete_and_erase(&self, id: u64) {
         let pending = self.pending.borrow_mut().remove(&id);
         if let Some(pending) = pending {
-            // SAFETY: `deferral` is the live deferral of this request, completed once.
+            // SAFETY: `pending` holds a COM reference to this request's deferral, and it was
+            // just removed from the table, so `Complete` runs once per deferral.
             let _ = unsafe { pending.deferral.Complete() };
         }
     }
@@ -856,9 +863,9 @@ fn set_response(
 /// The request headers as the request handler receives them.
 fn read_request_headers_json(request: &ICoreWebView2WebResourceRequest) -> String {
     let mut headers = Vec::new();
-    // SAFETY: `request` is a live request of the event being handled.
+    // SAFETY: `request` is a COM reference the caller holds for the event being handled.
     let iterator = unsafe { request.Headers() }.and_then(|collection| {
-        // SAFETY: `collection` is the live header collection just returned.
+        // SAFETY: `collection` is the COM reference `Headers` just returned, owned by this closure.
         unsafe { collection.GetIterator() }
     });
     if let Ok(iterator) = iterator {
@@ -886,7 +893,7 @@ fn read_request_headers_json(request: &ICoreWebView2WebResourceRequest) -> Strin
 /// The whole request body, or `None` when the stream fails, so the handler
 /// never sees a body cut short.
 fn read_request_body(request: &ICoreWebView2WebResourceRequest) -> Option<Vec<u8>> {
-    // SAFETY: `request` is a live request of the event being handled.
+    // SAFETY: `request` is a COM reference the caller holds for the event being handled.
     let content = match unsafe { request.Content() } {
         Ok(content) => content,
         Err(e) if e.code().is_ok() => return Some(Vec::new()), // no body
@@ -919,7 +926,8 @@ fn read_dropped_paths(args: &ICoreWebView2WebMessageReceivedEventArgs) -> Vec<St
     let mut paths = Vec::new();
     // A runtime too old to attach objects has no ICoreWebView2WebMessageReceivedEventArgs2.
     let Ok(args2) = args.cast::<ICoreWebView2WebMessageReceivedEventArgs2>() else { return paths };
-    // SAFETY: `args2` is a live interface of the event args being handled.
+    // SAFETY: `args2` is a COM reference this frame holds (from `cast`) to the event args,
+    // which WebView2 keeps valid while the handler runs.
     let Ok(objects) = (unsafe { args2.AdditionalObjects() }) else { return paths };
     let mut count = 0u32;
     // SAFETY: `count` is a local u32 for the call to fill.
@@ -927,7 +935,8 @@ fn read_dropped_paths(args: &ICoreWebView2WebMessageReceivedEventArgs) -> Vec<St
         return paths;
     }
     for index in 0..count {
-        // SAFETY: `index` is below the count the collection just reported.
+        // SAFETY: `objects` is the COM reference `AdditionalObjects` returned, and `index` is
+        // below the count it just reported; a bad index would be an error result.
         let Ok(item) = (unsafe { objects.GetValueAtIndex(index) }) else { continue };
         // Anything but a file from the operating system is skipped.
         let Ok(file) = item.cast::<ICoreWebView2File>() else { continue };

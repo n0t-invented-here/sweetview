@@ -101,4 +101,28 @@ mod tests {
     assert!(!host.is_running());
     assert_eq!(host.with_target(|_| 2), 2);
   }
+
+  /// `tao` 0.38 starts a wait thread for each event loop it makes
+  /// (`platform_impl/windows/event_loop.rs`, `thread::spawn(.. wait_thread ..)`)
+  /// that outlives the loop, so every loop costs the process a thread's
+  /// handles and USER object; a process makes one. The host is measured
+  /// against a bare `tao` loop made and run the same way: it must keep
+  /// nothing more.
+  #[test]
+  fn making_and_dropping_a_host_keeps_nothing_beyond_taos_own_loop() {
+    let _serial = crate::TEST_SERIAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let bare = crate::testing::smallest_growth(20, || {
+      let mut event_loop: EventLoop<()> = EventLoopBuilder::new().with_any_thread(true).build();
+      event_loop.run_return(|_, _, flow| *flow = ControlFlow::Exit);
+    });
+    let host = crate::testing::smallest_growth(20, || {
+      let host: LoopHost<()> = LoopHost::new(EventLoopBuilder::new().with_any_thread(true).build());
+      host.run(|_, _, flow| *flow = ControlFlow::Exit).expect("no run in progress");
+      assert_eq!(host.with_target(|_| 3), 3);
+    });
+    eprintln!("growth over 20 loops: bare tao {bare:?}, LoopHost {host:?}");
+    assert!(host.user_objects <= bare.user_objects, "{host:?} > {bare:?}");
+    assert!(host.gdi_objects <= bare.gdi_objects, "{host:?} > {bare:?}");
+    assert!(host.kernel_handles <= bare.kernel_handles, "{host:?} > {bare:?}");
+  }
 }
