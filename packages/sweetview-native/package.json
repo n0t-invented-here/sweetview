@@ -15,7 +15,8 @@
   "files": [
     "src",
     "!src/**/*.test.ts",
-    "!src/**/*.test.worker.ts"
+    "!src/**/*.test.worker.ts",
+    "!src/**/*.test-support.ts"
   ],
   "exports": {
     ".": "./src/index.ts",
