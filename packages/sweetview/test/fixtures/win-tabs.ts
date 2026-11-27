@@ -7,6 +7,8 @@
 // process's window to be the foreground window and it is not.
 
 import { FFIType, dlopen, ptr, toArrayBuffer } from "bun:ffi";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { WebView, type Tab } from "../../src/index";
 import { Window, quitEventLoop, runEventLoop, type TabHandle } from "@n1h/sweetview-native";
@@ -37,7 +39,12 @@ const user32 = dlopen("user32.dll", {
   GetMonitorInfoW: { args: [u64, FFIType.ptr], returns: i32 },
   GetForegroundWindow: { args: [], returns: u64 },
   GetLayeredWindowAttributes: { args: [u64, FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: i32 },
+  WindowFromPoint: { args: [u64], returns: u64 },
+  GetAncestor: { args: [u64, u32], returns: u64 },
+  GetDC: { args: [u64], returns: u64 },
+  ReleaseDC: { args: [u64, u64], returns: i32 },
 }).symbols;
+const gdi32 = dlopen("gdi32.dll", { GetPixel: { args: [u64, i32, i32], returns: u32 } }).symbols;
 const kernel32 = dlopen("kernel32.dll", {
   GlobalAlloc: { args: [u32, u64], returns: u64 },
   GlobalLock: { args: [u64], returns: FFIType.ptr },
@@ -59,6 +66,7 @@ const WS_EX_NOACTIVATE = 0x08000000n;
 const WM_GETMINMAXINFO = 0x0024;
 const WM_NCHITTEST = 0x0084;
 const WM_DROPFILES = 0x0233;
+const WM_DPICHANGED = 0x02e0;
 
 type Rect = { x: number; y: number; width: number; height: number };
 type Check = { ok: boolean; detail?: unknown } | { skipped: string };
@@ -153,6 +161,19 @@ function webviewChildren(frame: bigint): { rect: Rect; visible: boolean }[] {
   return out;
 }
 
+/** The top-level window under a screen point. */
+function windowAt(x: number, y: number): bigint {
+  const hit = user32.WindowFromPoint(BigInt.asUintN(32, BigInt(x)) | (BigInt.asUintN(32, BigInt(y)) << 32n));
+  return hit === 0n ? 0n : user32.GetAncestor(hit, 2); // GA_ROOT
+}
+/** A pixel on the screen, as "#rrggbb". */
+function screenPixel(x: number, y: number): string {
+  const screen = user32.GetDC(0n);
+  const c = gdi32.GetPixel(screen, x, y);
+  user32.ReleaseDC(0n, screen);
+  return `#${[c & 0xff, (c >> 8) & 0xff, (c >> 16) & 0xff].map((v) => v.toString(16).padStart(2, "0")).join("")}`;
+}
+
 const html = (n: string) =>
   new TextEncoder().encode(`<!doctype html><title>${n}</title><script>window.count = 0; window.instance = Math.random().toString(36).slice(2);</script><body>${n}</body>`);
 const page = (n: string) => ({ title: n, assets: { "index.html": html(n) } });
@@ -201,6 +222,32 @@ const make = (options: ConstructorParameters<typeof Window>[0]) => {
 };
 
 try {
+  // ---- the backdrop: the strip's and the page's colours where no webview covers them -----------------
+  // Frames with no tab yet have no webview: what shows is what the frame paints. Read from the
+  // screen, only where the frame is the window on top (another session's window may cover it).
+  for (const appearance of ["light", "dark"] as const) {
+    const name = `backdrop: the strip and the page areas in their own colours (${appearance})`;
+    const bare = make({ tabs: true, appearance, topmost: true, bounds: { x: 60, y: 60, width: 640, height: 420 } });
+    bare.show();
+    const bareHwnd = BigInt(bare.handle!);
+    const bareScale = user32.GetDpiForWindow(bareHwnd) / 96;
+    const o = clientOrigin(bareHwnd);
+    const c = clientRect(bareHwnd);
+    const stripAt = { x: o.x + 30, y: o.y + Math.round((STRIP_HEIGHT - 4) * bareScale) };
+    const pageAt = { x: o.x + 30, y: o.y + c.height - 10 };
+    const want = appearance === "light" ? { strip: "#e9eaee", page: "#f9f9fb" } : { strip: "#292a30", page: "#15161a" };
+    let seen = { strip: "", page: "" };
+    let ours = false;
+    await until(() => {
+      ours = windowAt(stripAt.x, stripAt.y) === bareHwnd && windowAt(pageAt.x, pageAt.y) === bareHwnd;
+      seen = { strip: screenPixel(stripAt.x, stripAt.y), page: screenPixel(pageAt.x, pageAt.y) };
+      return ours && seen.strip === want.strip && seen.page === want.page;
+    }, 2000);
+    if (!ours) skip(name, "another window covers the frame on the shared desktop");
+    else check(name, seen.strip === want.strip && seen.page === want.page, { seen, want, stripAt, pageAt });
+    bare.dispose();
+  }
+
   // ---- the frame, read back from the OS ----------------------------------------------
   const win = make({ tabs: true, appearance: "dark" });
   const hwnd = BigInt(win.handle!);
@@ -261,6 +308,46 @@ try {
     { scale, kids },
   );
   check("a new tab is selected", selects.at(-1) === t3 && selects.length === 3);
+
+  // ---- moving the window tells the strip's and every tab's webview, hidden tabs included -------------
+  // (NotifyParentWindowPositionChanged: WebView2 keeps the position to itself, so the engine counts the calls.)
+  const moveTold = async (target: Window, views: WebView<any, any>[]) => {
+    const engines = views.map((v) => engineOf(v.raw)!);
+    const before = engines.map((e) => e.movesTold());
+    let moves = 0;
+    const off = target.onMove(() => moves++);
+    const start = target.bounds();
+    target.setBounds({ ...start, x: start.x + 15, y: start.y + 10 });
+    await until(() => moves > 0, 1000);
+    off();
+    const told = engines.map((e, i) => e.movesTold() - before[i]!);
+    target.setBounds(start);
+    return { moves, told };
+  };
+  const moved = await moveTold(win, [strip, t1.webview, t2.webview, t3.webview]);
+  check("moving the window tells the strip's and every tab's webview", moved.moves > 0 && moved.told.every((n) => n === moved.moves), moved);
+
+  // ---- a DPI change: the suggested rectangle is taken; the strip and the minimum follow the window's DPI ----
+  // One monitor: the scale itself does not change, only the message and its rectangle are real.
+  const beforeDpi = windowRect(hwnd);
+  const suggested = new Int32Array([beforeDpi.x + 24, beforeDpi.y + 16, beforeDpi.x + 24 + beforeDpi.width + 40, beforeDpi.y + 16 + beforeDpi.height + 30]);
+  user32.SendMessageW(hwnd, WM_DPICHANGED, BigInt((dpi << 16) | dpi), BigInt(ptr(suggested)));
+  const afterDpi = windowRect(hwnd);
+  const clientAfterDpi = clientRect(hwnd);
+  const scaleAfterDpi = user32.GetDpiForWindow(hwnd) / 96;
+  const stripAfterDpi = Math.round(STRIP_HEIGHT * scaleAfterDpi);
+  const kidsAfterDpi = webviewChildren(hwnd).filter((k) => k.visible).map((k) => k.rect);
+  const trackAfterDpi = minTrack(hwnd);
+  const wantTrackAfterDpi = [Math.round(560 * scaleAfterDpi) + (afterDpi.width - clientAfterDpi.width), Math.round((420 + STRIP_HEIGHT) * scaleAfterDpi) + (afterDpi.height - clientAfterDpi.height)];
+  check(
+    "DPI change: the frame takes the suggested rectangle; the strip height and the default minimum follow the window's DPI",
+    afterDpi.x === suggested[0] && afterDpi.y === suggested[1] && afterDpi.width === suggested[2]! - suggested[0]! && afterDpi.height === suggested[3]! - suggested[1]! &&
+      kidsAfterDpi.some((r) => r.y === 0 && r.height === stripAfterDpi && r.width === clientAfterDpi.width) &&
+      kidsAfterDpi.some((r) => r.y === stripAfterDpi && r.height === clientAfterDpi.height - stripAfterDpi) &&
+      Math.abs(trackAfterDpi[0] - wantTrackAfterDpi[0]!) <= 1 && Math.abs(trackAfterDpi[1] - wantTrackAfterDpi[1]!) <= 1,
+    { dpi, suggested: [...suggested], afterDpi, kidsAfterDpi, trackAfterDpi, wantTrackAfterDpi },
+  );
+  win.setBounds(beforeDpi);
   t1.select();
   await until(() => selects.at(-1) === t1);
   const shown = [await ask(t1.webview, "document.visibilityState"), await ask(t2.webview, "document.visibilityState"), await ask(t3.webview, "document.visibilityState")];
@@ -315,6 +402,31 @@ try {
     webviewChildren(hwnd),
   );
   r2.dispose();
+
+  // ---- concurrent openTab calls while the host is being made; a retry after a failed host ----------
+  const conc = make({ tabs: true });
+  const [ca, cb] = await Promise.all([WebView.openTab(conc, page("ca")), WebView.openTab(conc, page("cb"))]);
+  const concStrip = _debugWinTabs.strip(conc)!;
+  const concTabs = await askUntil(concStrip, "document.querySelectorAll('.tab').length", "2");
+  const concKids = webviewChildren(BigInt(conc.handle!));
+  check("concurrent openTab calls wait for one host: both tabs open in the window under one strip", ca.window === conc && cb.window === conc && concTabs === "2" && concKids.length === 3, { concTabs, concKids });
+  conc.dispose();
+
+  const retry = make({ tabs: true });
+  const retryHwnd = BigInt(retry.handle!);
+  _debugWinTabs.failNextStrip();
+  const failedOpens = await Promise.allSettled([WebView.openTab(retry, page("x1")), WebView.openTab(retry, page("x2"))]);
+  const strippedBack = await until(() => webviewChildren(retryHwnd).length === 0, 3000);
+  const x3 = await WebView.openTab(retry, page("x3"));
+  const retryStrip = _debugWinTabs.strip(retry)!;
+  // One strip, one tab, and the frame callbacks of the failed host are gone: one move tells each webview once.
+  const retryMoved = await moveTold(retry, [retryStrip, x3.webview]);
+  check(
+    "a failed host attach is forgotten: the waiting openTab fails with it, a later openTab makes the host again",
+    failedOpens.every((r) => r.status === "rejected") && strippedBack && x3.window === retry && webviewChildren(retryHwnd).length === 2 && retryMoved.moves > 0 && retryMoved.told.every((n) => n === retryMoved.moves),
+    { failed: failedOpens.map((r) => (r.status === "rejected" ? String(r.reason) : "opened")), retryMoved },
+  );
+  retry.dispose();
 
   // ---- the strip's close button -------------------------------------------------------------------------
   const closing = make({ tabs: true });
@@ -492,6 +604,23 @@ try {
     h2.window === torn && torn !== home && torn.isVisible() && afterTear[0] === "7" && afterTear[1] === instance && tornKids.length === 2 && tornKids.every((k) => k.visible),
     { afterTear, instance, tornKids },
   );
+  // A file dropped on the tab's webview goes to the window the tab is in now, and only to it.
+  const dropFile = join(process.env.WEBVIEW2_USER_DATA_FOLDER ?? tmpdir(), `dropped on a tab ${process.pid}.txt`);
+  await Bun.write(dropFile, "drop");
+  const tabDrops: Record<string, string[][]> = { home: [], torn: [] };
+  const offHomeDrop = home.onFileDrop((files) => tabDrops.home!.push(files));
+  const offTornDrop = torn.onFileDrop((files) => tabDrops.torn!.push(files));
+  const dragFile = (view: WebView<any, any>) => {
+    const engine = engineOf(view.raw)!;
+    for (const type of ["dragEnter", "dragOver", "drop"]) {
+      engine.callDevToolsProtocolMethod("Input.dispatchDragEvent", JSON.stringify({ type, x: 60, y: 60, data: { items: [], files: [dropFile], dragOperationsMask: 1 } }));
+    }
+  };
+  dragFile(h2.webview);
+  await until(() => tabDrops.torn!.length > 0, 3000);
+  await Bun.sleep(100);
+  check("a file dropped on a torn-off tab's webview goes to its new window", JSON.stringify(tabDrops) === JSON.stringify({ home: [], torn: [[dropFile]] }), tabDrops);
+
   mergeAllWindows(home);
   await until(() => user32.IsWindow(tornHwnd) === 0, 2000);
   const afterMerge = [await ask(h2.webview, "(window.count += 1)"), await ask(h2.webview, "window.instance")];
@@ -499,6 +628,16 @@ try {
   // The target window's selection before the merge stays selected; the merged tab is hidden behind it.
   const merged = [await ask(h1.webview, "document.visibilityState"), await ask(h2.webview, "document.visibilityState")];
   check("merge: the window keeps its selected tab on show", JSON.stringify(merged) === JSON.stringify(["visible", "hidden"]), merged);
+  // Back in `home`: a drop on the tab goes to `home` now.
+  tabDrops.torn = [];
+  h2.select();
+  await askUntil(h2.webview, "document.visibilityState", "visible", 2000);
+  dragFile(h2.webview);
+  await until(() => tabDrops.home!.length > 0, 3000);
+  await Bun.sleep(100);
+  check("a file dropped on a merged tab's webview goes to the window it joined", JSON.stringify(tabDrops) === JSON.stringify({ home: [[dropFile]], torn: [] }), tabDrops);
+  offHomeDrop();
+  offTornDrop();
 
 } catch (err) {
   check("fixture ran to the end", false, err instanceof Error ? err.stack : String(err));

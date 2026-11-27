@@ -119,6 +119,10 @@ impl Engine {
     self.inner.notify_moved();
   }
 
+  pub fn moves_told(&self) -> u32 {
+    self.inner.moves_told()
+  }
+
   pub fn reparent(&self, window: BigInt) -> napi::Result<()> {
     self.inner.reparent(handle_value(&window)).or_throw()
   }

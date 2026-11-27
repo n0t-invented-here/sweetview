@@ -14,6 +14,8 @@ import { fileURLToPath } from "node:url";
 type Check = { ok: boolean; detail?: unknown } | { skipped: string };
 
 const CHECKS = [
+  "backdrop: the strip and the page areas in their own colours (light)",
+  "backdrop: the strip and the page areas in their own colours (dark)",
   "frame styles",
   "system menu",
   "frame metrics: a 1040 x 720 page plus the strip, the caption removed, the system border kept",
@@ -22,6 +24,10 @@ const CHECKS = [
   "dark appearance: dark title bar",
   "strip and page rectangles: the strip across the top, one tab over the page area",
   "a new tab is selected",
+  "moving the window tells the strip's and every tab's webview",
+  "DPI change: the frame takes the suggested rectangle; the strip height and the default minimum follow the window's DPI",
+  "concurrent openTab calls wait for one host: both tabs open in the window under one strip",
+  "a failed host attach is forgotten: the waiting openTab fails with it, a later openTab makes the host again",
   "select shows that tab and hides the others",
   "the window title follows the selected tab",
   "close: the tab goes, onTabClose fires, its webview is destroyed",
@@ -46,6 +52,8 @@ const CHECKS = [
   "tear-off: the tab's webview moves to a new window with its page as it was",
   "merge: the tab comes back with its page as it was, the emptied window closes",
   "merge: the window keeps its selected tab on show",
+  "a file dropped on a torn-off tab's webview goes to its new window",
+  "a file dropped on a merged tab's webview goes to the window it joined",
   "a popup opens as a tab after its opener",
   "the popup tab's title follows its page",
   "a popup to another scheme is dropped",
