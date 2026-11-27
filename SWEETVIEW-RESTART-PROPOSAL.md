@@ -6,25 +6,16 @@ Rule: no functionality is removed. Everything Sweetview, the bindings and the C+
 
 How this document is used: it is the design. `rust-rewrite/REQUIREMENTS.md` states what the result must be and outranks this document where the two differ; `rust-rewrite/CHECKLIST-<platform>.md` is the order of work with its acceptance.
 
-## The tree this starts from
+## How the tree is organised
 
-Branch `v1-rust-rewrite` is `main` with `v1-drafting` merged. Parts of this document were written against `main` before the merge. Read them with this map:
+Branch `v1-rust-rewrite` is `main` with `v1-drafting` merged: six packages under `packages/`. A file name in this document is relative to `packages/sweetview-native/src/` unless it starts with `packages/`. `rust-rewrite/reference/ffi-files.md` lists the 34 files that import `bun:ffi`.
 
-| This document says | In the tree |
-|---|---|
-| `src/native/win32/...`, `src/native/darwin/...`, or a bare `win32/tray.ts` | `packages/sweetview-native/src/win32/...` and `.../darwin/...` |
-| `src/app.ts`, `src/worker.ts`, `src/webview-lib.ts`, `src/ring.ts` | `packages/sweetview/src/...` |
-| `NativeWindow` and `Overlay`, two classes | one `Window` class over one `WindowBackend` interface, in `packages/sweetview-native/src/window.ts`; an overlay is a `Window` with `transparent`, `topmost`, `noActivate`, `hideFromTaskbar` |
-| `win32/overlay.ts`, `darwin/overlay.ts` | merged into `win32/window.ts` (1,034 lines) and `darwin/window.ts` (1,073 lines) |
-| the tabs demo's own native files | the tabs library: `packages/sweetview/src/tabs/` and `packages/sweetview-native/src/win32/tab-window.ts`, `darwin/tabs.ts` |
-| a notification on Windows is a balloon on the tray's icon | WinRT toasts, with a balloon on a hidden icon of the notifier's own as the fallback: `win32/notifier.ts`, `win32/winrt-toast.ts` |
-| line counts in "Module map" | `main`'s. The current list is `rust-rewrite/reference/ffi-files.md`: 34 files import `bun:ffi` |
-
-Three facts about the tree that the design rests on:
-
-- A webview is mounted inside a window that already exists. `WebView.attach(window, options)` in `packages/sweetview/src/app.ts` passes the `Window`'s handle to the engine, and the tabs library mounts one into each child pane it gets from `Window.fromHandle`. The binding therefore mounts a `wry` webview into a window it is given, by handle, as well as into windows it created.
-- The native package picks an implementation per OS in one place: `backend(win32, darwin)` in `packages/sweetview-native/src/platform.ts`, used by eleven modules (`activation`, `app-icon`, `app-menu`, `clipboard`, `event-loop`, `folder-picker`, `menu`, `notifications`, `screen`, `tray`, `window`). On Windows each of those returns the Rust binding's implementation.
-- The input hooks and the permission model are exported only by the bindings package, `@n1h/sweetview-webview-bun`. Sweetview re-exports `SizeHint`, `WEBVIEW_VERSION` and `Webview` (as `RawWebview`) and nothing else from it. When the bindings package goes, a Sweetview package exports the hooks; `rust-rewrite/reference/bindings-exports.txt` lists every name.
+- One `Window` class over one `WindowBackend` interface (`window.ts`) covers framed windows, overlays, tabbed windows and wrapped windows. An overlay is a `Window` with `transparent`, `topmost`, `noActivate` and `hideFromTaskbar`.
+- A webview is mounted inside a window that already exists. `WebView.attach(window, options)` in `packages/sweetview/src/app.ts` passes the `Window`'s handle to the engine, and the tabs library mounts one into each child pane it wraps with `Window.fromHandle`. The binding therefore mounts a `wry` webview into a window it is given by handle, as well as into windows it created.
+- The native package picks an implementation per OS in one place: `backend(win32, darwin)` in `platform.ts`, used by eleven modules (`activation`, `app-icon`, `app-menu`, `clipboard`, `event-loop`, `folder-picker`, `menu`, `notifications`, `screen`, `tray`, `window`). On Windows each of those returns the Rust binding's implementation.
+- The webview has no such seam: `packages/sweetview/src/app.ts`, `webview-lib.ts` and `worker.ts` call the bindings' `Webview` class and the C library's symbols directly.
+- The input hooks and the permission model are exported only by the bindings package, `@n1h/sweetview-webview-bun`. Sweetview re-exports `SizeHint`, `WEBVIEW_VERSION` and `Webview` (as `RawWebview`) from it and nothing else. `rust-rewrite/reference/bindings-exports.txt` lists every name a Sweetview package exports once the bindings package is gone.
+- A notification on Windows is a WinRT toast, with a balloon on a hidden notification icon of the notifier's own as the fallback (`win32/notifier.ts`, `win32/winrt-toast.ts`). The tray is not involved.
 
 ## Readiness
 
@@ -33,8 +24,8 @@ Three facts about the tree that the design rests on:
 | JavaScript called from native code while the UI thread is inside the blocking loop, under Bun's N-API | **proven on Windows**; see "Proofs run" | on macOS: run the same proof on a Mac |
 | `tao`'s loop pumped from a Bun timer delivering tray events with no window, with Bun's timers and promises still running | **proven on Windows** | on macOS: run the same proof on a Mac |
 | `bun build --compile` embedding the `.node` binding into one executable | **proven on Windows** | on macOS: run the same proof on a Mac |
-| The five behaviours `wry` lacks: streaming on Windows and macOS, macOS drag routing, macOS top-level-only IPC, macOS navigation-failed event | no fork: each is built outside `wry` through the native objects it hands out; see "What `wry` lacks, and where each is built" and `rust-rewrite/FORKS.md` | Windows: nothing. macOS: checklist item M0.5 runs each of the four as a proof |
-| The Windows notification fallback (a balloon on a hidden icon) | this project's code in the platform crate, as `win32/notifier.ts` does it today; no `tray-icon` fork is needed | nothing |
+| The five behaviours `wry` lacks: streaming on Windows and macOS, macOS drag routing, macOS top-level-only IPC, macOS navigation-failed event | no fork: each is built outside `wry` through the native objects it hands out; see "What `wry` lacks, and where each is built" | Windows: nothing. macOS: checklist item M0.5 runs each of the four as a proof |
+| The Windows notification fallback (a balloon on a hidden icon) | Sweetview `platform::notify`, on `Shell_NotifyIconW` | nothing |
 | The binding loaded a second time inside a Bun `Worker`, waking the UI thread | **not proven**; today the worker opens the C library itself and calls `webview_dispatch` | checklist item W1.7, before any webview work |
 | Every crate API the design names | read on docs.rs or in source, with version; see "API references" | nothing |
 | Native tabs and every `v1-drafting` feature | designed from a full reading of their files; see "Tabs" and "The `v1-drafting` features" | nothing |
@@ -104,7 +95,7 @@ Crates for the N-API layer and for the Rust this project writes itself.
 | `objc2-user-notifications`, `objc2-core-graphics` | 0.3.2 | macOS notifications; the event tap for the input hooks |
 | `block2` | 0.6.2 | Objective-C blocks |
 
-No crate is forked. All of them are used as published on crates.io. What `wry` lacks is built outside it, through the native objects it hands out (`controller()`, `webview()`, `environment()`, `manager()`, `with_webview_configuration`); `rust-rewrite/FORKS.md` lists each behaviour with the `wry` source line it rests on.
+No crate is forked. All of them are used as published on crates.io. What `wry` lacks is built outside it, through the native objects it hands out (`controller()`, `webview()`, `environment()`, `manager()`, `with_webview_configuration`); "What `wry` lacks, and where each is built" lists each behaviour with the `wry` source line it rests on.
 
 ## Memory safety
 
@@ -121,9 +112,9 @@ Each row is something the TypeScript `bun:ffi` code does by hand today.
 
 | Today, in TypeScript | In Rust | Example in this repository |
 |---|---|---|
-| Every handle is a `bigint` | Each is its own type: `tao::window::Window`, `wry::WebView`, `muda::Menu`, `tray_icon::TrayIcon`. Passing one where another belongs does not compile | `src/native/win32/api.ts`: every handle is `FFIType.u64` |
+| Every handle is a `bigint` | Each is its own type: `tao::window::Window`, `wry::WebView`, `muda::Menu`, `tray_icon::TrayIcon`. Passing one where another belongs does not compile | `win32/api.ts`: every handle is `FFIType.u64` |
 | Function signatures are written by hand, one `FFIType` list per call | The crates' signatures are checked by the compiler | commit `83d7411`: `isZoomed` read with the wrong return type, `orderFrontRegardless` called with the wrong arity |
-| One hand-made `objc_msgSend` variant per signature shape | Typed methods | `src/native/darwin/objc.ts`: `sendRectUIntUIntBool`, `sendPtrSelPtrVoid` and 30 more |
+| One hand-made `objc_msgSend` variant per signature shape | Typed methods | `darwin/objc.ts`: `sendRectUIntUIntBool`, `sendPtrSelPtrVoid` and 30 more |
 | Structs are byte arrays with numeric offsets | Real structs with named fields | `win32/tray.ts`: `new Uint8Array(976)` with `NID_INFO = 304` |
 | COM methods are called by vtable slot number | Typed interfaces | `win32/folder-picker.ts`: slots 3, 9, 10, 17, 20 |
 | Release is called by hand | Ownership: values free their OS resources when dropped | `darwin/menu.ts`: `release(inited)`, `release(sub)`, `release(menu)` |
@@ -135,7 +126,7 @@ Each row is something the TypeScript `bun:ffi` code does by hand today.
 
 ## Every behaviour, and what provides it
 
-### Sweetview on `main`
+### Sweetview
 
 | Behaviour | Provided by |
 |---|---|
@@ -233,59 +224,38 @@ The gate:
 
 ## What `wry` lacks, and where each is built
 
-### `tray-icon`: no fork needed
+No crate is forked. `wry` 0.58.2 does not have the five behaviours below as API. It hands out the native objects they are built on, so each is written in Sweetview `platform::webview`. Source references are to `wry` 0.58.2.
 
-The table below located a balloon addition inside `tray-icon`. It is kept as a record of what the crate has and lacks, and it is not built: on this branch the notifier shows its fallback balloon on a hidden icon of its own and does not use the tray's icon, so the code belongs in this project's platform crate. `tray-icon` already re-adds the icon when Explorer restarts, which is the one tray behaviour that needed checking.
-
-Read in `src/platform_impl/windows/mod.rs` on the crate's `dev` branch.
-
-| Existing code | What it does | The addition |
+| Behaviour | Where `wry` stops | Built on |
 |---|---|---|
-| `struct TrayUserData` and `pub struct TrayIcon`, both holding `hwnd` and `internal_id` | the tray's hidden window and its `uID` | nothing; the addition uses both |
-| `register_tray_icon`, `TrayIcon::set_icon`, `TrayIcon::set_tooltip` | fill `NOTIFYICONDATAW` with `NIF_MESSAGE`, `NIF_ICON`, `NIF_TIP` and call `Shell_NotifyIconW` | a new `TrayIcon::show_balloon(title, body, silent, icon)`: `NIM_MODIFY` with `NIF_INFO`, `szInfo`, `szInfoTitle`, `dwInfoFlags`, as `win32/tray.ts` does today |
-| `tray_proc`, the arm for `WM_USER_TRAYICON` | matches mouse messages and sends `TrayIconEvent::Click` or `DoubleClick` | one more match arm for `NIN_BALLOONUSERCLICK` sending a new `TrayIconEvent::BalloonClick` |
-| the arm for `S_U_TASKBAR_RESTART` | re-adds the icon when Explorer restarts | nothing; this is the `TaskbarCreated` behaviour Sweetview has today |
+| Streamed response bodies, Windows | its responder takes the whole body: `RequestAsyncResponder::respond` (`src/lib.rs:451`), turned into one `SHCreateMemStream` (`src/webview2/mod.rs:1261`) | Sweetview's own `WebResourceRequested` handler on the `ICoreWebView2` from `WebViewExtWindows::webview()`, with responses made by `environment()` (`src/lib.rs:2404-2407`) and its own `IStream` whose `Read` waits for the next chunk; ported from `streaming_istream.hh` |
+| Streamed response bodies, macOS | one `didReceiveData` per response (`src/wkwebview/class/url_scheme_handler.rs`) | Sweetview's own `WKURLSchemeHandler`, registered on a `WKWebViewConfiguration` that Sweetview creates and passes to `WebViewBuilderExtMacos::with_webview_configuration` (`src/lib.rs:1672`); it calls `didReceiveData` per chunk; ported from `cocoa_webkit.hh` |
+| Page messages from the top-level document only, macOS | its message handler does not check the frame (`src/wkwebview/class/wry_web_view_delegate.rs`, `did_receive`) | Sweetview's own `WKScriptMessageHandler`, added through `WebViewExtMacOS::manager()` (`src/lib.rs:2555`), which returns early unless `frameInfo.isMainFrame`. `wry`'s own IPC handler is not used on macOS |
+| Navigation-failed event, macOS | no `didFailNavigation` and no `didFailProvisionalNavigation`; `wry` installs its own navigation delegate (`src/wkwebview/mod.rs:680`) | a Sweetview delegate that forwards every call to `wry`'s delegate and adds the two failure methods, set on the `WKWebView` from `WebViewExtMacOS::webview()` (`src/lib.rs:2553`) |
+| Drag routing, macOS: drags from other apps only, file drags to the handler, everything else to WebKit, one route per drag | its drag handler is given `Enter`, `Over`, `Drop` and `Leave` with the dragged paths, and not the drag's source; returning `false` hands the drag to WebKit (`src/wkwebview/drag_drop.rs:79-81`) | `with_drag_drop_handler`, with Sweetview keeping the route chosen at `Enter` until `Drop` or `Leave`; a main-frame script reports `dragstart` and `dragend`, which tells an in-page drag from one that came from another app; routing rules ported from `get_webview_class` in `cocoa_webkit.hh` |
 
-The file has no `NIF_INFO`, no `NIN_*` constant and no notification code today.
+One request handler per platform serves assets, the request handler's routes, the frames origin and streamed responses. `wry`'s custom protocols are not used, so `wry` attaches no request handler of its own (`src/webview2/mod.rs:536`), and both origins are the ones Sweetview registers: `http://webview.localhost` and `http://frames.webview.localhost` on Windows, the `webview` and `webview-frames` schemes on macOS.
 
-### `wry`: what it already does, and the five behaviours it lacks
+What `wry` already does and Sweetview uses as it is:
 
-No fork. `rust-rewrite/FORKS.md` says how each of the five is built outside `wry`. The tables below record where `wry`'s own code stops, which is why each one is this project's to write.
-
-Read on the crate's `dev` branch: `src/webview2/mod.rs`, `src/webview2/drag_drop.rs`, `src/wkwebview/mod.rs`, `src/wkwebview/drag_drop.rs`, `src/wkwebview/class/url_scheme_handler.rs`, `src/wkwebview/class/wry_web_view.rs`, `src/wkwebview/class/wry_web_view_delegate.rs`.
-
-Already in `wry`, so no addition is needed:
-
-| Fork behaviour | Where `wry` has it |
+| Behaviour | Where |
 |---|---|
-| Requests from service workers, shared workers and cross-origin iframes reach the handler on Windows | `attach_custom_protocol_handler` in `src/webview2/mod.rs` calls `AddWebResourceRequestedFilterWithRequestSourceKinds` with `COREWEBVIEW2_WEB_RESOURCE_REQUEST_SOURCE_KINDS_ALL` when `ICoreWebView2_22` is present, and falls back to `AddWebResourceRequestedFilter` |
-| Requests held open until answered | the same function takes `args.GetDeferral()` and completes it from the responder, on the UI thread through `dispatch_handler` |
-| Windows page messages from the top-level document only | `attach_ipc_handler` subscribes `add_WebMessageReceived` on the top-level `ICoreWebView2` only |
-| Custom scheme mapped to an `http://` origin on Windows | `custom_protocol_workaround` |
+| Creating the WebView2 or WKWebView inside a given window, as the window's content or as a child with bounds | `WebViewBuilder::build`, `build_as_child`, `with_bounds` |
+| Scripts at document start, script evaluation, navigation, HTML, devtools, background colour | `with_initialization_script`, `evaluate_script`, `load_url`, `load_html`, `with_devtools`, `with_background_color` |
+| Page messages from the top-level document only, Windows | `attach_ipc_handler` in `src/webview2/mod.rs` subscribes `add_WebMessageReceived` on the top-level `ICoreWebView2` only |
+| Popups reported instead of opened | `with_new_window_req_handler` |
+| Moving a webview to another window | `WebViewExtWindows::reparent` |
 
-Four of the five, each with the `wry` function that shows the gap. The "Change" column says what the behaviour is; it is built in Sweetview `platform`, not in `wry`:
+On Windows, through `WebViewExtWindows::controller()` and `webview()`:
 
-| Addition | File and function in `wry` | Change | Reference in the C++ fork |
-|---|---|---|---|
-| Streamed response bodies, Windows | `src/webview2/mod.rs`: `prepare_web_request_response`, which builds the body with `SHCreateMemStream` over the whole response | a second responder that passes an `IStream` whose `Read` blocks until a chunk or the end arrives | `streaming_istream.hh` |
-| Streamed response bodies, macOS | `src/wkwebview/class/url_scheme_handler.rs`: the nested `fn response` inside `start_task`, which calls `didReceiveResponse`, one `didReceiveData`, `didFinish` | a second responder that calls `didReceiveData` per chunk, behind the existing `check_task_is_valid` guard | `begin_response_impl`, `write_response_chunk_impl`, `end_response_impl` in `cocoa_webkit.hh` |
-| Drag routing, macOS: drags from other apps only, file drags to the handler, everything else to WebKit, one route per drag session | `src/wkwebview/drag_drop.rs`: `dragging_entered`, `dragging_updated`, `perform_drag_operation`, `dragging_exited`, which today call the handler for every drag and never read `draggingSource`; and `src/wkwebview/class/wry_web_view.rs`, which does not override `prepareForDragOperation:` or `draggingEnded:` | the fork's session routing | `get_webview_class` in `cocoa_webkit.hh` |
-| Page messages from the top-level document only, macOS | `src/wkwebview/class/wry_web_view_delegate.rs`: `did_receive`, which reads `msg.frameInfo()` for the URL and does not check the frame | return early unless `frameInfo().isMainFrame()` | the script message handler in `cocoa_webkit.hh` |
-
-Done outside `wry`, in Sweetview's `platform` code, through `WebViewExtWindows::controller()`, `webview()` and `environment()`:
-
-| Fork behaviour | How |
+| Behaviour | How |
 |---|---|
-| External drop control, Windows | `ICoreWebView2Controller4::SetAllowExternalDrop` on `controller()` |
-| File drop paths, Windows, with WebView2's own drop target left in place | the C++ fork's method: an initialization script that posts the dropped `File` objects with `postMessageWithAdditionalObjects`, and a `WebMessageReceived` handler on `webview()` that reads each `ICoreWebView2File` path. `wry`'s own `with_drag_drop_handler` is not used on Windows, because `DragDropController` in `src/webview2/drag_drop.rs` revokes WebView2's drop targets and rejects non-file drags |
-| Bridge and drop scripts in the top-level document only, Windows | each script starts with `if (window !== window.top) return`, as the C++ fork's do. `wry` adds scripts to every frame on Windows |
-
-The fifth, needed by tabs for the "This site did not open" page:
-
-| Addition | File in `wry` | Change |
-|---|---|---|
-| Navigation-failed event, macOS | `src/wkwebview/class/wry_navigation_delegate.rs`: `WryNavigationDelegate` implements `decidePolicyForNavigationAction`, `decidePolicyForNavigationResponse`, `didFinishNavigation`, `didCommitNavigation`, the two download methods and `webViewWebContentProcessDidTerminate`. It does not implement `webView:didFailNavigation:withError:` or `webView:didFailProvisionalNavigation:withError:`, and no builder callback reports a failed load | built outside `wry`: a delegate of this project's that forwards every call to `wry`'s delegate and adds the two failure methods, set on the `WKWebView` from `WebViewExtMacOS::webview()`. Replacing `wry`'s delegate outright would lose its page-load, policy and download handling, so the delegate forwards |
-| Navigation-failed event, Windows | none | outside `wry`: `add_NavigationCompleted` on `WebViewExtWindows::webview()`, with the failure rules `win-webview2.ts` has today |
+| External drop control | `ICoreWebView2Controller4::SetAllowExternalDrop` on `controller()` |
+| File drop paths, with WebView2's own drop target left in place | the C++ fork's method: an initialization script that posts the dropped `File` objects with `postMessageWithAdditionalObjects`, and a `WebMessageReceived` handler on `webview()` that reads each `ICoreWebView2File` path. `wry`'s `with_drag_drop_handler` is not used on Windows, because `DragDropController` in `src/webview2/drag_drop.rs` revokes WebView2's drop targets and rejects non-file drags |
+| Bridge and drop scripts in the top-level document only | each script starts with `if (window !== window.top) return`, as the C++ fork's do. `wry` adds scripts to every frame on Windows |
+| Requests from service workers, shared workers and cross-origin iframes | the request handler registers its filter with `AddWebResourceRequestedFilterWithRequestSourceKinds` and all source kinds when `ICoreWebView2_22` is present |
+| Navigation-failed event | `add_NavigationCompleted` on `webview()`, with the failure rules `packages/sweetview/src/tabs/win-webview2.ts` has |
+| Accelerator keys, focus, popup position | `add_AcceleratorKeyPressed`, `MoveFocus`, `NotifyParentWindowPositionChanged` on `controller()` |
 
 ## API references
 
@@ -344,12 +314,6 @@ Sweetview's native layer already has the seam this design uses. Each module decl
 
 Internal to the package. Signatures are the generated TypeScript.
 
-This surface was drawn against `main`. It shows the shape and the conventions: classes for things with a lifetime, functions callable from any thread named apart, callbacks passed as functions, menus as data. Against the merged tree it changes in these ways, and the work draws the final surface from the eleven `Backend` types and `WindowBackend`:
-
-- `NativeWindow` and `Overlay` below are one window class implementing `WindowBackend`: add `toggle`, `setTitle`, `isMaximized`, `onResize`, `onMove`, `onClose`, `onFileDrop`, the minimum size, and adoption of a window by handle.
-- `Tray.showBalloon` and `Tray.onBalloonClick` go: the notifier owns its fallback.
-- Missing below and needed: screens (`Screen`), the clipboard, activation (`registerUrlScheme`, `singleInstance`, the URL event), `Menu.popup`, `scheduleNativeTimeout`, and the tab primitives of `win32/tab-window.ts` and `tabs/win-webview2.ts`.
-
 ```ts
 class Engine {
   static create(debug: boolean, window: bigint | null): Engine;
@@ -395,32 +359,35 @@ function pumpEvents(): boolean;
 function discardQuit(): void;
 function setActivationPolicy(policy: ActivationPolicy): void;
 
-class NativeWindow {
-  constructor(handle: bigint);
-  isVisible(): boolean; show(): void; hide(): void;
-  setIcon(ico: Uint8Array | null): void;
-  onCloseRequest(fn: (() => void) | null): void;
-}
-
-class Overlay {
-  static create(options: OverlayWindowInit): Overlay;
-  static adopt(handle: bigint, options: OverlayInit): Overlay;
+class Window {                                    // implements WindowBackend of window.ts
+  static create(options: WindowInit): Window;
+  static adopt(handle: bigint): Window;          // Window.fromHandle: a window Sweetview did not create
   readonly handle: bigint;
-  show(): void; hide(): void; setIcon(ico: Uint8Array | null): void;
-  bounds(): Rect; moveTo(x: number, y: number): void; resize(w: number, h: number): void; setBounds(r: Rect): void;
+  readonly detected: { frame: boolean; resizable: boolean } | null;
+  isVisible(): boolean; show(): void; hide(): void;
+  bounds(): Rect; setBounds(r: Rect): void; moveTo(x: number, y: number): void; resize(w: number, h: number): void; scale(): number;
+  setTitle(title: string): void; setIcon(icon: IconBytes | null): void;
+  minimize(): void; toggleMaximize(): void; isMaximized(): boolean; setTopmost(on: boolean): void;
+  startDrag(): void; startResize(edge: ResizeEdge): void;
   setClickThrough(on: boolean): void;
   setHitRegions(packed: Int32Array | null, refine: ((x: number, y: number, seq: number) => void) | null): void;
   answerHit(seq: number, solid: boolean): void;
-  setTopmost(on: boolean): void; startDrag(): void; startResize(edge: ResizeEdge): void;
-  minimize(): void; toggleMaximize(): void; maximized(): boolean;
-  cursor(): Point; screen(): Rect; screenAt(x: number, y: number): Rect; workArea(): Rect; virtualScreen(): Rect; scale(): number;
+  onResize(fn: ((bounds: Rect) => void) | null): void;
+  onMove(fn: ((bounds: Rect) => void) | null): void;
+  onCloseRequest(fn: (() => void) | null): void;
+  onFileDrop(fn: ((paths: string[]) => void) | null): void;
+  dispose(): void;
 }
+
+function screens(): ScreenData[];
+function screenAt(x: number, y: number): ScreenData;
+function screenOf(handle: bigint): ScreenData;
+function virtualScreen(): Rect;
+function cursor(): Point;
 
 class Tray {
   constructor(init: TrayInit);   // icon, tooltip, onClick, onDoubleClick, openMenu, menuChosen
   setTooltip(text: string): void; setIcon(icon: IconBytes): void; setHasMenu(has: boolean): void; dispose(): void;
-  showBalloon(n: BalloonInit): boolean;
-  onBalloonClick(fn: (() => void) | null): void;
 }
 
 class Notifier {
@@ -431,6 +398,42 @@ class Notifier {
 function pickFolder(owner: bigint | null, title: string): string | null;
 function installAppMenu(appName: string, aboutText: string): void;
 function setAppIcon(icon: IconBytes): void;
+function popupMenu(owner: bigint | null, menu: MenuData, at: Point | null): number | null;   // the chosen item's id
+function scheduleTimeout(ms: number, fn: () => void): number;
+function cancelTimeout(id: number): void;
+
+function clipboardReadText(): string | null;
+function clipboardWriteText(text: string): void;
+function clipboardClear(): void;
+
+function registerUrlScheme(scheme: string, init: UrlSchemeInit): void;
+function unregisterUrlScheme(scheme: string): void;
+function onOpenUrl(fn: ((url: string) => void) | null): void;                 // macOS: the open-URL event
+class SingleInstance {
+  static acquire(appId: string, payloadJson: string, onSecond: (payloadJson: string) => void): SingleInstance;
+  readonly isPrimary: boolean;
+  readonly handedOff: boolean;
+  dispose(): void;
+}
+
+// Tabs on Windows: the frame with its strip pane and one child pane per tab (win32/tab-window.ts),
+// and the per-tab WebView2 controller calls (packages/sweetview/src/tabs/win-webview2.ts).
+class TabFrame {
+  static create(options: TabFrameInit): TabFrame;
+  readonly handle: bigint;
+  readonly stripPane: bigint;
+  createPane(): bigint; adoptPane(pane: bigint): void; placePane(pane: bigint): void;
+  showPane(pane: bigint): void; hidePane(pane: bigint): void; destroyPane(pane: bigint): void;
+  layout(): void; stripRect(): Rect; scale(): number; isForeground(): boolean;
+  startDrag(held: Point | null): void; startResize(edge: ResizeEdge): void;
+  showSystemMenu(): void; setSystemDark(dark: boolean): void;
+  destroy(): void;
+}
+// On Engine, for a tab's webview:
+//   setVisible(visible: boolean): void; moveFocus(): void; notifyMoved(): void; reparent(pane: bigint): void;
+//   onAcceleratorKey(fn: ((key: KeyData) => boolean) | null): void;
+//   onNewWindowRequested(fn: ((url: string) => void) | null): void;
+//   onNavigationFailed(fn: ((failure: NavigationFailure) => void) | null): void;
 ```
 
 The data types those signatures use:
@@ -446,8 +449,12 @@ type RawRequest = { id: bigint; method: string; url: string; headersJson: string
 // One icon, as Sweetview's `Icon` type carries it today.
 type IconBytes = { ico?: Uint8Array; png?: Uint8Array; symbol?: string; template?: boolean };
 
-type OverlayInit = { transparent: boolean; colorKey?: string; opacity?: number; topmost: boolean; hideFromTaskbar: boolean; noActivate: boolean };
-type OverlayWindowInit = OverlayInit & { title: string; bounds?: Rect; frame: boolean; appearance: "system" | "light" | "dark"; icon?: IconBytes };
+type WindowInit = {
+  title: string; bounds?: Rect; minWidth?: number; minHeight?: number;
+  frame: boolean; resizable: boolean; appearance: "system" | "light" | "dark"; icon?: IconBytes;
+  transparent: boolean; colorKey?: string; opacity?: number; topmost: boolean; hideFromTaskbar: boolean; noActivate: boolean;
+};
+type ScreenData = { bounds: Rect; workArea: Rect; scale: number; primary: boolean };
 
 type MenuData = MenuItemData[];
 type MenuItemData =
@@ -465,7 +472,6 @@ type TrayInit = {
   menuChosen: (id: number) => void;          // called after the menu closes
 };
 
-type BalloonInit = { title: string; body: string; silent: boolean };
 type NotificationInit = { id: string; title: string; body: string; silent: boolean; dataJson: string | null };
 ```
 
@@ -529,24 +535,28 @@ Today a `JSCallback` lets the OS call JavaScript on the UI thread while that thr
 
 ## Module map
 
-| TypeScript or C++ today | Lines | After |
-|---|---|---|
-| `win32/api.ts`, `darwin/objc.ts` | 485 | gone: the crates replace them |
-| `win32/event-loop.ts`, `darwin/event-loop.ts` | 91 | `tao` event loop |
-| `win32/window.ts`, `darwin/window.ts`, `win32/message-window.ts` | 213 | `tao` windows and events |
-| `win32/overlay.ts`, `darwin/overlay.ts` | 869 | `tao`, Sweetview `hit` and `resize`, `platform::misc` |
-| `win32/tray.ts`, `darwin/tray.ts` | 359 | `tray-icon`, Sweetview `click` |
-| `win32/menu.ts`, `darwin/menu.ts`, `darwin/app-menu.ts` | 283 | `muda`, Sweetview `menu` |
-| `win32/notifier.ts`, `win32/winrt-toast.ts`, `darwin/notifier.ts` | 169 on `main` | `platform::notify` |
-| `win32/icon.ts`, `darwin/image.ts`, `darwin/app-icon.ts` | 142 | the crates' `Icon` types; `platform::misc` for SF Symbols and the Dock icon |
-| `win32/folder-picker.ts`, `darwin/folder-picker.ts` | 150 | `rfd` |
-| the bindings' `src/` | 2,014 | Sweetview `engine` on `wry` |
-| C++ fork: backends, `engine_base.hh` | upstream plus 8,646 added | `wry`, and Sweetview `platform::webview` for what `wry` lacks |
-| C++ fork: `http_request.hh` | 683 | Sweetview `http`, safe Rust |
-| C++ fork: `input_hooks.hh`, `mouse_hook.hh`, `keyboard_hook.hh`, `key_codes.hh` | 1,617 | Sweetview `platform::input` |
-| C++ fork: `streaming_istream.hh` | 373 | Sweetview `platform::webview` |
+| Today | After |
+|---|---|
+| `win32/api.ts`, `darwin/objc.ts`, `darwin/core-foundation.ts` | gone: the crates replace them |
+| `win32/event-loop.ts`, `darwin/event-loop.ts`, `win32/init.ts`, `win32/message-window.ts` | `tao` event loop; `platform` for the hidden first window and native timeouts |
+| `win32/window.ts`, `darwin/window.ts` | `tao` windows and events; Sweetview `hit` and `resize`; `platform` for click-through styles, `colorKey`, opacity, window level, adopted windows |
+| `win32/screen.ts`, `darwin/screen.ts` | `tao` monitors; `platform` for the work area |
+| `win32/tray.ts`, `darwin/tray.ts` | `tray-icon`, Sweetview `click` |
+| `win32/menu.ts`, `darwin/menu.ts`, `darwin/app-menu.ts` | `muda`, Sweetview `menu` |
+| `win32/notifier.ts`, `win32/winrt-toast.ts`, `darwin/notifier.ts` | `platform::notify` |
+| `win32/icon.ts`, `darwin/image.ts`, `darwin/app-icon.ts` | the crates' `Icon` types; `platform` for SF Symbols and the Dock icon |
+| `win32/folder-picker.ts`, `darwin/folder-picker.ts` | `rfd` |
+| `win32/clipboard.ts`, `darwin/clipboard.ts` | `platform` |
+| `win32/activation.ts`, `darwin/activation.ts` | `platform` |
+| `win32/tab-window.ts`, `darwin/tabs.ts`, `packages/sweetview/src/tabs/win-webview2.ts`, `packages/sweetview/src/tabs/darwin-webview.ts` | `tao` windows, `wry` child webviews, `webview2-com` handlers, `platform` |
+| the FFI in `packages/sweetview/src/app.ts`, `webview-lib.ts`, `worker.ts` | Sweetview `engine` on `wry`, `platform::webview` |
+| the bindings' `src/` | Sweetview `engine`; `platform::input` for the hooks |
+| C++ fork: backends, `engine_base.hh` | `wry`, and `platform::webview` for what `wry` lacks |
+| C++ fork: `http_request.hh` | Sweetview `http`, safe Rust |
+| C++ fork: `input_hooks.hh`, `mouse_hook.hh`, `keyboard_hook.hh`, `key_codes.hh` | `platform::input` |
+| C++ fork: `streaming_istream.hh` | `platform::webview` |
 
-Kept as TypeScript, untouched: `hit-regions.ts`, `icon.ts`, `menu.ts`, `ring.ts`, the IPC modules, `html.ts`, `build.ts`, `make-app.ts`, `settings-store.ts`, `window-chrome.ts`, `page.ts`.
+Kept as TypeScript, untouched: `hit-regions.ts`, `icon.ts`, `menu.ts`, `fs.ts`, `win32/shortcuts.ts`, `win32/strip-shared.ts`, and in `packages/sweetview/src/`: `ring.ts`, `html.ts`, `page.ts`, `window-chrome.ts`, `request-response.ts`, `messages.ts`, `tabs/win-strip-assets.ts`, `tabs/load-failed.ts`; the IPC, WebSocket, settings and build packages.
 
 ## Tabs
 

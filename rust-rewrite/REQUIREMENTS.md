@@ -82,7 +82,7 @@ Check: the `cargo`, `unsafe` and `clippy` checks of `verify.ts`, plus the review
 
 - `tao` for windows and the event loop, `wry` for the webview, `muda` for menus, `tray-icon` for the tray, `rfd` for dialogs, `napi` with `napi-derive` for the Bun boundary.
 - `windows`, `webview2-com`, `objc2`, `objc2-foundation`, `objc2-app-kit`, `objc2-user-notifications`, `objc2-core-graphics`, `block2` for what this project writes itself.
-- No crate is forked. What `wry` lacks is built outside it through the native objects it hands out; `FORKS.md` lists each one.
+- No crate is forked. What `wry` lacks is built outside it through the native objects it hands out; the proposal's section "What `wry` lacks, and where each is built" lists each one.
 - These crates are the design the proposal settled on, not a requirement in themselves: where building shows that one of them cannot carry a behaviour R1 requires, the design is adjusted.
 - A different crate is allowed where it serves R1 and R4 better. The reason is recorded in `rust-rewrite/DECISIONS.md` in one paragraph.
 - The C++ library and the `@n1h/sweetview-webview-bun` dependency are gone from a platform when that platform's goal completes.

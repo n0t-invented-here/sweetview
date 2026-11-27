@@ -2,13 +2,13 @@ Take Sweetview as it stands on branch `v1-rust-rewrite` of `n0t-invented-here/sw
 
 PURPOSE. Today the native layer is TypeScript calling the OS through `bun:ffi`, over a C++ webview library. The result has native code written in Rust, in a well-organised set of crates that a maintainer can read, test and change. Everything that can reasonably be memory safe is memory safe; what cannot is small, contained and justified. A small amount of FFI needed to set things up is acceptable; a layer of it is not. Rust that repeats the old calls as `unsafe` blocks is barely better than what it replaces and fails this goal.
 
-READ FIRST, in full, and again after every context compaction: `rust-rewrite/REQUIREMENTS.md`, `rust-rewrite/UNSAFE-POLICY.md`, `rust-rewrite/CHECKLIST-windows.md`, `rust-rewrite/FORKS.md`, `SWEETVIEW-RESTART-PROPOSAL.md`. Then read the code each checklist group replaces before designing it; `rust-rewrite/reference/` maps it.
+READ FIRST, in full, and again after every context compaction: `rust-rewrite/REQUIREMENTS.md`, `rust-rewrite/UNSAFE-POLICY.md`, `rust-rewrite/CHECKLIST-windows.md`, `SWEETVIEW-RESTART-PROPOSAL.md`. Then read the code each checklist group replaces before designing it; `rust-rewrite/reference/` maps it.
 
 SCOPE. Everything is in scope. No functionality is declared out of scope, deferred, stubbed or dropped. That covers every capability of Sweetview's packages, of the Bun bindings (`n0t-invented-here/sweetview-webview-bun`, branch `v1-drafting`) and of the C++ fork's additions (`n0t-invented-here/sweetview-webview`, branch `v1-drafting`): transparent click-through overlays with hit regions, system-wide mouse and keyboard hooks, tray, menus, notifications, dialogs, clipboard, tabs, the request handler, streaming, file drop, activation, both event-loop modes, packaging, `bun build --compile`, and the IPC transports for Tauri 2 and Electron. A behaviour no crate provides is written by this project in Rust.
 
 THE API MAY CHANGE where the new design is better for it. No capability goes with a change: what an application could do before, it can do after. Every existing application has a clear upgrade path: each changed or removed export has a row in `docs/upgrading.md`, proven by a test under `rust-rewrite/compat/`, and the dependents run of R2 passes.
 
-DESIGN. The proposal is the design: `tao`, `wry`, `muda`, `tray-icon`, `rfd`, reached from Bun through `napi`. Where building shows part of it wrong, adjust it inside `REQUIREMENTS.md` and record the change in `rust-rewrite/DECISIONS.md`.
+DESIGN. The proposal is the design: `tao`, `wry`, `muda`, `tray-icon`, `rfd`, all as published with no fork, reached from Bun through `napi`. Where building shows part of it wrong, adjust it inside `REQUIREMENTS.md` and record the change in `rust-rewrite/DECISIONS.md`.
 
 PRIVACY (R6). Applications that depend on Sweetview are private: their names, paths, code and behaviour never enter anything tracked or pushed.
 

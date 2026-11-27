@@ -13,7 +13,7 @@ Items name today's API members to say which behaviour is meant. The API may chan
 - [ ] W0.1 Tag `pre-rust-rewrite` exists on the commit before the first change and is pushed.
 - [ ] W0.2 Baseline recorded: `bun run typecheck` and `bun test` on that tag, output saved to `rust-rewrite/evidence/baseline-windows.txt`. Every test that passes here passes at the end.
 - [ ] W0.3 A Cargo workspace exists at the repository root, under `crates/`. Each crate has one job that its `README.md` states in a sentence. The binding (the `napi` crate) and the logic crates forbid `unsafe`; only crates named `sweetview-platform` or `sweetview-platform-<name>` may hold it. The crate layout and the reason for each boundary are in `rust-rewrite/DECISIONS.md`.
-- [ ] W0.4 Every crate comes from crates.io at a version pinned in `Cargo.lock`. `cargo metadata` shows no git dependency and no path dependency outside this repository: no crate is forked (`FORKS.md`).
+- [ ] W0.4 Every crate comes from crates.io at a version pinned in `Cargo.lock`. `cargo metadata` shows no git dependency and no path dependency outside this repository: no crate is forked.
 - [ ] W0.5 `just native` builds the binding for the host and places it where the loader finds it. `just check` builds it first.
 - [ ] W0.6 A GitHub Actions workflow builds the binding and runs `cargo test`, `cargo clippy`, `bun run typecheck` and `bun test` on `windows-latest`.
 
@@ -32,7 +32,7 @@ Items name today's API members to say which behaviour is meant. The API may chan
 
 Source of truth for behaviour: the bindings repository's `docs/` and `test/`, and the C++ fork's `sweetview/` pages.
 
-`wry` creates the webview, runs scripts and carries page messages. Assets, the request handler, the frames origin and streamed responses are served by this project's own `WebResourceRequested` handler on the `ICoreWebView2` that `wry` hands out, as `FORKS.md` describes; `wry`'s custom protocols are not used on Windows.
+`wry` creates the webview, runs scripts and carries page messages. Assets, the request handler, the frames origin and streamed responses are served by this project's own `WebResourceRequested` handler on the `ICoreWebView2` that `wry` hands out, as the proposal's section "What `wry` lacks, and where each is built" describes; `wry`'s custom protocols are not used.
 
 - [ ] W2.1 Every capability of `RawWebview` (the bindings' `Webview` class) is available: constructor forms, `title`, `size`, `navigate`, `setHTML`, `init`, `eval`, `bind`, `bindRaw`, `unbind`, `return`, `run`, `destroy`, `unsafeHandle`, `unsafeWindowHandle`, and `unload`.
 - [ ] W2.2 `setAsset` and `assetOrigin`: `http://webview.localhost`, path matching and validation exactly as `assets.md` states.
