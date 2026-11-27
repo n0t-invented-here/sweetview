@@ -329,6 +329,50 @@ describe.if(onWindows)("Window on the binding: click-through, hit regions, the r
       win.dispose();
     }
   });
+
+  test("startDrag hands the window to the OS, which moves it with the cursor until the button is released", async () => {
+    const native = binding();
+    const original = await cursorNow();
+    const bounds = { x: 320, y: 320, width: 300, height: 200 };
+    const win = new Window({ title: unique("drag"), frame: false, topmost: true, noActivate: true, bounds });
+    let pressed = false;
+    try {
+      win.show();
+      await settle(30);
+      const grip = { x: bounds.x + 40, y: bounds.y + 20 };
+      probe!.SetCursorPos(grip.x, grip.y);
+      // Press only over this test's own window, so the click reaches nothing else.
+      if ((await buttonsDown()) || windowAt(grip.x, grip.y) !== handleOf(win)) {
+        console.warn("window-native.test: startDrag skipped: the test window is not under the cursor");
+        return;
+      }
+      leftButton(true);
+      pressed = true;
+      await settle(30);
+      // The OS runs its own move loop from here until the button is released, so the cursor is
+      // moved and the button released from native timeouts, which fire inside that loop.
+      let duringDrag: ReturnType<Window["bounds"]> | undefined;
+      native.scheduleTimeout(120, () => probe!.SetCursorPos(grip.x + 60, grip.y + 45));
+      native.scheduleTimeout(320, () => {
+        duringDrag = win.bounds();
+        leftButton(false);
+        pressed = false;
+      });
+      win.startDrag();
+      await settle(1500, () => !pressed);
+      await settle(60);
+      expect(duringDrag).toEqual({ x: bounds.x + 60, y: bounds.y + 45, width: 300, height: 200 });
+      expect(win.bounds()).toEqual({ x: bounds.x + 60, y: bounds.y + 45, width: 300, height: 200 });
+      // Released: the cursor no longer carries the window.
+      probe!.SetCursorPos(grip.x + 200, grip.y + 200);
+      await settle(80);
+      expect(win.bounds().x).toBe(bounds.x + 60);
+    } finally {
+      if (pressed) leftButton(false);
+      probe!.SetCursorPos(original.x, original.y);
+      win.dispose();
+    }
+  });
 });
 
 describe.if(onWindows)("Window.fromHandle on an application's own window (made here through bun:ffi)", () => {

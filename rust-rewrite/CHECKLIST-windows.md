@@ -168,7 +168,10 @@ Source of truth for behaviour: the bindings repository's `docs/` and `test/`, an
     test result: ok. 29 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
     ```
 
-- [ ] W4.5 `startDrag`, `startResize`, `minimize`, `toggleMaximize`, `isMaximized`, `closeToTrayOnLastWindow`, `onClose`, `onResize`, `onMove`, `onFileDrop`.
+- [x] W4.5 `startDrag`, `startResize`, `minimize`, `toggleMaximize`, `isMaximized`, `closeToTrayOnLastWindow`, `onClose`, `onResize`, `onMove`, `onFileDrop`.
+
+    `rust-rewrite/evidence/w4-windows.txt`: "startDrag hands the window to the OS, which moves it with the cursor until the button is released" and "startResize follows the cursor from an edge while the left button is down" (both with a real left-button press over the test's own window), "minimize, show restoring it, and toggleMaximize on a framed window", "frameless toggleMaximize uses the window's own monitor workArea and restores bounds", "close-to-tray destroys the secondary window and hides the last visible owned window", "onClose intercepts WM_CLOSE and unsubscribing restores default close-and-dispose", "onResize and onMove fire with outer bounds and stop after unsubscribe", "delivers Unicode file drops and cleans up owned, tabbed and borrowed listeners".
+
 - [x] W4.6 `Screen`: `primary`, `all`, `at`, `of`, `bounds`, `cursor`.
 
     `rust-rewrite/evidence/w4-windows.txt`: "Screen exposes primary, all, at, bounds, and cursor without a window", "Screen.of a window is the screen its frame is on; Screen.bounds holds every screen", "Screen.of(hwnd) resolves the monitor hosting a message window".
