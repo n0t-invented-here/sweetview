@@ -6,7 +6,7 @@
 
 use std::marker::PhantomData;
 
-use raw_window_handle::{HandleError, HasWindowHandle, WindowHandle};
+use raw_window_handle::{DisplayHandle, HandleError, HasDisplayHandle, HasWindowHandle, WindowHandle};
 
 use crate::{Chrome, ExStylePolicy, HandleCounts, Rect, WindowEvent};
 
@@ -43,6 +43,12 @@ impl ForeignWindow {
 
 impl HasWindowHandle for ForeignWindow {
   fn window_handle(&self) -> Result<WindowHandle<'_>, HandleError> {
+    Err(HandleError::NotSupported)
+  }
+}
+
+impl HasDisplayHandle for ForeignWindow {
+  fn display_handle(&self) -> Result<DisplayHandle<'_>, HandleError> {
     Err(HandleError::NotSupported)
   }
 }

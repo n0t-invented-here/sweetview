@@ -4,8 +4,9 @@
 //!   events of any window on this thread, one Sweetview made through `tao` or
 //!   one an application made itself, from inside whichever message loop
 //!   dispatches them. It also holds the window's [`ExStylePolicy`].
-//! * [`ForeignWindow`] names a window this process did not make through
-//!   Sweetview, checked when it is made.
+//! * [`ForeignWindow`] names a window by its handle value, checked when it is
+//!   made: an application's own window (adopted, or a webview mounted in it),
+//!   or the window a popup menu or a dialog is shown for.
 //! * The free functions are one OS call each (or one short sequence), on a
 //!   [`NativeWindow`]: a `tao` window or a [`ForeignWindow`].
 //!
@@ -83,4 +84,4 @@ mod metrics;
 mod popup;
 
 pub use metrics::{double_click_time_ms, small_icon_size};
-pub use popup::{check_item, show_popup, OwnerWindow, PopupAt};
+pub use popup::{check_item, show_popup, PopupAt};

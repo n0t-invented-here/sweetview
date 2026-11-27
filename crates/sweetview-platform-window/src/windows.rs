@@ -15,7 +15,7 @@ use std::num::NonZeroIsize;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::rc::Rc;
 
-use raw_window_handle::{HandleError, HasWindowHandle, RawWindowHandle, Win32WindowHandle, WindowHandle};
+use raw_window_handle::{DisplayHandle, HandleError, HasDisplayHandle, HasWindowHandle, RawWindowHandle, Win32WindowHandle, WindowHandle};
 use sweetview_window_logic::ico::{parse_ico, pick_ico_entry};
 use tao::platform::windows::{MonitorHandleExtWindows, WindowExtWindows};
 use windows::core::PCWSTR;
@@ -30,12 +30,12 @@ use windows::Win32::UI::Shell::{DefSubclassProc, DragFinish, DragQueryFileW, Rem
 use windows::Win32::UI::WindowsAndMessaging::{
   CreateIconFromResourceEx, DestroyIcon, DestroyWindow, GetClientRect, GetSystemMetrics, GetWindow, GetWindowLongPtrW,
   GetWindowRect, GetWindowThreadProcessId, IsIconic, IsWindow, IsWindowVisible, IsZoomed, LoadIconW, MoveWindow,
-  SendMessageW, SetForegroundWindow, SetLayeredWindowAttributes, SetWindowLongPtrW, SetWindowPos, SetWindowTextW,
+  PostMessageW, SendMessageW, SetForegroundWindow, SetLayeredWindowAttributes, SetWindowLongPtrW, SetWindowPos, SetWindowTextW,
   ShowWindow, GWL_EXSTYLE, GWL_STYLE, GW_CHILD, HICON, HTCAPTION, HWND_NOTOPMOST, HWND_TOPMOST, ICON_BIG, ICON_SMALL,
   IDI_APPLICATION, LAYERED_WINDOW_ATTRIBUTES_FLAGS, LR_DEFAULTCOLOR, LWA_ALPHA, LWA_COLORKEY, SET_WINDOW_POS_FLAGS,
   SHOW_WINDOW_CMD, SIZE_MINIMIZED, SM_CXICON, SM_CXSMICON, STYLESTRUCT, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE,
   SWP_NOSIZE, SWP_NOZORDER, SW_HIDE, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE, SW_SHOW, SW_SHOWNOACTIVATE, WM_CLOSE,
-  WM_ACTIVATE, WM_DROPFILES, WM_MOVE, WM_NCDESTROY, WM_NCLBUTTONDOWN, WM_SETICON, WM_SIZE, WM_STYLECHANGING, WS_POPUP, WS_THICKFRAME, WS_VISIBLE,
+  WM_ACTIVATE, WM_DROPFILES, WM_MOVE, WM_NCDESTROY, WM_NCLBUTTONDOWN, WM_NULL, WM_SETICON, WM_SIZE, WM_STYLECHANGING, WS_POPUP, WS_THICKFRAME, WS_VISIBLE,
 };
 
 use crate::{Chrome, ExStylePolicy, HandleCounts, Rect, WindowEvent};
@@ -108,6 +108,28 @@ impl HasWindowHandle for ForeignWindow {
     // thread, where the window can be destroyed only by code this thread runs.
     Ok(unsafe { WindowHandle::borrow_raw(raw) })
   }
+}
+
+impl HasDisplayHandle for ForeignWindow {
+  fn display_handle(&self) -> Result<DisplayHandle<'_>, HandleError> {
+    Ok(DisplayHandle::windows())
+  }
+}
+
+/// Posts `message` with plain integer parameters to a window named by
+/// [`NativeWindow`]. A failure (the window is gone, its queue is full) is not
+/// reported: every caller's message is a request the window may miss.
+pub(crate) fn post_message(hwnd: HWND, message: u32, wparam: usize) {
+  // SAFETY: a posted message with plain integer parameters; the OS validates
+  // the handle, and a stale one makes the call fail.
+  let _posted = unsafe { PostMessageW(Some(hwnd), message, WPARAM(wparam), LPARAM(0)) };
+}
+
+/// The nudge the shell asks for after a popup menu whose owner was made the
+/// foreground window for it (KB 135788): a `WM_NULL`, so the next menu closes
+/// when the user clicks elsewhere. Every popup menu this crate shows ends with it.
+pub(crate) fn after_popup_menu(hwnd: HWND) {
+  post_message(hwnd, WM_NULL, 0);
 }
 
 fn is_window_handle(hwnd: HWND) -> bool {
