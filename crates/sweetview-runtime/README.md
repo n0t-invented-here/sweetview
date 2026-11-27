@@ -10,3 +10,8 @@ It is safe Rust: `#![forbid(unsafe_code)]`. What needs an OS call no crate wraps
 |---|---|
 | `threads` | which thread is the UI thread, and the check every UI-thread entry point makes |
 | `runtime` | the loop in its blocking and pumped modes, deferred jobs, native timeouts, wakes from other threads |
+| `tray` | the tray icon on `tray-icon`: the single and double click rule, the menu built from data on each right click, events queued out of `tray-icon`'s window procedure before any callback runs |
+| `menu` | menus as data, built into `muda` menus on each showing; `Menu.popup` at a point or at the cursor, answering with the chosen item's number |
+| `icon` | `.ico` and PNG bytes decoded to RGBA at the size the tray or a menu draws |
+| `dialogs` | the folder dialog on `rfd` |
+| `app` | the application menu, the app icon and the activation policy, which do nothing on Windows |

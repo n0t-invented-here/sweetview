@@ -11,3 +11,4 @@ It is safe Rust: `#![forbid(unsafe_code)]`. The `#[napi]` attribute cannot be us
 | `callback` | `JsCallback`: a JavaScript function kept alive and called synchronously on the UI thread, each call in its own handle scope, with a thrown exception caught and logged |
 | `errors` | the conversion of runtime errors into thrown JavaScript errors |
 | `event_loop` | both loop modes, deferred jobs, native timeouts, and the wake a `Worker` calls |
+| `menus` | the tray, popup menus, the folder dialog and the app-wide settings: window handles from `bigint`, menu data in, the chosen item's number out |
