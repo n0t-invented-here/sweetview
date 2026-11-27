@@ -221,7 +221,10 @@ one from a plugin or another library. It does not change the window's style
 and does not own its lifetime: `dispose()` removes the hooks Sweetview added
 and leaves the window alive. It throws `sweetview: window handle is NULL`
 (Windows) or `sweetview: window handle is nil` (macOS) for `null`, `0` or
-`0n`.
+`0n`. On Windows a handle that names no window throws `sweetview: not a
+window: 0x…`, and events (`onClose`, `onResize`, `onMove`, `onFileDrop`) can
+be observed only on a window of the UI thread; for a window of another thread
+they throw `sweetview: a window of another thread cannot be observed`.
 
 The wrapper reads the window's real chrome so `WebView.attach` and
 `toggleMaximize` behave correctly: `frame` and `resizable` come from
