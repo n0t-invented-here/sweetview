@@ -155,7 +155,10 @@ Pure TypeScript and the same on every OS, so it is done once, here. The contract
     docs/ipc-electron.md
     docs/ipc-tauri.md
     docs/ipc-ws.md
-    $ grep -n "^## Transports" docs/ipc.md
+    $ grep -n "^### Transports" docs/ipc.md
+    248:### Transports
+    $ grep -c "webviewTransport()\|wsTransport()\|electronTransport()\|tauriTransport()" docs/ipc.md
+    10
     ```
 
     `docs/ipc.md` has a "Transports" section listing `webviewTransport`, `wsTransport`, `electronTransport` and `tauriTransport`; `docs/README.md` and the root `README.md` list both new pages.
