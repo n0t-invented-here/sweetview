@@ -1,8 +1,23 @@
 # Sweetview: native code in type-safe Rust
 
-Status: proposal and design.
+Status: proposal and design. **Not ready for full implementation.** The Readiness section says exactly what is and what is not.
 
 Rule: no functionality is removed. Everything Sweetview, the bindings and the C++ webview fork do today exists afterwards. Where a crate lacks something, this project writes it in Rust.
+
+## Readiness
+
+| Part | State | What closes it |
+|---|---|---|
+| Steps 1 and 2 of the order of work: the binding skeleton and the `Webview` API on `wry` | ready to start | nothing |
+| JavaScript called from native code while the UI thread is inside the loop, under Bun's N-API | unproven | step 1 builds it |
+| `tao`'s loop pumped from a Bun timer delivering tray events with no window | unproven | step 1 builds it |
+| The additions inside the `wry` fork: streaming, request source kinds, drag routing, top-level-only IPC | where they go in `wry`'s source is not located; `wry`'s source has not been read | reading `wry`'s `webview2` and `wkwebview` modules before step 3 |
+| The balloon addition inside the `tray-icon` fork | located: see "Fork additions, located" | nothing |
+| `objc2` and `windows` calls in the "this project writes" rows | named from their OS documentation; the crates' pages for them have not been read | reading each before the step that uses it |
+| `muda` `IconMenuItem`, `rfd` `MessageDialog`, `notify-rust` | not read | reading each before step 6 |
+| Native tabs, every `v1-drafting` feature, Linux | not designed | see "Not designed yet" |
+
+Every crate API named in "Every behaviour, and what provides it" is marked in "API references" as read or not read.
 
 ## What Sweetview is
 
@@ -33,7 +48,7 @@ Crates that already wrap the OS behind safe APIs. They are the libraries Tauri 2
 | `wry` | 0.58.2 | the webview: WebView2 on Windows, WKWebView on macOS, WebKitGTK on Linux |
 | `muda` | 0.22.0 | menus: `MenuItem`, `CheckMenuItem`, `IconMenuItem`, `Submenu`, `PredefinedMenuItem` |
 | `tray-icon` | 0.27.0 | tray and menu-bar icon with click events; the `ksni` feature gives Linux clicks |
-| `rfd` | pinned at step 1 | file and folder dialogs |
+| `rfd` | 0.18.0 | file and folder dialogs |
 | `notify-rust` | pinned at step 1 | Linux notifications |
 
 Crates for the N-API layer and for the Rust this project writes itself.
@@ -145,7 +160,7 @@ All kept.
 
 ## The games: required functions and the gate
 
-The owner's transparent desktop games are not in this repository or its siblings on the machine this was written on. So every function of Sweetview, the bindings and the C++ fork is treated as required by them. The functions below are the ones a full-screen transparent game with click handling exercises directly.
+Every function of Sweetview, the bindings and the C++ fork is treated as required by the owner's games. The functions below are the ones a full-screen transparent game with click handling exercises directly.
 
 | Function | Provided by | Check that exists today | Proven at |
 |---|---|---|---|
@@ -171,6 +186,61 @@ The gate:
 - The Rust library ships beside it under its own package version. A game moves to it by changing a dependency and moves back the same way.
 - Nothing of the current stack is deleted until every check in this document passes on Windows and macOS, and the owner's games run on the Rust library.
 - A function that cannot be made to work in Rust stops the migration at that step. The current stack remains the shipping one.
+
+## Fork additions, located
+
+### `tray-icon`: the Windows balloon
+
+Read in `src/platform_impl/windows/mod.rs` on the crate's `dev` branch.
+
+| Existing code | What it does | The addition |
+|---|---|---|
+| `struct TrayUserData` and `pub struct TrayIcon`, both holding `hwnd` and `internal_id` | the tray's hidden window and its `uID` | nothing; the addition uses both |
+| `register_tray_icon`, `TrayIcon::set_icon`, `TrayIcon::set_tooltip` | fill `NOTIFYICONDATAW` with `NIF_MESSAGE`, `NIF_ICON`, `NIF_TIP` and call `Shell_NotifyIconW` | a new `TrayIcon::show_balloon(title, body, silent, icon)`: `NIM_MODIFY` with `NIF_INFO`, `szInfo`, `szInfoTitle`, `dwInfoFlags`, as `win32/tray.ts` does today |
+| `tray_proc`, the arm for `WM_USER_TRAYICON` | matches mouse messages and sends `TrayIconEvent::Click` or `DoubleClick` | one more match arm for `NIN_BALLOONUSERCLICK` sending a new `TrayIconEvent::BalloonClick` |
+| the arm for `S_U_TASKBAR_RESTART` | re-adds the icon when Explorer restarts | nothing; this is the `TaskbarCreated` behaviour Sweetview has today |
+
+The file has no `NIF_INFO`, no `NIN_*` constant and no notification code today.
+
+### `wry`: streaming, request source kinds, drag routing, top-level-only IPC
+
+Not located: `wry`'s source has not been read. What is known from its API pages:
+
+- `WebViewExtWindows` gives the live COM objects: `controller() -> ICoreWebView2Controller`, `webview() -> ICoreWebView2`, `environment() -> ICoreWebView2Environment`. `AllowExternalDrop` on the controller and `AddWebResourceRequestedFilterWithRequestSourceKinds` on the webview are reachable through them.
+- The custom protocol handlers take and return whole bodies: `Request<Vec<u8>>` in, `Response<Cow<'static, [u8]>>` out. Streaming changes that path.
+- The C++ fork's own implementations are the reference: `streaming_istream.hh`, and the request, drag and script-message code in `win32_edge.hh` and `cocoa_webkit.hh`.
+
+## API references
+
+"Read" means the docs.rs page for that item was read on 2026-11-27 and the item is declared safe unless noted.
+
+| Item | Crate and version | Read |
+|---|---|---|
+| `WindowBuilder::with_visible`, `with_decorations`, `with_transparent`, `with_always_on_top`, `with_always_on_bottom`, `with_focusable`, `with_resizable`, `with_inner_size`, `with_position`, `with_title`, `with_window_icon`, `with_theme`, `with_visible_on_all_workspaces` | `tao` 0.38.0 | yes |
+| `WindowBuilderExtWindows::with_skip_taskbar`, `with_no_redirection_bitmap`, `with_undecorated_shadow`, `with_owner_window`, `with_window_classname` | `tao` 0.38.0 | yes |
+| `Window::set_ignore_cursor_events`, `cursor_position`, `outer_position`, `set_outer_position`, `inner_size`, `outer_size`, `set_inner_size`, `set_always_on_top`, `set_decorations`, `set_focusable`, `set_visible`, `is_visible`, `set_minimized`, `set_maximized`, `is_maximized`, `drag_window`, `drag_resize_window`, `scale_factor`, `current_monitor`, `primary_monitor`, `available_monitors`, `monitor_from_point`, `set_window_icon`, `set_theme`, `set_visible_on_all_workspaces` | `tao` 0.38.0 | yes |
+| `WindowExtWindows::hwnd`, `set_skip_taskbar`, `set_enable`, `set_undecorated_shadow` | `tao` 0.38.0 | yes |
+| `WindowExtMacOS::ns_window`, `ns_view`, `set_has_shadow`, `set_tabbing_identifier`, `tabbing_identifier`, `set_allows_automatic_window_tabbing`. The trait has no method for window level or collection behaviour | `tao` 0.38.0 | yes |
+| `EventLoopExtMacOS::set_activation_policy`, `set_dock_visibility`, `set_activate_ignoring_other_apps`, each effective only before the loop starts; `EventLoopWindowTargetExtMacOS::set_activation_policy_at_runtime` named there | `tao` 0.38.0 | yes |
+| `EventLoopProxy::send_event` | `tao` 0.38.0 | yes |
+| `EventLoopExtRunReturn::run_return`: documented as discouraged; does not return while a window is being resized | `tao` 0.38.0 | yes |
+| `WebViewBuilder::with_custom_protocol`, `with_asynchronous_custom_protocol`, `with_ipc_handler`, `with_initialization_script`, `with_initialization_script_for_main_only`, `with_transparent`, `with_background_color`, `with_devtools`, `with_drag_drop_handler`, `with_bounds`, `build`, `build_as_child` | `wry` 0.58.2 | yes |
+| `WebView::evaluate_script`, `evaluate_script_with_callback`, `load_url`, `load_html`, `set_background_color`, `bounds`, `set_bounds`, `set_visible`, `focus`, `open_devtools` | `wry` 0.58.2 | yes |
+| `WebViewExtWindows::controller`, `webview`, `environment`, `hwnd`, `reparent` | `wry` 0.58.2 | yes |
+| `TrayIconBuilder::with_icon`, `with_tooltip`, `with_title`, `with_menu`, `with_menu_on_left_click`, `with_menu_on_right_click`; `TrayIcon::set_icon`, `set_menu`, `set_tooltip`, `set_visible`, `set_show_menu_on_left_click`, `show_menu`, `rect` | `tray-icon` 0.27.0 | yes |
+| `TrayIconEvent::Click` with `button` and `button_state`; `DoubleClick`, Windows only; `Enter`, `Move`, `Leave`; `set_event_handler`. AppIndicator emits no events; KSNI emits left and middle clicks | `tray-icon` 0.27.0 | yes |
+| `Menu`, `Submenu`, `MenuItem`, `CheckMenuItem` with `set_checked`, `set_text`, `set_enabled`; `PredefinedMenuItem`; `MenuEvent::set_event_handler`. `show_context_menu_for_hwnd` and `show_context_menu_for_nsview` are `unsafe` calls | `muda` 0.22.0 | yes |
+| `IconMenuItem` constructors and `set_icon` | `muda` 0.22.0 | no |
+| `FileDialog::set_title`, `set_parent`, `set_can_create_directories`, `pick_folder` | `rfd` 0.18.0 | yes |
+| `MessageDialog` | `rfd` 0.18.0 | no |
+| `notify-rust` | not pinned | no |
+| every `objc2`, `objc2-app-kit`, `objc2-user-notifications`, `objc2-core-graphics`, `block2` item | not pinned | no |
+| every `windows` crate item | not pinned | no |
+| `napi` `Function`, `FunctionRef`, `ThreadsafeFunction` | version 3 documentation | concept pages only |
+
+One correction these readings forced: `tao` has no window level or collection behaviour call, so "above the Dock, on every Space" on macOS is written by this project against `NSWindow`, through the pointer from `ns_window()`.
+
+One addition they found: `tao` has `set_tabbing_identifier`, which is the macOS native-tabs mechanism the tabs demo implements by hand.
 
 ## Architecture
 
@@ -269,6 +339,42 @@ function installAppMenu(appName: string, aboutText: string): void;
 function setAppIcon(icon: IconBytes): void;
 ```
 
+The data types those signatures use:
+
+```ts
+type Rect = { x: number; y: number; width: number; height: number };
+type Point = { x: number; y: number };
+type ResizeEdge = "left" | "right" | "top" | "bottom" | "top-left" | "top-right" | "bottom-left" | "bottom-right";
+type ActivationPolicy = "regular" | "accessory" | "prohibited";
+
+type RawRequest = { id: bigint; method: string; url: string; headersJson: string; body: Uint8Array | null };
+
+// One icon, as Sweetview's `Icon` type carries it today.
+type IconBytes = { ico?: Uint8Array; png?: Uint8Array; symbol?: string; template?: boolean };
+
+type OverlayInit = { transparent: boolean; colorKey?: string; opacity?: number; topmost: boolean; hideFromTaskbar: boolean; noActivate: boolean };
+type OverlayWindowInit = OverlayInit & { title: string; bounds?: Rect; frame: boolean; appearance: "system" | "light" | "dark"; icon?: IconBytes };
+
+type MenuData = MenuItemData[];
+type MenuItemData =
+  | { kind: "item"; id: number; label: string; enabled: boolean; checked: boolean; icon?: IconBytes }
+  | { kind: "submenu"; label: string; enabled: boolean; icon?: IconBytes; items: MenuData }
+  | { kind: "separator" };
+
+type TrayInit = {
+  tooltip: string;
+  icon?: IconBytes;
+  hasMenu: boolean;
+  onClick: (() => void) | null;
+  onDoubleClick: (() => void) | null;
+  openMenu: () => MenuData;                  // called when the menu is about to open
+  menuChosen: (id: number) => void;          // called after the menu closes
+};
+
+type BalloonInit = { title: string; body: string; silent: boolean };
+type NotificationInit = { id: string; title: string; body: string; silent: boolean; dataJson: string | null };
+```
+
 - Numeric results keep the `webview_error_t` codes of today, so `WebviewError` and every documented code stay as they are.
 - Menus stay data. When a menu is about to open the library calls `openMenu()`; TypeScript resolves the template, keeps the click handlers by item number, and returns plain data. The library builds the `muda` menu and calls `menuChosen(itemNumber)`.
 
@@ -314,7 +420,8 @@ Today a `JSCallback` lets the OS call JavaScript on the UI thread while that thr
 
 ## Handles and constants
 
-- `Webview.unsafeHandle`, `Webview.unsafeWindowHandle`, `Overlay.handle` and the `handle` argument of the worker functions stay in the API as opaque numbers. The library checks each one against its table of live objects.
+- `Overlay.handle`, `WebviewApp.windowHandle` and `Webview.unsafeWindowHandle` stay the real OS handles, as `docs/native.md` and the bindings' docs define them: the `HWND` on Windows, the `NSWindow` pointer on macOS. `tao` returns them from `WindowExtWindows::hwnd()` and `WindowExtMacOS::ns_window()`.
+- `Webview.unsafeHandle` and the `handle` argument of the worker functions stay in the API as an opaque number that names the webview. The library checks it against its table of live webviews.
 - `assetOrigin` keeps its values: `http://webview.localhost` on Windows, `webview://localhost` on macOS.
 - `framesOrigin` on Windows becomes `http://webview-frames.localhost`; today it is `http://frames.webview.localhost`. Apps read it from the getter.
 - `WEBVIEW_PATH` pointed at a custom engine build. `SWEETVIEW_NATIVE_PATH` points at a custom build of the binding.
