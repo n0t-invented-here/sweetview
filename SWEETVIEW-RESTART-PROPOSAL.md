@@ -1,6 +1,6 @@
 # Sweetview: native code in type-safe Rust
 
-Status: proposal and design. **Not ready for full implementation.** The Readiness section says exactly what is and what is not.
+Status: proposal and design. Ready for implementation on Windows. On macOS two mechanisms that were proven on Windows are not yet proven; the Readiness section lists them.
 
 Rule: no functionality is removed. Everything Sweetview, the bindings and the C++ webview fork do today exists afterwards. Where a crate lacks something, this project writes it in Rust.
 
@@ -8,18 +8,34 @@ Rule: no functionality is removed. Everything Sweetview, the bindings and the C+
 
 | Part | State | What closes it |
 |---|---|---|
-| Steps 1 and 2 of the order of work: the binding skeleton and the `Webview` API on `wry` | ready to start | nothing |
-| JavaScript called from native code while the UI thread is inside the loop, under Bun's N-API | unproven | step 1 builds it |
-| `tao`'s loop pumped from a Bun timer delivering tray events with no window | unproven | step 1 builds it |
-| The four additions inside the `wry` fork: streaming on Windows and macOS, macOS drag routing, macOS top-level-only IPC | located, file and function each; see "Fork additions, located" | nothing |
-| A navigation-failed event from `wry`, needed by tabs | not located | reading `wry`'s navigation delegate before step 7 |
-| The balloon addition inside the `tray-icon` fork | located: see "Fork additions, located" | nothing |
-| `objc2` and `windows` calls in the "this project writes" rows | named from their OS documentation; the crates' pages for them have not been read | reading each before the step that uses it |
-| `muda` `IconMenuItem`, `rfd` `MessageDialog`, `notify-rust` | not read | reading each before step 6 |
+| JavaScript called from native code while the UI thread is inside the blocking loop, under Bun's N-API | **proven on Windows**; see "Proofs run" | on macOS: run the same proof on a Mac |
+| `tao`'s loop pumped from a Bun timer delivering tray events with no window, with Bun's timers and promises still running | **proven on Windows** | on macOS: run the same proof on a Mac |
+| `bun build --compile` embedding the `.node` binding into one executable | **proven on Windows** | on macOS: run the same proof on a Mac |
+| The five additions inside the `wry` fork: streaming on Windows and macOS, macOS drag routing, macOS top-level-only IPC, macOS navigation-failed event | located, file and function each; see "Fork additions, located" | nothing |
+| The balloon addition inside the `tray-icon` fork | located, file and function | nothing |
+| Every crate API the design names | read on docs.rs or in source, with version; see "API references" | nothing |
 | Native tabs and every `v1-drafting` feature | designed from a full reading of their files; see "Tabs" and "The `v1-drafting` features" | nothing |
 | Linux | scoped, not designed | its own step, last |
 
-Every crate API named in "Every behaviour, and what provides it" is marked in "API references" as read or not read.
+## Proofs run
+
+A throwaway crate, built and run on 2026-11-27 on Windows 11 with Bun 1.4.4 and Rust 1.97.1. It lives outside every repository and is not part of this proposal's code.
+
+Built with: `napi` 3.16.3, `napi-derive` 3.7.2, `napi-build` 2.7.0, `tao` 0.38.0, `wry` 0.58.2, `tray-icon` 0.27.0, `muda` 0.22.0, `windows` 0.62.2, `webview2-com` 0.39.1. Build time from clean: 43 seconds. The binding is 1.2 MB.
+
+| Question | What was run | Result |
+|---|---|---|
+| Can native code call a JavaScript function while the UI thread is inside the blocking `tao` loop? | A `#[napi]` function creates a hidden `tao` window and a `wry` webview, serves a page from a custom protocol, and enters `run_return`. The page calls `window.ipc.postMessage`. The loop calls the JavaScript function it was given and exits with its return value | The JavaScript function ran once, inside the loop, and its return value came back: `pong<ping from http://webview.localhost> insideLoop=true`. 368 ms from call to result |
+| What origin does a `wry` custom protocol named `webview` get on Windows? | the page reports `location.origin` | `http://webview.localhost`, the same value `assetOrigin` has today |
+| Does a `tao` loop pumped from a Bun timer deliver tray events with no window? | `init` creates a `tao` event loop and a `tray-icon` icon and no window. A Bun `setInterval` at 16 ms calls `pump`, which runs `run_return` until `MainEventsCleared`. Four tray mouse messages are posted to the tray icon's own window, the messages the shell posts for a left and a right click | 4 messages posted, 4 `TrayIconEvent::Click` events delivered to the JavaScript function |
+| Does Bun's own loop keep running between pumps? | a second 10 ms `setInterval` and a promise per tick, during 70 pump ticks | 109 timer ticks and 109 promise continuations ran |
+| Does `bun build --compile` embed the binding? | the script loads the binding with a literal `require("./spike.node")`; the compiled executable is copied alone into an empty folder and run | the executable passed every check above with no `.node` file beside it |
+
+Limits of these proofs:
+
+- Windows only. No Mac was available on the machine they ran on.
+- The tray clicks were the shell's messages posted by the test, not a person clicking.
+- They prove the mechanisms, not the features built on them.
 
 ## What Sweetview is
 
@@ -51,16 +67,19 @@ Crates that already wrap the OS behind safe APIs. They are the libraries Tauri 2
 | `muda` | 0.22.0 | menus: `MenuItem`, `CheckMenuItem`, `IconMenuItem`, `Submenu`, `PredefinedMenuItem` |
 | `tray-icon` | 0.27.0 | tray and menu-bar icon with click events; the `ksni` feature gives Linux clicks |
 | `rfd` | 0.18.0 | file and folder dialogs |
-| `notify-rust` | pinned at step 1 | Linux notifications |
+| `notify-rust` | 4.19.0 | Linux notifications |
 
 Crates for the N-API layer and for the Rust this project writes itself.
 
-| Crate | Job |
-|---|---|
-| `napi`, `napi-derive`, `napi-build` | The N-API layer. Rust marked `#[napi]` becomes the JavaScript API, and the crate generates the `.d.ts` from the Rust signatures |
-| `windows` | Microsoft's Rust bindings for Win32, COM and WinRT, generated from Windows' own metadata |
-| `objc2`, `objc2-foundation`, `objc2-app-kit` | Typed Objective-C: message sends, `define_class!`, `Retained<T>`, `MainThreadMarker` |
-| `objc2-user-notifications`, `objc2-core-graphics`, `block2` | macOS notifications, the event tap for the input hooks, Objective-C blocks |
+| Crate | Version read | Job |
+|---|---|---|
+| `napi`, `napi-derive`, `napi-build` | 3.16.3, 3.7.2, 2.7.0 | The N-API layer. Rust marked `#[napi]` becomes the JavaScript API, and the crate generates the `.d.ts` from the Rust signatures |
+| `windows` | 0.62.2 | Microsoft's Rust bindings for Win32, COM and WinRT, generated from Windows' own metadata |
+| `webview2-com` | 0.39.1 | typed WebView2 interfaces and event handlers; the types `wry`'s `controller()`, `webview()` and `environment()` return |
+| `objc2` | 0.6.3 | Typed Objective-C: message sends, `define_class!`, `Retained<T>`, `MainThreadMarker` |
+| `objc2-foundation`, `objc2-app-kit` | 0.3.2 | typed Foundation and AppKit |
+| `objc2-user-notifications`, `objc2-core-graphics` | 0.3.2 | macOS notifications; the event tap for the input hooks |
+| `block2` | 0.6.2 | Objective-C blocks |
 
 Two of the crates are used as forks this project owns, each carrying a short list of additions: `wry` and `tray-icon`. The additions are listed under "What this project writes in Rust".
 
@@ -204,7 +223,7 @@ Read in `src/platform_impl/windows/mod.rs` on the crate's `dev` branch.
 
 The file has no `NIF_INFO`, no `NIN_*` constant and no notification code today.
 
-### `wry`: what it already does, and the four additions
+### `wry`: what it already does, and the five additions
 
 Read on the crate's `dev` branch: `src/webview2/mod.rs`, `src/webview2/drag_drop.rs`, `src/wkwebview/mod.rs`, `src/wkwebview/drag_drop.rs`, `src/wkwebview/class/url_scheme_handler.rs`, `src/wkwebview/class/wry_web_view.rs`, `src/wkwebview/class/wry_web_view_delegate.rs`.
 
@@ -217,7 +236,7 @@ Already in `wry`, so no addition is needed:
 | Windows page messages from the top-level document only | `attach_ipc_handler` subscribes `add_WebMessageReceived` on the top-level `ICoreWebView2` only |
 | Custom scheme mapped to an `http://` origin on Windows | `custom_protocol_workaround` |
 
-The four additions, each with the function it changes:
+Four of the five additions, each with the function it changes:
 
 | Addition | File and function in `wry` | Change | Reference in the C++ fork |
 |---|---|---|---|
@@ -234,7 +253,12 @@ Done outside `wry`, in Sweetview's `platform` code, through `WebViewExtWindows::
 | File drop paths, Windows, with WebView2's own drop target left in place | the C++ fork's method: an initialization script that posts the dropped `File` objects with `postMessageWithAdditionalObjects`, and a `WebMessageReceived` handler on `webview()` that reads each `ICoreWebView2File` path. `wry`'s own `with_drag_drop_handler` is not used on Windows, because `DragDropController` in `src/webview2/drag_drop.rs` revokes WebView2's drop targets and rejects non-file drags |
 | Bridge and drop scripts in the top-level document only, Windows | each script starts with `if (window !== window.top) return`, as the C++ fork's do. `wry` adds scripts to every frame on Windows |
 
-Still to locate: where `wry` sets its own `WKNavigationDelegate` and its WebView2 navigation handlers. The tabs feature needs a "navigation failed" event from both, and on macOS the delegate slot the tabs demo uses today is taken by `wry`.
+The fifth addition, needed by tabs for the "This site did not open" page:
+
+| Addition | File in `wry` | Change |
+|---|---|---|
+| Navigation-failed event, macOS | `src/wkwebview/class/wry_navigation_delegate.rs`: `WryNavigationDelegate` implements `decidePolicyForNavigationAction`, `decidePolicyForNavigationResponse`, `didFinishNavigation`, `didCommitNavigation`, the two download methods and `webViewWebContentProcessDidTerminate`. It does not implement `webView:didFailNavigation:withError:` or `webView:didFailProvisionalNavigation:withError:`, and no builder callback reports a failed load | add the two methods and a handler ivar beside `on_page_load_handler`. `wry` owns the navigation delegate, so the tabs demo's own delegate cannot be installed |
+| Navigation-failed event, Windows | none | outside `wry`: `add_NavigationCompleted` on `WebViewExtWindows::webview()`, with the failure rules `win-webview2.ts` has today |
 
 ## API references
 
@@ -256,13 +280,24 @@ Still to locate: where `wry` sets its own `WKNavigationDelegate` and its WebView
 | `TrayIconBuilder::with_icon`, `with_tooltip`, `with_title`, `with_menu`, `with_menu_on_left_click`, `with_menu_on_right_click`; `TrayIcon::set_icon`, `set_menu`, `set_tooltip`, `set_visible`, `set_show_menu_on_left_click`, `show_menu`, `rect` | `tray-icon` 0.27.0 | yes |
 | `TrayIconEvent::Click` with `button` and `button_state`; `DoubleClick`, Windows only; `Enter`, `Move`, `Leave`; `set_event_handler`. AppIndicator emits no events; KSNI emits left and middle clicks | `tray-icon` 0.27.0 | yes |
 | `Menu`, `Submenu`, `MenuItem`, `CheckMenuItem` with `set_checked`, `set_text`, `set_enabled`; `PredefinedMenuItem`; `MenuEvent::set_event_handler`. `show_context_menu_for_hwnd` and `show_context_menu_for_nsview` are `unsafe` calls | `muda` 0.22.0 | yes |
-| `IconMenuItem` constructors and `set_icon` | `muda` 0.22.0 | no |
+| `IconMenuItem::new`, `with_id`, `with_native_icon`, `set_icon`, `set_text`, `set_enabled` | `muda` 0.22.0 | yes |
+| `WebViewBuilder::with_navigation_handler`, `with_on_page_load_handler`, `with_new_window_req_handler`, `with_document_title_changed_handler`, `with_url`, `with_html`. No callback reports a failed load | `wry` 0.58.2 | yes |
 | `FileDialog::set_title`, `set_parent`, `set_can_create_directories`, `pick_folder` | `rfd` 0.18.0 | yes |
-| `MessageDialog` | `rfd` 0.18.0 | no |
-| `notify-rust` | not pinned | no |
-| every `objc2`, `objc2-app-kit`, `objc2-user-notifications`, `objc2-core-graphics`, `block2` item | not pinned | no |
-| every `windows` crate item | not pinned | no |
-| `napi` `Function`, `FunctionRef`, `ThreadsafeFunction` | version 3 documentation | concept pages only |
+| `MessageDialog::set_title`, `set_description`, `set_buttons`, `set_parent`, `show` | `rfd` 0.18.0 | yes |
+| `Notification::summary`, `body`, `icon`, `appname`, `timeout`, `action`, `show` | `notify-rust` 4.19.0 | yes, the Linux page |
+| `NSWindow::setLevel`, `setCollectionBehavior`, `setAlphaValue`, `setOpaque`, `setIgnoresMouseEvents`, `setHasShadow`, `setStyleMask`, `frame`, `setFrame_display`, `setFrameOrigin`, `makeKeyAndOrderFront`, `orderFrontRegardless`, `orderOut`, `isVisible`, `isZoomed`, `zoom`, `miniaturize`, `performWindowDragWithEvent`, `standardWindowButton`, `addTabbedWindow_ordered`, `tabGroup`, `toggleTabBar`, `setTabbingIdentifier`, `setTabbingMode`, `setContentMinSize`, `setMinSize`, `screen`, `performClose`: all safe. `setNextResponder` and `setReleasedWhenClosed`: `unsafe` | `objc2-app-kit` 0.3.2 | yes |
+| `NSEvent::pressedMouseButtons`, `mouseLocation`, `doubleClickInterval`, `modifierFlags`, `clickCount`, `type`: all safe | `objc2-app-kit` 0.3.2 | yes |
+| `NSScreen::screens`, `mainScreen`, `frame`, `visibleFrame`, `backingScaleFactor`: all safe | `objc2-app-kit` 0.3.2 | yes |
+| `NSImage::imageWithSystemSymbolName_accessibilityDescription`, `initWithData`, `setTemplate`, `setSize`: all safe | `objc2-app-kit` 0.3.2 | yes |
+| `NSApplication::sharedApplication`, `setActivationPolicy`, `activate`, `currentEvent`, `keyWindow`, `mainMenu`, `setMainMenu`, `setWindowsMenu`, `nextEventMatchingMask_untilDate_inMode_dequeue`, `sendEvent`, `finishLaunching`, `updateWindows`: all safe. `setApplicationIconImage`: `unsafe` | `objc2-app-kit` 0.3.2 | yes |
+| `UNUserNotificationCenter::currentNotificationCenter`, `setDelegate`, `requestAuthorizationWithOptions_completionHandler`, `addNotificationRequest_withCompletionHandler`: all safe; completion handlers are `block2::DynBlock` | `objc2-user-notifications` 0.3.2 | yes |
+| `CGEvent::tap_create`: `unsafe`. `CGEvent::tap_enable`, `flags`, `location`, `integer_value_field`, `double_value_field`, `type`: safe | `objc2-core-graphics` 0.3.2 | yes |
+| `SetWindowsHookExW`: `unsafe`, returns `Result<HHOOK>`. `Shell_NotifyIconW`: `unsafe` | `windows` 0.62.2 | yes |
+| the other `windows` functions named in this document: `GetAsyncKeyState`, `SystemParametersInfoW`, `SetLayeredWindowAttributes`, `CreateMutexW`, `FindWindowExW`, `SendMessageTimeoutW`, the registry and clipboard calls, the WinRT toast types | `windows` 0.62.2 | no; every Win32 function in this crate is `unsafe` |
+| `objc2-core-foundation` `CFMessagePort` functions | not read | no |
+| `napi` `Function` called from inside a native loop; `.node` loading by `require`; embedding by `bun build --compile` | `napi` 3.16.3 on Bun 1.4.4 | built and run; see "Proofs run" |
+
+One consequence of these readings for memory safety on macOS: almost every AppKit call this project makes is a safe method. The `unsafe` there is the one conversion of `tao`'s `ns_window()` pointer into an `NSWindow` reference, plus `setNextResponder`, `setApplicationIconImage`, `CGEvent::tap_create` and the classes defined with `define_class!`.
 
 One correction these readings forced: `tao` has no window level or collection behaviour call, so "above the Dock, on every Space" on macOS is written by this project against `NSWindow`, through the pointer from `ns_window()`.
 
@@ -567,8 +602,8 @@ No Linux code exists in Sweetview today, and the C++ fork's additions do nothing
 
 | Risk | Action |
 |---|---|
-| A JavaScript function called from native code while the UI thread is inside the loop does not behave under Bun's N-API as it does under `bun:ffi` | Step 1 proves it before anything else is built. |
-| `tao`'s `run_return` under a Bun timer does not deliver tray events with no window | Step 1 proves it with `demos/menubar-only`. The fix belongs in the pump function, which then dequeues OS events itself with `windows` and `objc2`, the calls today's `pumpEvents` makes. |
+| The two loop mechanisms are proven on Windows and not on macOS | Step 1 runs the same proof on a Mac before any macOS module is built. If the timer pump fails there, the pump function dequeues events itself with `NSApplication::nextEventMatchingMask_untilDate_inMode_dequeue` and `sendEvent`, the calls today's `pumpEvents` makes; both are safe methods in `objc2-app-kit`. |
+| The tray proof used posted messages, not a person's click | Step 1's acceptance is `demos/menubar-only` clicked by hand on Windows and macOS. |
 | A rebuilt module behaves differently from today. Every game-critical path is re-implemented under this proposal, so each one can differ | Each is accepted against its existing tests and demo. The current stack stays the shipping one until the gate in step 8 is passed. |
 | The forks of `wry` and `tray-icon` drift from upstream | Each addition is one commit on top of a pinned upstream version, and is offered upstream. |
 | `unsafe` spreads | `#![forbid(unsafe_code)]` on every Sweetview module outside `platform`. CI counts `unsafe` blocks and fails when the count rises without an entry in a tracked list. |
