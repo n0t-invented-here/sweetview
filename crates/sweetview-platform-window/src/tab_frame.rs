@@ -1,8 +1,8 @@
 //! Windows: what the frame of a tabbed window needs that `tao` has no API for.
 //!
 //! The frame is a `tao` window without decorations (its caption is drawn by
-//! the tab strip, a child webview). These are the calls around it: its client
-//! area, whether it is the foreground window, handing a press on the strip to
+//! the tab strip, a child webview). These are the calls around it: whether it
+//! is the foreground window, handing a press on the strip to
 //! the OS move and size loops (synchronously, so the caller knows where the
 //! window ended up), the window's system menu, a popup menu that answers with
 //! the chosen item, and the system's light or dark app theme.
@@ -12,38 +12,20 @@ use std::marker::PhantomData;
 
 use sweetview_window_logic::ResizeEdge;
 use windows::core::PCWSTR;
-use windows::Win32::Foundation::{HWND, LPARAM, POINT, RECT, WPARAM};
-use windows::Win32::Graphics::Gdi::ClientToScreen;
+use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::UI::Input::KeyboardAndMouse::ReleaseCapture;
 use windows::Win32::UI::WindowsAndMessaging::{
-  AppendMenuW, CreatePopupMenu, DestroyMenu, EnableMenuItem, GetClientRect, GetForegroundWindow, GetSystemMenu,
+  AppendMenuW, CreatePopupMenu, DestroyMenu, EnableMenuItem, GetForegroundWindow, GetSystemMenu,
   PostMessageW, SendMessageW, SetForegroundWindow, SetMenuDefaultItem, TrackPopupMenu, HMENU, MENU_ITEM_FLAGS, MF_ENABLED,
   MF_GRAYED, MF_SEPARATOR, MF_STRING, SC_CLOSE, SC_MAXIMIZE, SC_MINIMIZE, SC_MOVE, SC_RESTORE, SC_SIZE, TPM_RETURNCMD,
   TPM_RIGHTBUTTON, WM_CLOSE, WM_NCLBUTTONDOWN, WM_NULL, WM_SYSCOMMAND, WS_CLIPCHILDREN,
 };
 
-use crate::{is_zoomed, NativeWindow, Point, Rect};
+use crate::{is_zoomed, NativeWindow, Point};
 
 /// The style bit a frame keeps on, so painting its background never draws
 /// over the webviews that are its children.
 pub const FRAME_STYLE: u32 = WS_CLIPCHILDREN.0;
-
-/// The client area: `(0, 0)` to the window's inside size, or `None` when the window is gone.
-pub fn client_rect(window: &impl NativeWindow) -> Option<Rect> {
-  let mut rect = RECT::default();
-  // SAFETY: `rect` is a RECT owned by this frame for the call to fill; the
-  // handle is named by `NativeWindow`, and an invalid one fails the call.
-  unsafe { GetClientRect(window.hwnd(), &mut rect) }.ok()?;
-  Some(Rect::from_edges(rect.left, rect.top, rect.right, rect.bottom))
-}
-
-/// Where the client area's top-left corner is on the screen.
-pub fn client_origin(window: &impl NativeWindow) -> Option<Point> {
-  let mut point = POINT::default();
-  // SAFETY: `point` is a POINT owned by this frame for the call to convert in place.
-  let converted = unsafe { ClientToScreen(window.hwnd(), &mut point) }.as_bool();
-  converted.then_some(Point { x: point.x, y: point.y })
-}
 
 /// True when the window is the foreground window: the one the user is typing into.
 pub fn is_foreground(window: &impl NativeWindow) -> bool {

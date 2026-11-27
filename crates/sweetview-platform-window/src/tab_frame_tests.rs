@@ -49,20 +49,10 @@ fn serial() -> std::sync::MutexGuard<'static, ()> {
 }
 
 #[test]
-fn the_client_area_starts_at_its_origin_on_the_screen() {
+fn a_hidden_window_is_never_the_foreground_window() {
   let _serial = serial();
   let window = TestWindow::new();
-  let foreign = window.foreign();
-  let client = client_rect(&foreign).expect("a client area");
-  assert_eq!((client.x, client.y), (0, 0));
-  assert!(client.width > 0 && client.height > 0);
-  let outer = crate::outer_bounds(&foreign).expect("outer bounds");
-  let origin = client_origin(&foreign).expect("an origin");
-  // The client area sits inside the frame, below the caption.
-  assert!(origin.x > outer.x && origin.y > outer.y);
-  assert!(!is_foreground(&foreign), "a hidden window is never the foreground window");
-  drop(window);
-  assert_eq!(client_rect(&foreign), None);
+  assert!(!is_foreground(&window.foreign()));
 }
 
 #[test]

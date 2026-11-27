@@ -22,7 +22,7 @@ use tao::window::Theme;
 
 use super::{core_of, screen, Appearance, Core, WINDOWS};
 use crate::error::{Error, Result};
-use crate::{Rect, ResizeEdge};
+use crate::{Point, Rect, ResizeEdge};
 
 /// The page the frame is sized for when no bounds are given, in device-independent pixels.
 const DEFAULT_PAGE: (f64, f64) = (1040.0, 720.0);
@@ -114,9 +114,10 @@ pub(super) fn finish(core: &Rc<Core>, tab: &TabState, default_bounds: bool, min:
 
 /// The outer frame less the client area: what the system's border takes.
 fn frame_edges(core: &Core) -> (i32, i32) {
-  match (platform::outer_bounds(&core.native), platform::client_rect(&core.native)) {
-    (Some(outer), Some(client)) => ((outer.width - client.width).max(0), (outer.height - client.height).max(0)),
-    _ => (0, 0),
+  let sizes = core.with_tao(|tao| (tao.outer_size(), tao.inner_size()));
+  match sizes {
+    Some((outer, inner)) => (outer.width.saturating_sub(inner.width) as i32, outer.height.saturating_sub(inner.height) as i32),
+    None => (0, 0),
   }
 }
 
@@ -156,8 +157,16 @@ impl TabFrame {
     platform::dpi_scale(&self.core.native)
   }
 
+  /// The client area, `(0, 0)` to its size; empty once the window is gone.
   fn client(&self) -> Rect {
-    platform::client_rect(&self.core.native).unwrap_or_default()
+    let size = self.core.with_tao(|tao| tao.inner_size()).unwrap_or_default();
+    Rect::new(0, 0, size.width as i32, size.height as i32)
+  }
+
+  /// Where the client area's top-left corner is on the screen.
+  fn client_origin(&self) -> Point {
+    let origin = self.core.with_tao(|tao| tao.inner_position().ok()).flatten();
+    origin.map(|p| Point { x: p.x, y: p.y }).unwrap_or_default()
   }
 
   /// The strip's height in physical pixels at the frame's DPI, never more than the client area.
@@ -180,7 +189,7 @@ impl TabFrame {
 
   /// The strip on the screen, for a tab dropped on it from another window.
   pub fn strip_screen_rect(&self) -> Rect {
-    let origin = platform::client_origin(&self.core.native).unwrap_or_default();
+    let origin = self.client_origin();
     let strip = self.strip_rect();
     Rect::new(origin.x, origin.y, strip.width, strip.height)
   }
@@ -203,7 +212,7 @@ impl TabFrame {
   fn travelled_since(&self, held: (f64, f64)) -> Result<(i32, i32)> {
     let cursor = screen::cursor()?;
     let scale = self.scale();
-    let origin = platform::client_origin(&self.core.native).unwrap_or_default();
+    let origin = self.client_origin();
     let x = origin.x + (held.0 * scale).round() as i32;
     let y = origin.y + (held.1 * scale).round() as i32;
     Ok((cursor.x - x, cursor.y - y))

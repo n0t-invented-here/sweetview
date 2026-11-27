@@ -3,16 +3,10 @@
 
 use sweetview_window_logic::ResizeEdge;
 
-use crate::{NativeWindow, Point, Rect};
+use crate::{NativeWindow, Point};
 
 pub const FRAME_STYLE: u32 = 0;
 
-pub fn client_rect(_window: &impl NativeWindow) -> Option<Rect> {
-  None
-}
-pub fn client_origin(_window: &impl NativeWindow) -> Option<Point> {
-  None
-}
 pub fn is_foreground(_window: &impl NativeWindow) -> bool {
   false
 }
