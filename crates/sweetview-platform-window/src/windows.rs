@@ -821,11 +821,11 @@ fn handle(hwnd: HWND, message: u32, wparam: WPARAM, mut lparam: LPARAM) -> Optio
   }
 }
 
-// SAFETY: this is the subclass procedure the OS calls with the arguments of a
-// window message; it is `unsafe extern "system"` only because `SUBCLASSPROC`
-// requires that signature. It never unwinds: its body runs inside
-// `catch_unwind`, and a panic forwards the message unchanged.
-unsafe extern "system" fn subclass_proc(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM, _id: usize, _data: usize) -> LRESULT {
+/// The subclass procedure the OS calls with the arguments of a window message.
+/// A safe `extern "system"` function, which `SUBCLASSPROC`'s `unsafe` function
+/// pointer type accepts. It never unwinds: its body runs inside `catch_unwind`,
+/// and a panic forwards the message unchanged.
+extern "system" fn subclass_proc(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM, _id: usize, _data: usize) -> LRESULT {
   let handled = catch_unwind(AssertUnwindSafe(|| handle(hwnd, message, wparam, lparam))).unwrap_or(None);
   match handled {
     Some(result) => result,
