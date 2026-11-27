@@ -1,188 +1,138 @@
 # Sweetview restart proposal
 
-Status: proposal, awaiting decision D at the end.
+Status: proposal, awaiting decisions D and E at the end.
 
-Basis: the npm registry, the repositories and documentation named under Sources, and git counts of this repository, as of 2026-11-27.
+Basis: git counts of this repository, its README and `webview/README.md`, and the external sources listed at the end, as of 2026-11-27.
 
-The current tree (`main` and `v1-drafting`) is reference material only. Its native code is TypeScript calling Win32 and Objective-C through `bun:ffi`, plus two C++ forks. None of that ships.
+## The change in one paragraph
 
-| Branch | Platform code (non-test `.ts` under the `win32/` and `darwin/` folders) | Other FFI |
+Sweetview's native code moves out of TypeScript and into one Rust library, called from Bun through N-API. The behaviour, the features, the public TypeScript API, the tests and the webview library stay. What goes is TypeScript holding raw pointers and calling the OS through `bun:ffi`.
+
+## What exists today
+
+| Part | Where | State |
 |---|---|---|
-| `main` | 2,779 lines in 24 files, under `src/native/` | 2,004 lines in 7 files in the `demos/native-tabs` demo |
-| `v1-drafting` | 6,916 lines in 35 files, under `packages/sweetview-native/src/` | 2,669 lines in 8 files in the other packages |
+| Webview library | `n0t-invented-here/sweetview-webview` (C++ fork of `webview/webview`) and `n0t-invented-here/sweetview-webview-bun` | works; carries this project's additions: background colour and transparency, native asset serving, and on its `v1-drafting` branches the request handler, streamed responses and external drop control |
+| Native layer on `main` | `src/native/win32/` and `src/native/darwin/` | 2,779 lines of TypeScript FFI in 24 files |
+| Native tabs on `main` | `demos/native-tabs/` | 2,004 lines of TypeScript FFI in 7 files |
+| Native layer on `v1-drafting` | `packages/sweetview-native/src/win32/` and `darwin/` | 6,916 lines of TypeScript FFI in 35 files, plus 2,669 lines in 8 files in the other packages |
+| Pure TypeScript | IPC contract and bridge, WebSocket transport, settings store, hit-region geometry, icon encoders, `.app` builder | works; no FFI |
+| Tests | 17 test files on `main`, 30 on `v1-drafting` | the acceptance suite for the port |
 
-## What this delivers
+## What is kept
 
-One package an app developer adds with `bun add`. TypeScript only on their side. Compiled with `bun build --compile`. All native code is one Rust library shipped prebuilt. Targets are Windows, macOS and, minimally, desktop Linux.
+- The webview library, as it is. It is linked into the Rust library and called through its existing C API.
+- Every native behaviour the port source has: windows, transparent overlays and hit regions for the games, tray, notifications, menus, folder picker, icons, the event loop, native tabs.
+- The public TypeScript API. App code, demos and docs keep working.
+- All pure TypeScript modules, unchanged.
+- The tests. Each ported module passes the tests its TypeScript version passes.
 
-Each of these works alone, in a single `.ts` file:
+## What is replaced
 
-1. A menu-bar or system-tray app: icon, left and right click on the icon, menus with checkmarks, icons and dynamic updates.
-2. A webview app whose page talks to Bun over IPC with no TCP.
-3. Native OS notifications.
-4. A webview app with N windows, and tabs in one window.
-5. Transparent full-screen desktop games with hit-region click-through.
+Each TypeScript FFI file becomes a Rust module making the same OS calls.
 
-An app that grows stays on this stack. An app that wants to leave can move to Tauri 2 (or Electron) without changing its page code.
-
-## Layer 1: native engine
-
-A Rust crate owned by this project, exposed to Bun through N-API with `napi-rs`. JavaScript holds no pointers. The crate binds the libraries Tauri 2 itself runs on, used without Tauri.
-
-| Library | Job | Platforms |
-|---|---|---|
-| `tao` | windows and the OS event loop | Windows, macOS, Linux |
-| `wry` | the webview: WebView2, WKWebView, WebKitGTK | Windows, macOS, Linux |
-| `muda` | menus: plain, check, icon and submenu items | Windows, macOS, Linux |
-| `tray-icon` 0.25 with its `ksni` feature | tray and menu-bar icon with click events | Windows, macOS, Linux |
-| `notify-rust` | native notifications | Windows, macOS, Linux |
-| `rfd` | file and folder dialogs | Windows, macOS, Linux |
-
-Code this project writes in the crate:
-
-| Part | Content |
+| Today | After |
 |---|---|
-| The N-API binding | typed functions over the six libraries above |
-| Hit-region click-through | OS hit-testing for transparent windows: "click the sprite, pass through elsewhere" |
-| Event loop integration | the OS loop is pumped from a Bun timer, the model today's Sweetview uses in `runEventLoop` and its `menubar-only` demo |
+| `bun:ffi` `dlopen` of `user32`, `shell32`, `dwmapi` and others, with hand-written signatures | the `windows` crate, whose signatures are generated from Microsoft's own metadata |
+| Hand-rolled `objc_msgSend` calls in `darwin/objc.ts` | the `objc2` crates, with typed AppKit bindings and automatic retain and release |
+| `JSCallback` function pointers handed to the OS | Rust callbacks owned by the library, delivered to JavaScript through N-API |
+| Pointers and buffers held in JavaScript | none; JavaScript receives objects and plain values |
+| A separate `webview.dll` or `libwebview.dylib` loaded at run time | the same C++ code linked into the one native binary |
 
-Size reference: `webviewjs/webview`, an existing binding over the same libraries, is 6,082 lines of Rust.
+## What the port fixes
 
-Rule for the crate: `#![forbid(unsafe_code)]` on every file except the hit-testing module. The compiler enforces it.
+| Class of defect | Example in this repository | After the port |
+|---|---|---|
+| Wrong return type or argument count on a native call | commit `83d7411`: `isZoomed` read with the wrong return type, `orderFrontRegardless` called with the wrong arity | does not compile |
+| Object lifetime errors: use after release, leaks of COM or Objective-C objects | commit `db5fd1b`: COM cleanup on tab teardown | released by the type system when the owner is dropped |
+| A callback freed while the OS still holds its pointer | every `JSCallback` site, 65 on `v1-drafting` | the library owns the callback for the life of the registration |
+| A buffer moved or collected while the OS writes to it | every `ptr()` site, 63 on `v1-drafting` | buffers are Rust-owned for the duration of the call |
 
-## Layer 2: TypeScript API
+Each OS call in Rust still sits in an `unsafe` block, because the OS API is unsafe. The count of those blocks is visible to the compiler and to review, and they are confined to the platform modules. Every other module carries `#![forbid(unsafe_code)]`.
 
-What app developers import. One entry point per journey, each usable without the others.
+## Shape after the port
 
-| Entry point | Journey | Windows | macOS | Linux (minimal) |
+| Layer | Content | Language |
+|---|---|---|
+| App | the developer's single `.ts` file | TypeScript |
+| Sweetview API | `Window`, `Tray`, `Notifier`, `Menu`, `createApp`, IPC, build helpers | TypeScript, as today |
+| Native library | one prebuilt binary per target, loaded through N-API | Rust, plus the existing C++ webview library linked in |
+
+App developers write TypeScript only. `bun add` installs the package with its prebuilt binaries. `bun build --compile` embeds the binary, which is loaded with a literal `require` of a fixed path.
+
+## The five journeys
+
+| Journey | Source of the implementation | Windows | macOS | Linux (minimal) |
 |---|---|---|---|---|
-| `/tray` | menu bar or system tray, icon clicks, dynamic menus | full | full | menu and left click, on desktops with a StatusNotifierItem host (KDE Plasma, Waybar) |
-| `/notify` | native notifications with click events | full | needs a signed `.app` | basic |
-| `/webview` | a window rendering a page, N windows | full | full | full |
-| `/webview` tabs | tabs in one window | tab strip plus one child webview per tab | native tabs | tab strip plus one child webview per tab |
-| `/overlay` | transparent, always on top, hit-region click-through | full | full | not planned |
-| `/build` | `.app` bundle helper, compile helper | n/a | n/a | n/a |
+| Tray or menu-bar app with icon clicks and menus | port of the existing tray and menu modules; checkmarks, item icons and dynamic menus added where missing | yes | yes | new code |
+| Webview app with IPC and no TCP | existing webview library and IPC layer | yes | yes | upstream `webview/webview` supports WebKitGTK; this project's fork additions are ported to it |
+| Native notifications | port of the existing notifier modules | yes | yes, from a signed `.app` | new code |
+| N windows and tabs | port of the existing window and native-tabs modules | yes | yes | windows yes; tabs not planned |
+| Transparent games with hit-region click-through | port of the existing overlay and hit-region modules, with the fork's input handling | yes | yes | not planned |
 
-`/tray` and `/notify` load no webview code. A tray-only app runs with no window.
+## IPC and bail-out
 
-## Layer 3: IPC
-
-The service definition, bridge and ready handshake from the Qt template, ported as they are.
-
-Transports, with identical page code across all of them:
-
-| Transport | Used when | Carrier |
-|---|---|---|
-| webview | the page runs in a Sweetview window | native webview messaging, no TCP |
-| WebSocket | the same page runs in a browser | `Bun.serve` WebSocket |
-| Tauri 2 | the app has moved to Tauri | `invoke` and events |
-| Electron | the app has moved to Electron | preload bridge |
-
-Bailing out to Tauri 2: the page does not change. The service either runs as a Bun sidecar under Tauri or is ported to Rust commands. The native layer is already Tauri's own libraries.
-
-## Carried over from the current tree
-
-All pure TypeScript, no FFI.
-
-| Item | On `main` | On `v1-drafting` |
-|---|---|---|
-| IPC contract and bridge (`defineService`, `createBridge`) | yes | yes |
-| WebSocket transport (`wsHost`, `wsTransport`) | yes | yes |
-| Settings store | yes | yes |
-| Hit-region geometry | yes | yes |
-| Icon encoders | yes | yes |
-| `.app` bundle builder (`makeMacApp`) | yes | yes |
-| Ready handshake (`signalReady`) | no | yes |
-| App identity (`defineAppIdentity`) | no | yes |
-| Chunked IPC framing (`ChunkFrame`) | no | yes |
-
-The docs serve as the API reference and the demos as acceptance tests.
-
-## Dropped
-
-- every line of `bun:ffi`, and both C++ forks (`n0t-invented-here/sweetview-webview`, `n0t-invented-here/sweetview-webview-bun`)
-- streamed responses: `wry` accepts only whole response bodies, so large payloads go as chunked IPC messages
-- the mandatory worker and the shared-memory ring
+The service definition, bridge and ready handshake stay as they are. Two transports are added beside the webview and WebSocket ones: Tauri 2 (`invoke` and events) and Electron (preload bridge). Page code is identical across all four. An app that moves to Tauri 2 keeps its page; its service runs as a Bun sidecar or is ported to Rust commands.
 
 ## Distribution
 
 - One npm package holding the TypeScript and one prebuilt binary per target: Windows x64, macOS arm64, Linux x64.
-- CI builds the binaries on one runner per OS. Consumers never install Rust.
-- The binary is loaded with a literal `require` of a fixed path, which is the form `bun build --compile` embeds. All targets ship in the one package, so a Windows executable compiles on a Mac.
+- CI builds the binaries on one runner per OS. Consumers never install Rust or a C++ toolchain.
+- The separate `@n1h/sweetview-webview-bun` package is retired; its C++ source is built into the one binary.
 
 ## Order of work
 
-1. Crate skeleton with CI producing the three prebuilt binaries in one package, and a tray-only app with no window that receives icon clicks on Windows, macOS and Linux.
-2. `/tray` with checkmarks, icons and dynamic menus; `/notify`.
-3. `/webview` with the IPC port.
-4. Multiple windows and tabs.
-5. Hit-region click-through, then port one game.
-6. Tauri 2 and Electron transports.
-7. Linux minimal pass.
+1. Rust library skeleton: N-API entry point, the C++ webview library linked in, CI producing the prebuilt binaries. Acceptance: the existing `web-app` demo opens its window through the new binary.
+2. Port the event loop and window modules. Acceptance: their existing tests pass.
+3. Port tray, menus and notifications. Acceptance: the `menubar-only` and `menubar-notify` demos run unchanged.
+4. Port overlays and hit regions. Acceptance: the `desktop-pet` demo and one game run unchanged.
+5. Port native tabs. Acceptance: the `native-tabs` demo runs unchanged.
+6. Delete the TypeScript FFI files and the run-time loading of the webview library.
+7. Tauri 2 and Electron transports.
+8. Linux minimal pass.
+
+The port goes one module at a time. After each step the tree works, with ported modules in Rust and the rest still in TypeScript.
 
 ## Risks and actions
 
 | Risk | Action |
 |---|---|
-| Tray events are lost when the OS loop is pumped from a timer with no window. `webviewjs/webview` has exactly this bug (issue #96) | Step 1 is the tray-only app with no window. No other feature is built until it receives clicks on all three OSes. The tray module pumps the OS loop itself (`PeekMessage` on Windows, `NSApplication` event polling on macOS) the way today's `menubar-only` demo does. |
-| `tray-icon` up to 0.24 emits no click events on Linux | The crate uses `tray-icon` 0.25 with the `ksni` feature, which delivers left click through StatusNotifierItem (tauri-apps/tray-icon#201, merged 2026-09-08). |
-| GNOME has no StatusNotifierItem host without an extension | `/tray` exposes `supportsIconClick`. Where it is false, the app's click action is the first menu item. |
-| Transparent windows on Windows turn opaque intermittently | `/overlay` creates transparent windows without a redirection bitmap, the fix recorded in webviewjs issue #59. |
-| Hit-testing requires unsafe Rust | It lives in one module. Every other file carries `#![forbid(unsafe_code)]`. |
-| macOS shows no notifications from an unsigned bundle | The `/build` helper signs every `.app` it produces. `/notify` throws an error naming the missing signature when called outside a signed bundle. |
-| `wry` cannot stream response bodies | Large payloads use the chunked IPC framing carried over from `v1-drafting`. Decision D confirms this. |
-| Handle leaks on Windows when windows are disposed (reported against webviewjs `0.4.4`, issue #54) | CI runs a create-and-dispose cycle test that counts process handles on Windows. |
+| A ported module behaves differently from its TypeScript original | Each module is ported against its existing tests and demo before the TypeScript version is deleted. Both versions exist side by side until the tests pass on the Rust one. |
+| The C++ webview library stays C++ | The fork's diff against upstream `webview/webview` stays small and is listed in `webview/README.md`. CI builds it with AddressSanitizer and runs the webview tests under it on macOS and Linux. |
+| `unsafe` blocks spread through the Rust code | `#![forbid(unsafe_code)]` on every module outside the two platform folders. CI fails when the count of `unsafe` blocks rises without a matching entry in a tracked list. |
+| The OS event loop and Bun's loop interact differently through N-API than through `bun:ffi` | Step 1 ends with the `web-app` demo running, which exercises the blocking loop with a worker. Step 3 ends with `menubar-only` running, which exercises the timer-pumped loop with no window. |
+| macOS shows no notifications from an unsigned bundle | Unchanged from today: the `.app` builder signs the bundle. |
+| Linux has no existing native code to port | Linux is last, scoped to a window with a webview, a tray menu and a notification. |
 
 ## Alternatives ruled out
 
 | Option | Why not |
 |---|---|
-| `webviewjs/webview`, as a dependency or as a fork | See the next section |
-| Electrobun | own CLI and toolchain, no `bun build --compile`, IPC over a localhost WebSocket, broken transparent click-through, Zig, Objective-C and C++ native layer; excluded by the project owner |
+| Replace the native layer with Tauri's `tao` and `wry` libraries | loses working features: streamed responses (`wry` accepts whole bodies only), the fork's input handling for transparent games, hit regions, the Windows tab strip. All of it would be written again |
+| `webviewjs/webview` | an N-API binding over `tao` and `wry`. Its tray does not deliver events without a window (issue #96, open). It has no menu checkmarks or icons, no hit regions, no Linux tray clicks. One maintainer |
+| Electrobun | own CLI and toolchain, no `bun build --compile`, IPC over a localhost WebSocket, broken transparent click-through; excluded by the project owner |
 | bunmaska | alpha; its native layer is `bun:ffi` written in TypeScript |
 | `Bun.WebView` | headless browser automation; opens no window |
-| Deno desktop, Neutralinojs | not Bun |
 | Tauri 2 directly | app developers must write Rust and use Tauri's tooling |
-| Own Rust crate on raw OS bindings | the same unsafe OS calls in another language |
+| Keep the TypeScript FFI | the defect classes in "What the port fixes" stay possible in every native call |
 
-## Why not `webviewjs/webview`
+## Open decisions
 
-It is an N-API binding over `tao`, `wry`, `muda`, `tray-icon` and `notify-rust` for Bun, Node.js and Deno. It is used here as reading material only.
+D. Should the webview library also be ported from C++ to Rust later, or stay C++ permanently? It works today and its fork diff is small. Porting it means reimplementing the WebView2 and WKWebView hosting that upstream already provides.
 
-| Finding | Evidence |
-|---|---|
-| Its tray is broken for the first journey | Issue #96, open, filed 2026-11-25 against `0.6.0`: with no window, tray events do not fire. With a window, they arrive only once the window gains focus or receives mouse events. |
-| No icon clicks on Linux | It pins `tray-icon` 0.24.1, which emits no events on Linux. Its docs state "Linux does not emit tray pointer events." |
-| No checkmarks or icons on menu items | Its menu item type has `id`, `label`, `enabled`, `accelerator`, `submenu`, `role` and nothing else. |
-| No hit-region click-through | Only `setIgnoreCursorEvents(boolean)` for the whole window. |
-| Young event loop | `app.run()` blocked JavaScript until `0.4.0` on 2026-06-29. That month the engine went from `tao` to `winit` and back to a patched `tao`. |
-| One maintainer, with a gap | 202 of 215 commits by one person. No release between 2026-01-11 and 2026-06-20. |
-| Issue history | 60 issues, 52 closed. Closed ones include a Windows memory and handle leak (#54), intermittently opaque transparent windows (#59), a macOS blank-window regression in `0.4.0` (#47) and four binary-install failures (#23, #29, #48, #69). |
-
-## Open decision
-
-D. Is losing streamed responses acceptable, with large payloads sent as chunked IPC messages instead?
+E. Which branch is the source of the port? `main` has 2,779 lines of native code plus the native-tabs demo. `v1-drafting` has 6,916 lines and adds URL schemes, single instance, clipboard, WinRT toasts, screen info, the request handler and file drop. Recommended: port `main`, then bring `v1-drafting` features across one at a time, each reviewed as it is ported.
 
 ## Sources
 
-- https://github.com/tauri-apps/tao
-- https://github.com/tauri-apps/wry
-- https://github.com/tauri-apps/muda
-- https://github.com/tauri-apps/tray-icon
-- https://docs.rs/tauri/latest/tauri/tray/enum.TrayIconEvent.html
-- https://v2.tauri.app/learn/system-tray/
-- https://docs.rs/ksni/latest/ksni/trait.Tray.html
-- https://github.com/webviewjs/webview
-- https://github.com/webviewjs/webview/issues?q=is%3Aissue
-- https://github.com/webviewjs/webview/issues/96
-- https://github.com/webviewjs/webview/issues/59
-- https://github.com/webviewjs/webview/issues/54
-- https://github.com/webviewjs/webview/issues/37
-- https://github.com/webviewjs/webview/issues/89
-- https://webview.js.org/api/tray/
-- https://webview.js.org/api/menu/
+- https://github.com/microsoft/windows-rs
+- https://github.com/madsmtm/objc2
+- https://github.com/napi-rs/napi-rs
+- https://github.com/webview/webview
 - https://bun.com/docs/compiler/executables
+- https://github.com/tauri-apps/wry
+- https://github.com/webviewjs/webview
+- https://github.com/webviewjs/webview/issues/96
+- https://github.com/webviewjs/webview/issues/89
 - https://github.com/blackboardsh/electrobun
-- https://github.com/blackboardsh/electrobun/issues/263
 - https://github.com/ipfizz/bunmaska
 - https://bun.com/blog/bun-v1.4
