@@ -1,9 +1,13 @@
 // Live Windows tests of tabbed windows (`new Window({ tabs: true })`,
 // `WebView.openTab`, `Tab`): one per behaviour of "Behaviour: tabs on
 // Windows" (rust-rewrite/reference/v1-drafting-tabs-and-window.md) that the
-// other tab tests do not cover. They run in test/fixtures/win-tabs.ts, a
-// process of its own with a WebView2 profile of its own; each test reads its
-// check from that run's report.
+// other tab tests do not cover. They run in test/fixtures/win-tabs.ts and,
+// for the gestures that need a held mouse button and real keys,
+// test/fixtures/win-tabs-input.ts: each a process of its own with a WebView2
+// profile of its own; each test reads its check from that run's report. A
+// check that needs the shared desktop (the mouse over the fixture's own
+// window, the foreground) is reported skipped, with the reason, when another
+// session has it.
 
 import { beforeAll, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -76,16 +80,31 @@ const CHECKS = [
   "an explicit appearance ignores the system",
 ];
 
-describe.if(process.platform === "win32")("tabbed windows (win32, live)", () => {
+const INPUT_CHECKS = [
+  "strip.drag: the window follows the cursor, the held point stays under it",
+  "strip.resize top",
+  "strip.resize top-left",
+  "strip.resize top-right",
+  "strip.drag from a maximised window: it restores first and follows the cursor",
+  "strip.detach: a tab dragged out of a window with several tabs becomes a new window at the cursor, same size, keeping its page",
+  "strip.detach: the only tab of a window drags the whole window",
+  "strip.detach: a tab dropped on another window's strip joins it at the drop index",
+  "real keys: Ctrl+T opens a tab and Ctrl+W closes it while the page has the keyboard focus",
+];
+
+for (const [title, file, checks] of [
+  ["tabbed windows (win32, live)", "win-tabs.ts", CHECKS],
+  ["tabbed windows: strip gestures and real keys (win32, live)", "win-tabs-input.ts", INPUT_CHECKS],
+] as const) describe.if(process.platform === "win32")(title, () => {
   let report: Record<string, Check> = {};
   let output = "";
 
   beforeAll(async () => {
     const profile = mkdtempSync(join(tmpdir(), "sweetview-win-tabs-"));
     try {
-      const fixture = fileURLToPath(new URL("../../test/fixtures/win-tabs.ts", import.meta.url));
+      const fixture = fileURLToPath(new URL(`../../test/fixtures/${file}`, import.meta.url));
       const proc = Bun.spawn([process.execPath, fixture], {
-        timeout: 150_000,
+        timeout: 190_000,
         env: { ...process.env, WEBVIEW2_USER_DATA_FOLDER: profile },
         stdout: "pipe",
         stderr: "pipe",
@@ -100,14 +119,14 @@ describe.if(process.platform === "win32")("tabbed windows (win32, live)", () => 
         rmSync(profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
       } catch {}
     }
-  }, 180_000);
+  }, 200_000);
 
   test("the fixture ran every check to the end", () => {
     expect(report["fixture ran to the end"], output).toBeUndefined();
-    expect(Object.keys(report).sort(), output).toEqual([...CHECKS].sort());
+    expect(Object.keys(report).sort(), output).toEqual([...checks].sort());
   });
 
-  for (const name of CHECKS) {
+  for (const name of checks) {
     test(name, () => {
       const result = report[name];
       expect(result, output).toBeDefined();

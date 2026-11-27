@@ -137,6 +137,14 @@ function moveCursorAsInput(x: number, y: number): void {
 
 const handleOf = (win: Window) => BigInt(win.handle!);
 
+// The move-loop control (test/win32-os.ts), run once before the gesture that needs the OS's move
+// loop: when the session's OS runs no move loop for a plain window of the test's own either, the
+// startDrag test is skipped for that reason rather than failed.
+const moveLoop = onWindows ? await (await api()).moveLoopControl(Screen.bounds()) : undefined;
+if (moveLoop?.ok === false) {
+  console.log(`window-native.test: startDrag skipped: the session's OS started no move loop for the control window either (${moveLoop.why}): ${JSON.stringify(moveLoop.readings)}`);
+}
+
 describe.if(onWindows)("Window on the binding: options read back from the OS", () => {
   test("bounds, title, frame, resizable and the minimum size", async () => {
     const { user32, WM_GETMINMAXINFO } = await api();
@@ -368,7 +376,7 @@ describe.if(onWindows)("Window on the binding: click-through, hit regions, the r
     }
   });
 
-  test("startDrag hands the window to the OS, which moves it with the cursor until the button is released", async () => {
+  test.skipIf(moveLoop?.ok === false)("startDrag hands the window to the OS, which moves it with the cursor until the button is released", async () => {
     const native = binding();
     const original = await cursorNow();
     const bounds = { x: 320, y: 320, width: 300, height: 200 };

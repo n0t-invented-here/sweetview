@@ -13,7 +13,9 @@ import { fileURLToPath } from "node:url";
 import { WebView, type Tab } from "../../src/index";
 import { Window, quitEventLoop, runEventLoop, type TabHandle } from "@n1h/sweetview-native";
 import { getTabFrame } from "@n1h/sweetview-native/win32/tab-window";
-import { engineOf } from "@n1h/sweetview-native/internal";
+import { engineOf, scheduleNativeTimeout } from "@n1h/sweetview-native/internal";
+import { writeSync } from "node:fs";
+import { endMenu, openPopupMenu } from "../../../sweetview-native/test/win32-os";
 import type { Key } from "@n1h/sweetview-native/win32/shortcuts";
 import { STRIP_HEIGHT } from "@n1h/sweetview-native/win32/strip-shared";
 import { _debugWinTabs, mergeAllWindows } from "../../src/tabs/win-tabs";
@@ -71,11 +73,16 @@ const WM_DPICHANGED = 0x02e0;
 type Rect = { x: number; y: number; width: number; height: number };
 type Check = { ok: boolean; detail?: unknown } | { skipped: string };
 const results: Record<string, Check> = {};
+/** One line per check as it happens, written straight to stderr, so a killed run shows where it was. */
+const say = (line: string) => void writeSync(2, `${line}\n`);
 const check = (name: string, ok: boolean, detail?: unknown) => {
   results[name] = { ok, detail };
-  console.error(`${ok ? "ok  " : "FAIL"} ${name}`);
+  say(`${ok ? "ok  " : "FAIL"} ${name}`);
 };
-const skip = (name: string, why: string) => void (results[name] = { skipped: why });
+const skip = (name: string, why: string) => {
+  results[name] = { skipped: why };
+  say(`skipped ${name}: ${why}`);
+};
 
 const until = async (condition: () => boolean, ms = 5000) => {
   for (const end = Date.now() + ms; Date.now() < end; await Bun.sleep(20)) if (condition()) return true;
@@ -208,13 +215,46 @@ const unique = `w7-tabs-${process.pid}`;
 
 const loop = runEventLoop({ intervalMs: 5 });
 // A stuck step ends the run with what it has, rather than leaving the test to kill a process that hosts webviews.
-setTimeout(() => {
+// A native timeout: it fires inside a modal loop (a popup menu's) too, where Bun's own timers do not run.
+scheduleNativeTimeout(120_000, () => {
+  endMenu();
   check("fixture ran to the end", false, "timed out");
   console.log(`RESULT ${JSON.stringify(results)}`);
   server.kill();
   process.exit(1);
-}, 120_000).unref();
+});
 const windows: Window[] = [];
+const windowsOfOurs = () => windows.flatMap((w) => (w.handle ? [BigInt(w.handle)] : []));
+
+// ---- a guard on every popup menu this process opens ----------------------------------------------
+// A popup menu runs its own modal loop on this thread: nothing else here runs until it closes. A
+// native timeout fires inside that loop; every quarter second it looks for a menu of this process,
+// and one open longer than MENU_LIMIT_MS is ended (EndMenu) and recorded with what the OS showed,
+// so a menu nobody closes fails its check instead of hanging the run.
+const MENU_LIMIT_MS = 8000;
+const menuHangs: Record<string, unknown>[] = [];
+let menuContext: () => Record<string, unknown> = () => ({});
+let menuOpenSince = 0;
+let menusOpened = 0;
+let guarding = true;
+const guardMenus = () => {
+  if (!guarding) return;
+  if (openPopupMenu() === 0n) menuOpenSince = 0;
+  else if (menuOpenSince === 0) {
+    menuOpenSince = Date.now();
+    menusOpened++;
+  }
+  else if (Date.now() - menuOpenSince > MENU_LIMIT_MS) {
+    const hang = { menuWindowOfThisProcessOnScreen: true, openForMs: Date.now() - menuOpenSince, foregroundIsOurs: windowsOfOurs().includes(user32.GetForegroundWindow()), ...menuContext() };
+    menuHangs.push(hang);
+    say(`watchdog: a popup menu stayed open for ${MENU_LIMIT_MS} ms; ended it: ${JSON.stringify(hang)}`);
+    endMenu();
+    menuOpenSince = 0;
+  }
+  scheduleNativeTimeout(250, guardMenus);
+};
+scheduleNativeTimeout(250, guardMenus);
+
 const make = (options: ConstructorParameters<typeof Window>[0]) => {
   const win = new Window({ title: unique, noActivate: true, ...options });
   windows.push(win);
@@ -490,27 +530,51 @@ try {
   const h2 = await WebView.openTab(home, page("h2"));
 
   // ---- the tab menu and the system menu ----------------------------------------------------------
+  // Opens the menu from the strip and has the probe (a second process) read and work it. What the
+  // probe did and any watchdog report ride along, for a check that fails.
   const menu = async (id: number | null, action: string) => {
+    const hangsBefore = menuHangs.length;
+    const openedBefore = menusOpened;
     const helper = Bun.spawn([process.execPath, probe, String(process.pid), action], { stdout: "pipe", stderr: "pipe" });
+    const probeRun = { started: helper.pid > 0, action, out: "", exitCode: null as number | null };
+    menuContext = () => ({ probe: { ...probeRun, exitCode: helper.exitCode } });
+    const out = new Response(helper.stdout).text().then((t) => (probeRun.out = t.trim()));
     await Bun.sleep(50);
     void strip.raw.eval(`window.__sweetview_rpc("strip.menu", ${id === null ? "null" : await stripId(strip, id)})`);
-    const [out] = await Promise.all([new Response(helper.stdout).text(), helper.exited]);
-    return JSON.parse(out.trim().split(/\r?\n/).at(-1) || "{}");
+    const exited = await Promise.race([helper.exited.then(() => true), Bun.sleep(MENU_LIMIT_MS + 4000).then(() => false)]);
+    if (!exited) helper.kill(); // the probe this fixture started, through its own handle
+    await Promise.race([out, Bun.sleep(500)]);
+    probeRun.exitCode = helper.exitCode;
+    let parsed: { items?: any[] } = {};
+    try {
+      parsed = JSON.parse(probeRun.out.split(/\r?\n/).at(-1) || "{}");
+    } catch {}
+    // When the probe did not see the menu, it may still be on its way: wait for it, and for it to
+    // be gone (the guard ends it), so whatever happens to it belongs to this step.
+    if (parsed.items === undefined) await until(() => menusOpened > openedBefore, 3000);
+    await until(() => openPopupMenu() === 0n, MENU_LIMIT_MS + 1000);
+    const hangs = menuHangs.slice(hangsBefore);
+    return { ...parsed, probe: probeRun, ...(hangs.length > 0 ? { hangs } : {}) } as { items?: any[]; probe: typeof probeRun; hangs?: unknown[] };
   };
+  const failedMenu = (m: { probe: unknown; hangs?: unknown[] }, detail: unknown) => (m.hangs ? { hangs: m.hangs, probe: m.probe } : { detail, probe: m.probe });
   const tabMenu = await menu(0, "close");
   const labels = (tabMenu.items ?? []).map((i: { label?: string; enabled?: boolean; separator?: boolean }) => (i.separator ? "-" : `${i.label}${i.enabled ? "" : " (off)"}`));
   check(
     "tab menu items",
-    JSON.stringify(labels) === JSON.stringify(["New tab\tCtrl+T", "-", "Move tab to new window", "Merge all windows", "-", "Close tab\tCtrl+W", "Close other tabs"]),
-    labels,
+    !tabMenu.hangs && JSON.stringify(labels) === JSON.stringify(["New tab\tCtrl+T", "-", "Move tab to new window", "Merge all windows", "-", "Close tab\tCtrl+W", "Close other tabs"]),
+    tabMenu.hangs ? failedMenu(tabMenu, labels) : labels,
   );
   const sysMenu = await menu(null, "close");
   const sysLabels = (sysMenu.items ?? []).filter((i: { separator?: boolean }) => !i.separator).map((i: { label: string; enabled: boolean }) => `${i.label.replace(/\t.*/, "")}${i.enabled ? "" : " (off)"}`);
-  check("system menu on the strip: Restore off and Move, Size, Minimize, Maximize, Close on while not maximised", sysLabels.length >= 6 && sysLabels[0].endsWith("(off)") && sysLabels.slice(1).every((l: string) => !l.endsWith("(off)")), sysLabels);
+  check(
+    "system menu on the strip: Restore off and Move, Size, Minimize, Maximize, Close on while not maximised",
+    !sysMenu.hangs && sysLabels.length >= 6 && sysLabels[0]!.endsWith("(off)") && sysLabels.slice(1).every((l: string) => !l.endsWith("(off)")),
+    sysMenu.hangs ? failedMenu(sysMenu, sysLabels) : sysLabels,
+  );
   const countBefore = closes.length;
   const picked = await menu(0, "pick:5"); // Close tab
   await until(() => closes.length > countBefore, 2000);
-  check("choosing Close tab in the tab menu closes that tab", picked.items !== undefined && closes.length === countBefore + 1);
+  check("choosing Close tab in the tab menu closes that tab", !picked.hangs && picked.items !== undefined && closes.length === countBefore + 1, failedMenu(picked, { closes: closes.length - countBefore }));
 
   // ---- the strip's window buttons -------------------------------------------------------------------
   const rpc = (method: string) => strip.raw.eval(`window.__sweetview_rpc("${method}", null)`);
@@ -642,6 +706,7 @@ try {
 } catch (err) {
   check("fixture ran to the end", false, err instanceof Error ? err.stack : String(err));
 } finally {
+  guarding = false;
   for (const w of windows) w.dispose();
   server.kill();
   quitEventLoop();
