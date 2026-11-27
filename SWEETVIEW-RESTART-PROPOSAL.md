@@ -157,11 +157,11 @@ All kept.
 | Assets at the page's own origin | `webview_set_asset` | `wry`: `with_custom_protocol` |
 | Request handler | `webview_set_request_handler`, `webview_complete_request` | `wry`: `with_asynchronous_custom_protocol`; header validation, status and size limits in Sweetview's safe Rust, ported from `http_request.hh` with its tests |
 | Frames origin, cross-origin from the page | part of the request handler | `wry`: a second custom protocol scheme |
-| Service-worker, shared-worker and cross-origin iframe requests reaching the handler on Windows | part of the request handler | the `wry` fork: `AddWebResourceRequestedFilterWithRequestSourceKinds` |
+| Service-worker, shared-worker and cross-origin iframe requests reaching the handler on Windows | part of the request handler | `wry` as it is: its handler already calls `AddWebResourceRequestedFilterWithRequestSourceKinds` with all source kinds |
 | Streamed responses | `webview_begin_response`, `webview_write_response_chunk`, `webview_end_response` | the `wry` fork: a streaming body on WebView2 and `didReceiveData:` per chunk on WKWebView, ported from `streaming_istream.hh` and `cocoa_webkit.hh` |
-| External drop control with HTML drops inside the page still working | `webview_set_allow_external_drop` | the `wry` fork: the C++ fork's drag routing |
-| File drop paths | `webview_set_file_drop_handler` | the `wry` fork: the same drag routing |
-| Bindings reachable from the top-level document only | internal | the `wry` fork: IPC messages from other frames are refused |
+| External drop control with HTML drops inside the page still working | `webview_set_allow_external_drop` | Windows: `SetAllowExternalDrop` on `wry`'s `controller()`, from Sweetview `platform`. macOS: the `wry` fork, the C++ fork's drag routing |
+| File drop paths | `webview_set_file_drop_handler` | Windows: the C++ fork's drop script and `WebMessageReceived` handler on `wry`'s `webview()`, from Sweetview `platform`. macOS: the `wry` fork, the same drag routing |
+| Bindings reachable from the top-level document only | internal | Windows: `wry` as it is, plus a top-frame guard in the bridge script. macOS: the `wry` fork refuses messages from other frames |
 | System-wide mouse hook | `webview_mouse_hook_install`, `webview_mouse_hook_remove` | Sweetview `platform`: `SetWindowsHookExW(WH_MOUSE_LL)`, `CGEventTap`; ported from `mouse_hook.hh` |
 | System-wide keyboard hook, DOM key codes | `webview_keyboard_hook_install`, `webview_keyboard_hook_remove` | Sweetview `platform`: `WH_KEYBOARD_LL`, the same event tap; `key_codes.hh` ported with its tests |
 | Permission model for the hooks | `webview_feature_permissions`, `webview_permission_status`, `webview_permission_request`, `webview_permission_set_auto_request` | Sweetview `platform`: `CGPreflightPostEventAccess`, `CGRequestPostEventAccess` |
@@ -171,7 +171,7 @@ All kept.
 
 | Where | What | Unsafe |
 |---|---|---|
-| `wry` fork | streamed response bodies; all request source kinds on Windows; the C++ fork's drag routing; top-level-only IPC | yes |
+| `wry` fork | streamed response bodies on Windows and macOS; on macOS the C++ fork's drag routing, top-level-only IPC and a navigation-failed event | yes |
 | `tray-icon` fork | the balloon notification and its click event on Windows | yes |
 | Sweetview `platform::input` | mouse hook, keyboard hook, permissions | yes |
 | Sweetview `platform::notify` | macOS notifications | yes |
@@ -586,9 +586,9 @@ No Linux code exists in Sweetview today, and the C++ fork's additions do nothing
 
 ## Order of work
 
-1. Binding skeleton on `napi`, `tao` and `wry`; CI producing the binaries. Proves two mechanisms: a JavaScript function called from the page while `run()` blocks, and a tray-only app with no window receiving clicks under the timer-pumped loop on Windows and macOS. Accepted by the bindings' `examples/basic.ts`, `examples/bind.ts` and `demos/menubar-only`.
+1. Binding skeleton on `napi`, `tao` and `wry`; CI producing the binaries. Repeats on macOS the proofs already run on Windows: a JavaScript function called from the page while `run()` blocks, and a tray-only app with no window receiving clicks under the timer-pumped loop. Accepted by the bindings' `examples/basic.ts`, `examples/bind.ts` and `demos/menubar-only` clicked by hand on both platforms.
 2. The `Webview` API on `wry`: assets, background colour, bind, the request handler. Accepted by the parts of `test/request-handler.test.ts` that cover them.
-3. The `wry` fork additions: streaming, request source kinds, drag routing, top-level-only IPC. Accepted by the rest of `test/request-handler.test.ts`, unchanged.
+3. The `wry` fork additions (streaming; on macOS drag routing, top-level-only IPC and the navigation-failed event) and the Windows drop and external-drop code in `platform`. Accepted by the rest of `test/request-handler.test.ts`, unchanged.
 4. Input hooks and permissions. Accepted by the ported key-code tests and `examples/input-hooks.ts`.
 5. Windows, overlays, hit regions. Accepted by `demos/web-app` and `demos/desktop-pet`.
 6. Tray, menus, notifications, folder dialog, app menu, app icon. Accepted by `demos/menubar-notify`.
