@@ -11,31 +11,29 @@ use std::collections::HashMap;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::rc::{Rc, Weak};
 use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, OnceLock, PoisonError};
+use std::sync::OnceLock;
 
-use windows::core::{w, Ref, RuntimeType, HSTRING, PCWSTR};
+use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+use sweetview_platform_loop::{MessageWindow, Poster};
+use windows::core::{Ref, RuntimeType, HSTRING};
 use windows::Data::Xml::Dom::XmlDocument;
 use windows::Foundation::TypedEventHandler;
 use windows::UI::Notifications::{
   ToastDismissedEventArgs, ToastFailedEventArgs, ToastNotification, ToastNotificationManager, ToastNotifier,
 };
-use windows::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_SUCCESS, HWND, LPARAM, LRESULT, RPC_E_CHANGED_MODE, WPARAM};
+use windows::Win32::Foundation::{ERROR_FILE_NOT_FOUND, HWND, LPARAM, RPC_E_CHANGED_MODE, WPARAM};
 use windows::Win32::System::Com::CoIncrementMTAUsage;
-use windows::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows::Win32::System::Registry::{
-  RegCloseKey, RegCreateKeyExW, RegGetValueW, RegSetValueExW, HKEY, HKEY_CURRENT_USER, KEY_QUERY_VALUE, KEY_WRITE,
-  REG_OPTION_NON_VOLATILE, REG_SAM_FLAGS, REG_SZ, RRF_RT_ANY,
-};
+use windows::Win32::System::Registry::KEY_QUERY_VALUE;
 use windows::Win32::System::WinRT::{RoInitialize, RoUninitialize, RO_INIT_SINGLETHREADED};
+use windows_registry::CURRENT_USER;
 use windows::Win32::UI::Shell::{
   Shell_NotifyIconW, NIF_ICON, NIF_INFO, NIF_MESSAGE, NIF_STATE, NIF_TIP, NIIF_INFO, NIIF_LARGE_ICON, NIIF_NOSOUND,
   NIIF_RESPECT_QUIET_TIME, NIIF_USER, NIM_ADD, NIM_DELETE, NIN_BALLOONHIDE, NIN_BALLOONTIMEOUT, NIN_BALLOONUSERCLICK,
   NIS_HIDDEN, NOTIFYICONDATAW, NOTIFY_ICON_INFOTIP_FLAGS,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-  CreateIconFromResourceEx, CreateWindowExW, DefWindowProcW, DestroyIcon, DestroyWindow, GetSystemMetrics, LoadIconW,
-  PostMessageW, RegisterClassExW, HICON, HWND_MESSAGE, IDI_APPLICATION, LR_DEFAULTCOLOR, SM_CXICON, SM_CXSMICON,
-  SYSTEM_METRICS_INDEX, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_CLOSE, WNDCLASSEXW,
+  CreateIconFromResourceEx, DestroyIcon, GetSystemMetrics, LoadIconW, HICON, IDI_APPLICATION, LR_DEFAULTCOLOR, SM_CXICON,
+  SM_CXSMICON, SYSTEM_METRICS_INDEX, WM_APP, WM_CLOSE,
 };
 
 use crate::toast_xml::{app_id_key, display_name, toast_xml, validate_app_id};
@@ -91,28 +89,7 @@ fn copy_wide(field: &mut [u16], value: &str) {
   field[written..].fill(0);
 }
 
-// ---- the post target ---------------------------------------------------------
-
-/// The window handle value toast handlers post to. Zero once the window is
-/// destroyed. The lock is held across both the post and the destroy, so a
-/// handler on a WinRT thread never posts to a handle that was destroyed and
-/// reused.
-struct PostTarget(Mutex<isize>);
-
-impl PostTarget {
-  fn post(&self, message: u32, wparam: usize, lparam: isize) -> bool {
-    let target = self.0.lock().unwrap_or_else(PoisonError::into_inner);
-    if *target == 0 {
-      return false;
-    }
-    let hwnd = HWND(*target as *mut core::ffi::c_void);
-    // SAFETY: `*target` is non-zero only while the `NotifyWindow` that owns the window is
-    // alive; its `Drop` zeroes it under this same lock before destroying the window, and
-    // the lock is held for the whole call.
-    let posted = unsafe { PostMessageW(Some(hwnd), message, WPARAM(wparam), LPARAM(lparam)) };
-    posted.is_ok()
-  }
-}
+// ---- the toast handlers ------------------------------------------------------
 
 /// Counts itself in [`LIVE_HANDLERS`] while a toast handler holds it.
 struct HandlerLife;
@@ -131,9 +108,10 @@ impl Drop for HandlerLife {
 }
 
 /// A toast event handler's body: post the cookie and the event to the owner.
-/// It runs on a WinRT thread and must never unwind into WinRT.
+/// It runs on a WinRT thread and must never unwind into WinRT. The post fails
+/// harmlessly once the notifier's window is gone.
 fn poster<S: RuntimeType + 'static, R: RuntimeType + 'static>(
-  target: Arc<PostTarget>,
+  target: Poster,
   cookie: u64,
   event: ToastEvent,
 ) -> impl Fn(Ref<S>, Ref<R>) -> windows::core::Result<()> + Send + 'static {
@@ -205,57 +183,46 @@ struct Balloon {
 
 // ---- the window --------------------------------------------------------------
 
-thread_local! {
-  /// The notifier of each live notifier window of this thread, by handle value.
-  static NOTIFIERS: RefCell<HashMap<isize, Weak<Inner>>> = RefCell::new(HashMap::new());
+/// The notifier's message-only window and the notification-area icons it owns.
+/// Dropping it deletes every icon, then the window (which disarms the toast
+/// handlers' [`Poster`]s and destroys it).
+struct NotifyWindow {
+  balloons: RefCell<HashMap<u32, Balloon>>,
+  /// The icons name this window, so it is dropped after them.
+  window: MessageWindow,
 }
 
-/// The notifier's message-only window and the notification-area icons it owns.
-/// Dropping it deletes every icon, disarms the toast handlers and destroys the
-/// window.
-struct NotifyWindow {
-  hwnd: HWND,
-  target: Arc<PostTarget>,
-  balloons: RefCell<HashMap<u32, Balloon>>,
+/// The window a notification-area icon names: `window`'s handle, borrowed for
+/// as long as `window` is.
+fn icon_owner(window: &MessageWindow) -> HWND {
+  match window.window_handle().map(|handle| handle.as_raw()) {
+    Ok(RawWindowHandle::Win32(handle)) => HWND(handle.hwnd.get() as *mut core::ffi::c_void),
+    _ => HWND::default(),
+  }
 }
 
 impl NotifyWindow {
   fn new(owner: Weak<Inner>) -> Result<Self, NotifyError> {
-    // SAFETY: a null module name asks for the handle of the process's own executable; no pointer is passed.
-    let module = unsafe { GetModuleHandleW(None) }.map_err(hresult_error("GetModuleHandleW"))?;
-    let class_name = w!("SweetviewNotifierWindow");
-    let class = WNDCLASSEXW {
-      cbSize: size_of::<WNDCLASSEXW>() as u32,
-      lpfnWndProc: Some(notifier_proc),
-      hInstance: module.into(),
-      lpszClassName: class_name,
-      ..Default::default()
+    // The window procedure. The notifier is upgraded first, so it may be dropped from
+    // inside the call; `MessageWindow` catches a panic, which counts as handled.
+    let procedure = move |message: u32, wparam: usize, lparam: isize| match message {
+      WM_TOAST_EVENT | WM_NOTIFIER => {
+        if let Some(inner) = owner.upgrade() {
+          inner.handle_message(message, WPARAM(wparam), LPARAM(lparam));
+        }
+        Some(0)
+      }
+      // Only the owner tears this window down; an external WM_CLOSE is ignored.
+      WM_CLOSE => Some(0),
+      _ => None,
     };
-    // Registering twice fails with "class already exists", which is the state wanted;
-    // any other failure shows up as CreateWindowExW failing below.
-    // SAFETY: `class` is a fully initialised WNDCLASSEXW that outlives the call, and its class name is a static string.
-    let _atom = unsafe { RegisterClassExW(&class) };
-    // SAFETY: the class name and window name are static strings, no creation parameter is
-    // passed, and HWND_MESSAGE makes a message-only window with no parent to keep alive.
-    let created = unsafe {
-      CreateWindowExW(
-        WINDOW_EX_STYLE(0),
-        class_name,
-        w!("sweetview.notifier"),
-        WINDOW_STYLE(0),
-        0,
-        0,
-        0,
-        0,
-        Some(HWND_MESSAGE),
-        None,
-        Some(module.into()),
-        None,
-      )
-    };
-    let hwnd = created.map_err(|e| NotifyError(format!("sweetview: CreateWindowExW failed ({})", e.code().0 & 0xffff)))?;
-    NOTIFIERS.with(|map| map.borrow_mut().insert(hwnd.0 as isize, owner));
-    Ok(Self { hwnd, target: Arc::new(PostTarget(Mutex::new(hwnd.0 as isize))), balloons: RefCell::new(HashMap::new()) })
+    let window = MessageWindow::new("SweetviewNotifierWindow", "sweetview.notifier", procedure)
+      .map_err(|e| NotifyError(format!("sweetview: {} failed ({})", e.call(), e.code())))?;
+    Ok(Self { balloons: RefCell::new(HashMap::new()), window })
+  }
+
+  fn poster(&self) -> Poster {
+    self.window.poster()
   }
 
   fn show_balloon(&self, notification: &Notification, icon: Option<&[u8]>) -> Option<u32> {
@@ -270,7 +237,7 @@ impl NotifyWindow {
     }
     let mut data = NOTIFYICONDATAW {
       cbSize: size_of::<NOTIFYICONDATAW>() as u32,
-      hWnd: self.hwnd,
+      hWnd: icon_owner(&self.window),
       uID: uid,
       uFlags: NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_STATE | NIF_INFO,
       uCallbackMessage: WM_NOTIFIER,
@@ -285,8 +252,8 @@ impl NotifyWindow {
     copy_wide(&mut data.szInfo, &notification.body);
     copy_wide(&mut data.szInfoTitle, &notification.title);
     // SAFETY: `data` is a fully initialised NOTIFYICONDATAW that outlives the call; its
-    // window is `self.hwnd`, owned by this value, and its icons are owned by `small` and
-    // `large`, which the balloon keeps until its icon is deleted.
+    // window is `self.window`'s, owned by this value and dropped after every icon, and its
+    // icons are owned by `small` and `large`, which the balloon keeps until its icon is deleted.
     let added = unsafe { Shell_NotifyIconW(NIM_ADD, &data) };
     if !added.as_bool() {
       eprintln!("sweetview: Shell_NotifyIcon notification failed ({})", last_error());
@@ -305,9 +272,9 @@ impl NotifyWindow {
   }
 
   fn delete_icon(&self, uid: u32) {
-    let data = NOTIFYICONDATAW { cbSize: size_of::<NOTIFYICONDATAW>() as u32, hWnd: self.hwnd, uID: uid, ..Default::default() };
+    let data = NOTIFYICONDATAW { cbSize: size_of::<NOTIFYICONDATAW>() as u32, hWnd: icon_owner(&self.window), uID: uid, ..Default::default() };
     // SAFETY: `data` is a fully initialised NOTIFYICONDATAW that outlives the call, naming
-    // `self.hwnd`, which this value owns.
+    // the window of `self.window`, which this value owns.
     let deleted = unsafe { Shell_NotifyIconW(NIM_DELETE, &data) };
     let _ = deleted;
   }
@@ -319,40 +286,8 @@ impl Drop for NotifyWindow {
       self.delete_icon(uid);
       drop(balloon);
     }
-    {
-      // Disarm the toast handlers first, under the lock a post holds.
-      let mut target = self.target.0.lock().unwrap_or_else(PoisonError::into_inner);
-      *target = 0;
-    }
-    // `try_with`: a notifier kept in thread-local storage is dropped while the thread's
-    // storage is being torn down, when the table may already be gone.
-    let _ = NOTIFIERS.try_with(|map| map.borrow_mut().remove(&(self.hwnd.0 as isize)));
-    // SAFETY: `self.hwnd` was created by `new` on this thread (the owning `Notifier` is not
-    // `Send`), is owned by this value alone, and is not used again after this call.
-    let destroyed = unsafe { DestroyWindow(self.hwnd) };
-    let _ = destroyed;
+    // `self.window` is dropped next: it disarms the toast handlers' posters and destroys the window.
   }
-}
-
-/// The window procedure of every notifier window. Called by the OS; never unwinds.
-extern "system" fn notifier_proc(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
-  if message == WM_TOAST_EVENT || message == WM_NOTIFIER {
-    // A panic must not cross into the OS: it is caught and the message counts as handled.
-    let _ = catch_unwind(AssertUnwindSafe(|| {
-      // The notifier is upgraded out of the table first, so it may be dropped from inside the call.
-      let owner = NOTIFIERS.try_with(|map| map.borrow().get(&(hwnd.0 as isize)).and_then(Weak::upgrade)).ok().flatten();
-      if let Some(inner) = owner {
-        inner.handle_message(message, wparam, lparam);
-      }
-    }));
-    return LRESULT(0);
-  }
-  if message == WM_CLOSE {
-    // Only the owner tears this window down; an external WM_CLOSE is ignored.
-    return LRESULT(0);
-  }
-  // SAFETY: the arguments are the ones the OS passed to this window procedure for this message.
-  unsafe { DefWindowProcW(hwnd, message, wparam, lparam) }
 }
 
 // ---- WinRT -------------------------------------------------------------------
@@ -402,31 +337,9 @@ impl Drop for RoInit {
   }
 }
 
-/// A registry key this value opened and closes.
-struct OwnedKey(HKEY);
-
-impl OwnedKey {
-  fn create(sub_key: &str, access: REG_SAM_FLAGS) -> Result<Self, NotifyError> {
-    let name = HSTRING::from(sub_key);
-    let mut key = HKEY::default();
-    // SAFETY: `name` is a NUL-terminated wide string that outlives the call, and `key` is a
-    // valid HKEY for the call to fill; no class, security attributes or disposition are passed.
-    let status = unsafe {
-      RegCreateKeyExW(HKEY_CURRENT_USER, &name, None, PCWSTR::null(), REG_OPTION_NON_VOLATILE, access, None, &mut key, None)
-    };
-    if status != ERROR_SUCCESS {
-      return Err(NotifyError(format!("sweetview: RegCreateKeyExW({sub_key}) failed ({})", status.0)));
-    }
-    Ok(Self(key))
-  }
-}
-
-impl Drop for OwnedKey {
-  fn drop(&mut self) {
-    // SAFETY: `self.0` was opened by `create` for this value alone and is not used again.
-    let closed = unsafe { RegCloseKey(self.0) };
-    let _ = closed;
-  }
+/// The Win32 error code a registry call failed with, as today's messages print it.
+fn registry_code(error: &windows::core::Error) -> u32 {
+  (error.code().0 as u32) & 0xffff
 }
 
 /// Registers the AUMID under `HKCU\Software\Classes\AppUserModelId`. A
@@ -434,23 +347,17 @@ impl Drop for OwnedKey {
 /// installer set are kept.
 fn register_app_id(app_id: &str, display: &str) -> Result<(), NotifyError> {
   validate_app_id(app_id)?;
-  let key = OwnedKey::create(&app_id_key(app_id), KEY_WRITE | KEY_QUERY_VALUE)?;
-  let mut size = 0u32;
-  // SAFETY: `key` is open for this call's duration, the value name is a static string, and
-  // `size` is a valid u32 for the call to fill; no data buffer is passed.
-  let existing = unsafe { RegGetValueW(key.0, PCWSTR::null(), w!("DisplayName"), RRF_RT_ANY, None, None, Some(&mut size)) };
-  if existing == ERROR_FILE_NOT_FOUND {
-    let bytes: Vec<u8> = display.encode_utf16().chain([0]).flat_map(u16::to_le_bytes).collect();
-    // SAFETY: `key` is open for this call's duration, the value name is a static string,
-    // and the data is a slice whose length the call takes from the slice.
-    let written = unsafe { RegSetValueExW(key.0, w!("DisplayName"), None, REG_SZ, Some(&bytes)) };
-    if written != ERROR_SUCCESS {
-      return Err(NotifyError(format!("sweetview: RegSetValueExW(DisplayName) failed ({})", written.0)));
-    }
-  } else if existing != ERROR_SUCCESS {
-    return Err(NotifyError(format!("sweetview: RegGetValueW(DisplayName) failed ({})", existing.0)));
+  let sub_key = app_id_key(app_id);
+  // Created when missing, opened to write and query values as today, and closed when `key` drops.
+  let key = CURRENT_USER.options().write().access(KEY_QUERY_VALUE.0).create().open(&sub_key);
+  let key = key.map_err(|e| NotifyError(format!("sweetview: RegCreateKeyExW({sub_key}) failed ({})", registry_code(&e))))?;
+  match key.get_type("DisplayName") {
+    Ok(_) => Ok(()),
+    Err(error) if error.code() == ERROR_FILE_NOT_FOUND.to_hresult() => key
+      .set_string("DisplayName", display)
+      .map_err(|e| NotifyError(format!("sweetview: RegSetValueExW(DisplayName) failed ({})", registry_code(&e)))),
+    Err(error) => Err(NotifyError(format!("sweetview: RegGetValueW(DisplayName) failed ({})", registry_code(&error)))),
   }
-  Ok(())
 }
 
 /// One event subscription of a toast: its token and the handler, kept so a
@@ -488,7 +395,7 @@ impl Toasts {
     Ok(Self { notifier, pending: RefCell::new(HashMap::new()), disposed: Cell::new(false), _ro: ro })
   }
 
-  fn show(&self, notification: &Notification, target: &Arc<PostTarget>, forced: ForcedPath) -> Result<u64, NotifyError> {
+  fn show(&self, notification: &Notification, target: &Poster, forced: ForcedPath) -> Result<u64, NotifyError> {
     let xml = toast_xml(&notification.id, &notification.title, &notification.body, notification.silent);
     let document = XmlDocument::new().map_err(hresult_error("RoActivateInstance(XmlDocument)"))?;
     document.LoadXml(&HSTRING::from(xml)).map_err(hresult_error("IXmlDocumentIO.LoadXml"))?;
@@ -508,7 +415,7 @@ impl Toasts {
     &self,
     cookie: u64,
     toast: &ToastNotification,
-    target: &Arc<PostTarget>,
+    target: &Poster,
     forced: ForcedPath,
   ) -> Result<(), NotifyError> {
     let keep = |subscription: Subscription| {
@@ -630,8 +537,8 @@ impl Inner {
     }
   }
 
-  fn target(&self) -> Option<Arc<PostTarget>> {
-    self.window.borrow().as_ref().map(|window| window.target.clone())
+  fn target(&self) -> Option<Poster> {
+    self.window.borrow().as_ref().map(NotifyWindow::poster)
   }
 
   fn show(&self, notification: &Notification) -> Option<Shown> {
@@ -854,10 +761,9 @@ fn validate_icon(bytes: &[u8]) -> Result<(), NotifyError> {
 #[cfg(test)]
 mod tests {
   use super::*;
+  use std::sync::PoisonError;
   use std::time::{Duration, Instant};
-  use windows::Win32::System::Registry::RegDeleteTreeW;
-  use windows::Win32::System::Threading::{GetCurrentProcess, GetGuiResources, GetProcessHandleCount, GR_GDIOBJECTS, GR_USEROBJECTS};
-  use windows::Win32::UI::WindowsAndMessaging::{DispatchMessageW, PeekMessageW, MSG, PM_REMOVE};
+  use sweetview_platform_loop::dispatch_waiting as pump;
 
   fn serial() -> std::sync::MutexGuard<'static, ()> {
     crate::TEST_SERIAL.lock().unwrap_or_else(PoisonError::into_inner)
@@ -875,26 +781,9 @@ mod tests {
     }
   }
 
-  fn pump() {
-    let mut message = MSG::default();
-    // SAFETY: `message` is a valid MSG for the call to fill.
-    while unsafe { PeekMessageW(&mut message, None, 0, 0, PM_REMOVE) }.as_bool() {
-      // SAFETY: `message` was filled by PeekMessageW just above.
-      unsafe { DispatchMessageW(&message) };
-    }
-  }
-
   fn counts() -> (u32, u32, u32) {
-    // SAFETY: the pseudo-handle of the current process is always valid.
-    let process = unsafe { GetCurrentProcess() };
-    // SAFETY: `process` is the current process's pseudo-handle.
-    let user = unsafe { GetGuiResources(process, GR_USEROBJECTS) };
-    // SAFETY: `process` is the current process's pseudo-handle.
-    let gdi = unsafe { GetGuiResources(process, GR_GDIOBJECTS) };
-    let mut kernel = 0u32;
-    // SAFETY: `kernel` is a valid u32 for the call to fill.
-    unsafe { GetProcessHandleCount(process, &mut kernel) }.expect("GetProcessHandleCount");
-    (user, gdi, kernel)
+    let counts = sweetview_platform_loop::resource_counts();
+    (counts.user_objects, counts.gdi_objects, counts.kernel_handles)
   }
 
   fn unique_app_id(kind: &str) -> String {
@@ -907,31 +796,14 @@ mod tests {
 
   impl Drop for AppIdKey {
     fn drop(&mut self) {
-      let name = HSTRING::from(app_id_key(&self.0));
-      // SAFETY: `name` is a NUL-terminated wide string that outlives the call.
-      let status = unsafe { RegDeleteTreeW(HKEY_CURRENT_USER, &name) };
-      assert!(status == ERROR_SUCCESS || status == ERROR_FILE_NOT_FOUND, "RegDeleteTreeW: {status:?}");
+      if let Err(error) = CURRENT_USER.remove_tree(app_id_key(&self.0)) {
+        assert_eq!(error.code(), ERROR_FILE_NOT_FOUND.to_hresult(), "RegDeleteTreeW: {error:?}");
+      }
     }
   }
 
   fn display_name_of(app_id: &str) -> Option<String> {
-    let name = HSTRING::from(app_id_key(app_id));
-    let mut buffer = [0u16; 256];
-    let mut size = size_of_val(&buffer) as u32;
-    // SAFETY: `name` is a NUL-terminated wide string, and `buffer` and `size` are valid
-    // for the call to fill, with `size` the buffer's length in bytes.
-    let status = unsafe {
-      RegGetValueW(
-        HKEY_CURRENT_USER,
-        &name,
-        w!("DisplayName"),
-        windows::Win32::System::Registry::RRF_RT_REG_SZ,
-        None,
-        Some(buffer.as_mut_ptr().cast()),
-        Some(&mut size),
-      )
-    };
-    (status == ERROR_SUCCESS).then(|| String::from_utf16_lossy(&buffer[..(size as usize / 2).saturating_sub(1)]))
+    CURRENT_USER.open(app_id_key(app_id)).ok()?.get_string("DisplayName").ok()
   }
 
   fn note(id: &str) -> Notification {
