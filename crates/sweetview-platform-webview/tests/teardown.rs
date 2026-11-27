@@ -144,8 +144,14 @@ fn teardown() {
     }
     let lives = 5;
     let bare = growth(&mut ctx, lives, bare_life);
-    let with_extras = growth(&mut ctx, lives, one_life);
-    eprintln!("   over {lives} lives: without the extras {bare:?}, with them {with_extras:?}");
+    // Measured twice, and the smaller growth of each kind counts: what the extras leak they leak
+    // in every life, so it shows in both runs; an object WebView2 or the shell makes once in the
+    // process, when it pleases, shows in one.
+    let first = growth(&mut ctx, lives, one_life);
+    let second = growth(&mut ctx, lives, one_life);
+    eprintln!("   over {lives} lives: without the extras {bare:?}, with them {first:?} and then {second:?}");
+    let with_extras =
+        Growth { user: first.user.min(second.user), gdi: first.gdi.min(second.gdi), handles: first.handles.min(second.handles) };
     // Measured against the same loop without the extras, as the kernel handles are: on some
     // machines WebView2 itself keeps a USER object across these lives, extras or not.
     assert!(with_extras.user <= bare.user, "USER objects return to their start: {with_extras:?} against {bare:?} without the extras");

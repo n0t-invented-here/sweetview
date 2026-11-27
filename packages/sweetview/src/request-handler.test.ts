@@ -134,14 +134,20 @@ async function runLive(mode: string) {
     expect(result.report?.error).toBeUndefined();
     return result;
   } finally {
-    // WebView2's subprocesses can keep the profile locked after Bun exits.
+    // WebView2's subprocesses can keep the profile locked after Bun exits, on a slow machine for
+    // longer than a test should wait: a folder still locked then is left in the temp directory.
+    // What this test asserts is what the page got, not when WebView2 lets go of its files.
     for (let attempt = 0; ; attempt++) {
       try {
         rmSync(profile, { recursive: true, force: true });
         break;
       } catch (error) {
         const code = (error as NodeJS.ErrnoException).code;
-        if (attempt === 99 || !["EBUSY", "EPERM", "ENOTEMPTY"].includes(code ?? "")) throw error;
+        if (!["EBUSY", "EPERM", "ENOTEMPTY"].includes(code ?? "")) throw error;
+        if (attempt === 99) {
+          console.warn(`request-handler.test: a WebView2 profile folder under the temp directory is still locked (${code}) and was left there`);
+          break;
+        }
         await Bun.sleep(100);
       }
     }
