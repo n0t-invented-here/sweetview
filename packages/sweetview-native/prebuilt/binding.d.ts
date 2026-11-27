@@ -38,7 +38,7 @@ export declare class Engine {
   get windowHandle(): bigint
   get destroyed(): boolean
   setTitle(title: string): void
-  /** Sizes the webview's own window, in device-independent pixels; `hint` is a `SizeHint`. */
+  /** Sizes the webview's window, in device-independent pixels; `hint` is a `SizeHint`. A window the webview was given is restyled and resized but not shown. */
   setSize(width: number, height: number, hint: number): void
   /** Moves a child webview inside its host window. */
   setBounds(bounds: Rect): void

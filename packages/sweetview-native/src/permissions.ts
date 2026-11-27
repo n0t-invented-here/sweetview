@@ -77,4 +77,4 @@ const native: Permissions = {
 
 /** The permission model. */
 export const permissions: Permissions =
-  process.platform === "darwin" ? ((require("./darwin/input") as typeof import("./darwin/input")).permissions as Permissions) : native;
+  process.platform === "darwin" ? ((await import("./darwin/input")).permissions as Permissions) : native;

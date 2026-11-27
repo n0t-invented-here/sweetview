@@ -4,8 +4,7 @@
 
 import type { KeyHandler, KeyboardHook, MouseHandler, MouseHook } from "../input-hooks";
 
-// Loosely typed on purpose: the installed version of the library decides what exists.
-const library = require("@n1h/sweetview-webview-bun") as Record<string, unknown>;
+import { library } from "./library";
 
 export const installMouseHook = library.installMouseHook as (handler: MouseHandler) => MouseHook;
 export const installKeyboardHook = library.installKeyboardHook as (handler: KeyHandler) => KeyboardHook;

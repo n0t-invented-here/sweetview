@@ -1,7 +1,7 @@
 // Probes of OS state Sweetview has no API for, for the webview fixtures: what
 // a window's handle names (its text, client size, style, visibility, DPI, dark
-// title bar), the colour of a pixel on the screen, the child windows WebView2
-// made, and a message posted to a window. Tests only; listed in
+// title bar), the colour of a pixel on the screen, a process's top-level
+// window, the foreground, a message posted and a key tapped. Tests only; listed in
 // rust-rewrite/ffi-allowlist.txt as a probe.
 
 import { dlopen, FFIType, ptr } from "bun:ffi";
@@ -10,17 +10,16 @@ const user32 = dlopen("user32.dll", {
   IsWindow: { args: [FFIType.u64], returns: FFIType.i32 },
   IsWindowVisible: { args: [FFIType.u64], returns: FFIType.i32 },
   GetWindowTextW: { args: [FFIType.u64, FFIType.ptr, FFIType.i32], returns: FFIType.i32 },
-  GetClassNameW: { args: [FFIType.u64, FFIType.ptr, FFIType.i32], returns: FFIType.i32 },
   GetClientRect: { args: [FFIType.u64, FFIType.ptr], returns: FFIType.i32 },
   GetWindowRect: { args: [FFIType.u64, FFIType.ptr], returns: FFIType.i32 },
   GetWindowLongPtrW: { args: [FFIType.u64, FFIType.i32], returns: FFIType.i64 },
   GetDpiForWindow: { args: [FFIType.u64], returns: FFIType.u32 },
-  GetWindow: { args: [FFIType.u64, FFIType.u32], returns: FFIType.u64 },
   PostMessageW: { args: [FFIType.u64, FFIType.u32, FFIType.u64, FFIType.i64], returns: FFIType.i32 },
   SendMessageW: { args: [FFIType.u64, FFIType.u32, FFIType.u64, FFIType.u64], returns: FFIType.i64 },
-  SetWindowPos: { args: [FFIType.u64, FFIType.u64, FFIType.i32, FFIType.i32, FFIType.i32, FFIType.i32, FFIType.u32], returns: FFIType.i32 },
   GetDC: { args: [FFIType.u64], returns: FFIType.u64 },
   GetForegroundWindow: { args: [], returns: FFIType.u64 },
+  FindWindowExW: { args: [FFIType.u64, FFIType.u64, FFIType.ptr, FFIType.ptr], returns: FFIType.u64 },
+  GetWindowThreadProcessId: { args: [FFIType.u64, FFIType.ptr], returns: FFIType.u32 },
   SetForegroundWindow: { args: [FFIType.u64], returns: FFIType.i32 },
   SendInput: { args: [FFIType.u32, FFIType.ptr, FFIType.i32], returns: FFIType.u32 },
   ReleaseDC: { args: [FFIType.u64, FFIType.u64], returns: FFIType.i32 },
@@ -38,8 +37,6 @@ const advapi32 = dlopen("advapi32.dll", {
 export const WS_THICKFRAME = 0x0004_0000;
 export const WS_MAXIMIZEBOX = 0x0001_0000;
 export const WM_CLOSE = 0x0010;
-export const WM_KEYDOWN = 0x0100;
-export const WM_KEYUP = 0x0101;
 
 const wide = (text: string) => new Uint8Array(Buffer.from(`${text}\0`, "utf16le"));
 const h = (hwnd: number | bigint | null) => BigInt(hwnd ?? 0);
@@ -52,12 +49,6 @@ export const style = (hwnd: number | bigint | null) => Number(user32.GetWindowLo
 export function windowText(hwnd: number | bigint | null): string {
   const buffer = new Uint16Array(512);
   const length = user32.GetWindowTextW(h(hwnd), ptr(buffer), buffer.length);
-  return String.fromCharCode(...buffer.subarray(0, length));
-}
-
-function className(hwnd: bigint): string {
-  const buffer = new Uint16Array(256);
-  const length = user32.GetClassNameW(hwnd, ptr(buffer), buffer.length);
   return String.fromCharCode(...buffer.subarray(0, length));
 }
 
@@ -90,23 +81,7 @@ export function trackingBounds(hwnd: number | bigint | null) {
   return { minWidth: info[6]!, minHeight: info[7]!, maxWidth: info[8]!, maxHeight: info[9]! };
 }
 
-/** Sizes the outer frame without moving or activating it, as the user dragging an edge would ask. */
-export const resizeOuter = (hwnd: number | bigint | null, width: number, height: number) =>
-  user32.SetWindowPos(h(hwnd), 0n, 0, 0, width, height, 0x0002 | 0x0004 | 0x0010) !== 0;
-
 export const postMessage = (hwnd: number | bigint | null, message: number, wparam = 0n, lparam = 0n) => user32.PostMessageW(h(hwnd), message, wparam, lparam) !== 0;
-
-/** The first window under `hwnd`, depth first, whose class name is `name`. */
-export function findDescendant(hwnd: number | bigint | null, name: string): bigint | null {
-  const GW_HWNDNEXT = 2;
-  const GW_CHILD = 5;
-  for (let child = user32.GetWindow(h(hwnd), GW_CHILD); child !== 0n; child = user32.GetWindow(child, GW_HWNDNEXT)) {
-    if (className(child) === name) return child;
-    const found = findDescendant(child, name);
-    if (found !== null) return found;
-  }
-  return null;
-}
 
 /** The colour on the screen at a point, as `#rrggbb`. */
 export function screenPixel(x: number, y: number): string {
@@ -166,4 +141,14 @@ export function tapKey(hwnd: number | bigint | null, virtualKey: number): boolea
     inputs.setUint32(i * INPUT_SIZE + 12, up ? 0x0002 : 0, true); // KEYEVENTF_KEYUP
   }
   return user32.SendInput(2, ptr(inputs.buffer), INPUT_SIZE) === 2;
+}
+
+/** The top-level window of process `pid` titled `title`, or null. */
+export function topLevelWindowOf(pid: number, title: string): bigint | null {
+  const owner = new Uint32Array(1);
+  for (let hwnd = user32.FindWindowExW(0n, 0n, null, wide(title)); hwnd !== 0n; hwnd = user32.FindWindowExW(0n, hwnd, null, wide(title))) {
+    user32.GetWindowThreadProcessId(hwnd, ptr(owner));
+    if (owner[0] === pid) return hwnd;
+  }
+  return null;
 }

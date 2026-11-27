@@ -55,7 +55,7 @@ impl Engine {
     self.0.set_title(title)
   }
 
-  /// Sizes the webview's own window, in device-independent pixels; `hint` is a `SizeHint`.
+  /// Sizes the webview's window, in device-independent pixels; `hint` is a `SizeHint`. A window the webview was given is restyled and resized but not shown.
   #[napi]
   pub fn set_size(&self, width: u32, height: u32, hint: i32) {
     self.0.set_size(width, height, hint)

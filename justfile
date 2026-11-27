@@ -31,8 +31,9 @@ compile: demos::web-app::compile demos::desktop-pet::compile demos::menubar-only
 
 clean: demos::web-app::clean demos::web-app-electron::clean demos::web-app-tauri::clean demos::desktop-pet::clean demos::menubar-only::clean demos::menubar-notify::clean demos::native-tabs::clean
 
+# The native package ships the binding, so it is built first.
 [script("pwsh", "-NoProfile", "-File")]
-pack:
+pack: native
     $ErrorActionPreference = 'Stop'
     $PSNativeCommandUseErrorActionPreference = $true
     foreach ($package in Get-ChildItem packages -Directory) {
@@ -42,7 +43,7 @@ pack:
     }
 
 [script("pwsh", "-NoProfile", "-File")]
-publish:
+publish: native
     $ErrorActionPreference = 'Stop'
     $PSNativeCommandUseErrorActionPreference = $true
     foreach ($package in @('sweetview-ipc', 'sweetview-ipc-ws', 'sweetview-ipc-electron', 'sweetview-ipc-tauri', 'sweetview-settings', 'sweetview-native', 'sweetview-build', 'sweetview')) {

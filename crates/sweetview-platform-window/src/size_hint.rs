@@ -114,3 +114,82 @@ mod tests {
     assert_eq!(scale_to_dpi(u32::MAX, 960), i32::MAX);
   }
 }
+
+#[cfg(all(test, windows))]
+mod live_tests {
+  use std::sync::PoisonError;
+
+  use windows::core::w;
+  use windows::Win32::Foundation::{HWND, RECT};
+  use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+  use windows::Win32::UI::HiDpi::GetDpiForWindow;
+  use windows::Win32::UI::WindowsAndMessaging::{CreateWindowExW, DestroyWindow, GetClientRect, IsWindowVisible, WINDOW_EX_STYLE, WS_OVERLAPPEDWINDOW};
+
+  use super::*;
+  use crate::{style, ForeignWindow};
+
+  /// A hidden top-level window of this thread, as an application would hand one over; destroyed on drop.
+  struct GivenWindow(HWND);
+
+  impl GivenWindow {
+    fn new() -> Self {
+      // SAFETY: a null module name asks for the handle of the process's own executable.
+      let module = unsafe { GetModuleHandleW(None) }.expect("module handle");
+      // SAFETY: the class is the system's STATIC class and every string is static.
+      let hwnd = unsafe {
+        CreateWindowExW(WINDOW_EX_STYLE(0), w!("STATIC"), w!("sweetview size hint test"), WS_OVERLAPPEDWINDOW, 40, 40, 300, 200, None, None, Some(module.into()), None)
+      }
+      .expect("CreateWindowExW");
+      Self(hwnd)
+    }
+
+    fn client(&self) -> (i32, i32) {
+      let mut rect = RECT::default();
+      // SAFETY: `rect` is a RECT owned by this frame for the call to fill, on this test's own window.
+      unsafe { GetClientRect(self.0, &mut rect) }.expect("GetClientRect");
+      (rect.right, rect.bottom)
+    }
+
+    fn dpi(&self) -> u32 {
+      // SAFETY: a window function on this test's own window.
+      unsafe { GetDpiForWindow(self.0) }.max(96)
+    }
+
+    fn visible(&self) -> bool {
+      // SAFETY: a window function on this test's own window.
+      unsafe { IsWindowVisible(self.0) }.as_bool()
+    }
+  }
+
+  impl Drop for GivenWindow {
+    fn drop(&mut self) {
+      // SAFETY: the window was made by `new` on this thread and is destroyed only here.
+      let _ = unsafe { DestroyWindow(self.0) };
+    }
+  }
+
+  #[test]
+  fn a_given_window_is_restyled_and_resized_as_the_library_did_and_never_shown() {
+    let _serial = crate::TEST_SERIAL.lock().unwrap_or_else(PoisonError::into_inner);
+    let window = GivenWindow::new();
+    let given = ForeignWindow::from_handle_value(window.0 .0 as isize).expect("a live window");
+    let resizable = 0x0004_0000 | 0x0001_0000;
+    let dpi = window.dpi();
+
+    assert!(apply_given_window_size(&given, 420, 260, GivenWindowSizeHint::None));
+    assert_eq!(window.client(), (scale_to_dpi(420, dpi), scale_to_dpi(260, dpi)));
+    assert_eq!(style(&given) & resizable, resizable);
+
+    assert!(apply_given_window_size(&given, 400, 250, GivenWindowSizeHint::Fixed));
+    assert_eq!(window.client(), (scale_to_dpi(400, dpi), scale_to_dpi(250, dpi)));
+    assert_eq!(style(&given) & resizable, 0);
+
+    // MIN and MAX: the style only.
+    assert!(apply_given_window_size(&given, 100, 100, GivenWindowSizeHint::Min));
+    assert!(apply_given_window_size(&given, 900, 900, GivenWindowSizeHint::Max));
+    assert_eq!(window.client(), (scale_to_dpi(400, dpi), scale_to_dpi(250, dpi)));
+    assert_eq!(style(&given) & resizable, resizable);
+
+    assert!(!window.visible());
+  }
+}

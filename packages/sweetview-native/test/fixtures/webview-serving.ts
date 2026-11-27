@@ -6,7 +6,7 @@
 
 import { join } from "node:path";
 import { Window } from "../../src/window";
-import { completeWebviewRequest, engineOf, SizeHint, Webview, type WebviewRequest } from "../../src/webview";
+import { completeWebviewRequest, engineOf, SizeHint, Webview, type WebviewRequest, type WebviewResponse } from "../../src/webview";
 import { codeOf, finish, native, report, watchdog } from "./kit";
 import * as probe from "./win32-probe";
 
@@ -147,7 +147,7 @@ if (scenario === "requests-404-500") {
   webview.bind("phase", (p: string) => {
     phase = p;
     if (p === "handler") {
-      webview.setRequestHandler((req: WebviewRequest) => {
+      webview.setRequestHandler((req: WebviewRequest): WebviewResponse | void => {
         const path = new URL(req.url).pathname;
         if (path === "/throws") throw new Error("handler threw");
         if (path === "/bad-header") return { headers: { "Bad Name": "x" }, body: "never" };

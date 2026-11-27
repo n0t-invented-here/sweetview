@@ -2,8 +2,7 @@
 // library of @n1h/sweetview-webview-bun, and `../webview.ts` hands every call to it.
 // The handle that names a webview is the library's pointer here; it travels as a number.
 
-// Loosely typed on purpose: the installed version of the library decides which of these exist.
-const library = require("@n1h/sweetview-webview-bun") as Record<string, unknown>;
+import { library } from "./library";
 import type { Size, WebviewResponse, WebviewResponseHead } from "../webview";
 import type { WindowHandle } from "../types";
 

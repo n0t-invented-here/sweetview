@@ -84,9 +84,9 @@ export type MouseHook = { dispose(): void };
 
 // The macOS seam.
 type DarwinInput = typeof import("./darwin/input");
-let darwinModule: DarwinInput | undefined;
 const onDarwin = process.platform === "darwin";
-const darwin = (): DarwinInput => (darwinModule ??= require("./darwin/input") as DarwinInput);
+const darwinModule: DarwinInput | undefined = onDarwin ? await import("./darwin/input") : undefined;
+const darwin = (): DarwinInput => darwinModule!;
 
 /**
  * Installs the process's mouse hook. One per process: a second install

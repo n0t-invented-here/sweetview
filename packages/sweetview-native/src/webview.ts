@@ -130,10 +130,11 @@ function responseBodyBytes(body: WebviewResponse["body"]): Uint8Array | null {
 const headersJson = (headers: WebviewResponse["headers"]): string | null => (headers ? JSON.stringify(headers) : null);
 
 // The macOS seam: these four and the class fall through to the webview library there.
+// The library is loaded with `import()`, not `require`: it has a top-level await of its own.
 type DarwinWebview = typeof import("./darwin/webview");
-let darwinModule: DarwinWebview | undefined;
 const onDarwin = process.platform === "darwin";
-const darwin = (): DarwinWebview => (darwinModule ??= require("./darwin/webview") as DarwinWebview);
+const darwinModule: DarwinWebview | undefined = onDarwin ? await import("./darwin/webview") : undefined;
+const darwin = (): DarwinWebview => darwinModule!;
 
 /**
  * Answers a request handed to a {@link Webview.setRequestHandler request handler},
@@ -293,8 +294,10 @@ export class Webview {
    *
    * @param debug Defaults to false; when true developer tools and the
    * context menu are enabled
-   * @param size The window size, default 1024x768 with no size hint. Pass
-   * `undefined` to leave the window's size alone.
+   * @param size The window size, default 1024x768 with no size hint
+   * (`undefined` is a missing argument, so it gets the default too). A
+   * window you pass is restyled and resized by it, as the C++ library did,
+   * but not shown.
    * @param window A native window handle (`HWND`, or `NSWindow` pointer on
    * macOS) to mount the webview in. When `null` or omitted a new window is
    * created.

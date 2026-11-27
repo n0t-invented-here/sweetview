@@ -1,2 +1,3 @@
 # Files under packages/ and demos/ that still import bun:ffi, one per line as path<TAB>reason (rust-rewrite/REQUIREMENTS.md, R3).
 packages/sweetview-native/src/win32/activation.test.ts	probe: hides and shows the single-instance primary's message window (FindWindowExW, SetWindowTextW) so a secondary process must retry its lookup; no Sweetview API reaches that OS state
+packages/sweetview-native/test/fixtures/win32-probe.ts	probe: reads OS state of the webview fixtures that Sweetview has no API for (a window's text, client size, style, tracking bounds, visibility, DPI and dark title bar, a screen pixel, a process's top-level window, the foreground) and posts WM_CLOSE to, or taps one key into, a window of the fixture's own while it holds the foreground

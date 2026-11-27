@@ -1,0 +1,21 @@
+W3.5: the bindings' examples/input-hooks.ts, brought over as packages/sweetview-native/examples/input-hooks.ts.
+Edited for the import path: no edit needed. Its import is "../src/index", which from packages/sweetview-native/examples/ names this package's index; every name it imports (Feature, installKeyboardHook, installMouseHook, KeyEvent, MouseEvent, permissions, Webview, KeyboardHook, MouseHook) is exported there.
+
+$ diff <bindings v1-drafting>/examples/input-hooks.ts packages/sweetview-native/examples/input-hooks.ts
+(no difference)
+
+The run: src/input-hooks-example.test.ts spawns 'bun examples/input-hooks.ts' with its own WebView2 profile, waits for a visible top-level window of that process titled "Input hooks", gives the page 1.5 s, posts WM_CLOSE to that window (the example's unsafeWindowHandle), and waits for the process to exit. The example prints nothing when the hooks install (it warns 'input hooks off' when they do not).
+
+$ bun test packages/sweetview-native/src/input-hooks-example.test.ts   (CLAUDECODE, CLAUDE_CODE_ENTRYPOINT and AGENT unset)
+bun test v1.4.4 (38afee6c8)
+
+packages\sweetview-native\src\input-hooks-example.test.ts:
+exit: 0
+stdout: (empty)
+stderr: (empty)
+(pass) W3.5 examples/input-hooks.ts starts, shows its window and exits when the window is closed [1956.98ms]
+
+ 1 pass
+ 0 fail
+ 7 expect() calls
+Ran 1 test across 1 file. [1.99s]
