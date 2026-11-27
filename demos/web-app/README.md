@@ -26,7 +26,7 @@ The demo is three workspace packages and two entry points:
 |---|---|
 | [`packages/web-app-backend/src/protocol.ts`](packages/web-app-backend/src/protocol.ts) | The contract: `Methods` and `Events`. The page imports only these types. |
 | [`packages/web-app-backend/src/index.ts`](packages/web-app-backend/src/index.ts) | `createService()`: the notes, the folder watcher and the session list, as one [`Service`](../../docs/ipc.md). It knows nothing about windows or sockets. |
-| [`packages/web-app-frontend/src/`](packages/web-app-frontend/src/bridge.ts) | The React and Mantine page. [`bridge.ts`](packages/web-app-frontend/src/bridge.ts) picks the transport once: `webviewTransport()` inside the app, `wsTransport()` in a browser. |
+| [`packages/web-app-frontend/src/`](packages/web-app-frontend/src/bridge.ts) | The React and Mantine page. [`bridge.ts`](packages/web-app-frontend/src/bridge.ts) picks the transport once: `webviewTransport()` inside the app, `electronTransport()` in [the Electron shell](../web-app-electron/README.md), `tauriTransport()` in [the Tauri 2 shell](../web-app-tauri/README.md), `wsTransport()` in a browser. |
 | [`app.ts`](app.ts), [`app-worker.ts`](app-worker.ts) | The desktop entry point and its worker. |
 | [`web.ts`](web.ts) | The web entry point. |
 
