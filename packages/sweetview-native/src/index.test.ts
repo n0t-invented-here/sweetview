@@ -81,6 +81,29 @@ describe("public modules", () => {
     expect(typeof pt.y).toBe("number");
   });
 
+  test.if(process.platform === "win32")("Screen.cursor() is where SetCursorPos put the cursor, as GetCursorPos reads it (physical pixels)", async () => {
+    const { cursor, user32 } = await import("../test/win32-os");
+    const original = cursor();
+    const primary = Screen.primary().bounds;
+    try {
+      // Other sessions move the cursor too: a reading spoilt by one is taken again, up to five times.
+      let readings: { target: { x: number; y: number }; os: { x: number; y: number }; screen: { x: number; y: number } } | undefined;
+      for (let attempt = 0; attempt < 5; attempt++) {
+        const target = { x: primary.x + 37 + attempt * 11, y: primary.y + 41 + attempt * 7 };
+        user32.SetCursorPos(target.x, target.y);
+        const screen = Screen.cursor();
+        const os = cursor();
+        readings = { target, os, screen };
+        if (os.x === target.x && os.y === target.y && screen.x === os.x && screen.y === os.y) break;
+        await Bun.sleep(200);
+      }
+      expect(readings!.os).toEqual(readings!.target);
+      expect(readings!.screen).toEqual(readings!.os);
+    } finally {
+      user32.SetCursorPos(original.x, original.y);
+    }
+  });
+
   test("Menu and Tray classes are exported", () => {
     expect(typeof Menu.popup).toBe("function");
     expect(typeof Tray).toBe("function");

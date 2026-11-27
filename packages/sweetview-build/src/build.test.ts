@@ -162,6 +162,36 @@ describe("refreshWindowsIcons", () => {
     expect(refreshWindowsIcons()).toBeUndefined();
   });
 
+  // What reaches the shell: a window of the test's own registered for SHCNE_ASSOCCHANGED receives
+  // the shell's notification after refreshWindowsIcons(), and none in a quiet period before it.
+  // Another process can raise the same event (an installer, a file association change), so a
+  // quiet period spoilt by one is taken again, up to five times.
+  test.if(process.platform === "win32")("refreshWindowsIcons() reaches the shell: a window registered for SHCNE_ASSOCCHANGED receives the notification", async () => {
+    const { refreshWindowsIcons } = await import("./build");
+    const { watchAssocChanged } = await import("../../sweetview-native/test/win32-shell");
+    const { pumpEvents } = await import("@n1h/sweetview-native");
+    const pumpFor = async (ms: number, until: () => boolean = () => false) => {
+      for (const end = Date.now() + ms; Date.now() < end && !until(); await Bun.sleep(10)) pumpEvents();
+      pumpEvents();
+    };
+    const watch = watchAssocChanged();
+    try {
+      let quiet = false;
+      for (let attempt = 0; attempt < 5 && !quiet; attempt++) {
+        const before = watch.assocChanged();
+        await pumpFor(400);
+        quiet = watch.assocChanged() === before;
+      }
+      expect(quiet).toBe(true);
+      const before = watch.assocChanged();
+      expect(refreshWindowsIcons()).toBeUndefined();
+      await pumpFor(5000, () => watch.assocChanged() > before);
+      expect(watch.assocChanged()).toBeGreaterThan(before);
+    } finally {
+      watch.dispose();
+    }
+  }, 30_000);
+
   test("does nothing on another OS", async () => {
     const { refreshWindowsIcons } = await import("./build");
     const platform = Object.getOwnPropertyDescriptor(process, "platform")!;

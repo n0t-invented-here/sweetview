@@ -241,9 +241,11 @@ describe.if(onWindows)("WebView & createApp (win32)", () => {
     // 1. Owned framed window
     const target = { x: 120, y: 120, width: 640, height: 480 };
     const win = new Window({ title: "Attach Bounds", bounds: target });
+    const framedStyleBefore = user32.GetWindowLongPtrW(asHwnd(win.handle), GWL_STYLE);
     const view = await WebView.attach(win, { url: "about:blank" });
     try {
       expect(win.bounds()).toEqual(target);
+      expect(user32.GetWindowLongPtrW(asHwnd(win.handle), GWL_STYLE)).toBe(framedStyleBefore);
     } finally {
       view.dispose();
       win.dispose();
@@ -283,6 +285,40 @@ describe.if(onWindows)("WebView & createApp (win32)", () => {
       host.dispose();
     }
   });
+
+  test("WebView.attach mounts a webview in an application's own window (CreateWindowExW through bun:ffi): the page loads and answers a call; the window keeps GWL_STYLE and its outer bounds", async () => {
+    const { GWL_STYLE, WS_OVERLAPPEDWINDOW, hInstance, user32, wide, windowRect } = await import("../../sweetview-native/test/win32-os");
+    // Not made by Sweetview: a STATIC window of the application's own, as the fromHandle event test makes it.
+    const hwnd = user32.CreateWindowExW(0, wide("STATIC"), wide(`app.test own window ${process.pid}`), WS_OVERLAPPEDWINDOW, 130, 120, 520, 380, 0n, 0n, hInstance(), null);
+    expect(hwnd).not.toBe(0n);
+    const styleBefore = user32.GetWindowLongPtrW(hwnd, GWL_STYLE);
+    const rectBefore = windowRect(hwnd);
+    const borrowed = Window.fromHandle(hwnd);
+    let answered: unknown;
+    let view: WebView | undefined;
+    try {
+      view = await WebView.attach(borrowed, {
+        assets: { "index.html": htmlBytes(`<script>
+          window.__sweetview_rpc("ping", { from: location.origin })
+            .then(reply => window.__sweetview_rpc("capture", reply));
+        </script>`) },
+        uiMethods: {
+          ping: (params: unknown) => ({ pong: params }),
+          capture: (params: unknown) => { answered = params; },
+        },
+      });
+      pumpUntil(() => answered !== undefined, 15_000);
+      // The page loaded from the asset origin, its call was answered, and the answer reached it.
+      expect(answered).toEqual({ pong: { from: "http://webview.localhost" } });
+      expect(view.raw.unsafeHandle).not.toBeNull();
+      expect(user32.GetWindowLongPtrW(hwnd, GWL_STYLE)).toBe(styleBefore);
+      expect(windowRect(hwnd)).toEqual(rectBefore);
+    } finally {
+      view?.dispose();
+      borrowed.dispose();
+      if (user32.IsWindow(hwnd)) user32.DestroyWindow(hwnd);
+    }
+  }, 30_000);
 
   test("Layer 1 tabbed Window.dispose() disposes child tab webviews and blocks later openTab calls", async () => {
     const win = new Window({ title: "Layer 1 Tabs", tabs: true, bounds: { x: 140, y: 140, width: 720, height: 500 } });

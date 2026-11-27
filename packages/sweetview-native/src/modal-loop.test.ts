@@ -32,6 +32,9 @@ async function runFixture(mode: "blocking" | "pumped") {
       drainsInsideModal: number;
       timeoutsInsideModal: number;
       framesFromWorker: string[];
+      inside: Record<"box" | "menu", { pageCalls: number; repliesSeenByPage: number; drains: number; timeouts: number }>;
+      menuOpened: boolean;
+      menuReturned: number | null;
       timedOut?: boolean;
     };
   } finally {
@@ -58,7 +61,16 @@ describe.if(onWindows)("a modal loop opened by a handler (W1.8)", () => {
       expect(report.pageCallsInsideModal).toBeGreaterThanOrEqual(3);
       expect(report.drainsInsideModal).toBeGreaterThanOrEqual(1);
       expect(report.timeoutsInsideModal).toBeGreaterThanOrEqual(1);
-      expect(report.framesFromWorker).toEqual(["written while the box was open"]);
+      // Answers reached the page while the box was open: the page reported them back inside it.
+      expect(report.inside.box.repliesSeenByPage).toBeGreaterThanOrEqual(3);
+      // The application's own popup menu: the same, inside TrackPopupMenu's loop, ended by EndMenu.
+      expect(report.menuOpened).toBe(true);
+      expect(report.menuReturned).toBe(0);
+      expect(report.inside.menu.pageCalls).toBeGreaterThanOrEqual(3);
+      expect(report.inside.menu.repliesSeenByPage).toBeGreaterThanOrEqual(3);
+      expect(report.inside.menu.drains).toBeGreaterThanOrEqual(1);
+      expect(report.inside.menu.timeouts).toBeGreaterThanOrEqual(1);
+      expect(report.framesFromWorker).toEqual(["written while the box was open", "written while the menu was open"]);
     }, 60_000);
   }
 });

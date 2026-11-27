@@ -2,16 +2,22 @@
 
 import { binding } from "./binding";
 import { Ring } from "../../sweetview/src/ring";
+import { pureAnswers } from "../test/pure-answers";
 
 declare const self: Worker;
 
 type Command =
   | { kind: "probe" }
+  | { kind: "pure"; file: string }
   | { kind: "write"; ring: SharedArrayBuffer; token: number; text: string };
 
-self.onmessage = (event: MessageEvent<Command>) => {
+self.onmessage = async (event: MessageEvent<Command>) => {
   const command = event.data;
   const native = binding();
+  if (command.kind === "pure") {
+    self.postMessage({ kind: "pure", isUiThread: native.isUiThread(), answers: await pureAnswers(command.file) });
+    return;
+  }
   if (command.kind === "probe") {
     const refused: Record<string, string> = {};
     const uiOnly: Record<string, () => unknown> = {

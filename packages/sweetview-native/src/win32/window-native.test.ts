@@ -10,6 +10,7 @@ import { binding } from "../binding";
 import { pumpEvents, quitEventLoop, runEventLoop } from "../event-loop";
 import { Screen } from "../screen";
 import { Window } from "../window";
+import { untilDesktopIsOurs } from "../../test/desktop";
 
 const onWindows = process.platform === "win32";
 
@@ -302,7 +303,9 @@ describe.if(onWindows)("Window on the binding: click-through, hit regions, the r
     const passing = async () => ((await styles(handleOf(win))).ex & WS_EX_TRANSPARENT) !== 0n;
     const leftHalf = [[{ x: 0, y: 0 }, { x: 150, y: 0 }, { x: 150, y: 200 }, { x: 0, y: 200 }]];
     try {
-      if (await buttonsDown()) return; // the poll freezes while a button is held (proved in sweetview-window-logic)
+      // The poll freezes while a button is held (proved in sweetview-window-logic): wait for another
+      // session's held button to be let go, or fail saying why.
+      await untilDesktopIsOurs("hit-region poll: a mouse button is held", async () => !(await buttonsDown()));
       win.show();
       win.setHitRegions(leftHalf);
       probe!.SetCursorPos(bounds.x + 50, bounds.y + 50);
@@ -346,11 +349,14 @@ describe.if(onWindows)("Window on the binding: click-through, hit regions, the r
       await settle(30);
       const corner = { x: bounds.x + bounds.width - 2, y: bounds.y + bounds.height - 2 };
       probe!.SetCursorPos(corner.x, corner.y);
-      // Press only over this test's own window, so the click reaches nothing else.
-      if ((await buttonsDown()) || windowAt(corner.x, corner.y) !== handleOf(win)) {
-        console.warn("window-native.test: startResize skipped: the test window is not under the cursor");
-        return;
-      }
+      // Press only over this test's own window, so the click reaches nothing else. Another session's
+      // window or held button is waited out (the window raised and the cursor placed again), or the
+      // test fails saying why.
+      await untilDesktopIsOurs(
+        "startResize: the test window is not under the cursor, or a mouse button is held",
+        async () => !(await buttonsDown()) && windowAt(corner.x, corner.y) === handleOf(win),
+        { between: () => { win.setTopmost(true); win.show(); probe!.SetCursorPos(corner.x, corner.y); } },
+      );
       leftButton(true);
       pressed = true;
       await settle(30);
@@ -386,11 +392,12 @@ describe.if(onWindows)("Window on the binding: click-through, hit regions, the r
       await settle(30);
       const grip = { x: bounds.x + 40, y: bounds.y + 20 };
       probe!.SetCursorPos(grip.x, grip.y);
-      // Press only over this test's own window, so the click reaches nothing else.
-      if ((await buttonsDown()) || windowAt(grip.x, grip.y) !== handleOf(win)) {
-        console.warn("window-native.test: startDrag skipped: the test window is not under the cursor");
-        return;
-      }
+      // Press only over this test's own window, as in startResize: waited out, or fails saying why.
+      await untilDesktopIsOurs(
+        "startDrag: the test window is not under the cursor, or a mouse button is held",
+        async () => !(await buttonsDown()) && windowAt(grip.x, grip.y) === handleOf(win),
+        { between: () => { win.setTopmost(true); win.show(); probe!.SetCursorPos(grip.x, grip.y); } },
+      );
       leftButton(true);
       pressed = true;
       // The OS starts its move loop only when this thread has seen the press: the button's state

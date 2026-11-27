@@ -162,6 +162,75 @@ if (scenario === "destroy-new-window" || scenario === "destroy-navigation-failed
   finish();
 }
 
+/**
+ * Asks for the foreground for `hwnd` up to eight times, a short wait apart (other sessions take
+ * it), then runs `then`; when it is never granted, records `foreground: false` and the reason and
+ * ends the loop with nothing pressed.
+ */
+function whenForeground(hwnd: number | bigint, then: () => void, attempt = 1): void {
+  if (probe.takeForeground(hwnd)) {
+    report.foreground = true;
+    report.foregroundAttempts = attempt;
+    then();
+    return;
+  }
+  if (attempt >= 8) {
+    report.foreground = false;
+    report.foregroundRefused = `the desktop did not give this process the foreground in ${attempt} attempts`;
+    native.quitLoop();
+    return;
+  }
+  after(250, () => whenForeground(hwnd, then, attempt + 1));
+}
+
+/**
+ * Taps `virtualKey` into `hwnd`, taking the foreground back first if another session took it.
+ * When it cannot, the run counts as one without the foreground (the test runs it again or skips).
+ */
+function tapInForeground(hwnd: number | bigint, virtualKey: number): boolean {
+  if (!probe.takeForeground(hwnd)) {
+    report.foreground = false;
+    report.foregroundRefused = "another session took the foreground during the run and it could not be taken back";
+    native.quitLoop();
+    return false;
+  }
+  return probe.tapKey(hwnd, virtualKey);
+}
+
+if (scenario === "accelerator-destroy") {
+  // An accelerator-key handler destroys its own webview from inside its call. Needs the
+  // foreground, as above.
+  const hwnd = webview.unsafeWindowHandle!;
+  const keys: number[] = [];
+  engine.onAcceleratorKey((key) => {
+    // Other sessions press keys system-wide while this window has the foreground: only F12 is ours.
+    if (key.virtualKey !== 0x7b) return false;
+    keys.push(key.virtualKey);
+    webview.destroy();
+    report.insideCall = destroyedCodes();
+    return true;
+  });
+  webview.bind("ready", () =>
+    whenForeground(hwnd, () => {
+      engine.moveFocus();
+      const VK_F12 = 0x7b;
+      const taps: boolean[] = [];
+      report.taps = taps;
+      after(200, () => taps.push(tapInForeground(hwnd, VK_F12)));
+      // run() returns when the handler destroys the webview; this only bounds a run where it did not.
+      after(3000, () => native.quitLoop());
+    }),
+  );
+  page(`window.ready();`);
+  webview.navigate(`${origin}/index.html`);
+  webview.run();
+  report.runReturned = true;
+  report.released = webview.unsafeHandle === null && engine.destroyed;
+  report.windowGone = !probe.isWindow(hwnd);
+  report.keys = keys;
+  finish();
+}
+
 if (scenario === "accelerator") {
   // AcceleratorKeyPressed is raised only for real keyboard input to a
   // focused webview, so this needs the foreground; a shared desktop may
@@ -169,28 +238,25 @@ if (scenario === "accelerator") {
   const hwnd = webview.unsafeWindowHandle!;
   const keys: number[] = [];
   engine.onAcceleratorKey((key) => {
+    // Other sessions press keys system-wide while this window has the foreground: only F12 is ours.
+    if (key.virtualKey !== 0x7b) return false;
     keys.push(key.virtualKey);
     if (keys.length === 1) throw new Error("accelerator boom");
     // The second clears itself; the third key is not delivered.
     engine.onAcceleratorKey(null);
     return true;
   });
-  webview.bind("ready", () => {
-    report.foreground = probe.takeForeground(hwnd);
-    if (!report.foreground) {
-      native.quitLoop();
-      return;
-    }
+  webview.bind("ready", () => whenForeground(hwnd, () => {
     engine.moveFocus();
     // F12 opens the developer tools only with `debug`, which is off here.
     const VK_F12 = 0x7b;
     const taps: boolean[] = [];
     report.taps = taps;
-    after(200, () => taps.push(probe.tapKey(hwnd, VK_F12)));
-    after(500, () => taps.push(probe.tapKey(hwnd, VK_F12)));
-    after(800, () => taps.push(probe.tapKey(hwnd, VK_F12)));
+    after(200, () => taps.push(tapInForeground(hwnd, VK_F12)));
+    after(500, () => taps.push(tapInForeground(hwnd, VK_F12)));
+    after(800, () => taps.push(tapInForeground(hwnd, VK_F12)));
     after(1300, () => native.quitLoop());
-  });
+  }));
   page(`window.ready();`);
   webview.navigate(`${origin}/index.html`);
   webview.run();
