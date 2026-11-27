@@ -15,7 +15,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 
 use muda::{CheckMenuItem, IconMenuItem, IsMenuItem, Menu, MenuId, MenuItem as MudaItem, PredefinedMenuItem, Submenu};
-use sweetview_platform_window::{check_item, is_on_this_thread, menu_handle_value, set_command_id, show_popup, show_system_menu, ForeignWindow, PopupAt};
+use sweetview_platform_window::{check_item, is_on_this_thread, menu_handle_value, set_command_id, show_popup, show_system_menu, BorrowedWindow, PopupAt};
 pub use sweetview_platform_window::PopupCorner;
 
 use crate::error::{Error, Result};
@@ -179,7 +179,7 @@ fn build_item(entry: &MenuItem, path: &mut Vec<u32>, built: &mut Building) -> Re
 
 /// Shows `menu` owned by `owner` and returns the chosen item's number after the
 /// menu closes, or `None` when it was dismissed.
-pub fn show(menu: &BuiltMenu, owner: &ForeignWindow, at: PopupAt) -> Option<u32> {
+pub fn show(menu: &BuiltMenu, owner: &BorrowedWindow<'_>, at: PopupAt) -> Option<u32> {
   match show_popup(&menu.menu, owner, at) {
     0 => None,
     id => Some(id),
@@ -209,10 +209,12 @@ pub fn popup(owner: isize, data: &[MenuItem], at: Option<(f64, f64)>, corner: Po
   if data.is_empty() {
     return Ok(None);
   }
-  let Some(owner) = ForeignWindow::from_handle_value(owner) else { return Ok(None) };
+  if BorrowedWindow::with_handle_value(owner, |_| ()).is_none() {
+    return Ok(None);
+  }
   let built = build(data)?;
   let at = popup_point(at, corner)?;
-  Ok(show(&built, &owner, at))
+  Ok(BorrowedWindow::with_handle_value(owner, |owner| show(&built, owner, at)).flatten())
 }
 
 thread_local! {
@@ -250,11 +252,12 @@ pub fn destroy_handed_out(handle: isize) -> bool {
 /// window of another thread, shows nothing.
 pub fn window_menu(owner: isize) -> Result<()> {
   Runtime::get()?;
-  let Some(owner) = ForeignWindow::from_handle_value(owner) else { return Ok(()) };
-  if !is_on_this_thread(&owner) {
-    return Ok(());
-  }
-  show_system_menu(&owner, screen::cursor()?);
+  let cursor = screen::cursor()?;
+  BorrowedWindow::with_handle_value(owner, |owner| {
+    if is_on_this_thread(owner) {
+      show_system_menu(owner, cursor);
+    }
+  });
   Ok(())
 }
 

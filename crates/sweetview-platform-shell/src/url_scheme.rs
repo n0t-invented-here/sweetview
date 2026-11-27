@@ -144,7 +144,6 @@ mod tests {
   #[cfg(windows)]
   mod live {
     use super::super::*;
-    use crate::win::test_support::counts;
     use windows_registry::CURRENT_USER;
 
     /// A `REG_SZ` value under `HKCU\<sub_key>`; `None` names the default value.
@@ -192,15 +191,10 @@ mod tests {
       let scheme = unique_scheme();
       let _cleanup = Cleanup(scheme.clone());
       let registration = Registration::for_executable("Sweetview Test", "C:\\SweetviewTest\\app.exe");
-      register(&scheme, &registration).expect("register");
-      unregister(&scheme).expect("unregister");
-      let before = counts();
-      for _ in 0..50 {
+      sweetview_platform_loop::testing::assert_gives_back_every_handle(50, || {
         register(&scheme, &registration).expect("register");
         unregister(&scheme).expect("unregister");
-      }
-      let after = counts();
-      assert!(after.2 <= before.2 + 2, "registry keys were closed: {before:?} -> {after:?}");
+      });
     }
   }
 }

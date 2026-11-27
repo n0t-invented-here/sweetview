@@ -25,7 +25,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use sweetview_platform_webview::{ErrorCode, ExtrasOptions, Responder, UserScript, WebviewExtras};
 pub use sweetview_platform_webview::{KeyData, NavigationFailure, RawRequest};
-use sweetview_platform_window::ForeignWindow;
+use sweetview_platform_window::BorrowedWindow;
 use tao::dpi::{LogicalSize, PhysicalPosition, PhysicalSize};
 use tao::event::{Event, WindowEvent};
 use tao::window::{Window as TaoWindow, WindowBuilder};
@@ -91,10 +91,11 @@ struct Binding {
 
 enum HostWindow {
   Own { window: TaoWindow, listener: u64 },
-  /// A window the webview was given to fill (`Host::Fill`).
-  Filled(ForeignWindow),
-  /// A window the webview is a child of (`Host::Child`).
-  Foreign(ForeignWindow),
+  /// A window the webview was given to fill (`Host::Fill`), by handle value:
+  /// lent again for each call (`window::with_mount_target`).
+  Filled(isize),
+  /// A window the webview is a child of (`Host::Child`), by handle value.
+  Foreign(isize),
 }
 
 /// What exists only while the webview does. Fields drop in this order: what
@@ -226,9 +227,7 @@ impl Engine {
     let builder = configure_for_platform(builder)?;
 
     let mount = |error: wry::Error| Error::os("the webview could not be created (is the WebView2 runtime installed?)", error);
-    let foreign = |value: isize| {
-      crate::window::mount_target(value).ok_or_else(|| Error::state("sweetview: the window handle given for the webview names no window"))
-    };
+    let no_window = || Error::state("sweetview: the window handle given for the webview names no window");
     let (webview, window, window_value) = match host {
       Host::Own => {
         let window = runtime
@@ -251,13 +250,12 @@ impl Engine {
         (webview, HostWindow::Own { window, listener }, value)
       }
       Host::Fill(value) => {
-        let parent = foreign(value)?;
-        (builder.build(&parent).map_err(mount)?, HostWindow::Filled(parent), value)
+        let webview = crate::window::with_mount_target(value, |parent| builder.build(parent)).ok_or_else(no_window)?.map_err(mount)?;
+        (webview, HostWindow::Filled(value), value)
       }
       Host::Child(value, bounds) => {
-        let parent = foreign(value)?;
-        let webview = builder.with_bounds(wry_rect(bounds)).build_as_child(&parent).map_err(mount)?;
-        (webview, HostWindow::Foreign(parent), value)
+        let built = crate::window::with_mount_target(value, |parent| builder.with_bounds(wry_rect(bounds)).build_as_child(parent));
+        (built.ok_or_else(no_window)?.map_err(mount)?, HostWindow::Foreign(value), value)
       }
     };
 
@@ -344,7 +342,7 @@ impl Engine {
     self.inner.with_live(|live| match &live.window {
       HostWindow::Own { window, .. } => window.set_title(title),
       HostWindow::Filled(window) | HostWindow::Foreign(window) => {
-        sweetview_platform_window::set_title(window, title);
+        crate::window::with_mount_target(*window, |window| sweetview_platform_window::set_title(window, title));
       }
     });
   }
@@ -360,7 +358,9 @@ impl Engine {
       let window = match &live.window {
         HostWindow::Own { window, .. } => window,
         HostWindow::Filled(window) => {
-          sweetview_platform_window::apply_given_window_size(window, width, height, given_hint(hint));
+          crate::window::with_mount_target(*window, |window| {
+            sweetview_platform_window::apply_given_window_size(window, width, height, given_hint(hint))
+          });
           return false;
         }
         HostWindow::Foreign(_) => return false,
@@ -426,9 +426,8 @@ impl Engine {
 
   /// Moves the webview into another window without reloading it.
   pub fn reparent(&self, window: isize) -> Result<()> {
-    let parent = crate::window::mount_target(window)
+    let moved = crate::window::with_mount_target(window, |parent| self.inner.with_live(|live| reparent(&live.webview, parent)))
       .ok_or_else(|| Error::state("sweetview: the window handle given to reparent names no window"))?;
-    let moved = self.inner.with_live(|live| reparent(&live.webview, &parent));
     match moved {
       Some(Ok(())) => {
         self.inner.window_value.set(window);
@@ -511,7 +510,7 @@ impl Engine {
   }
 
   pub fn set_background_color(&self, r: u8, g: u8, b: u8, a: u8) -> ErrorCode {
-    self.inner.with_extras(|extras| extras.set_background_color(r, g, b, a))
+    self.inner.with_live(|live| sweetview_platform_webview::set_background_color(&live.webview, r, g, b, a)).unwrap_or(ErrorCode::InvalidState)
   }
 
   pub fn set_allow_external_drop(&self, allow: bool) -> ErrorCode {
@@ -728,13 +727,12 @@ impl Inner {
         let Live { extras, webview, window } = live;
         drop(extras);
         drop(webview);
-        if let HostWindow::Own { window, listener } = &window {
-          self.runtime.remove_event_listener(*listener);
+        if let HostWindow::Own { window, listener } = window {
+          self.runtime.remove_event_listener(listener);
           // Gone now, as the C++ library's `webview_destroy` closed it: `tao`
           // alone destroys a dropped window only when its loop next runs.
           sweetview_platform_window::destroy_now(window);
         }
-        drop(window);
       }
       None if self.live.try_borrow().map(|live| live.is_some()).unwrap_or(true) => {
         let inner = self.clone();
@@ -807,12 +805,12 @@ fn window_value_of(_window: &TaoWindow) -> isize {
 }
 
 #[cfg(windows)]
-fn reparent(webview: &WebView, parent: &ForeignWindow) -> std::result::Result<(), wry::Error> {
+fn reparent(webview: &WebView, parent: &BorrowedWindow<'_>) -> std::result::Result<(), wry::Error> {
   use wry::WebViewExtWindows;
   webview.reparent(sweetview_platform_window::handle_value(parent))
 }
 
 #[cfg(not(windows))]
-fn reparent(_webview: &WebView, _parent: &ForeignWindow) -> std::result::Result<(), wry::Error> {
+fn reparent(_webview: &WebView, _parent: &BorrowedWindow<'_>) -> std::result::Result<(), wry::Error> {
   Ok(())
 }

@@ -15,7 +15,7 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use sweetview_platform_window as platform;
+use sweetview_platform_window::{self as platform, FramePart, Placement};
 pub use sweetview_platform_window::PopupEntry;
 use tao::dpi::{LogicalSize, PhysicalSize};
 use tao::window::Theme;
@@ -91,7 +91,7 @@ impl TabState {
 /// given, and its minimum. Bounds and minimums are the outer frame, as for
 /// every window; the frame's edges are measured, not assumed.
 pub(super) fn finish(core: &Rc<Core>, tab: &TabState, default_bounds: bool, min: (Option<i32>, Option<i32>)) {
-  let scale = platform::dpi_scale(&core.native);
+  let scale = core.with_tao(platform::dpi_scale).unwrap_or(1.0);
   let (edge_w, edge_h) = frame_edges(core);
   let strip = f64::from(tab.strip_height);
   if default_bounds {
@@ -126,7 +126,7 @@ pub(super) fn finish(core: &Rc<Core>, tab: &TabState, default_bounds: bool, min:
     core.with_tao(|tao| tao.set_background_color(Some(tab.backdrop())));
   }
   // A frame that cannot answer its own backdrop still works: `tao` paints the page's colour.
-  *tab.messages.borrow_mut() = platform::FrameMessages::install(&core.native, tab.colours()).ok();
+  *tab.messages.borrow_mut() = core.with_tao(|tao| platform::FrameMessages::install(tao, tab.colours()).ok()).flatten();
 }
 
 /// The outer frame less the client area: what the system's border takes.
@@ -171,7 +171,7 @@ impl TabFrame {
   }
 
   fn scale(&self) -> f64 {
-    platform::dpi_scale(&self.core.native)
+    self.core.with_tao(platform::dpi_scale).unwrap_or(1.0)
   }
 
   /// The client area, `(0, 0)` to its size; empty once the window is gone.
@@ -213,7 +213,7 @@ impl TabFrame {
 
   /// True when the frame is the window the user is typing into.
   pub fn is_foreground(&self) -> bool {
-    self.is_live() && platform::is_foreground(&self.core.native)
+    self.is_live() && self.core.with_tao(platform::is_foreground).unwrap_or(false)
   }
 
   /// The frame's activation listener; `None` removes it. One per frame.
@@ -244,13 +244,14 @@ impl TabFrame {
       return Ok(());
     }
     if let Some(held) = held {
-      if !platform::is_zoomed(&self.core.native) {
+      if !self.core.with_tao(platform::is_zoomed).unwrap_or(false) {
         let (dx, dy) = self.travelled_since(held)?;
         let bounds = self.core.bounds();
-        platform::move_outer(&self.core.native, bounds.x + dx, bounds.y + dy, self.core.topmost.get());
+        let position = Some(Point { x: bounds.x + dx, y: bounds.y + dy });
+        self.core.place(Placement { position, z: self.core.keep_band(), ..Placement::default() });
       }
     }
-    platform::move_with_mouse(&self.core.native);
+    self.core.with_tao(|tao| platform::press_frame(tao, FramePart::Caption));
     Ok(())
   }
 
@@ -260,7 +261,7 @@ impl TabFrame {
   /// window is not resizable, is maximised, or the left button is not down.
   pub fn start_resize_at(&self, edge: ResizeEdge, held: Option<(f64, f64)>) -> Result<()> {
     let core = &self.core;
-    if !self.is_live() || !core.chrome.resizable || !platform::left_button_down() || platform::is_zoomed(&core.native) {
+    if !self.is_live() || !core.chrome.resizable || !platform::left_button_down() || core.with_tao(platform::is_zoomed).unwrap_or(false) {
       return Ok(());
     }
     if let Some(held) = held {
@@ -279,7 +280,7 @@ impl TabFrame {
       }
       core.set_bounds(Rect::from_edges(left, top, right, bottom));
     }
-    platform::size_with_mouse(&core.native, edge);
+    core.with_tao(|tao| platform::press_frame(tao, FramePart::Edge(edge)));
     Ok(())
   }
 
@@ -287,14 +288,15 @@ impl TabFrame {
   /// request was handled: the window's close listeners ran, or it is destroyed.
   pub fn request_close(&self) {
     if self.is_live() {
-      platform::request_close(&self.core.native);
+      self.core.with_tao(platform::request_close);
     }
   }
 
   /// Shows the window's system menu at the cursor, as a right-click on a title bar does.
   pub fn show_system_menu(&self) -> Result<()> {
     if self.is_live() {
-      platform::show_system_menu(&self.core.native, screen::cursor()?);
+      let at = screen::cursor()?;
+      self.core.with_tao(|tao| platform::show_system_menu(tao, at));
     }
     Ok(())
   }
@@ -305,7 +307,8 @@ impl TabFrame {
     if !self.is_live() || entries.is_empty() {
       return Ok(None);
     }
-    platform::popup_menu(&self.core.native, entries, screen::cursor()?).map_err(Error::state)
+    let at = screen::cursor()?;
+    self.core.with_tao(|tao| platform::popup_menu(tao, entries, at)).unwrap_or(Ok(None)).map_err(Error::state)
   }
 
   /// The appearance the frame was made with.
@@ -348,7 +351,7 @@ pub fn left_button_down() -> bool {
 
 /// True when `handle` names a window now.
 pub fn window_exists(handle: isize) -> bool {
-  platform::ForeignWindow::from_handle_value(handle).is_some()
+  platform::BorrowedWindow::with_handle_value(handle, |_| ()).is_some()
 }
 
 /// What a tab menu entry is made from: a label, or `None` for a separator.

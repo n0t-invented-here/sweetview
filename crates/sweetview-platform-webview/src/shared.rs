@@ -10,7 +10,7 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, Weak};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, Weak};
 
 use sweetview_http::{validate_body_len, validate_request_id, validate_response_head, ErrorCode, Header};
 
@@ -53,8 +53,10 @@ fn stream_key(stream: &Arc<StreamState>) -> usize {
 /// the whole process, so a late answer carrying an id from a dropped webview
 /// can never match a request of a newer one.
 pub(crate) fn next_request_id() -> u64 {
-    static COUNTER: AtomicU64 = AtomicU64::new(1);
-    COUNTER.fetch_add(1, Ordering::Relaxed)
+    // Global state in a form `UNSAFE-POLICY.md` lists: a `OnceLock`, holding the
+    // atomic every thread counts with.
+    static COUNTER: OnceLock<AtomicU64> = OnceLock::new();
+    COUNTER.get_or_init(|| AtomicU64::new(1)).fetch_add(1, Ordering::Relaxed)
 }
 
 impl Shared {

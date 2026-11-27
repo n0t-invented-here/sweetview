@@ -18,18 +18,18 @@ use std::marker::PhantomData;
 use std::num::NonZeroIsize;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::rc::Rc;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 
 use raw_window_handle::{HandleError, HasWindowHandle, RawWindowHandle, Win32WindowHandle, WindowHandle};
-use windows::core::HSTRING;
-use windows::Win32::Foundation::{ERROR_CLASS_ALREADY_EXISTS, HWND, LPARAM, LRESULT, WPARAM};
+use windows::core::{HSTRING, PCWSTR};
+use windows::Win32::Foundation::{ERROR_CLASS_ALREADY_EXISTS, HINSTANCE, HMODULE, HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Threading::{GetCurrentProcess, GetGuiResources, GetProcessHandleCount, GR_GDIOBJECTS, GR_USEROBJECTS};
 use windows::Win32::UI::WindowsAndMessaging::{
-  CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW, KillTimer, PeekMessageW, PostMessageW,
-  PostQuitMessage, RegisterClassExW, SetTimer, TranslateMessage, HWND_MESSAGE, MSG, PEEK_MESSAGE_REMOVE_TYPE, PM_NOREMOVE,
-  PM_QS_INPUT, PM_QS_POSTMESSAGE, PM_QS_SENDMESSAGE, PM_REMOVE, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_QUIT, WM_TIMER,
-  WNDCLASSEXW,
+  CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetClassInfoExW, GetMessageW, KillTimer, PeekMessageW,
+  PostMessageW, PostQuitMessage, RegisterClassExW, SetTimer, TranslateMessage, UnregisterClassW, HWND_MESSAGE, MSG,
+  PEEK_MESSAGE_REMOVE_TYPE, PM_NOREMOVE, PM_QS_INPUT, PM_QS_POSTMESSAGE, PM_QS_SENDMESSAGE, PM_REMOVE, WINDOW_EX_STYLE,
+  WINDOW_STYLE, WM_APP, WM_CLOSE, WM_NCDESTROY, WM_QUIT, WM_TIMER, WNDCLASSEXW, WNDPROC,
 };
 
 use crate::signal::{Signal, SignalError, TimerId};
@@ -41,10 +41,49 @@ use crate::ResourceCounts;
 /// `Some(result)` when it handled the message, `None` to let the OS handle it.
 type Procedure = Rc<dyn Fn(u32, usize, isize) -> Option<isize>>;
 
+/// What the window procedure keeps for one live message window: its closure,
+/// and the post target it disarms when the window is destroyed.
+struct Entry {
+  procedure: Procedure,
+  target: Arc<PostTarget>,
+}
+
 thread_local! {
-  /// The procedure of each live message window of this thread, by window handle value.
-  /// The window procedure finds its closure here, so no pointer rides in the window's data.
-  static PROCEDURES: RefCell<HashMap<isize, Procedure>> = RefCell::new(HashMap::new());
+  /// Each live message window of this thread, by window handle value. The
+  /// window procedure finds its closure here, so no pointer rides in the window's data.
+  static PROCEDURES: RefCell<HashMap<isize, Entry>> = RefCell::new(HashMap::new());
+}
+
+/// How many live windows each class this crate registered has, process-wide,
+/// so the last window of a class unregisters it. Every registration, window
+/// creation and destruction of a [`MessageWindow`] holds this lock, so a class
+/// is never unregistered between another thread's registration and its window.
+fn classes() -> MutexGuard<'static, HashMap<String, usize>> {
+  static CLASSES: OnceLock<Mutex<HashMap<String, usize>>> = OnceLock::new();
+  CLASSES.get_or_init(|| Mutex::new(HashMap::new())).lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// The handle of the process's own executable, which registers the classes.
+fn this_module() -> Result<HMODULE, WindowError> {
+  // SAFETY: a null module name asks for the handle of the process's own executable; no pointer is passed.
+  unsafe { GetModuleHandleW(None) }.map_err(|error| WindowError { call: "GetModuleHandleW", error })
+}
+
+/// The window procedure the class `name` of this module was registered with,
+/// or `None` when no such class is registered.
+fn class_procedure(module: HMODULE, name: &HSTRING) -> Option<WNDPROC> {
+  let mut class = WNDCLASSEXW { cbSize: size_of::<WNDCLASSEXW>() as u32, ..Default::default() };
+  // SAFETY: `class` is a WNDCLASSEXW owned by this frame with `cbSize` set, for the call to fill;
+  // `name` is an HSTRING alive for the whole call.
+  let found = unsafe { GetClassInfoExW(Some(HINSTANCE::from(module)), name, &mut class) };
+  found.is_ok().then_some(class.lpfnWndProc)
+}
+
+/// True when `procedure` is [`message_window_proc`]. Compared by address: a
+/// class another part of the process registered under the same name has its own.
+fn is_ours(procedure: WNDPROC) -> bool {
+  let ours: WNDPROC = Some(message_window_proc);
+  procedure.map(|p| p as usize) == ours.map(|p| p as usize)
 }
 
 /// A message window could not be made: the OS call that failed and its error.
@@ -74,30 +113,39 @@ impl fmt::Display for WindowError {
 
 impl std::error::Error for WindowError {}
 
-/// The handle value posts go to. Zero once the window is destroyed.
+/// The handle value posts go to. Zero once the window is destroyed, by this
+/// value's owner or by anyone: the window procedure zeroes it on `WM_NCDESTROY`.
 ///
-/// The lock is held across both the post and the destroy, so a post from
+/// The lock is held across both the post and the zeroing, so a post from
 /// another thread never reaches a handle that has been destroyed and reused.
 struct PostTarget(Mutex<isize>);
 
+impl PostTarget {
+  fn lock(&self) -> MutexGuard<'_, isize> {
+    self.0.lock().unwrap_or_else(PoisonError::into_inner)
+  }
+}
+
 /// Posts messages to a [`MessageWindow`] from any thread. Cheap to clone.
-/// Once the window is dropped, every post reports failure.
+/// Once the window is gone, every post reports failure.
 #[derive(Clone)]
 pub struct Poster(Arc<PostTarget>);
 
 impl Poster {
   /// Posts `message` with plain integer parameters. Returns false when the
-  /// window is gone or the message could not be queued.
+  /// window is gone or the message could not be queued. A `WM_CLOSE` posted
+  /// here (or by anyone) is answered by the window procedure and does not
+  /// destroy the window.
   pub fn post(&self, message: u32, wparam: usize, lparam: isize) -> bool {
-    let target = self.0 .0.lock().unwrap_or_else(PoisonError::into_inner);
+    let target = self.0.lock();
     if *target == 0 {
       return false;
     }
     let hwnd = HWND(*target as *mut core::ffi::c_void);
-    // SAFETY: `*target` is non-zero only while the `MessageWindow` that owns this
-    // window is alive; its `Drop` zeroes it under this same lock before destroying
-    // the window, and the lock is held for the whole call. The parameters are
-    // integers the receiving procedure reads as integers.
+    // SAFETY: `*target` is non-zero only while the window exists: `MessageWindow::drop`
+    // zeroes it before destroying the window, and the window procedure zeroes it on
+    // `WM_NCDESTROY` whoever destroys it, both under this lock, which is held for the
+    // whole call. The parameters are integers the receiving procedure reads as integers.
     let posted = unsafe { PostMessageW(Some(hwnd), message, WPARAM(wparam), LPARAM(lparam)) };
     posted.is_ok()
   }
@@ -105,55 +153,68 @@ impl Poster {
 
 /// A message-only window made on this thread, with its window procedure as a
 /// closure. Dropping it disarms every [`Poster`], forgets the closure and
-/// destroys the window.
+/// destroys the window; the last window of a class unregisters the class.
+///
+/// The window procedure answers `WM_CLOSE` itself, so a close posted from
+/// another thread or process does not destroy the window. Should other code
+/// of this thread destroy it anyway (`DestroyWindow` on the handle it lends),
+/// `WM_NCDESTROY` disarms this value: posts fail, timers and handles are
+/// refused, and `Drop` destroys nothing.
 ///
 /// Not `Send`: the window and its closure belong to the thread that made them.
 pub struct MessageWindow {
   hwnd: HWND,
+  class: String,
   target: Arc<PostTarget>,
   _not_send: PhantomData<*const ()>,
 }
 
 impl MessageWindow {
-  /// Registers `class_name` (once per process; a second registration's "class
-  /// already exists" is the state wanted) and makes a window of it titled
-  /// `title`. `procedure` runs on this thread for each message the window gets
-  /// once this call has returned, from inside whichever message loop
-  /// dispatches it; a panic in it is caught and the message counts as handled
-  /// with result 0. It may drop its own window.
+  /// Registers `class_name` (once per process while any window of it lives;
+  /// a class of that name registered with another procedure is refused) and
+  /// makes a window of it titled `title`. `procedure` runs on this thread for
+  /// each message the window gets once this call has returned, from inside
+  /// whichever message loop dispatches it; a panic in it is caught and the
+  /// message counts as handled with result 0. It may drop its own window.
   pub fn new(
     class_name: &str,
     title: &str,
     procedure: impl Fn(u32, usize, isize) -> Option<isize> + 'static,
   ) -> Result<Self, WindowError> {
-    // SAFETY: a null module name asks for the handle of the process's own executable; no pointer is passed.
-    let module = unsafe { GetModuleHandleW(None) }.map_err(|error| WindowError { call: "GetModuleHandleW", error })?;
-    let class_name = HSTRING::from(class_name);
-    let class = WNDCLASSEXW {
-      cbSize: size_of::<WNDCLASSEXW>() as u32,
-      lpfnWndProc: Some(message_window_proc),
-      hInstance: module.into(),
-      lpszClassName: windows::core::PCWSTR(class_name.as_ptr()),
-      ..Default::default()
-    };
-    // SAFETY: `class` is a fully initialised WNDCLASSEXW owned by this frame; the
-    // class name it points to is `class_name`, alive for the whole call, and the
-    // system copies it. The procedure is `message_window_proc`, a `'static` fn.
-    let atom = unsafe { RegisterClassExW(&class) };
-    if atom == 0 {
-      let error = windows::core::Error::from_thread();
-      if error.code() != ERROR_CLASS_ALREADY_EXISTS.to_hresult() {
-        return Err(WindowError { call: "RegisterClassExW", error });
+    let module = this_module()?;
+    let class_wide = HSTRING::from(class_name);
+    let mut classes = classes();
+    let registered_here = !classes.contains_key(class_name);
+    if registered_here {
+      let class = WNDCLASSEXW {
+        cbSize: size_of::<WNDCLASSEXW>() as u32,
+        lpfnWndProc: Some(message_window_proc),
+        hInstance: module.into(),
+        lpszClassName: PCWSTR(class_wide.as_ptr()),
+        ..Default::default()
+      };
+      // SAFETY: `class` is a fully initialised WNDCLASSEXW owned by this frame; the
+      // class name it points to is `class_wide`, alive for the whole call, and the
+      // system copies it. The procedure is `message_window_proc`, a `'static` fn.
+      let atom = unsafe { RegisterClassExW(&class) };
+      if atom == 0 {
+        let error = windows::core::Error::from_thread();
+        // A class of this name that this crate did not count: one this module
+        // registered earlier and could not unregister, or another part of the
+        // process's. Only one with this crate's own procedure will do.
+        if error.code() != ERROR_CLASS_ALREADY_EXISTS.to_hresult() || !class_procedure(module, &class_wide).is_some_and(is_ours) {
+          return Err(WindowError { call: "RegisterClassExW", error });
+        }
       }
     }
     // SAFETY: the class and window names are HSTRINGs alive for the whole call, no
     // creation parameter is passed, and HWND_MESSAGE makes a message-only window
-    // with no parent to keep alive. Messages sent during creation find no closure
+    // with no parent to keep alive. Messages sent during creation find no entry
     // in `PROCEDURES` yet and go to `DefWindowProcW`.
     let created = unsafe {
       CreateWindowExW(
         WINDOW_EX_STYLE(0),
-        &class_name,
+        &class_wide,
         &HSTRING::from(title),
         WINDOW_STYLE(0),
         0,
@@ -166,9 +227,21 @@ impl MessageWindow {
         None,
       )
     };
-    let hwnd = created.map_err(|error| WindowError { call: "CreateWindowExW", error })?;
-    PROCEDURES.with(|procedures| procedures.borrow_mut().insert(hwnd.0 as isize, Rc::new(procedure)));
-    Ok(Self { hwnd, target: Arc::new(PostTarget(Mutex::new(hwnd.0 as isize))), _not_send: PhantomData })
+    let hwnd = match created {
+      Ok(hwnd) => hwnd,
+      Err(error) => {
+        if registered_here {
+          unregister_class(module, &class_wide);
+        }
+        return Err(WindowError { call: "CreateWindowExW", error });
+      }
+    };
+    *classes.entry(class_name.to_owned()).or_insert(0) += 1;
+    drop(classes);
+    let target = Arc::new(PostTarget(Mutex::new(hwnd.0 as isize)));
+    let entry = Entry { procedure: Rc::new(procedure), target: target.clone() };
+    PROCEDURES.with(|procedures| procedures.borrow_mut().insert(hwnd.0 as isize, entry));
+    Ok(Self { hwnd, class: class_name.to_owned(), target, _not_send: PhantomData })
   }
 
   /// A handle other threads use to post to this window.
@@ -176,59 +249,115 @@ impl MessageWindow {
     Poster(self.target.clone())
   }
 
-  /// The window's handle, for the calls of this crate that name the window.
-  pub(crate) fn hwnd(&self) -> HWND {
-    self.hwnd
+  /// The window's handle while the window exists, for the calls of this crate
+  /// that name the window; `None` once something destroyed it.
+  pub(crate) fn live_hwnd(&self) -> Option<HWND> {
+    (*self.target.lock() != 0).then_some(self.hwnd)
   }
+}
+
+/// Unregisters the class `name` of `module`; a failure (a window of it still
+/// exists somewhere) leaves it registered, which a later `new` accepts.
+fn unregister_class(module: HMODULE, name: &HSTRING) {
+  // SAFETY: `name` is an HSTRING alive for the whole call; the class was registered by
+  // this crate with `message_window_proc`, and the `classes` lock the caller holds keeps
+  // any other `MessageWindow::new` from making a window of it meanwhile.
+  let _unregistered = unsafe { UnregisterClassW(name, Some(HINSTANCE::from(module))) };
 }
 
 impl HasWindowHandle for MessageWindow {
   /// The window, borrowed for as long as this value is: for an OS call of
   /// another platform crate that names its owner window (the clipboard's
-  /// owner, a notification-area icon's window).
+  /// owner, a notification-area icon's window). Refused once the window is gone.
   fn window_handle(&self) -> Result<WindowHandle<'_>, HandleError> {
-    let value = NonZeroIsize::new(self.hwnd.0 as isize).ok_or(HandleError::Unavailable)?;
+    let hwnd = self.live_hwnd().ok_or(HandleError::Unavailable)?;
+    let value = NonZeroIsize::new(hwnd.0 as isize).ok_or(HandleError::Unavailable)?;
     let raw = RawWindowHandle::Win32(Win32WindowHandle::new(value));
-    // SAFETY: `borrow_raw` asks that the handle name a window for the whole
-    // borrow. `self.hwnd` was made by `new` and is destroyed only in this value's
-    // `Drop`, which cannot run while the borrow of `&self` is alive.
+    // SAFETY: `borrow_raw` asks that the handle name a window for the whole borrow.
+    // `live_hwnd` just read it from the post target, which the window procedure zeroes
+    // on `WM_NCDESTROY` whoever destroys the window, so it names this value's window
+    // now; this value destroys it only in `Drop`, which the borrow of `&self` excludes.
+    // Should other code of this thread destroy the lent handle during the borrow, the
+    // OS validates it on each later call and refuses it, and this value refuses the next.
     Ok(unsafe { WindowHandle::borrow_raw(raw) })
   }
 }
 
 impl Drop for MessageWindow {
   fn drop(&mut self) {
-    {
-      // Disarm the posters first, under the lock a post holds.
-      let mut target = self.target.0.lock().unwrap_or_else(PoisonError::into_inner);
-      *target = 0;
-    }
+    // Disarm the posters first, under the lock a post holds. Zero already when
+    // something else destroyed the window (`WM_NCDESTROY`).
+    let live = std::mem::replace(&mut *self.target.lock(), 0) != 0;
     // `try_with`: a window kept in thread-local storage is dropped while the
     // thread's storage is being torn down, when the table may already be gone.
-    let _ = PROCEDURES.try_with(|procedures| procedures.borrow_mut().remove(&(self.hwnd.0 as isize)));
-    // SAFETY: `self.hwnd` was created by `new` on this thread (the type is not
-    // `Send`), is owned by this value alone, and is not used again after this call.
-    let destroyed = unsafe { DestroyWindow(self.hwnd) };
-    // Nothing useful can be done with a failure while dropping.
-    let _ = destroyed;
+    // Only this value's own entry: a window destroyed earlier may have left its
+    // handle value to a later window of this thread.
+    let _ = PROCEDURES.try_with(|procedures| {
+      let mut procedures = procedures.borrow_mut();
+      if procedures.get(&(self.hwnd.0 as isize)).is_some_and(|entry| Arc::ptr_eq(&entry.target, &self.target)) {
+        procedures.remove(&(self.hwnd.0 as isize));
+      }
+    });
+    let mut classes = classes();
+    if live {
+      // SAFETY: `self.hwnd` was created by `new` on this thread (the type is not `Send`)
+      // and still exists: `live` was read from the post target, which the window
+      // procedure zeroes on `WM_NCDESTROY` whoever destroys the window, so its handle
+      // value has not been given to another window. It is not used again after this call.
+      let destroyed = unsafe { DestroyWindow(self.hwnd) };
+      // Nothing useful can be done with a failure while dropping.
+      let _ = destroyed;
+    }
+    let last = match classes.get_mut(&self.class) {
+      Some(count) => {
+        *count = count.saturating_sub(1);
+        *count == 0
+      }
+      None => false,
+    };
+    if last {
+      classes.remove(&self.class);
+      if let Ok(module) = this_module() {
+        unregister_class(module, &HSTRING::from(self.class.as_str()));
+      }
+    }
   }
 }
 
-/// The window procedure of every [`MessageWindow`]. Called by the OS; never unwinds.
-extern "system" fn message_window_proc(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+/// What the window procedure does with one message: `Some` when it answered
+/// it, `None` to hand it to `DefWindowProcW`.
+fn answer(hwnd: HWND, message: u32, wparam: usize, lparam: isize) -> Option<isize> {
   // The closure is cloned out of the table first, so it may drop its own window.
   // `try_with`: a message can arrive while the thread's storage is being torn down.
-  let procedure = PROCEDURES.try_with(|procedures| procedures.borrow().get(&(hwnd.0 as isize)).cloned()).ok().flatten();
-  if let Some(procedure) = procedure {
-    // A panic must not cross into the OS: it is caught and the message counts as handled.
-    match catch_unwind(AssertUnwindSafe(|| procedure(message, wparam.0, lparam.0))) {
-      Ok(Some(result)) => return LRESULT(result),
-      Ok(None) => {}
-      Err(_) => return LRESULT(0),
-    }
+  let found = PROCEDURES
+    .try_with(|procedures| procedures.borrow().get(&(hwnd.0 as isize)).map(|entry| (entry.procedure.clone(), entry.target.clone())))
+    .ok()
+    .flatten();
+  let (procedure, target) = found?;
+  if message == WM_NCDESTROY {
+    // Destroyed by someone other than the owner's `Drop` (which removes the entry
+    // first): disarm the owner, so nothing acts on the handle value again.
+    *target.lock() = 0;
+    let _ = PROCEDURES.try_with(|procedures| procedures.borrow_mut().remove(&(hwnd.0 as isize)));
+    return None;
   }
-  // SAFETY: the arguments are the ones the OS passed to this window procedure for this message.
-  unsafe { DefWindowProcW(hwnd, message, wparam, lparam) }
+  match procedure(message, wparam, lparam) {
+    // `DefWindowProcW` destroys a window on `WM_CLOSE`; only the owner destroys this one.
+    None if message == WM_CLOSE => Some(0),
+    answered => answered,
+  }
+}
+
+/// The window procedure of every [`MessageWindow`]. Called by the OS; never
+/// unwinds: its body runs inside `catch_unwind`, and a panic counts as handled
+/// with result 0.
+extern "system" fn message_window_proc(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+  match catch_unwind(AssertUnwindSafe(|| answer(hwnd, message, wparam.0, lparam.0))) {
+    Ok(Some(result)) => LRESULT(result),
+    Err(_) => LRESULT(0),
+    // SAFETY: the arguments are the ones the OS passed to this window procedure for this message.
+    Ok(None) => unsafe { DefWindowProcW(hwnd, message, wparam, lparam) },
+  }
 }
 
 // ---- the message pump ------------------------------------------------------------------
@@ -236,8 +365,20 @@ extern "system" fn message_window_proc(hwnd: HWND, message: u32, wparam: WPARAM,
 /// A message the OS took off this thread's queue. Only this crate makes one,
 /// from `PeekMessageW` or `GetMessageW`, so what it holds is what the OS put
 /// there, which is what `TranslateMessage` and `DispatchMessageW` require.
+/// Dispatching consumes it, so a message is dispatched at most once: a message
+/// can carry ownership in its parameters (a boxed closure `tao` posts to its
+/// own window and takes back when its procedure runs).
 ///
 /// Not `Send`: a message is dispatched on the thread whose queue it came from.
+///
+/// A second dispatch of the same message does not compile:
+///
+/// ```compile_fail,E0382
+/// if let Some(message) = sweetview_platform_loop::next_message() {
+///   message.dispatch();
+///   message.dispatch();
+/// }
+/// ```
 pub struct QueuedMessage(MSG);
 
 impl QueuedMessage {
@@ -247,25 +388,33 @@ impl QueuedMessage {
   }
 
   /// Turns a key message into its character messages, as a message loop does.
+  /// Call it before [`QueuedMessage::dispatch`].
   pub fn translate(&self) {
     // SAFETY: `self.0` was filled by the OS from this thread's queue (see the type).
     let _translated = unsafe { TranslateMessage(&self.0) };
   }
 
-  /// Hands the message to its window's procedure.
-  pub fn dispatch(&self) {
+  /// Hands the message to its window's procedure, once: the message is consumed.
+  pub fn dispatch(self) {
     // SAFETY: `self.0` was filled by the OS from this thread's queue (see the
-    // type), so its window, parameters and any timer procedure are the OS's own.
+    // type), so its window, parameters and any timer procedure are the OS's own;
+    // `self` is consumed, so this message is not dispatched again.
     unsafe { DispatchMessageW(&self.0) };
   }
 }
 
-/// `PeekMessageW` on this thread's queue: the first message for `hwnd` (any
-/// window for `None`) in `first..=last` (every message for `0, 0`).
-fn peek(hwnd: Option<HWND>, first: u32, last: u32, flags: PEEK_MESSAGE_REMOVE_TYPE) -> Option<QueuedMessage> {
+/// `PeekMessageW` on this thread's queue: the first message for `window`
+/// (any window for `None`) in `first..=last` (every message for `0, 0`).
+/// Nothing for a window that is gone.
+fn peek(window: Option<&MessageWindow>, first: u32, last: u32, flags: PEEK_MESSAGE_REMOVE_TYPE) -> Option<QueuedMessage> {
+  let hwnd = match window {
+    Some(window) => Some(window.live_hwnd()?),
+    None => None,
+  };
   let mut message = MSG::default();
-  // SAFETY: `message` is a MSG owned by this frame for the call to fill; the
-  // window filter is a handle the caller owns or none, and the OS validates it.
+  // SAFETY: `message` is a MSG owned by this frame for the call to fill; the window
+  // filter is none or the live window of a `MessageWindow` borrowed for the call
+  // (`live_hwnd`), and the OS validates it.
   let found = unsafe { PeekMessageW(&mut message, hwnd, first, last, flags) };
   found.as_bool().then_some(QueuedMessage(message))
 }
@@ -412,11 +561,12 @@ impl SignalWindow {
   /// Starts a timer that delivers `Signal::Timer` every `interval_ms`
   /// milliseconds until it is cancelled.
   pub fn set_timer(&self, interval_ms: u32) -> Result<TimerId, SignalError> {
+    let hwnd = self.window.live_hwnd().ok_or_else(|| SignalError("SetTimer: the signal window is gone".into()))?;
     let id = self.next_timer.get();
     self.next_timer.set(id.wrapping_add(1).max(1));
-    // SAFETY: the window is owned by `self.window` and destroyed only in its `Drop`;
-    // no timer procedure is passed, so the timer arrives as a WM_TIMER message.
-    let set = unsafe { SetTimer(Some(self.window.hwnd()), id, interval_ms, None) };
+    // SAFETY: `hwnd` is the live window of `self.window` (`live_hwnd`), which this value
+    // owns; no timer procedure is passed, so the timer arrives as a WM_TIMER message.
+    let set = unsafe { SetTimer(Some(hwnd), id, interval_ms, None) };
     if set == 0 {
       return Err(SignalError(format!("SetTimer: {}", windows::core::Error::from_thread())));
     }
@@ -441,15 +591,17 @@ impl SignalWindow {
   pub fn dispatch_due_timers(&self) {
     // Bounded: a handler that keeps timers due cannot hold the caller here.
     for _ in 0..64 {
-      let Some(message) = peek(Some(self.window.hwnd()), WM_TIMER, WM_TIMER, PM_REMOVE) else { break };
+      let Some(message) = peek(Some(&self.window), WM_TIMER, WM_TIMER, PM_REMOVE) else { break };
       message.dispatch();
     }
   }
 
   fn kill(&self, id: usize) {
-    // SAFETY: the window is owned by `self.window` and destroyed only in its `Drop`,
-    // which runs after this value's own `Drop` has killed the timers.
-    let killed = unsafe { KillTimer(Some(self.window.hwnd()), id) };
+    // A window destroyed by someone else took its timers with it.
+    let Some(hwnd) = self.window.live_hwnd() else { return };
+    // SAFETY: `hwnd` is the live window of `self.window` (`live_hwnd`), which this value
+    // owns and which is destroyed only after this value's own `Drop` has killed the timers.
+    let killed = unsafe { KillTimer(Some(hwnd), id) };
     // A timer that is already gone is the state wanted.
     let _ = killed;
   }
@@ -467,7 +619,7 @@ impl Drop for SignalWindow {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::testing::smallest_growth;
+  use crate::testing::assert_gives_back_every_handle;
   use std::time::{Duration, Instant};
 
   /// Dispatches this thread's queued messages until `done` or the deadline.
@@ -572,22 +724,13 @@ mod tests {
   #[test]
   fn creating_and_dropping_returns_every_handle() {
     let _serial = serial();
-    // One round first, so one-time costs (the window class, lazily loaded modules) are paid.
-    drop(SignalWindow::new(|_| {}).expect("signal window"));
-    let (user_before, kernel_before) = {
-      let counts = resource_counts();
-      (counts.user_objects, counts.kernel_handles)
-    };
-    for _ in 0..200 {
+    assert_gives_back_every_handle(200, || {
       let window = SignalWindow::new(|_| {}).expect("signal window");
       let timer = window.set_timer(1000).expect("timer");
       let _waker = window.waker();
       window.cancel_timer(timer);
       let _left_set = window.set_timer(1000).expect("timer");
-    }
-    let after = resource_counts();
-    assert_eq!(after.user_objects, user_before, "USER objects returned to the starting count");
-    assert!(after.kernel_handles <= kernel_before + 2, "kernel handles returned to the starting count");
+    });
   }
 
   #[test]
@@ -611,10 +754,109 @@ mod tests {
     drop(window);
     assert!(!poster.post(WM_APP + 7, 0, 0), "a post after the drop fails");
 
-    let growth = smallest_growth(100, || {
+    assert_gives_back_every_handle(100, || {
       let window = MessageWindow::new("SweetviewLoopTestWindow", "sweetview.loop-test", |_, _, _| None).expect("message window");
       let _poster = window.poster();
     });
-    assert!(growth.user_objects <= 0 && growth.gdi_objects <= 0 && growth.kernel_handles <= 0, "{growth:?}");
+  }
+
+  /// The raw handle a `MessageWindow` lends, as another platform crate gets it.
+  fn lent_hwnd(window: &MessageWindow) -> HWND {
+    match window.window_handle().expect("a live window").as_raw() {
+      RawWindowHandle::Win32(handle) => HWND(handle.hwnd.get() as *mut core::ffi::c_void),
+      _ => unreachable!("a Win32 handle"),
+    }
+  }
+
+  fn registered(name: &str) -> bool {
+    class_procedure(this_module().expect("module"), &HSTRING::from(name)).is_some()
+  }
+
+  /// `WM_CLOSE` from any thread is answered by the procedure: the window, its
+  /// posters and its closure carry on as before.
+  #[test]
+  fn a_posted_close_leaves_the_window_and_its_owner_coherent() {
+    let _serial = serial();
+    let closes = Rc::new(Cell::new(0u32));
+    let pings = Rc::new(Cell::new(0u32));
+    let (close_sink, ping_sink) = (closes.clone(), pings.clone());
+    let window = MessageWindow::new("SweetviewLoopCloseTest", "sweetview.close-test", move |message, _, _| {
+      match message {
+        WM_CLOSE => close_sink.set(close_sink.get() + 1),
+        m if m == WM_APP + 9 => ping_sink.set(ping_sink.get() + 1),
+        _ => return None,
+      }
+      // The close is seen and left to the OS's default answer: the window procedure answers it.
+      (message != WM_CLOSE).then_some(0)
+    })
+    .expect("message window");
+    let poster = window.poster();
+    let remote = poster.clone();
+    assert!(std::thread::spawn(move || remote.post(WM_CLOSE, 0, 0)).join().expect("poster thread"));
+    pump_until(|| closes.get() == 1);
+    assert_eq!(closes.get(), 1, "the closure saw the close");
+    let hwnd = lent_hwnd(&window);
+    // SAFETY: `IsWindow` accepts any value and only reports whether it names a window.
+    assert!(unsafe { windows::Win32::UI::WindowsAndMessaging::IsWindow(Some(hwnd)) }.as_bool(), "the window still exists");
+    assert!(poster.post(WM_APP + 9, 0, 0), "posts still reach it");
+    pump_until(|| pings.get() == 1);
+    assert_eq!(pings.get(), 1);
+    drop(window);
+    assert!(!poster.post(WM_APP + 9, 0, 0));
+    assert!(!registered("SweetviewLoopCloseTest"), "the last window of the class unregistered it");
+  }
+
+  /// A window destroyed out from under its owner disarms the owner: every
+  /// later call is refused instead of acting on the stale handle value.
+  #[test]
+  fn a_window_destroyed_by_other_code_disarms_its_owner() {
+    let _serial = serial();
+    let window = SignalWindow::new(|_| {}).expect("signal window");
+    let waker = window.waker();
+    let timer = window.set_timer(1000).expect("timer");
+    let hwnd = lent_hwnd(&window.window);
+    // SAFETY: the test destroys the window of its own `SignalWindow` on this thread, as code
+    // of this thread holding the lent handle could.
+    unsafe { DestroyWindow(hwnd) }.expect("DestroyWindow");
+    assert!(window.window.live_hwnd().is_none());
+    assert!(matches!(window.window.window_handle(), Err(HandleError::Unavailable)), "no handle is lent");
+    assert!(!waker.wake(1), "posts fail");
+    assert!(window.set_timer(1000).is_err(), "timers are refused");
+    window.cancel_timer(timer);
+    window.dispatch_due_timers();
+    assert!(PROCEDURES.with(|p| !p.borrow().contains_key(&(hwnd.0 as isize))), "the closure is forgotten");
+    drop(window);
+    // The class stays usable, and a new window of it works.
+    let fired = Rc::new(Cell::new(false));
+    let sink = fired.clone();
+    let again = SignalWindow::new(move |_| sink.set(true)).expect("a new signal window");
+    assert!(again.waker().wake(2));
+    pump_until(|| fired.get());
+    assert!(fired.get());
+  }
+
+  /// A class of the same name that other code registered with its own
+  /// procedure is not taken over.
+  #[test]
+  fn a_class_registered_with_another_procedure_is_refused() {
+    let _serial = serial();
+    extern "system" fn other_procedure(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+      // SAFETY: the arguments are the ones the OS passed to this window procedure.
+      unsafe { DefWindowProcW(hwnd, message, wparam, lparam) }
+    }
+    let module = this_module().expect("module");
+    let name = HSTRING::from("SweetviewLoopForeignClass");
+    let class = WNDCLASSEXW {
+      cbSize: size_of::<WNDCLASSEXW>() as u32,
+      lpfnWndProc: Some(other_procedure),
+      hInstance: module.into(),
+      lpszClassName: PCWSTR(name.as_ptr()),
+      ..Default::default()
+    };
+    // SAFETY: a fully initialised WNDCLASSEXW owned by this frame; `name` outlives the call.
+    assert_ne!(unsafe { RegisterClassExW(&class) }, 0);
+    let refused = MessageWindow::new("SweetviewLoopForeignClass", "sweetview.foreign", |_, _, _| None);
+    assert!(refused.as_ref().is_err_and(|e| e.call() == "RegisterClassExW"), "{:?}", refused.err());
+    unregister_class(module, &name);
   }
 }

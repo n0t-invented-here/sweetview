@@ -1,8 +1,9 @@
-// W4.8: an application's own bun:ffi modal dialog and popup menu, opened from
-// a handler on the UI thread, work inside Sweetview's event loop in both of
-// its modes, while a native timeout still fires and a wake still drains
-// inside the modal loop. The handler stands in for a `uiMethods` call: both
-// are JavaScript run by the binding from inside the loop.
+// W4.8: an application's own bun:ffi modal dialog and popup menu work inside
+// Sweetview's event loop in both of its modes. First as the item states it:
+// opened from a `uiMethods` method of an app made with `createApp`, called
+// from its page, with the page's UI and worker calls answered inside each
+// loop (fixtures/app-modals.ts). Then from a plain handler on the UI thread,
+// while a native timeout still fires and a wake still drains inside the loop.
 //
 // The dialog is closed by a native timeout posting WM_CLOSE to it; the menu
 // is dismissed by a native timeout calling EndMenu, the documented way to
@@ -82,6 +83,49 @@ function expected(label: string): string[] {
     `${label}: menu returned 0`,
   ];
 }
+
+// The same two modal loops opened from `uiMethods` of an app made with `createApp`, called from its
+// page (fixtures/app-modals.ts, a process per loop mode with its own WebView2 profile): inside each
+// loop the page's calls to a UI method and to a worker method are answered, and the page reports
+// each answer back while the loop is still open.
+async function appModals(mode: "blocking" | "pumped") {
+  const { mkdtempSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { fileURLToPath } = await import("node:url");
+  const profile = mkdtempSync(join(tmpdir(), "sweetview-compat-modals-"));
+  try {
+    const fixture = fileURLToPath(new URL("./fixtures/app-modals.ts", import.meta.url));
+    const proc = Bun.spawn([process.execPath, fixture, mode], { env: { ...process.env, WEBVIEW2_USER_DATA_FOLDER: profile }, stdout: "pipe", stderr: "pipe", timeout: 50_000 });
+    const [code, stdout, stderr] = await Promise.all([proc.exited, new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
+    const line = stdout.split(/\r?\n/).find((l) => l.startsWith("RESULT "));
+    if (code !== 0 || !line) throw new Error(`app-modals ${mode}: exit ${code}\n${stdout}\n${stderr}`);
+    return JSON.parse(line.slice("RESULT ".length));
+  } finally {
+    for (let attempt = 0; attempt < 50; attempt++) {
+      try {
+        rmSync(profile, { recursive: true, force: true });
+        break;
+      } catch {
+        await Bun.sleep(100);
+      }
+    }
+  }
+}
+
+describe.if(onWindows)("an application's own modal dialog and popup menu, opened from a uiMethods call of createApp's app, called from its page", () => {
+  for (const mode of ["blocking", "pumped"] as const) {
+    test(`${mode === "blocking" ? "under app.run()" : "under runEventLoop()"}: inside each loop the page's UI calls and worker calls are answered and the answers reach the page`, async () => {
+      const r = await appModals(mode);
+      expect(r).toMatchObject({ mode, timedOut: false, finished: true, boxReturned: true, menuReturned: 0 });
+      for (const kind of ["box", "menu"] as const) {
+        expect(r.inside[kind].uiCalls).toBeGreaterThanOrEqual(3);
+        expect(r.inside[kind].uiAnswersSeenByPage).toBeGreaterThanOrEqual(3);
+        expect(r.inside[kind].workerAnswersSeenByPage).toBeGreaterThanOrEqual(3);
+      }
+    }, 60_000);
+  }
+});
 
 describe.if(onWindows)("an application's own modal dialog and popup menu inside Sweetview's loop", () => {
   test("under the Bun-timer loop (runEventLoop)", async () => {

@@ -11,9 +11,9 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { WebView, type Tab } from "../../src/index";
-import { Screen, Window, quitEventLoop, runEventLoop, type TabHandle } from "@n1h/sweetview-native";
+import { Screen, Window, dotIco, quitEventLoop, runEventLoop, type TabHandle } from "@n1h/sweetview-native";
 import { getTabFrame } from "@n1h/sweetview-native/win32/tab-window";
-import { engineOf, scheduleNativeTimeout } from "@n1h/sweetview-native/internal";
+import { engineOf, getWindowMeta, scheduleNativeTimeout } from "@n1h/sweetview-native/internal";
 import { writeSync } from "node:fs";
 import { buttonsDown, endMenu, injectCursorMove, injectLeftButton, openPopupMenu } from "../../../sweetview-native/test/win32-os";
 import type { Key } from "@n1h/sweetview-native/win32/shortcuts";
@@ -38,6 +38,7 @@ const user32 = dlopen("user32.dll", {
   GetDpiForWindow: { args: [u64], returns: u32 },
   GetSystemMetricsForDpi: { args: [i32, u32], returns: i32 },
   MonitorFromWindow: { args: [u64, u32], returns: u64 },
+  MonitorFromPoint: { args: [u64, u32], returns: u64 },
   GetMonitorInfoW: { args: [u64, FFIType.ptr], returns: i32 },
   GetForegroundWindow: { args: [], returns: u64 },
   GetLayeredWindowAttributes: { args: [u64, FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: i32 },
@@ -152,6 +153,23 @@ function workArea(hwnd: bigint): Rect {
   return { x: info[5]!, y: info[6]!, width: info[7]! - info[5]!, height: info[8]! - info[6]! };
 }
 
+/** The work area of the primary monitor (the one at the origin), from the OS. */
+function primaryWorkArea(): Rect {
+  const info = new Int32Array(10);
+  info[0] = 40;
+  user32.GetMonitorInfoW(user32.MonitorFromPoint(0n, 1), ptr(info)); // MONITOR_DEFAULTTOPRIMARY
+  return { x: info[5]!, y: info[6]!, width: info[7]! - info[5]!, height: info[8]! - info[6]! };
+}
+/** The system's app theme from the registry, as Windows keeps it: dark when AppsUseLightTheme is 0 (light when absent). */
+function registryDark(): boolean {
+  const run = Bun.spawnSync(["reg", "query", "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize", "/v", "AppsUseLightTheme"], { stdout: "pipe", stderr: "pipe" });
+  const value = /AppsUseLightTheme\s+REG_DWORD\s+0x([0-9a-f]+)/i.exec(run.stdout.toString());
+  return value !== null && Number.parseInt(value[1]!, 16) === 0;
+}
+/** The big icon the window was given (WM_GETICON), 0 when none. */
+const iconOf = (hwnd: bigint) => BigInt(user32.SendMessageW(hwnd, 0x007f, 1n, 0n));
+const rectEq = (a: Rect, b: Rect) => a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
+
 /** The frame's webview children (`wry`'s `WRY_WEBVIEW` containers), in client coordinates. */
 function webviewChildren(frame: bigint): { rect: Rect; visible: boolean }[] {
   const out: { rect: Rect; visible: boolean }[] = [];
@@ -194,7 +212,13 @@ const server = Bun.spawn(
   [
     process.execPath,
     "-e",
-    `const s = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: (req) => new Response("<!doctype html><title>Served " + new URL(req.url).pathname + "</title><p>served", { headers: { "content-type": "text/html" } }) }); console.log(s.port); setInterval(() => {}, 1 << 30);`,
+    // /status/<n> answers with that HTTP status (204 with no body); /slow answers after 3 s.
+    `const s = Bun.serve({ port: 0, hostname: "127.0.0.1", async fetch(req) {
+      const path = new URL(req.url).pathname;
+      const status = path.startsWith("/status/") ? Number(path.slice(8)) : 200;
+      if (path.startsWith("/slow")) await Bun.sleep(3000);
+      return new Response(status === 204 ? null : "<!doctype html><title>Served " + path + "</title><p>served", { status, headers: { "content-type": "text/html" } });
+    } }); console.log(s.port); setInterval(() => {}, 1 << 30);`,
   ],
   { stdout: "pipe", stderr: "inherit" },
 );
@@ -216,7 +240,16 @@ const unique = `w7-tabs-${process.pid}`;
 const loop = runEventLoop({ intervalMs: 5 });
 // A stuck step ends the run with what it has, rather than leaving the test to kill a process that hosts webviews.
 // A native timeout: it fires inside a modal loop (a popup menu's) too, where Bun's own timers do not run.
-scheduleNativeTimeout(120_000, () => {
+// The one press this fixture injects (the focus click) is let go on every way out: its own
+// finally, this limit (released first), and the process's exit.
+let leftHeld = false;
+const letGo = () => {
+  if (leftHeld) injectLeftButton(false);
+  leftHeld = false;
+};
+process.on("exit", letGo);
+scheduleNativeTimeout(200_000, () => {
+  letGo();
   endMenu();
   check("fixture ran to the end", false, "timed out");
   console.log(`RESULT ${JSON.stringify(results)}`);
@@ -290,9 +323,34 @@ try {
     bare.dispose();
   }
 
+  // ---- where a frame goes; the dark state a "system" frame starts in ---------------------------------
+  {
+    const area = primaryWorkArea();
+    const given = { x: area.x + 50, y: area.y + 40, width: Math.min(820, area.width - 100), height: Math.min(600, area.height - 80) };
+    const placed = make({ tabs: true, bounds: given });
+    const at = windowRect(BigInt(placed.handle!));
+    check("a frame given bounds takes them as its outer rectangle", rectEq(at, given), { given, at });
+    placed.dispose();
+    // No strip yet, so nothing has reported a theme: the frame's state is what it read from the system.
+    const fresh = make({ tabs: true, appearance: "system" });
+    const freshHwnd = BigInt(fresh.handle!);
+    const want = registryDark();
+    const frameDark = getTabFrame(freshHwnd)!.isDark();
+    check("a \"system\" frame starts in the system's theme (AppsUseLightTheme)", frameDark === want && dwmDark(freshHwnd) === want, { registryDark: want, frameDark, dwmDark: dwmDark(freshHwnd) });
+    fresh.dispose();
+  }
+
   // ---- the frame, read back from the OS ----------------------------------------------
   const win = make({ tabs: true, appearance: "dark" });
   const hwnd = BigInt(win.handle!);
+  {
+    // Made with no bounds: centred on the primary monitor's work area.
+    const r = windowRect(hwnd);
+    const area = primaryWorkArea();
+    const want = { x: area.x + Math.floor((area.width - r.width) / 2), y: area.y + Math.floor((area.height - r.height) / 2) };
+    check("a frame made with no bounds is centred on the primary work area", Math.abs(r.x - want.x) <= 1 && Math.abs(r.y - want.y) <= 1, { outer: r, area, want });
+  }
+  check("before its first tab the frame shows the window's title", getTitle(hwnd) === unique, getTitle(hwnd));
   const s = style(hwnd);
   check("frame styles", (s & (WS_CAPTION | WS_SYSMENU | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_CLIPCHILDREN)) === (WS_CAPTION | WS_SYSMENU | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_CLIPCHILDREN), `0x${s.toString(16)}`);
   check("system menu", user32.GetSystemMenu(hwnd, 0) !== 0n);
@@ -432,6 +490,10 @@ try {
   await Bun.sleep(100);
   await press(ctrl(0x31));
   check("strip.move reorders the tabs", sel() === r2, (sel() as Tab<any, any> | undefined)?.title);
+  const titlesOf = (view: WebView<any, any>) => ask(view, `window.__sweetview_rpc("strip.state", null).then((s) => s.tabs.map((t) => t.title).join("|"))`);
+  await ask(strip, `window.__sweetview_rpc("strip.move", { id: ${await stripId(strip, 0)}, index: 99 })`); // r2 past the end
+  const clamped = await askUntil(strip, `window.__sweetview_rpc("strip.state", null).then((s) => s.tabs.map((t) => t.title).join("|"))`, "one|r1|r2", 2000);
+  check("strip.move clamps an index past the end to the last place", clamped === "one|r1|r2", clamped);
   const closesBefore = closes.length;
   r1.select();
   await until(() => sel() === r1);
@@ -464,6 +526,91 @@ try {
   await ask(strip, `window.__sweetview_rpc("strip.new", null)`);
   check("strip.new asks the window for a new tab", await until(() => newTabs.length === newBefore + 1 && newTabs.at(-1) === win, 2000));
   r2.dispose();
+
+  // ---- where a new tab goes; which tab is selected after a close; tab ids -------------------------------
+  {
+    const ins = make({ tabs: true });
+    const insSelects: TabHandle[] = [];
+    ins.onTabSelect((t) => insSelects.push(t));
+    const i1 = await WebView.openTab(ins, page("i1"));
+    const i2 = await WebView.openTab(ins, page("i2"));
+    const i3 = await WebView.openTab(ins, page("i3")); // i1 i2 i3, i3 selected
+    const insStrip = _debugWinTabs.strip(ins)!;
+    const ids = (await ask(insStrip, `window.__sweetview_rpc("strip.state", null).then((s) => s.tabs.map((t) => t.id).join(","))`)).split(",").map(Number);
+    await WebView.openTab(ins, { ...page("i4"), after: i1 }); // after the given tab, not the selected i3
+    const afterGiven = await titlesOf(insStrip);
+    i2.select();
+    await WebView.openTab(ins, page("i5")); // after the selected i2
+    const afterSelected = await titlesOf(insStrip);
+    await WebView.openTab(ins, { ...page("i6"), after: t1 }); // t1 is in another window: after the selected i5
+    const afterForeign = await titlesOf(insStrip);
+    check(
+      "a new tab goes after the tab given as after, else after the selected tab (also when the given tab is in another window)",
+      afterGiven === "i1|i4|i2|i3" && afterSelected === "i1|i4|i2|i5|i3" && afterForeign === "i1|i4|i2|i5|i6|i3",
+      { afterGiven, afterSelected, afterForeign },
+    );
+    const lastId = Number(await ask(insStrip, `window.__sweetview_rpc("strip.state", null).then((s) => Math.max(...s.tabs.map((t) => t.id)))`));
+    check("tab ids rise by one from tab to tab", ids.length === 3 && ids[1] === ids[0]! + 1 && ids[2] === ids[1]! + 1 && lastId === ids[2]! + 3, { ids, lastId });
+
+    // i1 i4 i2 i5 i6 i3: close the selected i2 (index 2): i5, now at index 2, is selected.
+    const insTabs = () => titlesOf(insStrip);
+    const selName = () => (insSelects.at(-1) as Tab<any, any> | undefined)?.title;
+    i2.select();
+    await until(() => insSelects.at(-1) === i2);
+    const before1 = insSelects.length;
+    i2.close();
+    await until(() => insSelects.length > before1, 2000);
+    const sameIndex = { selected: selName(), tabs: await insTabs() };
+    // i1 i4 i5 i6 i3: close the selected last tab i3: the one before it, i6, is selected.
+    i3.select();
+    await until(() => insSelects.at(-1) === i3);
+    const before2 = insSelects.length;
+    i3.close();
+    await until(() => insSelects.length > before2, 2000);
+    const previous = { selected: selName(), tabs: await insTabs() };
+    check(
+      "after a close the tab at the same place is selected, else the one before it (onTabSelect says so)",
+      sameIndex.selected === "i5" && sameIndex.tabs === "i1|i4|i5|i6|i3" && previous.selected === "i6" && previous.tabs === "i1|i4|i5|i6",
+      { sameIndex, previous },
+    );
+    ins.dispose();
+
+    // tab.dispose() takes the last tab down at once, then asks the window as a close does.
+    const forced = make({ tabs: true });
+    let forcedAsked = 0;
+    const forcedClosed: TabHandle[] = [];
+    forced.onClose(() => forcedAsked++);
+    forced.onTabClose((t) => forcedClosed.push(t));
+    const lone = await WebView.openTab(forced, page("lone"));
+    lone.dispose();
+    const goneAtOnce = lone.webview.raw.unsafeHandle === null && forcedClosed.includes(lone);
+    await until(() => forcedAsked === 1, 2000);
+    check(
+      "tab.dispose() takes even the last tab down at once; then the window's onClose listeners are asked",
+      goneAtOnce && forcedAsked === 1 && user32.IsWindow(BigInt(forced.handle!)) !== 0,
+      { goneAtOnce, forcedAsked },
+    );
+    forced.dispose();
+
+    // A window with no title of its own shows its tab's title alone.
+    const untitledWin = make({ tabs: true, title: "" });
+    await WebView.openTab(untitledWin, page("solo"));
+    check("a window with no title shows the selected tab's title alone", getTitle(BigInt(untitledWin.handle!)) === "solo", getTitle(BigInt(untitledWin.handle!)));
+    untitledWin.dispose();
+
+    // openTab asks for a tabbed, live window.
+    const plain = make({});
+    const notTabbed = await WebView.openTab(plain, page("p")).then(() => "opened", (e) => String(e));
+    plain.dispose();
+    const gone = make({ tabs: true });
+    gone.dispose();
+    const disposed = await WebView.openTab(gone, page("g")).then(() => "opened", (e) => String(e));
+    check(
+      "openTab needs a window made with tabs: true that is not disposed",
+      notTabbed.includes("requires a Window created with { tabs: true }") && disposed.includes("disposed window"),
+      { notTabbed, disposed },
+    );
+  }
 
   // ---- concurrent openTab calls while the host is being made; a retry after a failed host ----------
   const conc = make({ tabs: true });
@@ -520,6 +667,10 @@ try {
   check("shortcut Alt+F4 closes the window", await until(() => user32.IsWindow(BigInt(altWin.handle!)) === 0, 3000));
 
   // ---- popups become tabs --------------------------------------------------------------------
+  // A tab after the opener, so "after its opener" and "at the end" are different places.
+  await WebView.openTab(win, { ...page("tail"), after: t1 });
+  t1.select();
+  await until(() => selects.at(-1) === t1);
   const before = selects.length;
   const opener = t1.webview;
   await ask(opener, `(document.body.insertAdjacentHTML("beforeend", '<a id="pop" href="${origin}/popup" target="_blank" style="position:fixed;left:0;top:0;width:300px;height:200px;display:block">pop</a>'), 1)`);
@@ -530,7 +681,12 @@ try {
   await until(() => selects.length > before, 5000);
   const popup = selects.at(-1) as Tab<any, any> | undefined;
   const popupTitle = popup && popup !== t1 ? await askUntil(popup.webview, "document.title", "Served /popup") : "";
-  check("a popup opens as a tab after its opener", popup !== undefined && popup !== t1 && popup.window === win && popupTitle === "Served /popup", popupTitle);
+  const popupOrder = (await askUntil(strip, `window.__sweetview_rpc("strip.state", null).then((s) => s.tabs.map((t) => t.title).join("|"))`, "one|Served /popup|tail", 3000)).split("|");
+  check(
+    "a popup opens as a tab after its opener",
+    popup !== undefined && popup !== t1 && popup.window === win && popupTitle === "Served /popup" && popupOrder.indexOf("Served /popup") === popupOrder.indexOf("one") + 1 && popupOrder.at(-1) === "tail",
+    { popupTitle, popupOrder },
+  );
   await Bun.sleep(300);
   check("the popup tab's title follows its page", popup?.title === "Served /popup", popup?.title);
   const beforeMailto = selects.length;
@@ -546,6 +702,107 @@ try {
   const heading = await askUntil(failed.webview, `document.querySelector("h1")?.textContent ?? ""`, "This site did not open");
   const address = await ask(failed.webview, `document.querySelector("main p")?.textContent ?? ""`);
   check("failed load: the tab shows the page with the address", heading === "This site did not open" && address === `http://127.0.0.1:${refusedPort}/`, { heading, address });
+  const reason = await ask(failed.webview, `document.querySelectorAll("main p")[1]?.textContent ?? ""`);
+  check("failed load: the page gives the reason from the engine's table (a refused port, which WebView2 reports with no status of the table: its default sentence)", reason === "The page could not be loaded.", reason);
+
+  // ---- what never shows the failed-load page ------------------------------------------------------------------
+  // Each case runs in a URL tab of its own (only URL tabs have the page), and is read once the
+  // navigation is over and the page would have been set: what the tab shows then is not the page.
+  {
+    const navWin = make({ tabs: true });
+    const failedPageShown = async (view: WebView<any, any>) => (await ask(view, `document.querySelector("main h1")?.textContent ?? ""`).catch((e) => String(e))) === "This site did not open";
+    const where = async (view: WebView<any, any>) => ({
+      href: await ask(view, "location.href").catch((e) => String(e)),
+      title: await ask(view, "document.title").catch((e) => String(e)),
+      failedPage: await failedPageShown(view),
+    });
+    const urlTab = async (path: string) => {
+      const tab = await WebView.openTab(navWin, { url: `${origin}${path}` });
+      await askUntil(tab.webview, "document.title", `Served ${path}`);
+      return tab;
+    };
+    const cdp = (view: WebView<any, any>, method: string, params: object = {}) => engineOf(view.raw)!.callDevToolsProtocolMethod(method, JSON.stringify(params));
+
+    // A URL tab is called by its address's host until its page gives a title.
+    const slowTab = await WebView.openTab(navWin, { url: `${origin}/slow` });
+    const hostTitle = slowTab.title;
+    const slowTitle = await askUntil(slowTab.webview, "document.title", "Served /slow", 6000);
+    await until(() => slowTab.title === "Served /slow", 2000);
+    check("a URL tab is called by its host until its page gives a title", hostTitle === "127.0.0.1" && slowTitle === "Served /slow" && slowTab.title === "Served /slow", { hostTitle, slowTitle, now: slowTab.title });
+
+    const httpTab = await WebView.openTab(navWin, { url: `${origin}/status/404` });
+    const http404 = await askUntil(httpTab.webview, "document.title", "Served /status/404");
+    httpTab.webview.raw.navigate(`${origin}/status/500`);
+    await askUntil(httpTab.webview, "document.title", "Served /status/500");
+    await Bun.sleep(800);
+    const http500 = await where(httpTab.webview);
+    check("failed load: not shown for an HTTP error status (404, 500): the server's page stays", http404 === "Served /status/404" && http500.title === "Served /status/500" && !http500.failedPage, { http404, http500 });
+
+    const abortTab = await urlTab("/first");
+    abortTab.webview.raw.eval(`location.href = "${origin}/status/204"`); // a 204: the engine aborts the navigation
+    await Bun.sleep(1500);
+    const aborted = await where(abortTab.webview);
+    check("failed load: not shown for an aborted navigation (a 204 response): the page stays", aborted.title === "Served /first" && !aborted.failedPage, aborted);
+
+    const cancelTab = await urlTab("/first");
+    cancelTab.webview.raw.eval(`location.href = "${origin}/slow"`);
+    await Bun.sleep(300);
+    const stopCode = cdp(cancelTab.webview, "Page.stopLoading");
+    await Bun.sleep(3500);
+    const cancelled = await where(cancelTab.webview);
+    check("failed load: not shown for a cancelled navigation (stopped while loading): the page stays", stopCode === 0 && cancelled.title === "Served /first" && !cancelled.failedPage, { stopCode, ...cancelled });
+
+    const supersedeTab = await urlTab("/first");
+    supersedeTab.webview.raw.eval(`location.href = "${origin}/slow"; setTimeout(() => { location.href = "${origin}/second"; }, 300)`);
+    await askUntil(supersedeTab.webview, "document.title", "Served /second");
+    await Bun.sleep(3500);
+    const superseded = await where(supersedeTab.webview);
+    check("failed load: not shown for a navigation a newer one superseded", superseded.title === "Served /second" && !superseded.failedPage, superseded);
+
+    // The host asks for another page while a failing navigation is under way.
+    const hostTab = await urlTab("/first");
+    const gonePort = (() => {
+      const l = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+      const p = l.port;
+      l.stop(true);
+      return p;
+    })();
+    hostTab.webview.raw.navigate(`http://127.0.0.1:${gonePort}/`);
+    hostTab.webview.raw.setHTML("<!doctype html><title>set by the host</title>");
+    await askUntil(hostTab.webview, "document.title", "set by the host");
+    await Bun.sleep(1500);
+    const byHtml = await where(hostTab.webview);
+    hostTab.webview.raw.navigate(`http://127.0.0.1:${gonePort}/`);
+    hostTab.webview.raw.navigate(`${origin}/second`);
+    await askUntil(hostTab.webview, "document.title", "Served /second");
+    await Bun.sleep(1500);
+    const byNavigate = await where(hostTab.webview);
+    check(
+      "failed load: not shown for a navigation the host superseded with setHTML or navigate",
+      byHtml.title === "set by the host" && !byHtml.failedPage && byNavigate.title === "Served /second" && !byNavigate.failedPage,
+      { byHtml, byNavigate },
+    );
+
+    const dataTab = await urlTab("/first");
+    dataTab.webview.raw.navigate("data:text/html;base64,@@@@"); // the engine refuses it and shows its own error page
+    await Bun.sleep(2000);
+    const dataFailed = await where(dataTab.webview);
+    check("failed load: not shown for a data: address the engine refuses", dataFailed.href.startsWith("chrome-error:") && !dataFailed.failedPage, dataFailed);
+
+    const aboutTab = await urlTab("/first");
+    aboutTab.webview.raw.navigate("about:sweetview-nowhere"); // the engine refuses it (it reports the address as edge://sweetview-nowhere/)
+    await Bun.sleep(2000);
+    const aboutFailed = await where(aboutTab.webview);
+    check("failed load: not shown for an about: address the engine refuses", !aboutFailed.failedPage, aboutFailed);
+
+    // A tab opened from assets (no url) never shows the page.
+    const assetTab = await WebView.openTab(navWin, page("assets"));
+    assetTab.webview.raw.navigate(`http://127.0.0.1:${gonePort}/`);
+    await Bun.sleep(2000);
+    const assetFailed = await where(assetTab.webview);
+    check("failed load: only a URL tab shows the page (a tab of assets whose navigation fails does not)", assetFailed.href.startsWith("chrome-error:") && !assetFailed.failedPage, assetFailed);
+    navWin.dispose();
+  }
 
   const home = make({ tabs: true });
   const h1 = await WebView.openTab(home, page("h1"));
@@ -554,7 +811,7 @@ try {
   // ---- the tab menu and the system menu ----------------------------------------------------------
   // Opens the menu from the strip and has the probe (a second process) read and work it. What the
   // probe did and any watchdog report ride along, for a check that fails.
-  const menu = async (id: number | null, action: string) => {
+  const menu = async (id: number | null, action: string, on: WebView<any, any> = strip) => {
     const hangsBefore = menuHangs.length;
     const openedBefore = menusOpened;
     const helper = Bun.spawn([process.execPath, probe, String(process.pid), action], { stdout: "pipe", stderr: "pipe" });
@@ -562,7 +819,7 @@ try {
     menuContext = () => ({ probe: { ...probeRun, exitCode: helper.exitCode } });
     const out = new Response(helper.stdout).text().then((t) => (probeRun.out = t.trim()));
     await Bun.sleep(50);
-    void strip.raw.eval(`window.__sweetview_rpc("strip.menu", ${id === null ? "null" : await stripId(strip, id)})`);
+    void on.raw.eval(`window.__sweetview_rpc("strip.menu", ${id === null ? "null" : await stripId(on, id)})`);
     const exited = await Promise.race([helper.exited.then(() => true), Bun.sleep(MENU_LIMIT_MS + 4000).then(() => false)]);
     if (!exited) helper.kill(); // the probe this fixture started, through its own handle
     await Promise.race([out, Bun.sleep(500)]);
@@ -600,6 +857,8 @@ try {
 
   // ---- the strip's window buttons -------------------------------------------------------------------
   const rpc = (method: string) => strip.raw.eval(`window.__sweetview_rpc("${method}", null)`);
+  let resized = 0;
+  const offResize = win.onResize(() => resized++);
   rpc("strip.maximize");
   await until(() => user32.IsZoomed(hwnd) !== 0, 3000);
   const zoomed = clientRect(hwnd);
@@ -613,12 +872,54 @@ try {
   check("the strip is told the window is maximised", (await askUntil(strip, "document.body.className.includes('maximized') || document.documentElement.className.includes('maximized') || !!document.querySelector('.maximized')", "true", 2000)) === "true");
   const kidsZoomed = webviewChildren(hwnd).filter((k) => k.visible).map((k) => k.rect);
   check("the strip and the page follow a resize", kidsZoomed.some((r) => r.y === 0 && r.width === zoomed.width) && kidsZoomed.some((r) => r.y === stripHeight && r.height === zoomed.height - stripHeight), kidsZoomed);
+  check("a resize of the frame reaches Window.onResize", resized > 0, resized);
+  offResize();
   rpc("strip.maximize");
   await until(() => user32.IsZoomed(hwnd) === 0, 3000);
   rpc("strip.minimize");
   check("strip minimise", await until(() => user32.IsIconic(hwnd) !== 0, 3000));
   win.show();
   await until(() => user32.IsIconic(hwnd) === 0, 3000);
+
+  // ---- an item chosen from the strip's system menu is carried out (WM_SYSCOMMAND) -------------------------
+  {
+    const SC_SIZE = 0xf000, SC_MOVE = 0xf010, SC_MINIMIZE = 0xf020, SC_MAXIMIZE = 0xf030, SC_CLOSE = 0xf060, SC_RESTORE = 0xf120;
+    const pickMax = await menu(null, `pick-id:${SC_MAXIMIZE}`);
+    const maximised = await until(() => user32.IsZoomed(hwnd) !== 0, 3000);
+    check("choosing Maximize in the strip's system menu maximises the window", !pickMax.hangs && pickMax.items !== undefined && maximised, failedMenu(pickMax, { zoomed: maximised }));
+    const zoomedMenu = await menu(null, "close");
+    const state = (id: number) => (zoomedMenu.items ?? []).find((i: { id?: number }) => i.id === id) as { enabled: boolean; default: boolean } | undefined;
+    const states = { restore: state(SC_RESTORE)?.enabled, move: state(SC_MOVE)?.enabled, size: state(SC_SIZE)?.enabled, minimize: state(SC_MINIMIZE)?.enabled, maximize: state(SC_MAXIMIZE)?.enabled, close: state(SC_CLOSE)?.enabled, closeDefault: state(SC_CLOSE)?.default };
+    check(
+      "system menu on the strip while maximised: Restore and Minimize on, Move, Size and Maximize off; Close on and the default item",
+      !zoomedMenu.hangs && JSON.stringify(states) === JSON.stringify({ restore: true, move: false, size: false, minimize: true, maximize: false, close: true, closeDefault: true }),
+      failedMenu(zoomedMenu, states),
+    );
+    const pickMin = await menu(null, `pick-id:${SC_MINIMIZE}`);
+    const minimised = await until(() => user32.IsIconic(hwnd) !== 0, 3000);
+    check("choosing Minimize in the strip's system menu minimises the window", !pickMin.hangs && pickMin.items !== undefined && minimised, failedMenu(pickMin, { iconic: minimised }));
+    win.show();
+    await until(() => user32.IsIconic(hwnd) === 0, 3000);
+    if (user32.IsZoomed(hwnd) !== 0) {
+      win.toggleMaximize();
+      await until(() => user32.IsZoomed(hwnd) === 0, 3000);
+    }
+  }
+
+  // ---- strip.drag and strip.resize need the left button down ----------------------------------------------
+  {
+    const name = "strip.drag and strip.resize do nothing while the left button is up";
+    if (buttonsDown()) skip(name, "a mouse button was down on the shared desktop");
+    else {
+      const start = windowRect(hwnd);
+      strip.raw.eval(`window.__sweetview_rpc("strip.drag", { x: 300, y: 20 })`);
+      strip.raw.eval(`window.__sweetview_rpc("strip.resize", { edge: "top", held: { x: 300, y: 2 } })`);
+      await Bun.sleep(400);
+      const after = windowRect(hwnd);
+      if (buttonsDown()) skip(name, "a mouse button went down on the shared desktop during the check");
+      else check(name, rectEq(start, after) && user32.IsWindow(hwnd) !== 0, { start, after });
+    }
+  }
 
   // ---- focus returns to the page after a strip action ------------------------------------------------
   const focusWin = make({ tabs: true, noActivate: false });
@@ -640,10 +941,11 @@ try {
       continue;
     }
     try {
+      leftHeld = true;
       injectLeftButton(true);
       await Bun.sleep(40);
     } finally {
-      injectLeftButton(false);
+      letGo();
     }
     await until(() => user32.GetForegroundWindow() === focusHwnd, 1500);
   }
@@ -698,6 +1000,66 @@ try {
   const darkReply = await ask(strip, `window.__sweetview_rpc("strip.dark", false)`);
   await Bun.sleep(50);
   check("an explicit appearance ignores the system", darkReply === "true" && getTabFrame(hwnd)!.isDark() && dwmDark(hwnd) && (await ask(strip, "document.documentElement.dataset.theme")) === "dark", darkReply);
+  // ---- a torn-off window takes its source's options; its tab events reach the source ---------------------
+  {
+    const srcTitle = `copy-src-${process.pid}`;
+    const src = make({ tabs: true, title: srcTitle, appearance: "dark", icon: { windows: { ico: dotIco() } }, resizable: false, topmost: true, opacity: 0.8, hideFromTaskbar: true, noActivate: true, minWidth: 900, minHeight: 650 });
+    const srcSelects: TabHandle[] = [];
+    src.onTabSelect((t) => srcSelects.push(t));
+    await WebView.openTab(src, page("stay"));
+    const mover = await WebView.openTab(src, page("mover"));
+    const copied = await mover.moveToNewWindow();
+    windows.push(copied);
+    const ch = BigInt(copied.handle!);
+    const ex = exStyle(ch);
+    const alpha = new Uint8Array(1);
+    user32.GetLayeredWindowAttributes(ch, null, ptr(alpha), null);
+    const control = make({ tabs: true });
+    const srcMeta = getWindowMeta(src);
+    const copiedMeta = getWindowMeta(copied);
+    const fields = ["title", "appearance", "icon", "resizable", "topmost", "opacity", "hideFromTaskbar", "noActivate", "minWidth", "minHeight"] as const;
+    const metaSame = fields.filter((f) => JSON.stringify((copiedMeta as any)[f]) !== JSON.stringify((srcMeta as any)[f]));
+    const os = {
+      title: getTitle(ch),
+      dark: dwmDark(ch),
+      notResizable: (style(ch) & (WS_THICKFRAME | WS_MAXIMIZEBOX)) === 0n,
+      topmost: (ex & WS_EX_TOPMOST) !== 0n,
+      opacity: (ex & WS_EX_LAYERED) !== 0n ? alpha[0] : null,
+      toolWindow: (ex & WS_EX_TOOLWINDOW) !== 0n,
+      noActivate: (ex & WS_EX_NOACTIVATE) !== 0n,
+      minTrack: minTrack(ch),
+      icon: iconOf(ch) !== 0n,
+      controlIcon: iconOf(BigInt(control.handle!)) !== 0n,
+    };
+    check(
+      "tear-off: the new window takes the source's title, appearance, icon, resizable, topmost, opacity, hideFromTaskbar, noActivate and minimum size",
+      copied !== src && metaSame.length === 0 && os.title === `mover - ${srcTitle}` && os.dark && os.notResizable && os.topmost && os.opacity === Math.round(0.8 * 255) && os.toolWindow && os.noActivate && JSON.stringify(os.minTrack) === "[900,650]" && os.icon && !os.controlIcon,
+      { metaDiffers: metaSame, os },
+    );
+    control.dispose();
+    check("tear-off: the new window's tab events reach the window the tab came from", srcSelects.includes(mover), srcSelects.map((t) => (t as Tab<any, any>).title));
+
+    // A popup from the moved tab opens in the window the tab is in now.
+    await ask(mover.webview, `(document.body.insertAdjacentHTML("beforeend", '<a id="pop2" href="${origin}/popup2" target="_blank" style="position:fixed;left:0;top:0;width:300px;height:200px;display:block">pop</a>'), 1)`);
+    const copiedTabs: TabHandle[] = [];
+    copied.onTabSelect((t) => copiedTabs.push(t));
+    for (const type of ["mousePressed", "mouseReleased"]) {
+      engineOf(mover.webview.raw)!.callDevToolsProtocolMethod("Input.dispatchMouseEvent", JSON.stringify({ type, x: 40, y: 40, button: "left", clickCount: 1 }));
+    }
+    await until(() => copiedTabs.some((t) => t !== mover), 5000);
+    const popped = copiedTabs.find((t) => t !== mover) as Tab<any, any> | undefined;
+    check("a popup from a torn-off tab opens in the tab's current window", popped !== undefined && popped.window === copied, popped?.window === src ? "opened in the source window" : popped?.title);
+
+    // A window whose only tab moves to a new window goes.
+    const soloWin = make({ tabs: true });
+    const soloHwnd = BigInt(soloWin.handle!);
+    const soloTab = await WebView.openTab(soloWin, page("solo-tab"));
+    const soloNew = await soloTab.moveToNewWindow();
+    windows.push(soloNew);
+    await until(() => user32.IsWindow(soloHwnd) === 0, 2000);
+    check("a window whose only tab moves to a new window closes", soloTab.window === soloNew && soloNew !== soloWin && user32.IsWindow(soloHwnd) === 0);
+  }
+
   // ---- tear-off and merge keep the page alive -------------------------------------------------
   // mergeAllWindows takes every tabbed window: only `home` (and the torn-off one) may be left.
   for (const w of windows) if (w !== home) w.dispose();
@@ -747,9 +1109,55 @@ try {
   offHomeDrop();
   offTornDrop();
 
+  // ---- the tab menu's items, carried out; which are off with one window and one tab ----------------------
+  {
+    const homeStrip = _debugWinTabs.strip(home)!;
+    const labelsOf = (m: { items?: any[] }) => (m.items ?? []).filter((i: { separator?: boolean }) => !i.separator).map((i: { label: string; enabled: boolean }) => `${i.label.replace(/\t.*/, "")}${i.enabled ? "" : " (off)"}`);
+    const homeNew: Window[] = [];
+    const offNew = home.onNewTab((w) => homeNew.push(w));
+    const chosenNew = await menu(0, "pick:0", homeStrip);
+    await until(() => homeNew.length > 0, 2000);
+    check("choosing New tab in the tab menu asks the window for a new tab", !chosenNew.hangs && homeNew[0] === home, failedMenu(chosenNew, { asked: homeNew.length }));
+    offNew();
+
+    const twoTabsOneWindow = await menu(0, "close", homeStrip);
+    const twoLabels = labelsOf(twoTabsOneWindow);
+    const closesBeforeOthers = closes.length;
+    const chosenOthers = await menu(0, "pick:6", homeStrip); // Close other tabs, on the first tab
+    const afterOthers = await askUntil(homeStrip, `window.__sweetview_rpc("strip.state", null).then((s) => s.tabs.map((t) => t.title).join("|"))`, "h1", 2000);
+    check("choosing Close other tabs in the tab menu keeps only that tab", !chosenOthers.hangs && afterOthers === "h1", failedMenu(chosenOthers, { afterOthers, closes: closes.length - closesBeforeOthers }));
+    const oneTabOneWindow = await menu(0, "close", homeStrip);
+    const oneLabels = labelsOf(oneTabOneWindow);
+    check(
+      "tab menu: Merge all windows is off with one window; Move tab to new window and Close other tabs are off with one tab",
+      !twoTabsOneWindow.hangs && !oneTabOneWindow.hangs &&
+        JSON.stringify(twoLabels) === JSON.stringify(["New tab", "Move tab to new window", "Merge all windows (off)", "Close tab", "Close other tabs"]) &&
+        JSON.stringify(oneLabels) === JSON.stringify(["New tab", "Move tab to new window (off)", "Merge all windows (off)", "Close tab", "Close other tabs (off)"]),
+      { twoLabels, oneLabels },
+    );
+
+    const h3 = await WebView.openTab(home, page("h3"));
+    await askUntil(homeStrip, `window.__sweetview_rpc("strip.state", null).then((s) => s.tabs.length)`, "2", 2000);
+    const chosenMove = await menu(1, "pick:2", homeStrip); // Move tab to new window, on h3
+    await until(() => h3.window !== home, 3000);
+    const movedTo = h3.window;
+    if (movedTo !== home) windows.push(movedTo);
+    check("choosing Move tab to new window in the tab menu moves that tab to a new window", !chosenMove.hangs && movedTo !== home && movedTo.isVisible(), failedMenu(chosenMove, { moved: movedTo !== home }));
+    const chosenMerge = await menu(0, "pick:3", homeStrip); // Merge all windows
+    await until(() => h1.window === h3.window, 3000);
+    const kept = h1.window;
+    const left = [home, movedTo].filter((w) => w.handle !== null && user32.IsWindow(BigInt(w.handle)) !== 0);
+    check(
+      "choosing Merge all windows in the tab menu brings every tab into one window and closes the other",
+      !chosenMerge.hangs && h1.window === h3.window && left.length === 1 && left[0] === kept,
+      failedMenu(chosenMerge, { together: h1.window === h3.window, windowsLeft: left.length, into: kept === home ? "the window the menu was in" : "the newer window" }),
+    );
+  }
+
 } catch (err) {
   check("fixture ran to the end", false, err instanceof Error ? err.stack : String(err));
 } finally {
+  letGo();
   guarding = false;
   for (const w of windows) w.dispose();
   server.kill();

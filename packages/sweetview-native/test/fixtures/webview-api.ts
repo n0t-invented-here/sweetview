@@ -76,6 +76,59 @@ if (scenario === "own-window") {
   finish();
 }
 
+if (scenario === "debug" || scenario === "no-debug") {
+  // new Webview(true, size): debug on. The page loads and answers a binding; and, when this
+  // process can take the foreground, F12 opens the developer tools, which WebView2 allows only
+  // with debug on ("no-debug" is the control: the same steps with debug off open none). The
+  // DevTools window belongs to WebView2's browser process and is titled after the page's URL,
+  // which names this process, so another session's DevTools is never mistaken for it.
+  const debug = scenario === "debug";
+  const webview = new Webview(debug, { width: 420, height: 300, hint: SizeHint.NONE });
+  const hwnd = webview.unsafeWindowHandle!;
+  const engine = engineOf(webview)!;
+  webview.title = tag;
+  report.isWindow = probe.isWindow(hwnd);
+  const page = `devtools-probe-${process.pid}.html`;
+  webview.setAsset(page, "text/html", `<!doctype html><script>window.answer(6, 7).then((v) => window.done(v));</script>`);
+  webview.bind("answer", (a: number, b: number) => a * b);
+  const after = (ms: number, job: () => void) => native.scheduleTimeout(ms, job);
+  const ask = (attempt: number) => {
+    if (probe.takeForeground(hwnd)) {
+      report.foreground = true;
+      engine.moveFocus();
+      report.tapped = probe.tapKey(hwnd, 0x7b); // F12
+      const started = Date.now();
+      const look = () => {
+        const devtools = probe.topLevelWindowContaining(page);
+        if (devtools !== null || Date.now() - started > 6000) {
+          report.devToolsOpened = devtools !== null;
+          if (devtools !== null) probe.postMessage(devtools, probe.WM_CLOSE);
+          after(300, () => native.quitLoop());
+          return;
+        }
+        after(100, look);
+      };
+      after(100, look);
+      return;
+    }
+    if (attempt >= 8) {
+      report.foreground = false;
+      report.foregroundRefused = `the desktop did not give this process the foreground in ${attempt} attempts`;
+      native.quitLoop();
+      return;
+    }
+    after(250, () => ask(attempt + 1));
+  };
+  webview.bind("done", (value: number) => {
+    report.answered = value;
+    ask(1);
+  });
+  webview.navigate(`${webview.assetOrigin}/${page}`);
+  webview.run();
+  webview.destroy();
+  finish();
+}
+
 if (scenario === "own-window-default") {
   // The default size is 1024x768 with no hint, shown at once. `undefined` is
   // JavaScript's missing argument, so it gets the same default, as it did in

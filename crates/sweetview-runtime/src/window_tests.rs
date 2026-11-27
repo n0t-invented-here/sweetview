@@ -3,7 +3,7 @@ use std::cell::RefCell;
 use sweetview_window_logic::style::{WS_EX_ACCEPTFILES, WS_EX_APPWINDOW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT};
 
 use super::*;
-use crate::runtime::testing::{on_ui_thread, pump_until};
+use crate::runtime::testing::on_ui_thread;
 
 const WS_EX_TOPMOST: u32 = 0x0000_0008;
 
@@ -11,12 +11,13 @@ fn init(title: &str) -> WindowInit {
   WindowInit { title: title.into(), frame: true, resizable: true, ..Default::default() }
 }
 
-fn native(window: &Window) -> ForeignWindow {
-  ForeignWindow::from_handle_value(window.handle()).expect("a live window")
+/// Lends `window`'s native window to `f`.
+fn native<R>(window: &Window, f: impl FnOnce(&BorrowedWindow<'_>) -> R) -> R {
+  BorrowedWindow::with_handle_value(window.handle(), f).expect("a live window")
 }
 
 fn alive(handle: isize) -> bool {
-  ForeignWindow::from_handle_value(handle).is_some()
+  BorrowedWindow::with_handle_value(handle, |_| ()).is_some()
 }
 
 #[test]
@@ -59,7 +60,7 @@ fn every_option_shows_in_the_window_styles_and_survives_a_style_rewrite() {
       ..init("rt overlay")
     })
     .expect("overlay");
-    let ex = platform::ex_style(&native(&overlay));
+    let ex = native(&overlay, |w| platform::ex_style(w));
     assert_eq!(ex & WS_EX_TOPMOST, WS_EX_TOPMOST, "topmost");
     assert_eq!(ex & (WS_EX_TOOLWINDOW | WS_EX_APPWINDOW), WS_EX_TOOLWINDOW, "off the taskbar");
     assert_eq!(ex & WS_EX_NOACTIVATE, WS_EX_NOACTIVATE, "no activation");
@@ -67,15 +68,15 @@ fn every_option_shows_in_the_window_styles_and_survives_a_style_rewrite() {
     assert_eq!(ex & WS_EX_ACCEPTFILES, 0, "no drops without a listener");
     // `tao` rewrites the whole extended style when one of its flags changes.
     overlay.set_topmost(false);
-    let ex = platform::ex_style(&native(&overlay));
+    let ex = native(&overlay, |w| platform::ex_style(w));
     assert_eq!(ex & WS_EX_TOPMOST, 0);
     assert_eq!(ex & (WS_EX_TOOLWINDOW | WS_EX_APPWINDOW | WS_EX_LAYERED | WS_EX_ACCEPTFILES), WS_EX_TOOLWINDOW | WS_EX_LAYERED);
     overlay.set_topmost(true);
-    assert_eq!(platform::ex_style(&native(&overlay)) & WS_EX_TOPMOST, WS_EX_TOPMOST);
+    assert_eq!(native(&overlay, |w| platform::ex_style(w)) & WS_EX_TOPMOST, WS_EX_TOPMOST);
     overlay.dispose();
 
     let plain = Window::create(init("rt plain")).expect("plain");
-    let ex = platform::ex_style(&native(&plain));
+    let ex = native(&plain, |w| platform::ex_style(w));
     assert_eq!(ex & (WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_LAYERED), 0);
     plain.dispose();
 
@@ -90,21 +91,21 @@ fn show_activates_unless_no_activate() {
     quiet.show().expect("show");
     runtime.pump();
     assert!(quiet.is_visible());
-    assert!(!platform::is_active(&native(&quiet)), "a noActivate window is shown without activation");
+    assert!(!native(&quiet, |w| platform::is_active(w)), "a noActivate window is shown without activation");
     // A later `tao` style rewrite (here: topmost) neither hides nor activates it.
     quiet.set_topmost(true);
-    assert!(quiet.is_visible() && !platform::is_active(&native(&quiet)));
+    assert!(quiet.is_visible() && !native(&quiet, |w| platform::is_active(w)));
     quiet.minimize();
-    assert!(platform::is_minimized(&native(&quiet)));
+    assert!(native(&quiet, |w| platform::is_minimized(w)));
     quiet.show().expect("restore");
-    assert!(!platform::is_minimized(&native(&quiet)) && quiet.is_visible());
+    assert!(!native(&quiet, |w| platform::is_minimized(w)) && quiet.is_visible());
     quiet.hide();
     assert!(!quiet.is_visible());
     quiet.dispose();
 
     let loud = Window::create(WindowInit { bounds: Some(Rect::new(-2000, -2000, 200, 200)), ..init("rt loud") }).expect("loud");
     loud.show().expect("show");
-    assert!(platform::is_active(&native(&loud)), "an ordinary window is activated by show()");
+    assert!(native(&loud, |w| platform::is_active(w)), "an ordinary window is activated by show()");
     loud.dispose();
   });
 }
@@ -146,21 +147,17 @@ fn events_reach_every_wrapper_and_close_follows_the_listeners() {
   });
 }
 
+/// `WM_CLOSE`, as the close button sends it, through the platform crate's
+/// `request_close` (the runtime has no unsafe).
 fn send_close(window: &Window) {
-  platform_send_close(&native(window));
-}
-
-/// `WM_CLOSE`, as the close button sends it. Reached through the platform
-/// crate's own subclass test helper: the runtime has no unsafe.
-fn platform_send_close(window: &ForeignWindow) {
-  sweetview_platform_window::send_close_for_tests(window);
+  native(window, |w| platform::request_close(w));
 }
 
 #[test]
 fn click_through_and_hit_regions_set_the_style_bits() {
   on_ui_thread(|_runtime| {
     let window = Window::create(WindowInit { frame: false, ..init("rt hits") }).expect("window");
-    let bits = || platform::ex_style(&native(&window)) & (WS_EX_TRANSPARENT | WS_EX_LAYERED);
+    let bits = || native(&window, |w| platform::ex_style(w)) & (WS_EX_TRANSPARENT | WS_EX_LAYERED);
     window.set_click_through(true);
     assert_eq!(bits(), WS_EX_TRANSPARENT | WS_EX_LAYERED);
     window.set_click_through(false);
@@ -198,52 +195,62 @@ fn adopting_a_handle_that_is_not_a_window_fails() {
   on_ui_thread(|_runtime| {
     assert!(Window::adopt(0).is_err());
     assert!(Window::adopt(1).is_err());
-    assert!(mount_target(1).is_none());
+    assert!(with_mount_target(1, |_| ()).is_none());
   });
 }
 
 #[test]
 fn owned_windows_give_every_handle_back() {
   on_ui_thread(|runtime| {
-    // One round first, so one-time costs (window classes, the theme, modules) are paid.
-    for _ in 0..2 {
-      let w = Window::create(init("rt warm")).expect("window");
-      w.set_hit_regions(Some(vec![]), None).expect("regions");
-      w.dispose();
-    }
-    runtime.pump();
-    let before = platform::handle_counts();
-    for i in 0..40 {
-      let w = Window::create(WindowInit { opacity: Some(0.9), hide_from_taskbar: i % 2 == 0, ..init("rt count") }).expect("window");
+    let ico = test_ico();
+    let mut i = 0u32;
+    sweetview_platform_loop::testing::assert_gives_back_every_handle(40, || {
+      i += 1;
+      let w = Window::create(WindowInit { opacity: Some(0.9), hide_from_taskbar: i % 2 == 0, icon: Some(ico.clone()), ..init("rt count") })
+        .expect("window");
       w.on_resize(Some(Rc::new(|_| {}))).expect("resize");
       w.set_hit_regions(Some(vec![]), None).expect("regions");
       let borrowed = Window::adopt(w.handle()).expect("adopt");
-      assert!(mount_target(w.handle()).is_some());
+      assert!(with_mount_target(w.handle(), |_| ()).is_some());
       borrowed.dispose();
       w.dispose();
-    }
-    pump_until(&runtime, false_after_a_moment);
-    let after = platform::handle_counts();
-    assert_eq!(after.user_objects, before.user_objects, "USER objects returned to the starting count");
-    assert_eq!(after.gdi_objects, before.gdi_objects, "GDI objects returned to the starting count");
-    assert!(after.kernel_handles <= before.kernel_handles + 4, "kernel handles: {} then {}", before.kernel_handles, after.kernel_handles);
+      runtime.pump();
+    });
   });
 }
 
-thread_local! {
-  static STARTED: Cell<Option<std::time::Instant>> = const { Cell::new(None) };
+/// A `.ico` with one 16 by 16 image, made with the `ico` crate.
+fn test_ico() -> Vec<u8> {
+  let image = ico::IconImage::from_rgba_data(16, 16, [0x40, 0x80, 0xff, 0xff].repeat(16 * 16));
+  let mut dir = ico::IconDir::new(ico::ResourceType::Icon);
+  dir.add_entry(ico::IconDirEntry::encode(&image).expect("encode"));
+  let mut bytes = Vec::new();
+  dir.write(&mut bytes).expect("write");
+  bytes
 }
 
-/// True once 100 ms have passed since its first call in this test.
-fn false_after_a_moment() -> bool {
-  STARTED.with(|s| {
-    let start = s.get().unwrap_or_else(|| {
-      let now = std::time::Instant::now();
-      s.set(Some(now));
-      now
-    });
-    start.elapsed() > std::time::Duration::from_millis(100)
-  })
+/// An application's own window given icons through `Window.fromHandle(h).setIcon(...)`
+/// and then released still shows valid icons: releasing the wrapper does not
+/// destroy icons a live window draws.
+#[test]
+fn an_adopted_window_keeps_valid_icons_after_it_is_released() {
+  on_ui_thread(|runtime| {
+    // The application's own window: made here with `tao`, not by `Window::create`.
+    let own = runtime
+      .with_target(|target| tao::window::WindowBuilder::new().with_visible(false).with_title("rt own window").build(target))
+      .expect("target")
+      .expect("window");
+    let handle = platform::handle_value(&own);
+    let adopted = Window::adopt(handle).expect("adopt");
+    adopted.set_icon(Some(&test_ico())).expect("icon");
+    assert!(platform::test_support::shows_valid_icons(&own));
+    adopted.dispose();
+    assert_eq!(tracked_count(handle), 0, "released");
+    assert!(alive(handle), "the application's window lives on");
+    assert!(platform::test_support::shows_valid_icons(&own), "its icons are still valid after the release");
+    drop(adopted);
+    drop(own);
+  });
 }
 
 
@@ -263,10 +270,10 @@ fn a_tab_frame_keeps_the_system_frame_and_lays_out_a_strip_and_a_page() {
     assert_eq!(TabFrame::all().len(), 2);
 
     // The caption and the resize border stay in the styles: snap, maximise and the system menu are the system's.
-    let style = platform::style(&native(&frame));
+    let style = native(&frame, |w| platform::style(w));
     assert_eq!(style & (WS_CAPTION | WS_THICKFRAME | WS_MAXIMIZEBOX), WS_CAPTION | WS_THICKFRAME | WS_MAXIMIZEBOX);
     assert_eq!(style & platform::FRAME_STYLE, platform::FRAME_STYLE, "children are clipped");
-    assert_eq!(platform::style(&native(&fixed)) & (WS_THICKFRAME | WS_MAXIMIZEBOX), 0);
+    assert_eq!(native(&fixed, |w| platform::style(w)) & (WS_THICKFRAME | WS_MAXIMIZEBOX), 0);
 
     // With no bounds: a 1040 x 720 page under a 40 pixel strip, at the window's scale.
     let scale = frame.scale();

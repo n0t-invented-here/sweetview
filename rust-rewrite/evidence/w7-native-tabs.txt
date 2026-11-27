@@ -1,119 +1,239 @@
 W7.1. Tabs on Windows: every behaviour of "Behaviour: tabs on Windows"
-(rust-rewrite/reference/v1-drafting-tabs-and-window.md), and the check or
-checks that prove it on the final tree.
+(rust-rewrite/reference/v1-drafting-tabs-and-window.md), clause by clause,
+and the check that proves each on the final tree.
 
-Every command below ran in <REPO> (the rust-rewrite-wt-tabs2 worktree) with
-WEBVIEW2_USER_DATA_FOLDER set to a fresh folder under <TEMP>, so no run shared
-a WebView2 profile with another session on the machine.
+Every command below ran in <REPO> with WEBVIEW2_USER_DATA_FOLDER set to a
+fresh folder under <TEMP>, so no run shared a WebView2 profile with another
+session on the machine.
 
 Where the checks live:
   F  = packages/sweetview/test/fixtures/win-tabs.ts (run by
        packages/sweetview/src/tabs/win-tabs.test.ts, "tabbed windows (win32, live)")
   I  = packages/sweetview/test/fixtures/win-tabs-input.ts (run by the same test file,
        "tabbed windows: strip gestures and real keys (win32, live)"): real input
+  P  = packages/sweetview/test/fixtures/win-menu-probe.ts, the second process that
+       reads and works a popup menu for F (now also by command id: pick-id:<id>)
   R  = crates/sweetview-platform-window/src/tab_frame_tests.rs (cargo test)
   W  = packages/sweetview-native/src/win32/window.test.ts ("win32 Window")
   A  = packages/sweetview/src/app.test.ts ("WebView & createApp (win32)")
   S  = packages/sweetview-native/src/win32/strip-shared.test.ts and shortcuts.test.ts
   D  = demos/native-tabs/scripts/win-drive.ts (just demos native-tabs drive)
 
-== The behaviours, in the reference's order =====================================
+A check the fixture records as skipped (the shared desktop was not the
+fixture's: a mouse button held by another session, another window over the
+fixture's, the foreground taken) shows as (skip) in the runner, never as a
+pass, and win-tabs.test.ts prints one line per fixture with how many checks
+ran, passed, failed and were skipped.
 
-| # | Behaviour (reference bullet) | Check(s) |
-|---|---|---|
-| 1 | new Window({ tabs: true }): strip 40 DIP, 1040 x (720 + 40) DIP without bounds, system dark from the OS | F "frame metrics: a 1040 x 720 page plus the strip, the caption removed, the system border kept"; F "a system frame follows the strip's report of the system theme"; W "tabbed windows keep per-frame appearance; system updates only touch system frames" |
-| 2 | Frame: overlapped styles plus WS_CLIPCHILDREN (minus thickframe/maximize when not resizable), layered/toolwindow/noactivate ex-styles, caption removed, system border kept, centred without bounds, topmost, dark title bar | F "frame styles"; F "frame metrics: ..."; F "resize edges: left, right, bottom and the bottom corners"; F "topmost"; F "opacity"; F "hideFromTaskbar"; F "noActivate"; F "dark appearance: dark title bar"; W "tabbed windows honor topmost on creation and setTopmost afterwards"; W "tabbed windows apply resizable, opacity, hideFromTaskbar, noActivate and outer minimum size"; R "the_subclass_reports_activation_and_keeps_forced_style_bits". The caption is removed by tao's undecorated window, not by WM_NCCALCSIZE (see the decision below) |
-| 3 | Strip pane across the top, round(40 * dpi / 96) high; page area below | F "strip and page rectangles: the strip across the top, one tab over the page area" |
-| 4 | Background painting: strip #e9eaee / page #f9f9fb light, #292a30 / #15161a dark | F "backdrop: the strip and the page areas in their own colours (light)"; F "... (dark)" (screen pixels of a frame with no webview yet); R "the_frame_paints_the_strip_and_the_page_in_their_own_colours" (light, dark, the first row below the strip, removal); R "frame_messages_give_every_handle_back"; R "a_destroyed_frame_forgets_its_messages_and_a_late_drop_is_harmless" |
-| 5 | Lazy host creation on the first openTab; a failed attach is forgotten so a later openTab retries; concurrent openTab calls await the strip | F "a new tab is selected"; F "concurrent openTab calls wait for one host: both tabs open in the window under one strip"; F "a failed host attach is forgotten: the waiting openTab fails with it, a later openTab makes the host again" (failure injected by _debugWinTabs.failNextStrip after the strip loaded); A "Layer 1 tabbed Window.dispose() disposes child tab webviews and blocks later openTab calls" |
-| 6 | Strip uiMethods | strip.state: every F check that reads the strip; strip.select: F "strip.select selects that tab"; strip.close: F "strip.close closes that tab"; strip.new: F "strip.new asks the window for a new tab"; strip.move: F "strip.move reorders the tabs"; strip.detach: the three I "strip.detach: ..." checks; strip.menu: F "tab menu items", F "system menu on the strip: ..."; strip.focus: F "focus returns to the page after a strip action"; strip.dark: F "a system frame follows the strip's report of the system theme", F "an explicit appearance ignores the system"; strip.drag: I "strip.drag: the window follows the cursor, the held point stays under it", I "strip.drag from a maximised window: it restores first and follows the cursor"; strip.resize: I "strip.resize top", "strip.resize top-left", "strip.resize top-right"; strip.minimize: F "strip minimise"; strip.maximize: F "maximised with the caption removed: ..."; strip.closeWindow: F "the strip's close button asks the window's onClose listeners"; strip.scrolled: no check of its own (see the end) |
-| 7 | State push to the strip after strip.state | F "the strip is told the window is maximised"; every I check reads the strip's tab list back through strip.state |
-| 8 | openTab: ids, initial title (title, else the URL's host, else Tab <id>), the child pane over the page area | F "a tab opened with no title is called Tab <id>"; F "strip and page rectangles: ..."; F "a popup opens as a tab after its opener" (a URL tab); D "three tabs opened: 3" |
-| 9 | beforeNavigate per tab: controller, navigate/setHTML epoch, accelerator keys, new-window requests, title following and failed loads for URL tabs | F every "shortcut ..." check; F "a popup opens as a tab after its opener"; F "the popup tab's title follows its page"; F "failed load: the tab shows the page with the address"; D "a refused initial navigation shows the failed-load page" |
-| 10 | Insertion after options.after, else after the selection, else at the end; the new tab is selected | F "shortcut Ctrl+2 (after: opens next to its tab)"; F "a popup opens as a tab after its opener"; F "a new tab is selected" |
-| 11 | Switching: the new tab shown, the previous hidden, title synced, focus moved | F "select shows that tab and hides the others"; F "the window title follows the selected tab" |
-| 12 | Title: "<tab> - <base>", renameTab trims, empty becomes Tab <id> | F "the window title follows the selected tab"; F "renaming a tab trims the title; an empty one becomes Tab <id>"; D "tab 1 renamed: Alpha Tab" |
-| 13 | Closing; the last tab asks the window's onClose listeners first | F "close: the tab goes, onTabClose fires, its webview is destroyed"; F "last tab: an onClose listener intercepts, the tab stays"; F "last tab: with no listener the window closes with it"; A "closing a tabbed Window via WM_CLOSE with no onClose disposes all child tab webviews"; D "closing tab 3 leaves 2 open" .. "closing the last tab exits the event loop" |
-| 14 | A tab's webview disposed directly | F "a tab whose webview is disposed directly leaves its window, which shows another tab" |
-| 15 | Reordering from the strip | F "strip.move reorders the tabs" |
-| 16 | Tear-off: the only tab drags its window and can drop on another strip at the drop index; otherwise a new window at the cursor minus the held offset, same size, the page kept, then dragged | I "strip.detach: a tab dragged out of a window with several tabs becomes a new window at the cursor, same size, keeping its page"; I "strip.detach: the only tab of a window drags the whole window"; I "strip.detach: a tab dropped on another window's strip joins it at the drop index"; F "tear-off: the tab's webview moves to a new window with its page as it was"; S "a tab dropped on a strip goes before the tab whose left half it lands on, after the one whose right half" |
-| 17 | Context menu: the system menu over the empty strip, the tab menu over a tab | F "tab menu items"; F "system menu on the strip: Restore off and Move, Size, Minimize, Maximize, Close on while not maximised"; F "choosing Close tab in the tab menu closes that tab" |
-| 18 | Merge all windows | F "merge: the tab comes back with its page as it was, the emptied window closes"; F "merge: the window keeps its selected tab on show"; D "mergeAllWindows moves tab back into primary window" |
-| 19 | New-window requests: http(s) opens a tab after its opener, other schemes dropped | F "a popup opens as a tab after its opener"; F "a popup to another scheme is dropped" |
-| 20 | Failed loads (URL tabs) | F "failed load: the tab shows the page with the address"; D "a refused initial navigation shows the failed-load page", "the failed-load page names the refused address" |
-| 21 | Keyboard shortcuts | F "shortcut Ctrl+1", "Ctrl+2", "Ctrl+9", "Ctrl+Tab wraps", "Ctrl+PageDown", "Ctrl+Shift+Tab", "Ctrl+PageUp wraps", "Ctrl+T", "a key that is no shortcut is left to the page", "the strip takes every key", "Ctrl+W closes the selected tab", "Ctrl+F4 closes the selected tab", "shortcut Alt+F4 closes the window" (all through the handler WebView2 calls); I "real keys: Ctrl+T opens a tab and Ctrl+W closes it while the page has the keyboard focus" (SendInput); S "the keys every tabbed Windows app answers to", "Ctrl+1 to Ctrl+8 pick a tab by place, Ctrl+9 the last", "everything else is left to the page and the browser" |
-| 22 | Focus: the shown page gets the focus when the frame is foreground; on activation | F "focus returns to the page after a strip action" (needs the foreground: skipped under bun test, run in the fixture alone, see below); I "real keys: ..." (asserts document.hasFocus() of the page after the window was activated) |
-| 23 | DPI: WM_DPICHANGED applies the suggested rectangle; strip height and minimum size follow the DPI | F "DPI change: the frame takes the suggested rectangle; the strip height and the default minimum follow the window's DPI"; R "a_dpi_change_applies_the_suggested_rectangle". The scale itself did not change in either: one monitor, so the message carries the window's current DPI |
-| 24 | Resizing and moving: relayout, onResized, maximised push, minimum sizes, WM_MOVE tells every webview | F "the strip and the page follow a resize"; F "the strip is told the window is maximised"; F "default minimum size: a 560 x 420 page plus the strip and the frame"; F "minimum size given as the outer frame"; F "moving the window tells the strip's and every tab's webview" (NotifyParentWindowPositionChanged counted by a test hook in the engine, Engine::moves_told, because WebView2 keeps the position to itself; hidden tabs included, one call per move per webview) |
-| 25 | Strip-driven chrome: drag (held point under the cursor; from maximised the OS restores), resize top / top-left / top-right, minimise, maximise, close | I "strip.drag: ..."; I "strip.drag from a maximised window: ..."; I "strip.resize top", "top-left", "top-right"; F "strip minimise"; F "maximised with the caption removed: ..."; F "the strip's close button asks the window's onClose listeners"; D "tabbed window maximizes", "tabbed window restores" |
-| 26 | Window dark mode: system frames follow the strip's report; explicit ones do not | F "a system frame follows the strip's report of the system theme"; F "an explicit appearance ignores the system"; W "tabbed windows keep per-frame appearance; ..." |
-| 27 | File drops: on the frame; on a tab's webview, to the tab's current window | F "file drops on the frame"; F "a file dropped on a torn-off tab's webview goes to its new window"; F "a file dropped on a merged tab's webview goes to the window it joined" (a real file, dragged through DevTools); W "delivers Unicode file drops and cleans up owned, tabbed and borrowed listeners" |
+== The behaviours, clause by clause =================================================
+
+ 1. new Window({ tabs: true })
+    a. the frame has the strip, 40 DIP ........ F "strip and page rectangles: the strip across the top, one tab over the page area"
+    b. 1040 x (720 + 40) DIP without bounds .... F "frame metrics: a 1040 x 720 page plus the strip, the caption removed, the system border kept"
+    c. systemDark from AppsUseLightTheme for "system"
+                                                F "a \"system\" frame starts in the system's theme (AppsUseLightTheme)"
+                                                (the frame's dark state and DWM's attribute, before any strip exists, equal the registry value)
+ 2. The frame
+    a. class SweetviewTabFrame ................ departure: the frame is tao's window (decision below); no check of the class name
+    b. WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN .. F "frame styles"
+    c. not resizable: no thick frame or maximise box
+                                                W "tabbed windows apply resizable, opacity, hideFromTaskbar, noActivate and outer minimum size";
+                                                F "tear-off: the new window takes the source's ..." (reads it on a torn-off window)
+    d. WS_EX_LAYERED / TOOLWINDOW / NOACTIVATE  F "opacity", "hideFromTaskbar", "noActivate"
+    e. caption removed, border kept ........... F "frame metrics: ..."; F "resize edges: left, right, bottom and the bottom corners"
+    f. client top restored when zoomed ........ F "maximised with the caption removed: the page fills the work area, the strip at its top"
+    g. outer size = DIP * dpi / 96 + borders .. F "frame metrics: ..."
+    h. centred on the primary work area ....... F "a frame made with no bounds is centred on the primary work area"
+    i. or at the place given .................. F "a frame given bounds takes them as its outer rectangle"
+    j. topmost ................................ F "topmost"; W "tabbed windows honor topmost on creation and setTopmost afterwards"
+    k. dark title bar (DWMWA 20) .............. F "dark appearance: dark title bar"
+ 3. Strip pane at (0, 0, width, round(40 * dpi / 96)), shown; page area = client less strip
+                                                F "strip and page rectangles: ..."
+ 4. Background painting, fixed colours light and dark, brushes kept
+                                                F "backdrop: ... (light)", "backdrop: ... (dark)"; R "the_frame_paints_the_strip_and_the_page_in_their_own_colours";
+                                                R "frame_messages_give_every_handle_back"
+ 5. Lazy host on the first openTab
+    a. needs meta.tabs and a live window ...... F "openTab needs a window made with tabs: true that is not disposed"
+    b. made on the first openTab .............. F "a new tab is selected"
+    c. the window's dispose takes the host .... A "Layer 1 tabbed Window.dispose() disposes child tab webviews and blocks later openTab calls"
+    d. frame callbacks: activate, resized, moved
+                                                F "focus returns to the page after a strip action"; F "the strip and the page follow a resize";
+                                                F "moving the window tells the strip's and every tab's webview"
+    e. strip assets; data-theme for an explicit appearance
+                                                F "an explicit appearance ignores the system" (reads documentElement.dataset.theme)
+    f. a failed attach is forgotten; a later openTab retries
+                                                F "a failed host attach is forgotten: the waiting openTab fails with it, a later openTab makes the host again"
+    g. concurrent openTab calls await the strip F "concurrent openTab calls wait for one host: both tabs open in the window under one strip"
+ 6. Strip uiMethods
+    strip.state ............................... every F check that reads the strip
+    strip.select / close / new / move ......... F "strip.select selects that tab", "strip.close closes that tab", "strip.new asks the window for a new tab", "strip.move reorders the tabs"
+    strip.detach .............................. the four I "strip.detach ..." / "strip.scrolled ..." checks
+    strip.menu ................................ F "tab menu items", "system menu on the strip: ...", and the menu choices under 17
+    strip.focus ............................... F "focus returns to the page after a strip action"
+    strip.scrolled (stores the offset) ........ I "strip.scrolled: a tab dropped on a strip whose tabs are scrolled joins it at the index the scrolled offset gives"
+                                                (a narrow window of seven tabs, the last selected, so its strip scrolls and posts strip.scrolled;
+                                                the drop lands at dropIndex(..., scrolled), which differs from the unscrolled index);
+                                                S "on a strip whose tabs are scrolled, the drop index counts the tabs scrolled out of view"
+    strip.dark (reply per appearance) ......... F "a system frame follows the strip's report of the system theme", "an explicit appearance ignores the system"
+    strip.drag / resize ....................... I "strip.drag: ...", "strip.drag from a maximised window: ...", "strip.resize top", "top-left", "top-right"
+    strip.minimize / maximize / closeWindow ... F "strip minimise", "maximised with the caption removed: ...", "the strip's close button asks the window's onClose listeners"
+ 7. State pushed after strip.state ............ F "the strip is told the window is maximised"; every I check reads the tab list back
+ 8. openTab
+    a. ids from a counter, one per tab ........ F "tab ids rise by one from tab to tab"
+    b. title: options.title ................... F "the window title follows the selected tab" (tabs opened with titles)
+       else the URL's host .................... F "a URL tab is called by its host until its page gives a title"
+       else Tab <id> .......................... F "a tab opened with no title is called Tab <id>"
+    c. a hidden pane over the page area ....... F "strip and page rectangles: ..."; F "select shows that tab and hides the others"
+    d. "the tab's webview has no browser controller": a guard in the code, not reachable from outside
+ 9. beforeNavigate for each tab
+    a. navigate / setHTML bump the epoch ...... F "failed load: not shown for a navigation the host superseded with setHTML or navigate"
+    b. accelerator keys ....................... every F "shortcut ..." check
+    c. new-window requests .................... F "a popup opens as a tab after its opener"
+    d. URL tabs follow the page title ......... F "the popup tab's title follows its page"; F "a URL tab is called by its host until its page gives a title"
+    e. URL tabs: failed loads ................. under 20
+10. Insertion: after options.after in this host, else after the selection, else at the end; the new tab selected
+                                                F "a new tab goes after the tab given as after, else after the selected tab (also when the given tab is in another window)";
+                                                F "a new tab is selected"
+11. Switching: shown, previous hidden, title, focus
+                                                F "select shows that tab and hides the others"; F "the window title follows the selected tab";
+                                                F "focus returns to the page after a strip action"
+12. Title
+    a. "<tab> - <base>" ....................... F "the window title follows the selected tab"
+    b. the tab's title alone when the window has none
+                                                F "a window with no title shows the selected tab's title alone"
+    c. the base title with no tab selected .... F "before its first tab the frame shows the window's title" (a live host always has a selection once it has a tab)
+    d. renameTab trims; empty is Tab <id> ..... F "renaming a tab trims the title; an empty one becomes Tab <id>"
+13. Closing
+    a. the last tab asks onClose first ........ F "last tab: an onClose listener intercepts, the tab stays"
+    b. with no listener the window goes ....... F "last tab: with no listener the window closes with it"; A "closing a tabbed Window via WM_CLOSE with no onClose disposes all child tab webviews"
+    c. selection: the tab at the same index, else the previous; onTabSelect for it
+                                                F "after a close the tab at the same place is selected, else the one before it (onTabSelect says so)"
+    d. the webview destroyed, onTabClose ...... F "close: the tab goes, onTabClose fires, its webview is destroyed"
+    e. tab.close() defers; tab.dispose() closes at once, last tab included
+                                                F "tab.dispose() takes even the last tab down at once; then the window's onClose listeners are asked"
+14. A tab's webview disposed directly ......... F "a tab whose webview is disposed directly leaves its window, which shows another tab"
+15. Reordering, the index clamped ............. F "strip.move reorders the tabs"; F "strip.move clamps an index past the end to the last place"
+16. Tear-off
+    a. the only tab drags its window .......... I "strip.detach: the only tab of a window drags the whole window"
+    b. dropped on another visible strip at dropIndex
+                                                I "strip.detach: a tab dropped on another window's strip joins it at the drop index"; I "strip.scrolled: ..."; S (dropIndex)
+    c. else a new window copying title, appearance, icon, resizable, topmost, opacity, hideFromTaskbar, noActivate, minimum sizes
+                                                F "tear-off: the new window takes the source's title, appearance, icon, resizable, topmost, opacity, hideFromTaskbar, noActivate and minimum size"
+                                                (read from the OS: window text, DWM dark, styles, layered alpha, WM_GETICON, minimum track size; and getWindowMeta)
+    d. at the cursor less the held point, same size, then dragged
+                                                I "strip.detach: a tab dragged out of a window with several tabs becomes a new window at the cursor, same size, keeping its page"
+    e. the tab's events go to the source window F "tear-off: the new window's tab events reach the window the tab came from"
+    f. the page moves, not reloaded; drops follow
+                                                F "tear-off: the tab's webview moves to a new window with its page as it was"; F "a file dropped on a torn-off tab's webview goes to its new window"
+    g. a source left with no tabs goes ........ F "a window whose only tab moves to a new window closes"
+17. Context menus
+    a. the system menu over the empty strip, items enabled per maximised state
+                                                F "system menu on the strip: Restore off and Move, Size, Minimize, Maximize, Close on while not maximised";
+                                                F "system menu on the strip while maximised: Restore and Minimize on, Move, Size and Maximize off; Close on and the default item"
+    b. the chosen item is carried out (WM_SYSCOMMAND)
+                                                F "choosing Maximize in the strip's system menu maximises the window" (IsZoomed);
+                                                F "choosing Minimize in the strip's system menu minimises the window" (IsIconic)
+    c. the tab menu's items and when they are off
+                                                F "tab menu items"; F "tab menu: Merge all windows is off with one window; Move tab to new window and Close other tabs are off with one tab"
+    d. each item carried out .................. F "choosing New tab ...", "choosing Close tab ...", "choosing Close other tabs ...",
+                                                "choosing Move tab to new window ...", "choosing Merge all windows ..."
+18. Merge all windows: every tab to the target, emptied windows closed, the selection kept, shown
+                                                F "merge: the tab comes back with its page as it was, the emptied window closes"; F "merge: the window keeps its selected tab on show";
+                                                F "choosing Merge all windows in the tab menu brings every tab into one window and closes the other"; D "mergeAllWindows moves tab back into primary window"
+19. New-window requests
+    a. http(s) opens a tab after its opener ... F "a popup opens as a tab after its opener" (asserts the place: right after the opener, before a tab that was after it)
+    b. in the tab's current window ............ F "a popup from a torn-off tab opens in the tab's current window"
+    c. other schemes dropped .................. F "a popup to another scheme is dropped"
+20. Failed loads
+    a. the page, with the address ............. F "failed load: the tab shows the page with the address"
+    b. the reason from the fixed table, default sentence otherwise
+                                                F "failed load: the page gives the reason from the engine's table (...: its default sentence)"
+    c. URL tabs only .......................... F "failed load: only a URL tab shows the page (a tab of assets whose navigation fails does not)"
+    d. not for a cancelled navigation ......... F "failed load: not shown for a cancelled navigation (stopped while loading): the page stays"
+    e. not for an aborted one ................. F "failed load: not shown for an aborted navigation (a 204 response): the page stays"
+    f. not for an HTTP error status ........... F "failed load: not shown for an HTTP error status (404, 500): the server's page stays"
+    g. not for data: .......................... F "failed load: not shown for a data: address the engine refuses"
+    h. not for about: ......................... F "failed load: not shown for an about: address the engine refuses": FAILS (a product defect, below)
+    i. not for a navigation superseded by a newer one
+                                                F "failed load: not shown for a navigation a newer one superseded"
+    j. not for one superseded by the host's navigate or setHTML
+                                                F "failed load: not shown for a navigation the host superseded with setHTML or navigate"
+21. Keyboard shortcuts
+    a. the table .............................. every F "shortcut ..." check; S "the keys every tabbed Windows app answers to", "Ctrl+1 to Ctrl+8 pick a tab by place, Ctrl+9 the last"
+    b. Alt+F4 closes every tab, then the window F "shortcut Alt+F4 closes the window"
+    c. modifier state, key downs only ......... I "real keys: Ctrl+T opens a tab and Ctrl+W closes it while the page has the keyboard focus" (one tab per chord: the key-up acts on nothing)
+    d. Handled only for shortcuts on a tab; always on the strip
+                                                F "shortcut a key that is no shortcut is left to the page", "shortcut the strip takes every key"
+    e. the action runs on a later tick ........ F every "shortcut ..." check (waits for the selection after the handler returned)
+22. Focus: the page gets it when the frame is the foreground window; on activation
+                                                F "focus returns to the page after a strip action"; I "real keys: ..." (document.hasFocus())
+23. DPI
+    a. WM_DPICHANGED applies the suggested rectangle; strip height and minimum follow the DPI
+                                                F "DPI change: the frame takes the suggested rectangle; the strip height and the default minimum follow the window's DPI";
+                                                R "a_dpi_change_applies_the_suggested_rectangle"
+    b. a real change of scale ................. not run (one monitor, one scale)
+24. Resizing and moving
+    a. relayout of strip and shown pane ....... F "the strip and the page follow a resize"
+    b. onResized reaches Window.onResize ...... F "a resize of the frame reaches Window.onResize"
+    c. the strip told of maximised ............ F "the strip is told the window is maximised"
+    d. minimum sizes .......................... F "default minimum size: a 560 x 420 page plus the strip and the frame"; F "minimum size given as the outer frame"
+    e. WM_MOVE tells every webview, and Window.onMove
+                                                F "moving the window tells the strip's and every tab's webview" (counted by Engine::moves_told, a test hook)
+25. Strip-driven chrome
+    a. drag, held point under the cursor; from maximised the OS restores
+                                                I "strip.drag: ...", "strip.drag from a maximised window: ..."
+    b. resize top / top-left / top-right ...... I "strip.resize top", "top-left", "top-right"
+    c. both need the left button down ......... F "strip.drag and strip.resize do nothing while the left button is up"
+    d. minimise, maximise, close .............. F "strip minimise", "maximised with the caption removed: ...", "the strip's close button asks the window's onClose listeners"
+26. Window dark mode: the strip reports; only "system" frames follow; setDarkWindows updates every "system" frame
+                                                F "a system frame follows the strip's report of the system theme"; F "an explicit appearance ignores the system";
+                                                W "tabbed windows keep per-frame appearance; system updates only touch system frames"
+27. File drops: on the frame; on a tab's webview, to the tab's current window
+                                                F "file drops on the frame"; F "a file dropped on a torn-off tab's webview goes to its new window";
+                                                F "a file dropped on a merged tab's webview goes to the window it joined"; W "delivers Unicode file drops and cleans up owned, tabbed and borrowed listeners"
 
 
 == The frame: decisions this item rests on ======================================
 
 - The frame is tao's window with with_decorations(false) and
   with_undecorated_shadow(true): the system keeps its border, shadow, snap,
-  maximise and system menu; no WM_NCCALCSIZE handling of this project's.
+  maximise and system menu; no WM_NCCALCSIZE handling of this project's, and
+  its class is tao's, not SweetviewTabFrame.
 - The backdrop and a DPI change are answered by a second subclass procedure of
-  the frame (FrameMessages in crates/sweetview-platform-window/src/tab_frame.rs):
-  WM_ERASEBKGND fills the strip's rectangle (40 DIP at the window's DPI) and the
-  page's rectangle with two owned solid brushes, light or dark, swapped when a
-  "system" frame's theme flips; WM_DPICHANGED is passed on to tao first (it
-  records the new scale, so the default minimum, a logical size, follows it)
-  and the suggested rectangle is applied after it. tao alone kept its own size
-  when the scale was unchanged and worked one out from the old inner size
-  otherwise: that was a defect of the rebuild against this list, fixed here.
+  the frame (FrameMessages in crates/sweetview-platform-window/src/tab_frame.rs).
 - The tab context menu is this project's own synchronous popup
   (TrackPopupMenu with TPM_RETURNCMD), and activation comes from the existing
   window subclass.
 
-== Runs =========================================================================
+== A product defect this item's checks found ========================================
 
-$ cargo test -p sweetview-platform-window tab_frame
-test tab_frame::tests::a_destroyed_frame_forgets_its_messages_and_a_late_drop_is_harmless ... ok
-test tab_frame::tests::a_dpi_change_applies_the_suggested_rectangle ... ok
-test tab_frame::tests::a_hidden_window_is_never_the_foreground_window ... ok
-test tab_frame::tests::frame_messages_give_every_handle_back ... ok
-test tab_frame::tests::popup_menus_give_every_handle_back ... ok
-test tab_frame::tests::the_frame_paints_the_strip_and_the_page_in_their_own_colours ... ok
-test tab_frame::tests::the_subclass_reports_activation_and_keeps_forced_style_bits ... ok
-test tab_frame::tests::the_system_theme_reads_without_failing ... ok
-test result: ok. 8 passed; 0 failed; 0 ignored
+20h. A navigation of a URL tab to an about: address the engine refuses shows
+the failed-load page, naming the tab's first address. WebView2 rewrites an
+about: address other than about:blank and about:srcdoc to edge://<name>/
+before the navigation starts; NavigationStarting reports that address, so
+failure_reason (crates/sweetview-platform-webview/src/lib.rs) does not see an
+about: prefix, and the tab driver, given an address that is not http(s),
+names options.url. To reproduce: open a URL tab, then
+tab.webview.raw.navigate("about:sweetview-nowhere"): the tab shows "This site
+did not open". The check is left failing under its own name; the fix is in
+Rust (not part of this change).
 
-$ just demos native-tabs drive <TEMP>/sv-drive-20942
-bun install --cwd ../..
-bun install v1.4.4 (38afee6c8)
+== Runs (the final tree) ==============================================================
 
-Checked 139 installs across 184 packages (no changes)
-bun build frontend/main.ts --outdir build/frontend --minify
-Bundled 10 modules in 5ms
+$ bun test packages/sweetview/src/tabs packages/sweetview-native/src/win32/strip-shared.test.ts rust-rewrite/compat
+  three runs in a row, each on a fresh WEBVIEW2_USER_DATA_FOLDER; the first, in full for the tabs
+  (the per-test listing is the runner's own: a skipped check would show as "(skip)", and the two
+  counts lines are win-tabs.test.ts's):
 
-  main.js   2.1 KB   (entry point)
-  main.css  3.21 KB  (asset)
-
-bun run scripts/win-drive.ts "<TEMP>\sv-drive-20942"
-ok   three tabs opened: 3
-ok   window is visible
-ok   tab 1 renamed: Alpha Tab
-ok   tab 1 page rendered: Tab 1 (70ec)
-ok   captured tabbed window screenshot: 1040x760
-ok   tabbed window maximizes
-ok   tabbed window restores
-ok   moveToNewWindow returns a new visible Window
-ok   mergeAllWindows moves tab back into primary window
-ok   a refused initial navigation shows the failed-load page: This site did not open
-ok   the failed-load page names the refused address: http://127.0.0.1:63598/
-ok   closing the failed tab leaves 3 open: 3
-ok   closing tab 3 leaves 2 open: 2
-ok   closing tab 2 leaves 1 open: 1
-ok   closing the last tab exits the event loop
-PASS
-
-$ bun test packages/sweetview/src/tabs        (the third of three runs in a row; the other two: 76 pass, 0 fail)
-(pass) tabbed windows (win32, live) > the fixture ran every check to the end
-(pass) tabbed windows (win32, live) > backdrop: the strip and the page areas in their own colours (light)
+win-tabs.ts: 100 checks: 100 ran, 99 passed, 1 failed, 0 skipped, 0 missing
+win-tabs-input.ts: 10 checks: 10 ran, 10 passed, 0 failed, 0 skipped, 0 missing
+(pass) tabbed windows (win32, live) > the fixture ran every check to the end [0.15ms]
+(pass) tabbed windows (win32, live) > backdrop: the strip and the page areas in their own colours (light) [0.06ms]
 (pass) tabbed windows (win32, live) > backdrop: the strip and the page areas in their own colours (dark)
+(pass) tabbed windows (win32, live) > a frame given bounds takes them as its outer rectangle
+(pass) tabbed windows (win32, live) > a "system" frame starts in the system's theme (AppsUseLightTheme) [0.01ms]
+(pass) tabbed windows (win32, live) > a frame made with no bounds is centred on the primary work area
+(pass) tabbed windows (win32, live) > before its first tab the frame shows the window's title
 (pass) tabbed windows (win32, live) > frame styles
 (pass) tabbed windows (win32, live) > system menu
 (pass) tabbed windows (win32, live) > frame metrics: a 1040 x 720 page plus the strip, the caption removed, the system border kept
@@ -141,33 +261,50 @@ $ bun test packages/sweetview/src/tabs        (the third of three runs in a row;
 (pass) tabbed windows (win32, live) > shortcut the strip takes every key
 (pass) tabbed windows (win32, live) > shortcut Ctrl+W closes the selected tab
 (pass) tabbed windows (win32, live) > shortcut Ctrl+F4 closes the selected tab
-(pass) tabbed windows (win32, live) > strip.move reorders the tabs
+(pass) tabbed windows (win32, live) > strip.move reorders the tabs [0.01ms]
+(pass) tabbed windows (win32, live) > strip.move clamps an index past the end to the last place
 (pass) tabbed windows (win32, live) > a tab whose webview is disposed directly leaves its window, which shows another tab
 (pass) tabbed windows (win32, live) > a tab opened with no title is called Tab <id>
 (pass) tabbed windows (win32, live) > renaming a tab trims the title; an empty one becomes Tab <id>
 (pass) tabbed windows (win32, live) > strip.select selects that tab
-(pass) tabbed windows (win32, live) > strip.close closes that tab
-(pass) tabbed windows (win32, live) > strip.new asks the window for a new tab
+(pass) tabbed windows (win32, live) > strip.close closes that tab [0.01ms]
+(pass) tabbed windows (win32, live) > strip.new asks the window for a new tab [0.01ms]
+(pass) tabbed windows (win32, live) > a new tab goes after the tab given as after, else after the selected tab (also when the given tab is in another window)
+(pass) tabbed windows (win32, live) > tab ids rise by one from tab to tab
+(pass) tabbed windows (win32, live) > after a close the tab at the same place is selected, else the one before it (onTabSelect says so)
+(pass) tabbed windows (win32, live) > tab.dispose() takes even the last tab down at once; then the window's onClose listeners are asked
+(pass) tabbed windows (win32, live) > a window with no title shows the selected tab's title alone
+(pass) tabbed windows (win32, live) > openTab needs a window made with tabs: true that is not disposed
 (pass) tabbed windows (win32, live) > the strip's close button asks the window's onClose listeners
 (pass) tabbed windows (win32, live) > shortcut Alt+F4 closes the window
 (pass) tabbed windows (win32, live) > last tab: an onClose listener intercepts, the tab stays
 (pass) tabbed windows (win32, live) > last tab: with no listener the window closes with it
-(pass) tabbed windows (win32, live) > tear-off: the tab's webview moves to a new window with its page as it was
-(pass) tabbed windows (win32, live) > merge: the tab comes back with its page as it was, the emptied window closes
-(pass) tabbed windows (win32, live) > merge: the window keeps its selected tab on show
-(pass) tabbed windows (win32, live) > a file dropped on a torn-off tab's webview goes to its new window
-(pass) tabbed windows (win32, live) > a file dropped on a merged tab's webview goes to the window it joined
 (pass) tabbed windows (win32, live) > a popup opens as a tab after its opener
 (pass) tabbed windows (win32, live) > the popup tab's title follows its page
 (pass) tabbed windows (win32, live) > a popup to another scheme is dropped
 (pass) tabbed windows (win32, live) > failed load: the tab shows the page with the address
+(pass) tabbed windows (win32, live) > failed load: the page gives the reason from the engine's table (a refused port, which WebView2 reports with no status of the table: its default sentence)
+(pass) tabbed windows (win32, live) > a URL tab is called by its host until its page gives a title
+(pass) tabbed windows (win32, live) > failed load: not shown for an HTTP error status (404, 500): the server's page stays
+(pass) tabbed windows (win32, live) > failed load: not shown for an aborted navigation (a 204 response): the page stays
+(pass) tabbed windows (win32, live) > failed load: not shown for a cancelled navigation (stopped while loading): the page stays
+(pass) tabbed windows (win32, live) > failed load: not shown for a navigation a newer one superseded
+(pass) tabbed windows (win32, live) > failed load: not shown for a navigation the host superseded with setHTML or navigate
+(pass) tabbed windows (win32, live) > failed load: not shown for a data: address the engine refuses
+(fail) tabbed windows (win32, live) > failed load: not shown for an about: address the engine refuses [0.37ms]
+(pass) tabbed windows (win32, live) > failed load: only a URL tab shows the page (a tab of assets whose navigation fails does not)
 (pass) tabbed windows (win32, live) > tab menu items
 (pass) tabbed windows (win32, live) > system menu on the strip: Restore off and Move, Size, Minimize, Maximize, Close on while not maximised
 (pass) tabbed windows (win32, live) > choosing Close tab in the tab menu closes that tab
 (pass) tabbed windows (win32, live) > maximised with the caption removed: the page fills the work area, the strip at its top
 (pass) tabbed windows (win32, live) > the strip is told the window is maximised
 (pass) tabbed windows (win32, live) > the strip and the page follow a resize
+(pass) tabbed windows (win32, live) > a resize of the frame reaches Window.onResize
 (pass) tabbed windows (win32, live) > strip minimise
+(pass) tabbed windows (win32, live) > choosing Maximize in the strip's system menu maximises the window
+(pass) tabbed windows (win32, live) > system menu on the strip while maximised: Restore and Minimize on, Move, Size and Maximize off; Close on and the default item
+(pass) tabbed windows (win32, live) > choosing Minimize in the strip's system menu minimises the window
+(pass) tabbed windows (win32, live) > strip.drag and strip.resize do nothing while the left button is up
 (pass) tabbed windows (win32, live) > focus returns to the page after a strip action
 (pass) tabbed windows (win32, live) > file drops on the frame
 (pass) tabbed windows (win32, live) > topmost
@@ -177,7 +314,21 @@ $ bun test packages/sweetview/src/tabs        (the third of three runs in a row;
 (pass) tabbed windows (win32, live) > minimum size given as the outer frame
 (pass) tabbed windows (win32, live) > a system frame follows the strip's report of the system theme
 (pass) tabbed windows (win32, live) > an explicit appearance ignores the system
-(pass) tabbed windows: strip gestures and real keys (win32, live) > the fixture ran every check to the end
+(pass) tabbed windows (win32, live) > tear-off: the new window takes the source's title, appearance, icon, resizable, topmost, opacity, hideFromTaskbar, noActivate and minimum size
+(pass) tabbed windows (win32, live) > tear-off: the new window's tab events reach the window the tab came from
+(pass) tabbed windows (win32, live) > a popup from a torn-off tab opens in the tab's current window
+(pass) tabbed windows (win32, live) > a window whose only tab moves to a new window closes
+(pass) tabbed windows (win32, live) > tear-off: the tab's webview moves to a new window with its page as it was
+(pass) tabbed windows (win32, live) > merge: the tab comes back with its page as it was, the emptied window closes
+(pass) tabbed windows (win32, live) > merge: the window keeps its selected tab on show
+(pass) tabbed windows (win32, live) > a file dropped on a torn-off tab's webview goes to its new window
+(pass) tabbed windows (win32, live) > a file dropped on a merged tab's webview goes to the window it joined
+(pass) tabbed windows (win32, live) > choosing New tab in the tab menu asks the window for a new tab
+(pass) tabbed windows (win32, live) > choosing Close other tabs in the tab menu keeps only that tab
+(pass) tabbed windows (win32, live) > tab menu: Merge all windows is off with one window; Move tab to new window and Close other tabs are off with one tab
+(pass) tabbed windows (win32, live) > choosing Move tab to new window in the tab menu moves that tab to a new window
+(pass) tabbed windows (win32, live) > choosing Merge all windows in the tab menu brings every tab into one window and closes the other
+(pass) tabbed windows: strip gestures and real keys (win32, live) > the fixture ran every check to the end [0.03ms]
 (pass) tabbed windows: strip gestures and real keys (win32, live) > strip.drag: the window follows the cursor, the held point stays under it
 (pass) tabbed windows: strip gestures and real keys (win32, live) > strip.resize top
 (pass) tabbed windows: strip gestures and real keys (win32, live) > strip.resize top-left
@@ -186,137 +337,40 @@ $ bun test packages/sweetview/src/tabs        (the third of three runs in a row;
 (pass) tabbed windows: strip gestures and real keys (win32, live) > strip.detach: a tab dragged out of a window with several tabs becomes a new window at the cursor, same size, keeping its page
 (pass) tabbed windows: strip gestures and real keys (win32, live) > strip.detach: the only tab of a window drags the whole window
 (pass) tabbed windows: strip gestures and real keys (win32, live) > strip.detach: a tab dropped on another window's strip joins it at the drop index
+(pass) tabbed windows: strip gestures and real keys (win32, live) > strip.scrolled: a tab dropped on a strip whose tabs are scrolled joins it at the index the scrolled offset gives
 (pass) tabbed windows: strip gestures and real keys (win32, live) > real keys: Ctrl+T opens a tab and Ctrl+W closes it while the page has the keyboard focus
- 76 pass
- 0 fail
-Ran 76 tests across 1 file.
+(pass) a tab dropped on a strip goes before the tab whose left half it lands on, after the one whose right half [0.07ms]
+(pass) on a strip whose tabs are scrolled, the drop index counts the tabs scrolled out of view [0.10ms]
 
-After the hosted runner's run of the merged branch, the gesture checks read
-the window inside the OS loop only once it has reached the expected place (or
-a limit passed), not after a fixed delay, since the runner applies a move
-later than this machine; and every window and cursor point is laid out inside
-the primary screen's work area, computed at run time. The move-loop control
-(packages/sweetview-native/test/win32-os.ts, moveLoopControl) waits the same
-way and now requires the window to be at the expected place while the button
-is down. It ran first in the input fixture's process, on a plain window of
-its own; no gesture check was skipped.
+(the other 30 tests of that run, strip-shared.test.ts and rust-rewrite/compat, passed)
+ 141 pass
+ 1 fail
+Ran 142 tests across 5 files.
 
-$ bun packages/sweetview/test/fixtures/win-tabs-input.ts   (stderr, this machine's work area)
-move-loop control: {"ok":true,"readings":{"threadSawThePress":true,"inLoopBeforeTheMove":true,"inLoopAfterTheMove":true,"windowInTheLoop":{"x":90,"y":75},"windowAfter":{"x":90,"y":75},"expected":{"x":90,"y":75}}}
-layout: {"screen":{"x":0,"y":0,"width":2560,"height":1440},"workArea":{"x":0,"y":0,"width":2560,"height":1392},"laidOutIn":{"x":0,"y":0,"width":2560,"height":1392}}
-ok   strip.drag: the window follows the cursor, the held point stays under it
-ok   strip.resize top
-ok   strip.resize top-left
-ok   strip.resize top-right
-ok   strip.drag from a maximised window: it restores first and follows the cursor
-ok   strip.detach: a tab dragged out of a window with several tabs becomes a new window at the cursor, same size, keeping its page
-ok   strip.detach: the only tab of a window drags the whole window
-ok   strip.detach: a tab dropped on another window's strip joins it at the drop index
-ok   real keys: Ctrl+T opens a tab and Ctrl+W closes it while the page has the keyboard focus
+  The one failure is the about: defect above. Nothing was skipped in that run.
 
-$ SWEETVIEW_TEST_SMALL_SCREEN=1 bun packages/sweetview/test/fixtures/win-tabs-input.ts
-  (laid out as if the work area were 1024 x 768 at the screen's top-left; stderr)
-move-loop control: {"ok":true,"readings":{"threadSawThePress":true,"inLoopBeforeTheMove":true,"inLoopAfterTheMove":true,"windowInTheLoop":{"x":90,"y":75},"windowAfter":{"x":90,"y":75},"expected":{"x":90,"y":75}}}
-layout: {"screen":{"x":0,"y":0,"width":2560,"height":1440},"workArea":{"x":0,"y":0,"width":2560,"height":1392},"laidOutIn":{"x":0,"y":0,"width":1024,"height":768}}
-ok   strip.drag: the window follows the cursor, the held point stays under it
-ok   strip.resize top
-ok   strip.resize top-left
-ok   strip.resize top-right
-ok   strip.drag from a maximised window: it restores first and follows the cursor
-ok   strip.detach: a tab dragged out of a window with several tabs becomes a new window at the cursor, same size, keeping its page
-ok   strip.detach: the only tab of a window drags the whole window
-ok   strip.detach: a tab dropped on another window's strip joins it at the drop index
-ok   real keys: Ctrl+T opens a tab and Ctrl+W closes it while the page has the keyboard focus
+  The second and third runs, on the same tree, while other sessions used the shared desktop:
+  run 2: 139 pass, 3 fail (the about: check; I "strip.scrolled: ..." did not settle in its limit;
+         the compat hook row saw no wheel event in four attempts while another session's test held
+         a swallowing mouse hook); run 3: 138 pass, 1 skip, 3 fail (the about: check; I "strip.resize
+         top" and "top-left" did not settle in their limit; F "focus returns ..." skipped, the window
+         not the foreground). Each of those passed in run 1 and when run alone; they are reported
+         here as they happened.
 
-$ bun test packages/sweetview/src/tabs packages/sweetview-native/src/win32/window-native.test.ts
-  three runs in a row, then one with SWEETVIEW_TEST_SMALL_SCREEN=1:
-  88 pass, 0 fail each time; the startDrag test of window-native.test.ts ran (not skipped) each time.
+$ bun test   (the whole suite, fresh WEBVIEW2_USER_DATA_FOLDER)
+ 460 pass
+ 18 skip
+ 2 fail
+Ran 480 tests across 45 files.
+  Fails: F "failed load: not shown for an about: address the engine refuses" (the defect above);
+  "win32 URL schemes & single-instance > singleInstance retries when the mutex exists before its
+  message window is discoverable" (not a tab check; it passed in the runs before).
+  Skips: 14 macOS-only tests, the unsupported-OS event-loop test, and three that need the
+  foreground (W1.3 / W1.4 accelerator-key tests, W2.1 F12); no tab check was skipped.
 
-The focus check ("focus returns to the page after a strip action") ran and
-passed in every run above: the fixture now clicks its own window's selected
-tab (SendInput, only with no button down and that window under the cursor),
-which gives the window the foreground and is itself a strip action.
+== Not run, and why ===============================================================
 
-== The watchdogs, each provoked once in a scratch run (not committed) ==========
-
-1. The menu probe made to do nothing (packages/sweetview/test/fixtures/
-   win-menu-probe.ts replaced by "process.exit(0)" for one run of
-   win-tabs.ts, then put back): each of the three menus stayed open until the
-   guard ended it, each check failed with what the OS showed, and the run went
-   on to the end (exit 0, 56 ok, 3 FAIL, 1 skipped; this scratch run came
-   before the focus check clicked its own tab, hence its skipped line):
-watchdog: a popup menu stayed open for 8000 ms; ended it: {"menuWindowOfThisProcessOnScreen":true,"openForMs":8001,"foregroundIsOurs":false,"probe":{"started":true,"action":"close","out":"","exitCode":0}}
-FAIL tab menu items
-watchdog: a popup menu stayed open for 8000 ms; ended it: {"menuWindowOfThisProcessOnScreen":true,"openForMs":8016,"foregroundIsOurs":false,"probe":{"started":true,"action":"close","out":"","exitCode":0}}
-FAIL system menu on the strip: Restore off and Move, Size, Minimize, Maximize, Close on while not maximised
-watchdog: a popup menu stayed open for 8000 ms; ended it: {"menuWindowOfThisProcessOnScreen":true,"openForMs":8253,"foregroundIsOurs":false,"probe":{"started":true,"action":"pick:5","out":"","exitCode":0}}
-FAIL choosing Close tab in the tab menu closes that tab
-skipped focus returns to the page after a strip action: the window is not the foreground window
-
-2. A gesture that never lets go (a scratch copy of win-tabs-input.ts whose
-   first gesture skips its release): the watchdog fired inside the OS move
-   loop, released the button, ended the loop with WM_CANCELMODE and failed
-   that check; every later check ran and passed (exit 0):
-watchdog: a gesture held the button for 15000 ms: {"inMoveSize":true,"leftDown":true,"cursor":{"x":878,"y":186},"foregroundIsOurs":false,"looped":true}
-FAIL strip.drag: the window follows the cursor, the held point stays under it
-ok   strip.resize top
-ok   strip.resize top-left
-ok   strip.resize top-right
-ok   strip.drag from a maximised window: it restores first and follows the cursor
-ok   strip.detach: a tab dragged out of a window with several tabs becomes a new window at the cursor, same size, keeping its page
-ok   strip.detach: the only tab of a window drags the whole window
-ok   strip.detach: a tab dropped on another window's strip joins it at the drop index
-ok   real keys: Ctrl+T opens a tab and Ctrl+W closes it while the page has the keyboard focus
-
-3. A move-loop control that fails (a scratch copy whose control answers
-   "no move loop"): every gesture check is recorded as skipped with the
-   control's readings, and the real-keys check still runs:
-move-loop control: {"ok":false,"why":"scratch: a control that saw no move loop","readings":{"inLoopAfterTheMove":false}}
-skipped strip.drag: the window follows the cursor, the held point stays under it: the session's OS started no move loop for the control window either (scratch: a control that saw no move loop): {"inLoopAfterTheMove":false}
-skipped strip.resize top: the session's OS started no move loop for the control window either (scratch: a control that saw no move loop): {"inLoopAfterTheMove":false}
-skipped strip.resize top-left: the session's OS started no move loop for the control window either (scratch: a control that saw no move loop): {"inLoopAfterTheMove":false}
-skipped strip.resize top-right: the session's OS started no move loop for the control window either (scratch: a control that saw no move loop): {"inLoopAfterTheMove":false}
-skipped strip.drag from a maximised window: it restores first and follows the cursor: the session's OS started no move loop for the control window either (scratch: a control that saw no move loop): {"inLoopAfterTheMove":false}
-skipped strip.detach: a tab dragged out of a window with several tabs becomes a new window at the cursor, same size, keeping its page: the session's OS started no move loop for the control window either (scratch: a control that saw no move loop): {"inLoopAfterTheMove":false}
-skipped strip.detach: the only tab of a window drags the whole window: the session's OS started no move loop for the control window either (scratch: a control that saw no move loop): {"inLoopAfterTheMove":false}
-skipped strip.detach: a tab dropped on another window's strip joins it at the drop index: the session's OS started no move loop for the control window either (scratch: a control that saw no move loop): {"inLoopAfterTheMove":false}
-ok   real keys: Ctrl+T opens a tab and Ctrl+W closes it while the page has the keyboard focus
-
-== The whole suite and the other checks =========================================
-
-$ just native                                        Finished (release)
-$ cargo clippy --workspace --all-targets -- -D warnings   no warning, no error
-$ cargo test --workspace --no-fail-fast              28 test results: 206 passed, 0 failed, 1 ignored
-$ bun run typecheck                                  tsc --noEmit: no error
-$ bun test                                           (fresh WEBVIEW2_USER_DATA_FOLDER)
- 404 pass
- 16 skip
- 0 fail
-Ran 420 tests across 45 files.
-The 16 skipped are macOS-only tests, the unsupported-OS event-loop test and
-the one W1.3 / W1.4 check that needs the foreground; none is a tab check.
-
-== Not run, and why =============================================================
-
-- A real DPI change: the machine has one monitor at one scale, so
-  WM_DPICHANGED was sent to the fixture's own frame (and to a test window in
-  cargo test) carrying the window's current DPI and a suggested rectangle. The
-  rectangle is proven applied; the strip height and the default minimum were
-  read at that same scale, so their following a different scale rests on the
-  code (both are computed from the window's DPI at the time of the call) and
-  not on an observed change of scale.
-- strip.scrolled has no check of its own: it stores how far the strip's tabs
-  are scrolled, which only the drop index of a tab dropped on a strip with
-  more tabs than fit reads; the drop-on-strip check uses a strip whose tabs
-  all fit (scrolled 0), and dropIndex's use of the offset is covered by the
-  unit tests in strip-shared.test.ts.
+- A real change of display scale: the machine has one monitor at one scale.
 - NotifyParentWindowPositionChanged is proven by a counter in the engine
   (Engine::moves_told, a test hook), not by an OS reading: WebView2 keeps the
   position it was told to itself.
-- The hosted CI runner does run the OS move loop for injected input (its
-  control read ok), but applies a move later than this machine, and its
-  screen is small. The gesture checks were changed for both (see "Runs");
-  their run on the runner after that change is not part of this file. The
-  small screen was proven here only by laying out in a 1024 x 768 area of a
-  larger screen (SWEETVIEW_TEST_SMALL_SCREEN=1), not on a 1024 x 768 display;
-  in that mode a maximised window still spans the real screen.

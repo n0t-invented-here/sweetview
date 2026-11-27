@@ -23,6 +23,11 @@ const user32 = dlopen("user32.dll", {
   SetForegroundWindow: { args: [FFIType.u64], returns: FFIType.i32 },
   SendInput: { args: [FFIType.u32, FFIType.ptr, FFIType.i32], returns: FFIType.u32 },
   ReleaseDC: { args: [FFIType.u64, FFIType.u64], returns: FFIType.i32 },
+  AttachThreadInput: { args: [FFIType.u32, FFIType.u32, FFIType.i32], returns: FFIType.i32 },
+  BringWindowToTop: { args: [FFIType.u64], returns: FFIType.i32 },
+}).symbols;
+const kernel32 = dlopen("kernel32.dll", {
+  GetCurrentThreadId: { args: [], returns: FFIType.u32 },
 }).symbols;
 const gdi32 = dlopen("gdi32.dll", {
   GetPixel: { args: [FFIType.u64, FFIType.i32, FFIType.i32], returns: FFIType.u32 },
@@ -120,9 +125,26 @@ export function systemUsesDarkApps(): boolean {
   return status === 0 && data[0] === 0;
 }
 
-/** Asks for the foreground for `hwnd`; true when it has it afterwards. */
+/**
+ * Asks for the foreground for `hwnd`; true when it has it afterwards. When the OS refuses it to a
+ * background process, the ask is made again with this thread's input briefly attached to the
+ * foreground window's thread (the documented way a cooperating thread may hand it over), and
+ * detached at once.
+ */
 export function takeForeground(hwnd: number | bigint | null): boolean {
   user32.SetForegroundWindow(h(hwnd));
+  if (user32.GetForegroundWindow() === h(hwnd)) return true;
+  const foreground = user32.GetForegroundWindow();
+  const theirs = foreground === 0n ? 0 : user32.GetWindowThreadProcessId(foreground, null);
+  const ours = kernel32.GetCurrentThreadId();
+  if (theirs === 0 || theirs === ours) return false;
+  if (user32.AttachThreadInput(ours, theirs, 1) === 0) return false;
+  try {
+    user32.BringWindowToTop(h(hwnd));
+    user32.SetForegroundWindow(h(hwnd));
+  } finally {
+    user32.AttachThreadInput(ours, theirs, 0);
+  }
   return user32.GetForegroundWindow() === h(hwnd);
 }
 
@@ -141,6 +163,14 @@ export function tapKey(hwnd: number | bigint | null, virtualKey: number): boolea
     inputs.setUint32(i * INPUT_SIZE + 12, up ? 0x0002 : 0, true); // KEYEVENTF_KEYUP
   }
   return user32.SendInput(2, ptr(inputs.buffer), INPUT_SIZE) === 2;
+}
+
+/** The first top-level window, of any process, whose title contains `text`, or null. */
+export function topLevelWindowContaining(text: string): bigint | null {
+  for (let hwnd = user32.FindWindowExW(0n, 0n, null, null); hwnd !== 0n; hwnd = user32.FindWindowExW(0n, hwnd, null, null)) {
+    if (windowText(hwnd).includes(text)) return hwnd;
+  }
+  return null;
 }
 
 /** The top-level window of process `pid` titled `title`, or null. */

@@ -11,7 +11,7 @@ pub use sweetview_napi::menus::{icon_bytes, IconBytes, MenuItemData, Point};
 /// pixels) or at the cursor, and returns the chosen item's `id` after it closes; `null` when dismissed.
 /// With `above`, the menu opens upward from the point (its bottom-left corner there), as the tray's
 /// menu does; otherwise downward (its top-left corner there). Either mouse button chooses an item.
-#[napi]
+#[napi(catch_unwind)]
 pub fn popup_menu(owner: BigInt, menu: Vec<MenuItemData>, at: Option<Point>, above: Option<bool>) -> napi::Result<Option<u32>> {
   imp::popup_menu(owner, menu, at, above)
 }
@@ -19,45 +19,45 @@ pub fn popup_menu(owner: BigInt, menu: Vec<MenuItemData>, at: Option<Point>, abo
 /// Builds `menu` and returns its popup menu handle (`HMENU`) for the application's own
 /// `TrackPopupMenu`. Each item's command id is its `id`. The menu, its submenus and its item
 /// bitmaps stay alive until `destroyMenu` is called with the handle.
-#[napi]
+#[napi(catch_unwind)]
 pub fn build_menu(menu: Vec<MenuItemData>) -> napi::Result<BigInt> {
   imp::build_menu(menu)
 }
 
 /// Frees a menu `buildMenu` made. False when the handle names no such menu (freed already).
-#[napi]
+#[napi(catch_unwind)]
 pub fn destroy_menu(handle: BigInt) -> napi::Result<bool> {
   imp::destroy_menu(handle)
 }
 
 /// Shows the system menu (Restore, Move, Size, Minimize, Maximize, Close) of `owner`, a window of
 /// this thread, at the cursor, and carries out the chosen command. Any other value shows nothing.
-#[napi]
+#[napi(catch_unwind)]
 pub fn window_menu(owner: BigInt) -> napi::Result<()> {
   imp::window_menu(owner)
 }
 
 /// The OS folder dialog, owned by the window `owner` when given. Blocks until it closes and
 /// returns the chosen folder's path, or `null` when cancelled.
-#[napi]
+#[napi(catch_unwind)]
 pub fn pick_folder(owner: Option<BigInt>, title: String) -> napi::Result<Option<String>> {
   imp::pick_folder(owner, title)
 }
 
 /// macOS: the application menu (About, Quit) and the Edit menu. Windows: nothing.
-#[napi]
+#[napi(catch_unwind)]
 pub fn install_app_menu(app_name: String, about_text: String) -> napi::Result<()> {
   imp::install_app_menu(app_name, about_text)
 }
 
 /// macOS: the running application's Dock icon. Windows: nothing.
-#[napi]
+#[napi(catch_unwind)]
 pub fn set_app_icon(icon: IconBytes) -> napi::Result<()> {
   imp::set_app_icon(icon)
 }
 
 /// macOS: the process's activation policy. Windows: nothing.
-#[napi]
+#[napi(catch_unwind)]
 pub fn set_activation_policy(#[napi(ts_arg_type = "'regular' | 'accessory' | 'prohibited'")] policy: String) -> napi::Result<()> {
   imp::set_activation_policy(policy)
 }
@@ -71,7 +71,7 @@ pub struct Tray(imp::Tray);
 impl Tray {
   /// `openMenu` is called each time the menu is about to open and returns it; `menuChosen` is
   /// called after it closes with the chosen item's `id`.
-  #[napi(constructor)]
+  #[napi(constructor, catch_unwind)]
   #[allow(clippy::too_many_arguments)]
   pub fn new(
     env: Env,
@@ -87,31 +87,31 @@ impl Tray {
     imp::Tray::new(env, tooltip, icon, has_menu, functions).map(Self)
   }
 
-  #[napi]
+  #[napi(catch_unwind)]
   pub fn set_tooltip(&self, text: String) -> napi::Result<()> {
     self.0.set_tooltip(text)
   }
 
   /// `null` shows the stock application icon.
-  #[napi]
+  #[napi(catch_unwind)]
   pub fn set_icon(&self, icon: Option<IconBytes>) -> napi::Result<()> {
     self.0.set_icon(icon)
   }
 
   /// Whether a right click opens the menu.
-  #[napi]
+  #[napi(catch_unwind)]
   pub fn set_has_menu(&self, has: bool) {
     self.0.set_has_menu(has)
   }
 
   /// The icon's own window, which the shell posts its mouse messages to. `0n` once disposed.
-  #[napi(getter)]
+  #[napi(getter, catch_unwind)]
   pub fn window_handle(&self) -> BigInt {
     self.0.window_handle()
   }
 
   /// Removes the icon. Safe to call twice.
-  #[napi]
+  #[napi(catch_unwind)]
   pub fn dispose(&self) {
     self.0.dispose()
   }

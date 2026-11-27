@@ -25,8 +25,23 @@ import {
 const onWindows = process.platform === "win32";
 
 const user32 = onWindows
-  ? dlopen("user32.dll", { SendInput: { args: [FFIType.u32, FFIType.ptr, FFIType.i32], returns: FFIType.u32 } }).symbols
+  ? dlopen("user32.dll", {
+      SendInput: { args: [FFIType.u32, FFIType.ptr, FFIType.i32], returns: FFIType.u32 },
+      // Read back what reached the system: the key's state and the pointer's position.
+      GetAsyncKeyState: { args: [FFIType.i32], returns: FFIType.i16 },
+      GetCursorPos: { args: [FFIType.ptr], returns: FFIType.i32 },
+      SetCursorPos: { args: [FFIType.i32, FFIType.i32], returns: FFIType.i32 },
+    }).symbols
   : undefined;
+
+/** The system's state of a key: down when the last event of it that reached the system was a press. */
+const keyIsDown = (virtualKey: number) => user32!.GetAsyncKeyState(virtualKey) < 0;
+
+function cursorNow(): { x: number; y: number } {
+  const point = new Int32Array(2);
+  user32!.GetCursorPos(ptr(point));
+  return { x: point[0]!, y: point[1]! };
+}
 
 const INPUT_SIZE = 40; // sizeof(INPUT) on x64
 const VK_F24 = 0x87;
@@ -131,8 +146,12 @@ describe.if(onWindows)("installKeyboardHook (W3.2)", () => {
     expect(() => installKeyboardHook(() => false)).toThrow("webview_keyboard_hook_install failed: a keyboard hook is already installed");
     sendKey(VK_F24, false);
     pumpUntil(() => seen.length >= 1);
+    pumpUntil(() => false, 30);
+    // Swallowed: the press never reached the system, whose key state stays up.
+    const downAfterSwallowedPress = keyIsDown(VK_F24);
     sendKey(VK_F24, true);
     pumpUntil(() => seen.length >= 2);
+    expect(downAfterSwallowedPress).toBe(false);
     expect(seen.map((m) => m.event)).toEqual([KeyEvent.Down, KeyEvent.Up]);
     expect(seen[0]!.code).toBe("F24");
     expect(seen[0]!.raw).toBe(VK_F24);
@@ -140,6 +159,93 @@ describe.if(onWindows)("installKeyboardHook (W3.2)", () => {
     keys.dispose();
     keys.dispose();
     keys = undefined;
+  });
+
+  test("a held key that is not swallowed reaches the system and its second press is a repeat: down, repeat, up", () => {
+    const seen: KeyMessage[] = [];
+    keys = installKeyboardHook((m) => {
+      if (m.code === "F24") seen.push(m);
+      return false;
+    });
+    sendKey(VK_F24, false);
+    pumpUntil(() => seen.length >= 1 && keyIsDown(VK_F24));
+    const downAfterPress = keyIsDown(VK_F24);
+    // Pressed again while held, as the keyboard's auto-repeat does.
+    sendKey(VK_F24, false);
+    pumpUntil(() => seen.length >= 2);
+    sendKey(VK_F24, true);
+    pumpUntil(() => seen.length >= 3 && !keyIsDown(VK_F24));
+    expect(downAfterPress).toBe(true);
+    expect(seen.map((m) => m.event)).toEqual([KeyEvent.Down, KeyEvent.Repeat, KeyEvent.Up]);
+    for (const m of seen) expect({ code: m.code, raw: m.raw }).toEqual({ code: "F24", raw: VK_F24 });
+    expect(keyIsDown(VK_F24)).toBe(false);
+  });
+
+  test("a handler returning true swallows per event: the swallowed press never reaches the system, so the next press is a down again, not a repeat", () => {
+    const seen: KeyMessage[] = [];
+    let swallow = true;
+    keys = installKeyboardHook((m) => {
+      if (m.code !== "F24") return false;
+      seen.push(m);
+      return swallow && m.event !== KeyEvent.Up;
+    });
+    sendKey(VK_F24, false);
+    pumpUntil(() => seen.length >= 1);
+    pumpUntil(() => false, 30);
+    const downAfterSwallowedPress = keyIsDown(VK_F24);
+    // The same press, now let through: the system sees a first press, and the hook a down.
+    swallow = false;
+    sendKey(VK_F24, false);
+    pumpUntil(() => seen.length >= 2 && keyIsDown(VK_F24));
+    const downAfterPassedPress = keyIsDown(VK_F24);
+    sendKey(VK_F24, true);
+    pumpUntil(() => seen.length >= 3 && !keyIsDown(VK_F24));
+    expect({ downAfterSwallowedPress, downAfterPassedPress }).toEqual({ downAfterSwallowedPress: false, downAfterPassedPress: true });
+    expect(seen.map((m) => m.event)).toEqual([KeyEvent.Down, KeyEvent.Down, KeyEvent.Up]);
+  });
+});
+
+describe.if(onWindows)("installMouseHook swallow, read back from the OS (W3.1)", () => {
+  test("a handler returning true swallows a move (the pointer stays); returning false lets the same move through (the pointer moves)", async () => {
+    const original = cursorNow();
+    try {
+      // Other sessions move the pointer too: a reading spoilt by one is taken again, up to five times.
+      type P = { x: number; y: number };
+      let readings: { swallowedFrom: P; swallowedAt: P; passedFrom: P; passedAt: P; dx: number } | undefined;
+      for (let attempt = 1; attempt <= 5; attempt++) {
+        let swallow = true;
+        const moves: MouseMessage[] = [];
+        mouse = installMouseHook((m) => {
+          if (m.event === MouseEvent.Move) moves.push(m);
+          return swallow && m.event === MouseEvent.Move;
+        });
+        const swallowedFrom = cursorNow();
+        // Away from the nearer screen edge, where the pointer could not move further.
+        const dx = swallowedFrom.x > 100 ? -6 : 6;
+        sendMouseMove(dx, 0);
+        pumpUntil(() => moves.length >= 1);
+        pumpUntil(() => false, 40);
+        const swallowedAt = cursorNow();
+        swallow = false;
+        const passedFrom = cursorNow();
+        sendMouseMove(dx, 0);
+        pumpUntil(() => moves.length >= 2 && cursorNow().x !== passedFrom.x);
+        const passedAt = cursorNow();
+        mouse.dispose();
+        mouse = undefined;
+        readings = { swallowedFrom, swallowedAt, passedFrom, passedAt, dx };
+        // Pointer speed and acceleration scale a relative move, so the move through is checked by direction.
+        const clean = swallowedAt.x === swallowedFrom.x && swallowedAt.y === swallowedFrom.y && Math.sign(passedAt.x - passedFrom.x) === Math.sign(dx) && passedAt.y === passedFrom.y;
+        if (clean) break;
+        await Bun.sleep(200);
+      }
+      const { swallowedFrom, swallowedAt, passedFrom, passedAt, dx } = readings!;
+      expect(swallowedAt).toEqual(swallowedFrom);
+      expect(passedAt.y).toBe(passedFrom.y);
+      expect(Math.sign(passedAt.x - passedFrom.x)).toBe(Math.sign(dx));
+    } finally {
+      user32!.SetCursorPos(original.x, original.y);
+    }
   });
 });
 

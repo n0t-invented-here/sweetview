@@ -9,9 +9,9 @@
 //! Here the menu's items carry the caller's own command ids
 //! ([`set_command_id`]) and the chosen one is the call's result (D24).
 //!
-//! The window is a [`ForeignWindow`](crate::ForeignWindow): a window a caller
-//! named by its handle value (a Sweetview window, one of the application's
-//! own, the tray icon's window), checked to be a window when it was named.
+//! The window is a [`BorrowedWindow`](crate::BorrowedWindow), lent for the
+//! length of the call: a Sweetview window, one of the application's own, or
+//! the tray menu's owner, named by its handle value.
 
 /// Which corner of a popup menu sits at its point.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -43,14 +43,14 @@ mod imp {
 
   use super::{PopupAt, PopupCorner};
   use crate::platform::{after_popup_menu, set_foreground, sealed::Sealed};
-  use crate::ForeignWindow;
+  use crate::BorrowedWindow;
 
   /// The popup menu `menu` owns, valid while `menu` is borrowed (`muda`'s `hpopupmenu`).
   fn popup_handle(menu: &muda::Menu) -> HMENU {
     HMENU(menu.hpopupmenu() as *mut core::ffi::c_void)
   }
 
-  pub fn show_popup(menu: &muda::Menu, owner: &ForeignWindow, at: PopupAt) -> u32 {
+  pub fn show_popup(menu: &muda::Menu, owner: &BorrowedWindow<'_>, at: PopupAt) -> u32 {
     let hwnd = owner.hwnd();
     // The right button chooses as the left does, as Sweetview's menus always have.
     let corner = match at.corner {
@@ -59,9 +59,11 @@ mod imp {
     };
     // The owner must be the foreground window or the menu does not close when the user clicks elsewhere.
     set_foreground(hwnd);
-    // SAFETY: the menu handle is `menu`'s popup menu, owned by `menu` and alive while it is borrowed for
-    // this whole call; `hwnd` is the window `owner` names, checked with IsWindow when it was named and
-    // validated again by the OS (a stale one makes the call fail and return 0); no rectangle is passed.
+    // SAFETY: the menu handle is `menu`'s popup menu, owned by `menu` and alive while `menu` is borrowed
+    // for this whole call. `hwnd` is the handle of the window `owner` lends for this call; TrackPopupMenu
+    // validates it on this call, as every user32 call does, and a handle that no longer names a window,
+    // or names one of another thread, makes the call fail and return 0. The point is passed by value and
+    // no rectangle is passed.
     let chosen = unsafe { TrackPopupMenu(popup_handle(menu), TPM_RIGHTBUTTON | TPM_RETURNCMD | corner, at.x, at.y, None, hwnd, None) };
     // The nudge the shell asks for after such a menu, so the next one closes properly.
     after_popup_menu(hwnd);
@@ -114,10 +116,10 @@ mod imp {
 #[cfg(not(windows))]
 mod imp {
   use super::PopupAt;
-  use crate::ForeignWindow;
+  use crate::BorrowedWindow;
 
   /// Not ported: no menu is shown and nothing is chosen.
-  pub fn show_popup(_menu: &muda::Menu, _owner: &ForeignWindow, _at: PopupAt) -> u32 {
+  pub fn show_popup(_menu: &muda::Menu, _owner: &BorrowedWindow<'_>, _at: PopupAt) -> u32 {
     0
   }
 
@@ -143,7 +145,7 @@ mod imp {
 ///
 /// The owner is brought to the foreground first so the menu closes when the user
 /// clicks elsewhere, and is posted `WM_NULL` afterwards, as the shell asks.
-pub fn show_popup(menu: &muda::Menu, owner: &crate::ForeignWindow, at: PopupAt) -> u32 {
+pub fn show_popup(menu: &muda::Menu, owner: &crate::BorrowedWindow<'_>, at: PopupAt) -> u32 {
   imp::show_popup(menu, owner, at)
 }
 
@@ -178,11 +180,11 @@ pub fn menu_handle_value(menu: &muda::Menu) -> isize {
 
 #[cfg(all(test, windows))]
 mod tests {
-  use crate::ForeignWindow;
+  use crate::BorrowedWindow;
 
   #[test]
   fn a_value_that_names_no_window_is_refused() {
-    assert!(ForeignWindow::from_handle_value(0).is_none());
-    assert!(ForeignWindow::from_handle_value(0x7fff_fff0).is_none());
+    assert!(BorrowedWindow::with_handle_value(0, |_| ()).is_none());
+    assert!(BorrowedWindow::with_handle_value(0x7fff_fff0, |_| ()).is_none());
   }
 }

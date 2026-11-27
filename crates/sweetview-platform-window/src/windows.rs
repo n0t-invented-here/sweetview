@@ -2,10 +2,11 @@
 //! has no API for, and the subclass that delivers any window's events.
 //!
 //! Every call here takes a window by a type that names it: a `tao` window this
-//! process owns, or a [`ForeignWindow`] checked with `IsWindow` when it was
-//! made. Window functions validate the handle they are given and fail with
-//! `ERROR_INVALID_WINDOW_HANDLE` on one that is gone, so a call on a window
-//! someone else destroyed is an error the OS reports, not undefined behaviour.
+//! process owns, or a [`BorrowedWindow`] lent for the length of one call,
+//! checked with `IsWindow` when it was lent. Window functions validate the
+//! handle they are given and fail with `ERROR_INVALID_WINDOW_HANDLE` on one
+//! that is gone, so a call on a window someone else destroyed is an error the
+//! OS reports, not undefined behaviour.
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -32,11 +33,12 @@ use windows::Win32::UI::WindowsAndMessaging::{
   ShowWindow, GWL_EXSTYLE, GWL_STYLE, GW_CHILD, HICON, HTCAPTION, HWND_NOTOPMOST, HWND_TOPMOST, ICON_BIG, ICON_SMALL,
   IDI_APPLICATION, LAYERED_WINDOW_ATTRIBUTES_FLAGS, LR_DEFAULTCOLOR, LWA_ALPHA, LWA_COLORKEY, SET_WINDOW_POS_FLAGS,
   SHOW_WINDOW_CMD, SIZE_MINIMIZED, SM_CXICON, SM_CXSMICON, STYLESTRUCT, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE,
-  SWP_NOSIZE, SWP_NOZORDER, SW_HIDE, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE, SW_SHOW, SW_SHOWNOACTIVATE, WM_CLOSE,
-  WM_ACTIVATE, WM_DROPFILES, WM_MOVE, WM_NCDESTROY, WM_NCLBUTTONDOWN, WM_NULL, WM_SETICON, WM_SIZE, WM_STYLECHANGING, WS_POPUP, WS_THICKFRAME, WS_VISIBLE,
+  SWP_NOSIZE, SWP_NOZORDER, SW_HIDE, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE, SW_SHOW, SW_SHOWNOACTIVATE, WM_ACTIVATE, WM_CLOSE,
+  WM_DROPFILES, WM_GETICON, WM_MOVE, WM_NCDESTROY, WM_NCLBUTTONDOWN, WM_NULL, WM_SETICON, WM_SIZE, WM_STYLECHANGING, WS_POPUP,
+  WS_THICKFRAME, WS_VISIBLE,
 };
 
-use crate::{Chrome, ExStylePolicy, HandleCounts, Rect, WindowEvent};
+use crate::{Chrome, ExStylePolicy, FramePart, HandleCounts, Placement, Rect, ResizeEdge, ShowAs, WindowEvent, ZOrder};
 
 // ---- naming a window ---------------------------------------------------------------
 
@@ -48,7 +50,7 @@ pub(crate) mod sealed {
   }
 }
 
-/// A window the functions of this crate accept: a `tao` window, or a [`ForeignWindow`].
+/// A window the functions of this crate accept: a `tao` window, or a [`BorrowedWindow`].
 pub trait NativeWindow: sealed::Sealed {}
 
 impl sealed::Sealed for tao::window::Window {
@@ -58,57 +60,73 @@ impl sealed::Sealed for tao::window::Window {
 }
 impl NativeWindow for tao::window::Window {}
 
-/// A window by its handle, checked to be a window when it was named. It does
-/// not own the window: whoever made it destroys it.
+/// A window lent for as long as `'a`: by [`BorrowedWindow::with_handle_value`]
+/// for the length of one call, or by [`BorrowedWindow::of`] for as long as a
+/// `tao` window is borrowed. It does not own the window and cannot be kept
+/// beyond its lifetime, so a window Sweetview did not make is kept as its
+/// handle value and lent again for each call.
 ///
-/// Not `Send`: a window is used from the thread that names it.
-#[derive(Debug, Clone)]
-pub struct ForeignWindow {
+/// The OS validates the handle on every call made with it: a window destroyed
+/// meanwhile (by another thread, or by code this call runs) makes those calls
+/// fail. Identity, that the value still names the window it named when lent,
+/// is checked where it matters: the subclass and the tab frame's procedure
+/// compare the state they installed, and a window of this thread is
+/// destroyed only by code this thread runs.
+///
+/// Not `Send`: a window is used from the thread that borrows it.
+#[derive(Debug)]
+pub struct BorrowedWindow<'a> {
   hwnd: HWND,
+  _window: PhantomData<&'a ()>,
   _not_send: PhantomData<*const ()>,
 }
 
-impl sealed::Sealed for ForeignWindow {
+impl sealed::Sealed for BorrowedWindow<'_> {
   fn hwnd(&self) -> HWND {
     self.hwnd
   }
 }
-impl NativeWindow for ForeignWindow {}
+impl NativeWindow for BorrowedWindow<'_> {}
 
-impl ForeignWindow {
-  /// The window whose handle value is `value`, if it names a window now.
-  /// This is how an application hands Sweetview a window of its own.
-  pub fn from_handle_value(value: isize) -> Option<Self> {
+impl BorrowedWindow<'_> {
+  /// Lends the window whose handle value is `value` to `f`, if it names a
+  /// window now; `None` (and `f` is not called) otherwise. This is how an
+  /// application hands Sweetview a window of its own.
+  pub fn with_handle_value<R>(value: isize, f: impl FnOnce(&BorrowedWindow<'_>) -> R) -> Option<R> {
     let hwnd = HWND(value as *mut c_void);
     if value == 0 || !is_window_handle(hwnd) {
       return None;
     }
-    Some(Self { hwnd, _not_send: PhantomData })
-  }
-
-  /// The same window as `window`, named by handle: for a borrower that needs
-  /// [`HasWindowHandle`] without owning the `tao` window.
-  pub fn of(window: &impl NativeWindow) -> Self {
-    Self { hwnd: window.hwnd(), _not_send: PhantomData }
+    Some(f(&BorrowedWindow { hwnd, _window: PhantomData, _not_send: PhantomData }))
   }
 }
 
-impl HasWindowHandle for ForeignWindow {
+impl<'a> BorrowedWindow<'a> {
+  /// The window of `window`, borrowed for as long as `window` is: for a
+  /// borrower that needs [`HasWindowHandle`] or a common type for both kinds.
+  pub fn of(window: &'a tao::window::Window) -> Self {
+    Self { hwnd: sealed::Sealed::hwnd(window), _window: PhantomData, _not_send: PhantomData }
+  }
+}
+
+impl HasWindowHandle for BorrowedWindow<'_> {
   fn window_handle(&self) -> Result<WindowHandle<'_>, HandleError> {
     if !is_window_handle(self.hwnd) {
       return Err(HandleError::Unavailable);
     }
     let value = NonZeroIsize::new(self.hwnd.0 as isize).ok_or(HandleError::Unavailable)?;
     let raw = RawWindowHandle::Win32(Win32WindowHandle::new(value));
-    // SAFETY: `borrow_raw` asks that the handle stay a valid window for the
-    // borrow. `IsWindow` confirmed it just above, the borrow is tied to
-    // `&self`, and `ForeignWindow` is not `Send`, so the borrower is on this
-    // thread, where the window can be destroyed only by code this thread runs.
+    // SAFETY: `borrow_raw` asks that the handle name a window for the borrow. `IsWindow`
+    // confirmed it just above, and the borrow is tied to `&self`, which is itself lent
+    // for one call or for the borrow of a `tao` window. The OS validates the handle on
+    // every call its borrowers make with it (`rfd` and `muda` pass it to user32 as an
+    // owner, `wry` as a parent), so a window destroyed during the borrow makes those
+    // calls fail; it reads no memory through the handle.
     Ok(unsafe { WindowHandle::borrow_raw(raw) })
   }
 }
 
-impl HasDisplayHandle for ForeignWindow {
+impl HasDisplayHandle for BorrowedWindow<'_> {
   fn display_handle(&self) -> Result<DisplayHandle<'_>, HandleError> {
     Ok(DisplayHandle::windows())
   }
@@ -157,6 +175,8 @@ pub fn is_on_this_thread(window: &impl NativeWindow) -> bool {
 
 // ---- reading a window ----------------------------------------------------------------
 
+/// True while the window is visible. For a window `tao` made, `tao`'s
+/// `Window::is_visible` makes the same call.
 pub fn is_visible(window: &impl NativeWindow) -> bool {
   // SAFETY: a window function on a handle named by `NativeWindow`; an invalid one reads as not visible.
   unsafe { IsWindowVisible(window.hwnd()) }.as_bool()
@@ -169,6 +189,8 @@ pub fn is_active(window: &impl NativeWindow) -> bool {
   active == window.hwnd()
 }
 
+/// True while the window is minimised. For a window `tao` made, `tao`'s
+/// `Window::is_minimized` makes the same call.
 pub fn is_minimized(window: &impl NativeWindow) -> bool {
   is_iconic(window.hwnd())
 }
@@ -179,6 +201,7 @@ fn is_iconic(hwnd: HWND) -> bool {
   unsafe { IsIconic(hwnd) }.as_bool()
 }
 
+/// True while the OS has the window maximised (its own state, not `tao`'s flag).
 pub fn is_zoomed(window: &impl NativeWindow) -> bool {
   // SAFETY: a window function on a handle named by `NativeWindow`; an invalid one reads as false.
   unsafe { IsZoomed(window.hwnd()) }.as_bool()
@@ -253,34 +276,34 @@ pub(crate) fn set_window_pos(hwnd: HWND, after: Option<HWND>, rect: Rect, flags:
   unsafe { SetWindowPos(hwnd, after, rect.x, rect.y, rect.width, rect.height, flags) }.is_ok()
 }
 
-/// Moves and sizes the outer frame in one step, without activating. A topmost
-/// window is re-asserted topmost; any other keeps its place in the z-order.
-pub fn set_outer_bounds(window: &impl NativeWindow, rect: Rect, topmost: bool) -> bool {
-  let (after, z) = if topmost { (Some(HWND_TOPMOST), SET_WINDOW_POS_FLAGS(0)) } else { (None, SWP_NOZORDER) };
-  set_window_pos(window.hwnd(), after, rect, z | SWP_NOACTIVATE)
-}
-
-/// Moves the outer frame, keeping its size.
-pub fn move_outer(window: &impl NativeWindow, x: i32, y: i32, topmost: bool) -> bool {
-  let (after, z) = if topmost { (Some(HWND_TOPMOST), SET_WINDOW_POS_FLAGS(0)) } else { (None, SWP_NOZORDER) };
-  set_window_pos(window.hwnd(), after, Rect::new(x, y, 0, 0), SWP_NOSIZE | z | SWP_NOACTIVATE)
-}
-
-/// Sizes the outer frame, keeping its position and z-order.
-pub fn resize_outer(window: &impl NativeWindow, width: i32, height: i32) -> bool {
-  set_window_pos(window.hwnd(), None, Rect::new(0, 0, width, height), SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE)
-}
-
-/// Puts the window in the topmost band or takes it out, without moving or activating it.
-pub fn set_topmost(window: &impl NativeWindow, on: bool) -> bool {
-  let after = if on { HWND_TOPMOST } else { HWND_NOTOPMOST };
-  set_window_pos(window.hwnd(), Some(after), Rect::default(), SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE)
-}
-
-/// Re-reads the frame after a style change.
-pub fn refresh_frame(window: &impl NativeWindow, topmost: bool) -> bool {
-  let after = if topmost { HWND_TOPMOST } else { HWND_NOTOPMOST };
-  set_window_pos(window.hwnd(), Some(after), Rect::default(), SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED)
+/// Moves, sizes and re-orders the outer frame as `placement` says, in one
+/// `SetWindowPos`, without activating the window. False when the OS refused.
+///
+/// `tao` sets an outer position (asynchronously, `SWP_ASYNCWINDOWPOS`) and an
+/// inner size as two calls, and its topmost flag through a style rewrite; a
+/// window dragged by its left or top edge must move and resize in one step (D8).
+pub fn set_placement(window: &impl NativeWindow, placement: Placement) -> bool {
+  let mut flags = SWP_NOACTIVATE;
+  if placement.position.is_none() {
+    flags |= SWP_NOMOVE;
+  }
+  if placement.size.is_none() {
+    flags |= SWP_NOSIZE;
+  }
+  if placement.frame_changed {
+    flags |= SWP_FRAMECHANGED;
+  }
+  let after = match placement.z {
+    ZOrder::Keep => {
+      flags |= SWP_NOZORDER;
+      None
+    }
+    ZOrder::Topmost => Some(HWND_TOPMOST),
+    ZOrder::NotTopmost => Some(HWND_NOTOPMOST),
+  };
+  let position = placement.position.unwrap_or_default();
+  let (width, height) = placement.size.unwrap_or((0, 0));
+  set_window_pos(window.hwnd(), after, Rect::new(position.x, position.y, width, height), flags)
 }
 
 fn show_window(hwnd: HWND, command: SHOW_WINDOW_CMD) {
@@ -300,9 +323,11 @@ pub fn bring_to_front(window: &impl NativeWindow) {
   set_foreground(hwnd);
 }
 
-/// `show()` for a window `tao` did not make: a minimised window is restored;
-/// otherwise it is shown, without activation for `no_activate`; then, unless
-/// it must not activate or is topmost, it is brought to the front.
+/// `show()`: a minimised window is restored; otherwise it is shown, without
+/// activation for `no_activate`; then, unless it must not activate or is
+/// topmost, it is brought to the front. Every window goes through it, a `tao`
+/// window included: `tao`'s `set_visible` shows with `SW_SHOW`, which
+/// activates even a `WS_EX_NOACTIVATE` window (D9).
 pub fn show(window: &impl NativeWindow, no_activate: bool, topmost: bool) {
   if is_minimized(window) {
     show_window(window.hwnd(), SW_RESTORE);
@@ -314,46 +339,48 @@ pub fn show(window: &impl NativeWindow, no_activate: bool, topmost: bool) {
   }
 }
 
-pub fn hide(window: &impl NativeWindow) {
-  show_window(window.hwnd(), SW_HIDE);
-}
-
-pub fn minimize(window: &impl NativeWindow) {
-  show_window(window.hwnd(), SW_MINIMIZE);
-}
-
-/// Maximises a framed window, or restores it when it is maximised.
-pub fn toggle_zoom(window: &impl NativeWindow) {
-  let command = if is_zoomed(window) { SW_RESTORE } else { SW_MAXIMIZE };
+/// Puts a window `tao` did not make in a show state (`ShowWindow`). A `tao`
+/// window goes through `tao`'s `set_visible`, `set_minimized` and
+/// `set_maximized`, which keep `tao`'s own flags in step.
+pub fn show_as(window: &impl NativeWindow, state: ShowAs) {
+  let command = match state {
+    ShowAs::Hidden => SW_HIDE,
+    ShowAs::Minimized => SW_MINIMIZE,
+    ShowAs::Maximized => SW_MAXIMIZE,
+    ShowAs::Restored => SW_RESTORE,
+  };
   show_window(window.hwnd(), command);
 }
 
-/// Sets the title bar text.
+/// Sets the title bar text of a window `tao` did not make (`tao`'s
+/// `set_title` makes the same call for its own).
 pub fn set_title(window: &impl NativeWindow, title: &str) -> bool {
   let wide: Vec<u16> = title.encode_utf16().chain(Some(0)).collect();
   // SAFETY: `wide` is a NUL-terminated UTF-16 buffer owned by this frame for the whole call.
   unsafe { SetWindowTextW(window.hwnd(), PCWSTR(wide.as_ptr())) }.is_ok()
 }
 
-/// Hands the press of the left button to the OS move loop, as a press on the title bar.
-pub fn start_os_drag(window: &impl NativeWindow) {
-  press_frame(window.hwnd(), HTCAPTION);
-}
-
-/// Hands the left button's press to the OS as a press on the part of the
-/// frame whose `HT*` code is `hit`; returns when the OS move or size loop ends.
-pub(crate) fn press_frame(hwnd: HWND, hit: u32) {
+/// Hands the left button's press to the OS as a press on `part` of the frame:
+/// the move loop for the caption, the size loop for an edge. Returns when the
+/// loop ends (the button is released), unlike `tao`'s `drag_window` and
+/// `drag_resize_window`, which post the press and return at once.
+pub fn press_frame(window: &impl NativeWindow, part: FramePart) {
+  let hit = match part {
+    FramePart::Caption => HTCAPTION,
+    FramePart::Edge(ResizeEdge::Left) => 10,
+    FramePart::Edge(ResizeEdge::Right) => 11,
+    FramePart::Edge(ResizeEdge::Top) => 12,
+    FramePart::Edge(ResizeEdge::TopLeft) => 13,
+    FramePart::Edge(ResizeEdge::TopRight) => 14,
+    FramePart::Edge(ResizeEdge::Bottom) => 15,
+    FramePart::Edge(ResizeEdge::BottomLeft) => 16,
+    FramePart::Edge(ResizeEdge::BottomRight) => 17,
+  };
   // SAFETY: `ReleaseCapture` takes nothing and has no preconditions; it fails only when nothing holds the capture.
   let _released = unsafe { ReleaseCapture() };
   // SAFETY: a window message with plain integer parameters (no pointer in either) to a handle
-  // the OS validates; a stale one makes the call fail.
-  let _result = unsafe { SendMessageW(hwnd, WM_NCLBUTTONDOWN, Some(WPARAM(hit as usize)), Some(LPARAM(0))) };
-}
-
-/// Sends `WM_CLOSE`, as the close button does. For tests of what a close request does.
-#[doc(hidden)]
-pub fn send_close_for_tests(window: &impl NativeWindow) {
-  crate::request_close(window);
+  // named by `NativeWindow`, which the OS validates; a stale one makes the call fail.
+  let _result = unsafe { SendMessageW(window.hwnd(), WM_NCLBUTTONDOWN, Some(WPARAM(hit as usize)), Some(LPARAM(0))) };
 }
 
 /// Resizes the window's first child to fill its client area, as a window
@@ -409,22 +436,26 @@ pub fn set_layered_attributes(window: &impl NativeWindow, color_key: Option<u32>
     .map_err(|e| format!("sweetview: SetLayeredWindowAttributes failed: {e}"))
 }
 
-/// Destroys a window this process made through `tao`, now rather than when
-/// `tao` gets to its own deferred destroy. Drop the `tao` window right after.
-pub fn destroy_now(window: &tao::window::Window) {
-  let hwnd = sealed::Sealed::hwnd(window);
+/// Destroys a window this process made through `tao` now, rather than when
+/// `tao` gets to its own deferred destroy, and drops the `tao` window.
+pub fn destroy_now(window: tao::window::Window) {
+  let hwnd = sealed::Sealed::hwnd(&window);
   // SAFETY: `tao` made this window on this thread (its windows are made on the loop's
-  // thread, which is the UI thread, and `DestroyWindow` refuses another thread's window),
-  // and the caller drops the `tao` window next, so nothing uses the handle afterwards.
+  // thread, which is the UI thread, and `DestroyWindow` refuses another thread's window).
+  // `window` is taken by value and dropped at the end of this function, so no later call
+  // names the handle through it; `tao`'s own deferred destroy finds the window gone.
   let _destroyed = unsafe { DestroyWindow(hwnd) };
+  drop(window);
 }
 
 // ---- style and bounds across a change made by someone else ---------------------------
 
 /// A window's styles and outer bounds at one moment, for `preserveGeometry`:
-/// mounting a webview may restyle or move the window it mounts into.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// mounting a webview may restyle or move the window it mounts into. The
+/// default is a snapshot of nothing, which restores nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct GeometrySnapshot {
+  taken: bool,
   style: isize,
   ex_style: isize,
   bounds: Option<Rect>,
@@ -433,13 +464,13 @@ pub struct GeometrySnapshot {
 impl GeometrySnapshot {
   pub fn take(window: &impl NativeWindow) -> Self {
     let hwnd = window.hwnd();
-    Self { style: style_of(hwnd, GWL_STYLE), ex_style: style_of(hwnd, GWL_EXSTYLE), bounds: outer_bounds_of(hwnd) }
+    Self { taken: true, style: style_of(hwnd, GWL_STYLE), ex_style: style_of(hwnd, GWL_EXSTYLE), bounds: outer_bounds_of(hwnd) }
   }
 
   /// Puts back whatever changed, and lays the first child out to fill the client area.
   pub fn restore(&self, window: &impl NativeWindow) {
     let hwnd = window.hwnd();
-    if !is_window_handle(hwnd) {
+    if !self.taken || !is_window_handle(hwnd) {
       return;
     }
     let mut style_changed = false;
@@ -468,18 +499,46 @@ struct OwnedIcon(HICON);
 
 impl Drop for OwnedIcon {
   fn drop(&mut self) {
-    // SAFETY: `self.0` was made by `CreateIconFromResourceEx` for this value
-    // alone and is destroyed only here.
+    // SAFETY: `self.0` was made by `CreateIconFromResourceEx` for this value alone and is
+    // destroyed only here; an `OwnedIcon` is dropped only once no window shows it
+    // (`WindowIcons`' drop parks it until then).
     let _destroyed = unsafe { DestroyIcon(self.0) };
   }
 }
 
-/// The caption and taskbar icons a window shows. The window draws from them
-/// for as long as it shows them, so they live until the next icon replaces them.
+/// The caption and taskbar icons a window shows.
+///
+/// The window draws from them for as long as it shows them, so dropping a
+/// `WindowIcons` never destroys an icon a live window still shows: the icons
+/// are parked, by the window's handle value, until the window is gone or
+/// shows other icons, and destroyed at the next [`WindowIcons::set`] of any
+/// window of this thread after that. An adopted window released while it shows icons
+/// Sweetview gave it keeps valid icons for its whole life.
+///
+/// Not `Send`: icons are set and destroyed on the window's thread.
 #[derive(Debug)]
 pub struct WindowIcons {
-  _small: Option<OwnedIcon>,
-  _big: Option<OwnedIcon>,
+  /// The window the icons were given to, as a number (it is not owned).
+  window: isize,
+  small: Option<OwnedIcon>,
+  big: Option<OwnedIcon>,
+}
+
+thread_local! {
+  /// Icons whose `WindowIcons` was dropped while their window still showed them.
+  static PARKED: RefCell<Vec<WindowIcons>> = const { RefCell::new(Vec::new()) };
+}
+
+/// `WM_SETICON` (with `icon`) or `WM_GETICON` (with none) for `kind`
+/// (`ICON_SMALL`, `ICON_BIG`); the icon the window had or has, 0 for none.
+pub(crate) fn icon_message(hwnd: HWND, message: u32, kind: u32, icon: Option<HICON>) -> isize {
+  debug_assert!(message == WM_SETICON || message == WM_GETICON);
+  let icon = icon.map_or(0, |icon| icon.0 as isize);
+  // SAFETY: `WM_SETICON` or `WM_GETICON` to a handle named by `NativeWindow` or a parked
+  // window's value, both validated by the OS; the parameters are an integer and an icon
+  // handle by value. An icon set here is one `WindowIcons` owns, which keeps it alive while
+  // the window shows it (its drop parks it), or the stock icon, which is never destroyed.
+  unsafe { SendMessageW(hwnd, message, Some(WPARAM(kind as usize)), Some(LPARAM(icon))) }.0
 }
 
 /// An icon from `.ico` bytes at `size` pixels; the stock application icon when there are none.
@@ -510,16 +569,67 @@ pub(crate) fn metric(index: windows::Win32::UI::WindowsAndMessaging::SYSTEM_METR
 impl WindowIcons {
   /// Sets the window's small and large icons from `.ico` bytes, each from the
   /// image closest to its size, or back to the stock icon for `None`. Keep the
-  /// result until the next call: dropping it destroys the icons the window draws.
+  /// result while the window should show them; dropping it is always safe.
+  ///
+  /// `tao`'s `Window::set_window_icon` and `WindowExtWindows::set_taskbar_icon`
+  /// set the same two icons of a window `tao` made, but from an RGBA image at
+  /// one size each (`Icon::from_rgba`, drawn with `CreateIcon`): the `.ico`'s
+  /// best entry for each size would have to be decoded (PNG or bitmap with its
+  /// mask) and scaled in this project instead of by `CreateIconFromResourceEx`,
+  /// `None` would clear the icons instead of setting the stock one, and an
+  /// adopted window has no `tao` window. So every window goes through here.
   pub fn set(window: &impl NativeWindow, ico: Option<&[u8]>) -> Result<Self, String> {
+    sweep_parked_icons();
     let (small, small_owned) = load_icon(ico, metric(SM_CXSMICON, 16))?;
     let (big, big_owned) = load_icon(ico, metric(SM_CXICON, 32))?;
+    let icons = Self { window: handle_value(window), small: small_owned, big: big_owned };
     for (kind, icon) in [(ICON_SMALL, small), (ICON_BIG, big)] {
-      // SAFETY: `WM_SETICON` with an icon that stays alive in the returned value
-      // until the next icon replaces it.
-      let _previous = unsafe { SendMessageW(window.hwnd(), WM_SETICON, Some(WPARAM(kind as usize)), Some(LPARAM(icon.0 as isize))) };
+      let _previous = icon_message(window.hwnd(), WM_SETICON, kind, Some(icon));
     }
-    Ok(Self { _small: small_owned, _big: big_owned })
+    Ok(icons)
+  }
+
+  /// True while the window still exists and shows one of these icons.
+  fn still_shown(&self) -> bool {
+    let hwnd = HWND(self.window as *mut c_void);
+    if !is_window_handle(hwnd) {
+      return false;
+    }
+    let shows = |kind, mine: &Option<OwnedIcon>| mine.as_ref().is_some_and(|icon| icon_message(hwnd, WM_GETICON, kind, None) == icon.0 .0 as isize);
+    shows(ICON_SMALL, &self.small) || shows(ICON_BIG, &self.big)
+  }
+}
+
+/// Destroys the parked icons whose window is gone or shows other icons now.
+fn sweep_parked_icons() {
+  let done: Vec<WindowIcons> = PARKED
+    .try_with(|parked| {
+      let mut parked = parked.borrow_mut();
+      let (keep, done): (Vec<_>, Vec<_>) = parked.drain(..).partition(WindowIcons::still_shown);
+      *parked = keep;
+      done
+    })
+    .unwrap_or_default();
+  // Dropped outside the borrow; each has nothing left to park.
+  drop(done);
+}
+
+impl Drop for WindowIcons {
+  fn drop(&mut self) {
+    if self.small.is_none() && self.big.is_none() {
+      return;
+    }
+    if !self.still_shown() {
+      // `small` and `big` are destroyed as this value's fields drop.
+      return;
+    }
+    let mut parked = Some(WindowIcons { window: self.window, small: self.small.take(), big: self.big.take() });
+    let _ = PARKED.try_with(|list| list.borrow_mut().extend(parked.take()));
+    if let Some(left) = parked {
+      // The thread is ending and its storage is gone: the icons are left to the
+      // process's end rather than destroyed under a window that shows them.
+      std::mem::forget(left);
+    }
   }
 }
 
@@ -573,6 +683,8 @@ struct SubclassState {
   hold_visibility: Cell<bool>,
   /// `GWL_STYLE` bits kept on through every style rewrite.
   forced_style: Cell<u32>,
+  /// Set once the window is destroyed and the subclass removed (`WM_NCDESTROY`).
+  gone: Cell<bool>,
 }
 
 thread_local! {
@@ -586,23 +698,35 @@ fn state_of(hwnd: HWND) -> Option<Rc<SubclassState>> {
   SUBCLASSES.try_with(|table| table.borrow().get(&(hwnd.0 as isize)).cloned()).ok().flatten()
 }
 
-fn take_state(hwnd: HWND) -> Option<Rc<SubclassState>> {
-  SUBCLASSES.try_with(|table| table.borrow_mut().remove(&(hwnd.0 as isize))).ok().flatten()
-}
-
-fn remove_subclass(hwnd: HWND) {
-  // SAFETY: removes this crate's own procedure under its own id; on a window
-  // that no longer has it (or no longer exists) the call fails and changes nothing.
+/// Takes `hwnd`'s entry out of the table when it is `state` (not a later
+/// window that was given the same handle value), removes the procedure, and
+/// marks the state gone. Does nothing the second time.
+fn forget_subclass(hwnd: HWND, state: &Rc<SubclassState>) {
+  if state.gone.replace(true) {
+    return;
+  }
+  let _ = SUBCLASSES.try_with(|table| {
+    let mut table = table.borrow_mut();
+    if table.get(&(hwnd.0 as isize)).is_some_and(|known| Rc::ptr_eq(known, state)) {
+      table.remove(&(hwnd.0 as isize));
+    }
+  });
+  // SAFETY: removes this crate's own procedure under its own id from the window `state` was
+  // installed on, which still exists: `gone` was not set, and it is set on `WM_NCDESTROY`.
   let _removed = unsafe { RemoveWindowSubclass(hwnd, Some(subclass_proc), SUBCLASS_ID) };
 }
 
 /// The events of one window, delivered by subclassing it. Dropping it removes
 /// the subclass; the window's own destruction removes it too, after a last
-/// [`WindowEvent::Destroyed`].
+/// [`WindowEvent::Destroyed`]. Once the window is gone, every method does
+/// nothing: the handle value it was installed on may name another window by then.
 ///
 /// Not `Send`: a subclass belongs to the window's thread.
 pub struct WindowSubclass {
+  /// The window the subclass is installed on: the key of the registration this value owns.
   hwnd: HWND,
+  /// The state it installed, which says whether the window is gone.
+  state: Rc<SubclassState>,
   _not_send: PhantomData<*const ()>,
 }
 
@@ -625,31 +749,38 @@ impl WindowSubclass {
       fill_child: Cell::new(false),
       hold_visibility: Cell::new(false),
       forced_style: Cell::new(0),
+      gone: Cell::new(false),
     });
-    SUBCLASSES.with(|table| table.borrow_mut().insert(hwnd.0 as isize, state));
+    SUBCLASSES.with(|table| table.borrow_mut().insert(hwnd.0 as isize, state.clone()));
     // SAFETY: installs this crate's procedure on a window of this thread (checked
     // above). The procedure finds its state by handle value in a thread-local
     // table and is removed by `Drop` or on `WM_NCDESTROY`.
     let installed = unsafe { SetWindowSubclass(hwnd, Some(subclass_proc), SUBCLASS_ID, 0) }.as_bool();
     if !installed {
-      take_state(hwnd);
+      state.gone.set(true);
+      let _ = SUBCLASSES.try_with(|table| table.borrow_mut().remove(&(hwnd.0 as isize)));
       return Err("sweetview: SetWindowSubclass failed".into());
     }
-    Ok(Self { hwnd, _not_send: PhantomData })
+    Ok(Self { hwnd, state, _not_send: PhantomData })
+  }
+
+  /// The window, while it exists: `None` once it is destroyed.
+  fn live_hwnd(&self) -> Option<HWND> {
+    (!self.state.gone.get()).then_some(self.hwnd)
   }
 
   /// The extended-style policy in force.
   pub fn policy(&self) -> ExStylePolicy {
-    state_of(self.hwnd).map(|s| s.policy.get()).unwrap_or_default()
+    self.state.policy.get()
   }
 
   /// Sets the extended-style policy and applies it now. Every later style
   /// change, by anyone, passes through it.
   pub fn set_policy(&self, policy: ExStylePolicy) {
-    if let Some(state) = state_of(self.hwnd) {
-      state.policy.set(policy);
+    self.state.policy.set(policy);
+    if let Some(hwnd) = self.live_hwnd() {
+      apply_ex_style_to(hwnd, &policy);
     }
-    apply_ex_style_to(self.hwnd, &policy);
   }
 
   /// When on, a rewrite of the window's style (`SetWindowLongPtr(GWL_STYLE)`)
@@ -657,39 +788,32 @@ impl WindowSubclass {
   /// `tao` writes the style from its own idea of the window's visibility, which
   /// is stale after a show it did not make.
   pub fn set_hold_visibility(&self, on: bool) {
-    if let Some(state) = state_of(self.hwnd) {
-      state.hold_visibility.set(on);
-    }
+    self.state.hold_visibility.set(on);
   }
 
   /// Keeps the `GWL_STYLE` bits `bits` on from now on, through every later
   /// rewrite of the style (by `tao` or anyone), and turns them on now.
   pub fn force_style(&self, bits: u32) {
-    if let Some(state) = state_of(self.hwnd) {
-      state.forced_style.set(bits);
-    }
-    let current = style_of(self.hwnd, GWL_STYLE) as u32;
+    self.state.forced_style.set(bits);
+    let Some(hwnd) = self.live_hwnd() else { return };
+    let current = style_of(hwnd, GWL_STYLE) as u32;
     if current & bits != bits {
       // The current style with `bits` added, on the window this subclass is installed on.
-      let _previous = set_style_of(self.hwnd, GWL_STYLE, (current | bits) as isize);
+      let _previous = set_style_of(hwnd, GWL_STYLE, (current | bits) as isize);
     }
   }
 
   /// When on, each resize also lays the window's first child out to fill the
   /// client area: the widget of a webview mounted in it.
   pub fn set_fill_child(&self, on: bool) {
-    if let Some(state) = state_of(self.hwnd) {
-      state.fill_child.set(on);
-    }
+    self.state.fill_child.set(on);
   }
 }
 
 impl Drop for WindowSubclass {
   fn drop(&mut self) {
-    // Gone already when the window was destroyed first.
-    if take_state(self.hwnd).is_some() {
-      remove_subclass(self.hwnd);
-    }
+    // Nothing to do when the window was destroyed first.
+    forget_subclass(self.hwnd, &self.state);
   }
 }
 
@@ -825,8 +949,7 @@ fn handle(hwnd: HWND, message: u32, wparam: WPARAM, mut lparam: LPARAM) -> Optio
       None
     }
     WM_NCDESTROY => {
-      take_state(hwnd);
-      remove_subclass(hwnd);
+      forget_subclass(hwnd, &state);
       deliver(&state, &WindowEvent::Destroyed);
       None
     }

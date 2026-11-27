@@ -379,10 +379,57 @@ describe.if(onWindows)("W1.3 / W1.4 the webview's callback kinds", () => {
 // that refuses the foreground to a background process leaves this test
 // skipped, with nothing pressed. The handler throws on its first call, clears
 // itself on its second, and is not called again.
-const accelerator = onWindows ? await callbacks("accelerator") : undefined;
-test.skipIf(!accelerator?.r.foreground)("W1.3 / W1.4 an accelerator-key handler that throws is logged and the loop goes on; it then clears itself (needs the foreground)", () => {
+// Other sessions share this desktop and take the foreground, so the fixture asks
+// for it up to eight times, and a fixture that never got it is run again, up to
+// three runs. A desktop that refuses the foreground to every run leaves the test
+// skipped (computed before the test, so the runner shows a skip, never a pass),
+// with the reason printed.
+async function withForeground(scenario: string) {
+  let run = await callbacks(scenario);
+  for (let again = 1; again < 3 && run.r.foreground === false; again++) run = await callbacks(scenario);
+  if (run.r.foreground !== true) console.warn(`webview.test: ${scenario} skipped: ${run.r.foregroundRefused ?? `no result: ${JSON.stringify(run.r)}`}`);
+  return run;
+}
+// W2.1 with debug on (F40). The fixture is webview-api.ts; the foreground is needed only for F12.
+async function apiWithForeground(scenario: string) {
+  let run = await api(scenario);
+  for (let again = 1; again < 3 && run.r.foreground === false; again++) run = await api(scenario);
+  if (run.r.foreground !== true) console.warn(`webview.test: ${scenario}: F12 not pressed: ${run.r.foregroundRefused ?? `no result: ${JSON.stringify(run.r)}`}`);
+  return run;
+}
+const debugOn = onWindows ? await apiWithForeground("debug") : undefined;
+const debugOff = onWindows ? await apiWithForeground("no-debug") : undefined;
+test.if(onWindows)("W2.1 new Webview(true, size): made with debug on, its window is real and its page answers a binding", () => {
+  const { r, exitCode } = debugOn!;
+  expect(exitCode).toBe(0);
+  expect(r.timedOut).toBeUndefined();
+  expect(r.isWindow).toBe(true);
+  expect(r.answered).toBe(42);
+});
+test.skipIf(debugOn?.r.foreground !== true || debugOff?.r.foreground !== true)("W2.1 with debug on, F12 opens the developer tools; with debug off the same key opens none (needs the foreground)", () => {
+  expect(debugOn!.r).toMatchObject({ tapped: true, devToolsOpened: true, answered: 42 });
+  expect(debugOff!.r).toMatchObject({ tapped: true, devToolsOpened: false, answered: 42 });
+});
+
+const accelerator = onWindows ? await withForeground("accelerator") : undefined;
+test.skipIf(accelerator?.r.foreground !== true)("W1.3 / W1.4 an accelerator-key handler that throws is logged and the loop goes on; it then clears itself (needs the foreground)", () => {
   const { r, stderr } = accelerator!;
   expect(r.taps).toEqual([true, true, true]);
   expect(r.keys).toEqual([0x7b, 0x7b]);
   expect(stderr).toContain("sweetview: an accelerator key handler threw: Error: accelerator boom");
+});
+
+// The handler destroys its own webview from inside its call: run() returns, calls on the webview
+// inside the handler already answer "destroyed" (-3), the window is gone and nothing crashed.
+const acceleratorDestroy = onWindows ? await withForeground("accelerator-destroy") : undefined;
+test.skipIf(acceleratorDestroy?.r.foreground !== true)("W1.4 an accelerator-key handler destroys its webview from inside its own call (needs the foreground)", () => {
+  const { r, exitCode } = acceleratorDestroy!;
+  expect(exitCode).toBe(0);
+  expect(r.timedOut).toBeUndefined();
+  expect(r.taps).toEqual([true]);
+  expect(r.keys).toEqual([0x7b]);
+  expect(r.insideCall).toEqual({ setRequestHandler: -3, setFileDropHandler: -3, bind: -3 });
+  expect(r.runReturned).toBe(true);
+  expect(r.released).toBe(true);
+  expect(r.windowGone).toBe(true);
 });

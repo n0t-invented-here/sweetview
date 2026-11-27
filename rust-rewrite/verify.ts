@@ -283,6 +283,8 @@ check("privacy", false, () => {
   const base = sh(["git", "rev-parse", "--verify", "--quiet", `${TAG}^{commit}`]).code === 0 ? TAG : "origin/main";
   const changed = sh(["git", "diff", "--name-only", "--diff-filter=AM", `${base}..HEAD`]).out.split(/\r?\n/).filter((f) => f && has(f) && !/\.(png|ico|icns|glb|node|dll|dylib|so|lock)$/.test(f));
   const localPath = /\b[A-Za-z]:[\\/]+Users[\\/]|\/Users\/[A-Za-z0-9._-]+\/|\/home\/[a-z0-9._-]+\//;
+  // The checkout's own location, with either slash: a machine-local path that sits outside any user folder.
+  const here = [root.replaceAll("\\", "/"), root.replaceAll("/", "\\")].map((p) => p.toLowerCase());
   const terms = has("rust-rewrite/local/private-terms.txt") ? read("rust-rewrite/local/private-terms.txt").split(/\r?\n/).map((t) => t.trim().toLowerCase()).filter(Boolean) : [];
   const messages = sh(["git", "log", "--format=%B", `${base}..HEAD`]).out.toLowerCase();
   let pathHits = 0;
@@ -290,11 +292,11 @@ check("privacy", false, () => {
   for (const file of changed) {
     if (file === "rust-rewrite/verify.ts") continue;
     const text = read(file);
-    if (localPath.test(text) && !/^(README\.md|docs\/|\.apmm\/)/.test(file)) {
+    const lower = text.toLowerCase();
+    if ((localPath.test(text) || here.some((p) => lower.includes(p))) && !/^(README\.md|docs\/|\.apmm\/)/.test(file)) {
       pathHits++;
       bad.push(`${file}: contains a machine-local absolute path`);
     }
-    const lower = text.toLowerCase();
     if (terms.some((t) => lower.includes(t))) {
       termHits++;
       bad.push(`${file}: contains a term from the private list`);

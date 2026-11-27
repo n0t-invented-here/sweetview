@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use common::{fetch_js, Ctx, View};
 use serde_json::{json, Value};
-use sweetview_platform_webview::{ErrorCode, NavigationFailure, RawRequest};
+use sweetview_platform_webview::{set_background_color, ErrorCode, NavigationFailure, RawRequest};
 
 fn scenario(name: &str) {
     eprintln!("-- {name}");
@@ -208,10 +208,10 @@ fn request_path_on_a_real_webview() {
     }
 
     scenario("background colour: alpha 0 and 255 accepted, any other alpha refused");
-    assert_eq!(extras.set_background_color(10, 20, 30, 128), ErrorCode::Unspecified);
-    assert_eq!(extras.set_background_color(10, 20, 30, 1), ErrorCode::Unspecified);
-    assert_eq!(extras.set_background_color(255, 255, 255, 255), ErrorCode::Ok);
-    assert_eq!(extras.set_background_color(0, 0, 0, 0), ErrorCode::Ok);
+    assert_eq!(set_background_color(view.webview(), 10, 20, 30, 128), ErrorCode::Unspecified);
+    assert_eq!(set_background_color(view.webview(), 10, 20, 30, 1), ErrorCode::Unspecified);
+    assert_eq!(set_background_color(view.webview(), 255, 255, 255, 255), ErrorCode::Ok);
+    assert_eq!(set_background_color(view.webview(), 0, 0, 0, 0), ErrorCode::Ok);
 
     scenario("a user script added, then removed");
     let us1 = extras.add_user_script("window.__us1 = 1;").expect("add_user_script");

@@ -8,7 +8,7 @@ use windows::Win32::UI::WindowsAndMessaging::{GetWindowRect, GWL_STYLE, WA_ACTIV
 use super::*;
 use crate::platform::tests::TestWindow;
 use crate::platform::{client_size, dpi_of, set_style_of};
-use crate::{handle_counts, outer_bounds, style, WindowEvent, WindowSubclass};
+use crate::{outer_bounds, style, WindowEvent, WindowSubclass};
 
 fn serial() -> std::sync::MutexGuard<'static, ()> {
   crate::TEST_SERIAL.lock().unwrap_or_else(PoisonError::into_inner)
@@ -63,15 +63,7 @@ fn popup_menus_give_every_handle_back() {
     }
     menu
   };
-  drop(build());
-  let before = handle_counts();
-  for _ in 0..100 {
-    drop(build());
-  }
-  let after = handle_counts();
-  // `<=`: another test's thread may be exiting meanwhile, freeing objects of its own.
-  assert!(after.user_objects <= before.user_objects, "USER objects returned to the starting count: {before:?} -> {after:?}");
-  assert!(after.gdi_objects <= before.gdi_objects, "GDI objects returned to the starting count: {before:?} -> {after:?}");
+  sweetview_platform_loop::testing::assert_gives_back_every_handle(100, || drop(build()));
 }
 
 #[test]
@@ -156,20 +148,14 @@ fn a_dpi_change_applies_the_suggested_rectangle() {
 fn frame_messages_give_every_handle_back() {
   let _serial = serial();
   let window = TestWindow::new();
-  // A first round of both backdrops: the system keeps a few solid brushes of its own once one is made.
-  let first = FrameMessages::install(&window.foreign(), LIGHT).expect("frame messages");
-  first.set_backdrop(DARK).expect("backdrop");
-  drop(first);
-  let before = handle_counts();
-  for round in 0..100 {
+  // The helper's first round pays one-time costs: the system keeps a few solid brushes of its own once one is made.
+  let mut round = 0u32;
+  sweetview_platform_loop::testing::assert_gives_back_every_handle(100, || {
+    round += 1;
     let messages = FrameMessages::install(&window.foreign(), LIGHT).expect("frame messages");
     messages.set_backdrop(if round % 2 == 0 { DARK } else { LIGHT }).expect("backdrop");
     drop(messages);
-  }
-  let after = handle_counts();
-  // `<=`: another test's thread may be exiting meanwhile, freeing objects of its own.
-  assert!(after.gdi_objects <= before.gdi_objects, "GDI objects returned to the starting count: {before:?} -> {after:?}");
-  assert!(after.user_objects <= before.user_objects, "USER objects returned to the starting count: {before:?} -> {after:?}");
+  });
 }
 
 #[test]

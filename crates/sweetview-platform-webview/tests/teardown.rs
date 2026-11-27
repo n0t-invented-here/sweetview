@@ -143,10 +143,13 @@ fn teardown() {
     eprintln!("   over {lives} lives: without the extras {bare:?}, with them {first:?} and then {second:?}");
     let with_extras =
         Growth { user: first.user.min(second.user), gdi: first.gdi.min(second.gdi), handles: first.handles.min(second.handles) };
-    // Measured against the same loop without the extras, as the kernel handles are: on some
-    // machines WebView2 itself keeps a USER object across these lives, extras or not.
-    assert!(with_extras.user <= bare.user, "USER objects return to their start: {with_extras:?} against {bare:?} without the extras");
-    assert!(with_extras.gdi <= bare.gdi, "GDI objects return to their start: {with_extras:?} against {bare:?} without the extras");
+    // USER and GDI objects return to their starting value (the smaller of the two runs, for the
+    // object WebView2 or the shell makes once in the process, D20).
+    assert_eq!(with_extras.user, 0, "USER objects return to their start: {with_extras:?} ({bare:?} without the extras)");
+    assert_eq!(with_extras.gdi, 0, "GDI objects return to their start: {with_extras:?} ({bare:?} without the extras)");
+    // Kernel handles are compared with the same loop without the extras: WebView2 keeps about
+    // one per webview ever made in the process, extras or not (measured here: 6 over 5 lives
+    // without the extras, 4 or 5 with them, in each of three runs).
     assert!(
         with_extras.handles <= bare.handles,
         "the extras add no kernel handle to what a webview without them keeps: {with_extras:?} vs {bare:?}"

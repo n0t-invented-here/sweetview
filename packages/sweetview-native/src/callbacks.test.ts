@@ -20,6 +20,7 @@
 
 import { afterEach, describe, expect, test } from "bun:test";
 import { dlopen, FFIType, ptr } from "bun:ffi";
+import { untilDesktopIsOurs } from "../test/desktop";
 import { runFixture } from "../test/run-fixture";
 import { _resetActivationForTest, onOpenUrl, signalReady, singleInstance, type SecondInstanceEvent } from "./activation";
 import { binding } from "./binding";
@@ -363,7 +364,8 @@ describe.if(onWindows)("W1.3 / W1.4 the hooks' fallback: a handler that throws d
     // The throw's log and the hook disposing itself: input-hooks.test.ts. This is its fallback.
     const original = cursorNow();
     try {
-      if (buttonsDown()) return;
+      // A held button is another session's: wait for it to be let go, or fail saying why.
+      await untilDesktopIsOurs("a mouse button is held", () => !buttonsDown());
       let swallowed = 0;
       mouse = installMouseHook(() => {
         swallowed++;
@@ -550,17 +552,141 @@ describe.if(onWindows)("W1.3 / W1.4 a window's listeners", () => {
 
 // ---------------------------------------------------------------------------------------------
 
+// TabFrame.onActivate: the frame of a tabbed window (public `new Window({ tabs: true })`), reached
+// as src/win32/tab-window.ts reaches it (`TabFrame.of(handle)`, and `getTabFrame` for the tabs
+// library's own callbacks). Activation is driven by sending WM_ACTIVATE to the frame, as the OS
+// sends it, so no foreground is needed: the low word is WA_ACTIVE (1) or WA_INACTIVE (0).
+describe.if(onWindows)("W1.3 / W1.4 a tab frame's activation listener", () => {
+  const WM_ACTIVATE = 0x0006;
+  const make = (what: string) =>
+    new Window({ title: unique(what), tabs: true, noActivate: true, hideFromTaskbar: true, bounds: { x: -3000, y: -3000, width: 500, height: 300 } });
+  const activate = (hwnd: bigint, on: boolean) => user32!.SendMessageW(hwnd, WM_ACTIVATE, on ? 1n : 0n, null);
+  /** Folds consecutive repeats. */
+  const dedupe = <T>(list: T[]) => list.filter((item, i) => i === 0 || item !== list[i - 1]);
+
+  test("W1.3 an onActivate callback that throws is logged with today's message; the next callback and later activations still arrive", async () => {
+    const { getTabFrame } = await import("./win32/tab-window");
+    const win = make("activate throws");
+    const hwnd = BigInt(win.handle!);
+    const seen: string[] = [];
+    const log = captureErrors();
+    try {
+      const frame = getTabFrame(hwnd)!;
+      expect(frame).toBeDefined();
+      frame.addCallbacks({
+        onActivate(active) {
+          seen.push(`throwing ${active}`);
+          throw new Error("activate boom");
+        },
+      });
+      frame.addCallbacks({ onActivate: (active) => void seen.push(`next ${active}`) });
+      activate(hwnd, true);
+      activate(hwnd, false);
+      activate(hwnd, true);
+    } finally {
+      log.restore();
+      win.dispose();
+    }
+    // Each activation reaches the throwing callback and then the next one. The default window
+    // procedure may report a state a second time (focus moves inside it), so repeats are folded.
+    const pairs = seen.flatMap((entry, i) => (i % 2 === 0 ? [`${entry} | ${seen[i + 1]}`] : []));
+    expect(pairs.every((pair) => pair === "throwing true | next true" || pair === "throwing false | next false")).toBe(true);
+    expect(dedupe(pairs)).toEqual(["throwing true | next true", "throwing false | next false", "throwing true | next true"]);
+    expect(log.lines()).toEqual(pairs.map(() => "sweetview: a tab frame's onActivate callback threw: activate boom"));
+  });
+
+  test("W1.4 the binding's onActivate listener removes itself, and another replaces itself, from inside its own call", () => {
+    const win = make("activate removes itself");
+    const hwnd = BigInt(win.handle!);
+    const calls: string[] = [];
+    try {
+      const tab = binding().TabFrame.of(hwnd)!;
+      expect(tab).not.toBeNull();
+      // Removes itself on its first call.
+      tab.onActivate((active) => {
+        calls.push(`once ${active}`);
+        tab.onActivate(null);
+      });
+      activate(hwnd, true);
+      activate(hwnd, false);
+      expect(calls).toEqual(["once true"]);
+      // Replaces itself; the replacement is called instead from the next call on (the default
+      // procedure may report the same state again, which the replacement then gets first).
+      tab.onActivate((active) => {
+        calls.push(`A ${active}`);
+        tab.onActivate((again) => void calls.push(`B ${again}`));
+      });
+      activate(hwnd, true);
+      activate(hwnd, false);
+      activate(hwnd, true);
+      expect(calls.slice(0, 2)).toEqual(["once true", "A true"]);
+      expect(calls.filter((c) => c.startsWith("A"))).toEqual(["A true"]);
+      const replacement = dedupe(calls.slice(2));
+      expect(replacement.every((c) => c.startsWith("B "))).toBe(true);
+      expect(replacement.slice(-2)).toEqual(["B false", "B true"]);
+      expect(tab.live).toBe(true);
+    } finally {
+      win.dispose();
+    }
+  });
+
+  test("W1.4 the tabs library's onActivate callback removes itself from inside its own call", async () => {
+    const { getTabFrame } = await import("./win32/tab-window");
+    const win = make("library callback removes itself");
+    const hwnd = BigInt(win.handle!);
+    const calls: boolean[] = [];
+    try {
+      const frame = getTabFrame(hwnd)!;
+      const remove = frame.addCallbacks({
+        onActivate(active) {
+          calls.push(active);
+          remove();
+        },
+      });
+      activate(hwnd, true);
+      activate(hwnd, false);
+      expect(calls).toEqual([true]);
+    } finally {
+      win.dispose();
+    }
+  });
+
+  test("W1.4 an onActivate listener disposes its window from inside its own call", async () => {
+    const win = make("activate disposes");
+    const hwnd = BigInt(win.handle!);
+    let calls = 0;
+    const tab = binding().TabFrame.of(hwnd)!;
+    try {
+      tab.onActivate(() => {
+        calls++;
+        win.dispose();
+      });
+      activate(hwnd, true);
+      await pumpFor(50);
+      expect(calls).toBe(1);
+      expect(isWindowDisposed(win)).toBe(true);
+      expect(isWindow(hwnd)).toBe(false);
+      expect(tab.live).toBe(false);
+      expect(binding().TabFrame.of(hwnd)).toBeNull();
+      // The window is gone: nothing is called again.
+      activate(hwnd, false);
+      expect(calls).toBe(1);
+    } finally {
+      win.dispose();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+
 describe.if(onWindows)("W1.3 / W1.4 the hit-region refiner", () => {
   const bounds = { x: 280, y: 260, width: 300, height: 200 };
   const leftHalf = [[{ x: 0, y: 0 }, { x: 150, y: 0 }, { x: 150, y: 200 }, { x: 0, y: 200 }]];
   const passing = (hwnd: bigint) => (BigInt.asUintN(32, BigInt(user32!.GetWindowLongPtrW(hwnd, GWL_EXSTYLE))) & WS_EX_TRANSPARENT) !== 0n;
 
-  /** A shown, topmost window under a cursor the test moves; skips (returns undefined) while a button is held. */
+  /** A shown, topmost window under a cursor the test moves; waits for held buttons to be let go (the poll freezes while one is), or throws why. */
   async function withRefinerWindow(what: string, body: (win: Window, hwnd: bigint, at: (x: number, y: number) => void) => Promise<void>) {
-    if (buttonsDown()) {
-      console.warn(`callbacks.test: ${what} skipped: a mouse button is held, which freezes the poll`);
-      return;
-    }
+    await untilDesktopIsOurs(`${what}: a mouse button is held, which freezes the poll`, () => !buttonsDown());
     const original = cursorNow();
     const win = new Window({ title: unique(what), frame: false, topmost: true, noActivate: true, hideFromTaskbar: true, bounds });
     try {
@@ -954,7 +1080,11 @@ describe.if(onWindows)("W1.3 the binding's backstop, straight through the bindin
       keyReachedSystem: true,
       keyboardCalls: 1,
       mouseMoved: true,
+      tabFrameLiveAfterThrow: true,
     });
+    // WA_ACTIVE then WA_INACTIVE; the default procedure may report a state twice.
+    const activations = r.tabActivations as boolean[];
+    expect(activations.filter((a, i) => i === 0 || a !== activations[i - 1])).toEqual([true, false]);
     const expected = [
       "sweetview: a deferred job threw: Error: deferred boom",
       "sweetview: a native timeout threw: Error: timeout boom",
@@ -975,14 +1105,19 @@ describe.if(onWindows)("W1.3 the binding's backstop, straight through the bindin
       "sweetview: a singleInstance onSecondInstance threw: Error: second instance boom",
       "sweetview: a keyboard hook handler threw: Error: keyboard boom",
       "sweetview: a mouse hook handler threw: Error: mouse boom",
+      "sweetview: a hit-region refiner threw: Error: refine boom",
+      "sweetview: a tab frame's activation listener threw: Error: activate boom",
     ];
+    // The refiner step needs the cursor and no held button; the fixture retried it. Never a silent pass.
+    if (r.refineSkipped) throw new Error(`not run: the raw refiner step: ${r.refineSkipped}`);
+    expect(r.refinerAsked).toBe(true);
     for (const line of expected) expect(stderr).toContain(line);
-    if (r.refineSkipped) console.warn(`callbacks.test: the raw refiner step was skipped: ${r.refineSkipped}`);
-    else expect(stderr).toContain("sweetview: a hit-region refiner threw: Error: refine boom");
     // The interval threw on each of its three runs, and the drain once.
     expect(stderr.split("interval boom").length - 1).toBe(3);
+    // The activation listener threw on every call and stayed registered.
+    expect(stderr.split("activate boom").length - 1).toBe(activations.length);
     // Every line the binding wrote is one of these.
     const lines = stderr.split(/\r?\n/).filter((line) => line.startsWith("sweetview:"));
-    for (const line of lines) expect([...expected, "sweetview: a hit-region refiner threw: Error: refine boom"]).toContain(line);
+    for (const line of lines) expect(expected).toContain(line);
   }, 60_000);
 });

@@ -61,6 +61,21 @@ pub fn settled_counts() -> ResourceCounts {
   last
 }
 
+/// The check `UNSAFE-POLICY.md` asks of every owning type, made the same way
+/// by every platform crate's tests: `round` creates and drops the type under
+/// test; it runs once to pay one-time costs, then `rounds` times measured,
+/// twice ([`smallest_growth`]), and each of the three counts (USER objects,
+/// GDI objects, kernel handles) must be back at its starting value. A count
+/// below its start also passes: the type under test can only add to a count,
+/// and another thread of the test process may end and give back its own
+/// objects meanwhile. Returns the growth for tests that print it.
+#[track_caller]
+pub fn assert_gives_back_every_handle(rounds: usize, round: impl FnMut()) -> Growth {
+  let growth = smallest_growth(rounds, round);
+  assert!(growth.within(0), "every count returns to its starting value (USER, GDI, kernel growth): {growth:?}");
+  growth
+}
+
 /// Runs `round` once to pay one-time costs, then `rounds` times measured,
 /// twice, and returns the smaller growth of each count over the two
 /// measurements. Compare the result with `<=`, never `==`.

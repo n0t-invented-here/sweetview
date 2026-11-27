@@ -173,10 +173,15 @@ user32.SendMessageW(hwnd, WM_CLOSE, 0n, 0n);
 report.windowAfterDefaultCloseThrew = user32.IsWindow(hwnd) !== 0;
 win.dispose();
 
-// The refiner: the cursor is moved into a polygon of a shown window of this process's own.
-if ([0x01, 0x02, 0x04].some((vk) => user32.GetAsyncKeyState(vk) < 0)) {
-  report.refineSkipped = "a mouse button is held, which freezes the poll";
-} else {
+// The refiner: the cursor is moved into a polygon of a shown window of this process's own. Other
+// sessions share the desktop (a held button freezes the poll; the cursor can be moved away), so
+// the step is tried up to five times; the test fails with `refineSkipped` if it never ran.
+for (let attempt = 1; attempt <= 5 && report.refinerAsked !== true; attempt++) {
+  if (attempt > 1) await pumpUntil(() => false, 250);
+  if ([0x01, 0x02, 0x04].some((vk) => user32.GetAsyncKeyState(vk) < 0)) {
+    report.refineSkipped = `a mouse button is held, which freezes the poll (${attempt} attempts)`;
+    continue;
+  }
   const original = cursorNow();
   const at = { x: 300, y: 280 };
   const shown = native.Window.create({ ...init, bounds: { ...at, width: 300, height: 200 }, topmost: true });
@@ -192,11 +197,30 @@ if ([0x01, 0x02, 0x04].some((vk) => user32.GetAsyncKeyState(vk) < 0)) {
     user32.SetCursorPos(at.x + 40, at.y + 40);
     await pumpUntil(() => asked > 0, 2000);
     report.refinerAsked = asked > 0;
-    if (asked === 0) report.refineSkipped = "the poll did not ask (another session moved the cursor?)";
+    if (asked === 0) report.refineSkipped = `the poll did not ask; another session moved the cursor (${attempt} attempts)`;
+    else delete report.refineSkipped;
   } finally {
     user32.SetCursorPos(original.x, original.y);
     shown.dispose();
   }
+}
+
+// A tab frame's activation listener: a window made with a tab strip, activated and deactivated
+// by WM_ACTIVATE sent to it, as the OS sends it.
+{
+  const WM_ACTIVATE = 0x0006;
+  const framed = native.Window.create({ ...init, frame: true, tabStripHeight: 36 });
+  const tab = native.TabFrame.of(framed.handle)!;
+  const seen: boolean[] = [];
+  tab.onActivate((active) => {
+    seen.push(active);
+    throw new Error("activate boom");
+  });
+  user32.SendMessageW(framed.handle, WM_ACTIVATE, 1n, 0n); // WA_ACTIVE
+  user32.SendMessageW(framed.handle, WM_ACTIVATE, 0n, 0n); // WA_INACTIVE
+  report.tabActivations = seen;
+  report.tabFrameLiveAfterThrow = tab.live && user32.IsWindow(framed.handle) !== 0;
+  framed.dispose();
 }
 
 // ---- the tray -----------------------------------------------------------------------------

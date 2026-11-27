@@ -65,16 +65,15 @@ mod imp {
 
   use sweetview_platform_loop::MessageWindow;
   use windows::core::HSTRING;
-  use windows::Win32::Foundation::{ERROR_ALREADY_EXISTS, HWND, LPARAM, WPARAM};
+  use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
   use windows::Win32::System::DataExchange::COPYDATASTRUCT;
-  use windows::Win32::System::Threading::CreateMutexW;
   use windows::Win32::UI::WindowsAndMessaging::{
     AllowSetForegroundWindow, FindWindowExW, GetWindowThreadProcessId, SendMessageTimeoutW, HWND_MESSAGE, SMTO_ABORTIFHUNG,
     WM_CLOSE, WM_COPYDATA,
   };
 
   use super::{is_valid_payload, mutex_name, window_title, COPYDATA_MAGIC, LOOKUPS, LOOKUP_INTERVAL_MS, SEND_TIMEOUT_MS, WINDOW_CLASS};
-  use crate::win::{last_error, OwnedHandle};
+  use crate::win::OwnedHandle;
   use crate::ShellError;
 
   /// The primary's hold on an application id. Not `Send`: its window belongs
@@ -103,12 +102,8 @@ mod imp {
     }
     let name = mutex_name(app_id);
     let wide_name = HSTRING::from(name.as_str());
-    // SAFETY: `wide_name` is a NUL-terminated wide string that outlives the call; no security
-    // attributes are passed and the mutex is not taken.
-    let created = unsafe { CreateMutexW(None, false, &wide_name) };
-    // Read before anything else can overwrite the thread's last error.
-    let existed = last_error() == ERROR_ALREADY_EXISTS.0 as i32;
-    let mutex = OwnedHandle(created.map_err(|_| ShellError(format!("sweetview: CreateMutexW({name}) failed ({})", last_error())))?);
+    let (mutex, existed) =
+      OwnedHandle::named_mutex(&wide_name).map_err(|code| ShellError(format!("sweetview: CreateMutexW({name}) failed ({code})")))?;
     let title = HSTRING::from(window_title(app_id).as_str());
     if existed {
       let handed_off = hand_off(&title, payload_json);
@@ -288,7 +283,7 @@ mod tests {
     use windows::Win32::UI::WindowsAndMessaging::{FindWindowExW, SetWindowTextW, HWND_MESSAGE};
 
     use super::super::*;
-    use crate::win::test_support::{counts, pump, pump_until};
+    use crate::win::test_support::{pump, pump_until};
 
     const ROLE: &str = "SWEETVIEW_SINGLE_INSTANCE_ROLE";
     const APP_ID: &str = "SWEETVIEW_SINGLE_INSTANCE_APP_ID";
@@ -454,18 +449,14 @@ mod tests {
     fn acquiring_and_releasing_returns_every_handle() {
       let _serial = crate::serial();
       let app_id = unique_app_id("handles");
-      drop(primary(&app_id));
-      let before = counts();
-      for round in 0..100 {
+      let mut round = 0u32;
+      sweetview_platform_loop::testing::assert_gives_back_every_handle(100, || {
+        round += 1;
         let (lock, received) = primary(&app_id);
         assert!(secondary(&app_id, &payload(&[&round.to_string()])));
         assert_eq!(received.borrow().len(), 1);
         drop(lock);
-      }
-      let after = counts();
-      // `<=`: an earlier test's thread may still be exiting, freeing its own USER objects.
-      assert!(after.0 <= before.0 && after.1 <= before.1, "USER and GDI objects returned to the starting count: {before:?} -> {after:?}");
-      assert!(after.2 <= before.2 + 2, "kernel handles returned to the starting count: {before:?} -> {after:?}");
+      });
     }
 
     /// The repository root, where `bun` resolves `@n1h/sweetview-native`.

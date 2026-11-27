@@ -31,7 +31,7 @@ use wry::WebViewExtWindows;
 
 use self::handlers::{
     AcceleratorKeyPressed, ContentLoading, MessageReceived, NavigationCompleted, NavigationStarting, Registration,
-    ResourceRequested, ScriptAdded,
+    RequestFilter, ResourceRequested, ScriptAdded,
 };
 use self::istream::StreamingIStream;
 use crate::shared::{next_request_id, Job, Responder, Shared};
@@ -76,6 +76,9 @@ struct Inner {
     navigations: RefCell<Navigations>,
     host_epoch: Cell<u64>,
     registrations: RefCell<Vec<Registration>>,
+    /// The two web-resource filters, removed when this value drops (on a failed
+    /// `register` too) or in `WebviewExtras`'s teardown.
+    filters: RefCell<Vec<RequestFilter>>,
     /// Scripts handed to `AddScriptToExecuteOnDocumentCreated` whose completion
     /// has not arrived.
     scripts_outstanding: Cell<usize>,
@@ -117,6 +120,20 @@ fn hstring(s: &str) -> HSTRING {
     HSTRING::from(s)
 }
 
+/// The colour WebView2 paints behind the page (`ICoreWebView2Controller2::DefaultBackgroundColor`),
+/// through `wry`'s safe `WebView::set_background_color`. WebView2 takes only an alpha of 0 or 255;
+/// `wry` turns any other non-zero alpha into 255, and this refuses it instead, as the C++ library
+/// did. Any other alpha, or a runtime without the interface, is [`ErrorCode::Unspecified`].
+pub fn set_background_color(webview: &wry::WebView, r: u8, g: u8, b: u8, a: u8) -> ErrorCode {
+    if a != 0 && a != 255 {
+        return ErrorCode::Unspecified;
+    }
+    match webview.set_background_color((r, g, b, a)) {
+        Ok(()) => ErrorCode::Ok,
+        Err(_) => ErrorCode::Unspecified,
+    }
+}
+
 /// Whether `key` is down, from the thread's keyboard state.
 fn key_down(key: VIRTUAL_KEY) -> bool {
     // SAFETY: `GetKeyState` takes a plain integer and reads the calling thread's
@@ -146,10 +163,11 @@ impl WebviewExtras {
             navigations: RefCell::new(Navigations::default()),
             host_epoch: Cell::new(0),
             registrations: RefCell::new(Vec::new()),
+            filters: RefCell::new(Vec::new()),
             scripts_outstanding: Cell::new(0),
             scripts_registered: RefCell::new(None),
         });
-        // On failure `inner` drops here, and with it every registration made so far.
+        // On failure `inner` drops here, and with it every registration and filter made so far.
         inner.register().map_err(|_| ErrorCode::Unspecified)?;
         Ok(Self { inner })
     }
@@ -258,22 +276,6 @@ impl WebviewExtras {
         Responder::new(self.inner.shared.clone())
     }
 
-    /// `ICoreWebView2Controller2::DefaultBackgroundColor`. WebView2 takes only
-    /// an alpha of 0 or 255; any other alpha, or a runtime without the
-    /// interface, is [`ErrorCode::Unspecified`].
-    pub fn set_background_color(&self, r: u8, g: u8, b: u8, a: u8) -> ErrorCode {
-        let Ok(controller2) = self.inner.controller.cast::<ICoreWebView2Controller2>() else {
-            return ErrorCode::Unspecified;
-        };
-        let color = COREWEBVIEW2_COLOR { R: r, G: g, B: b, A: a };
-        // SAFETY: `controller2` is a COM reference this frame holds (from `cast`) to the
-        // controller `Inner` keeps alive; the colour is passed by value.
-        match unsafe { controller2.SetDefaultBackgroundColor(color) } {
-            Ok(()) => ErrorCode::Ok,
-            Err(_) => ErrorCode::Unspecified,
-        }
-    }
-
     /// `ICoreWebView2Controller4::AllowExternalDrop`: whether content dragged
     /// from outside the app can be dropped on the page. Drags inside the page
     /// work either way. [`ErrorCode::Unspecified`] without the interface.
@@ -378,6 +380,7 @@ impl Drop for WebviewExtras {
         let _ = unsafe { inner.controller.Close() };
         drop(inner.pending.take());
         drop(inner.registrations.take());
+        drop(inner.filters.take());
         // The application's handlers may hold anything, a Responder included.
         drop(inner.request_handler.take());
         drop(inner.file_drop_handler.take());
@@ -389,30 +392,12 @@ impl Drop for WebviewExtras {
 
 impl Inner {
     fn register(self: &Rc<Self>) -> windows::core::Result<()> {
-        // Every request to either origin reaches the handler. Where the runtime
-        // has ICoreWebView2_22 the filters take every request source kind, so
-        // they also catch service workers, shared workers and cross-origin
-        // iframes; an older runtime falls back to the legacy filter.
-        let webview22 = self.webview.cast::<ICoreWebView2_22>().ok();
+        // Every request to either origin reaches the handler. Each filter is
+        // owned: if anything below fails, the filters added so far are removed
+        // as this frame unwinds its locals, with the handlers.
+        let mut filters = Vec::new();
         for origin in [WINDOWS_ASSET_ORIGIN, WINDOWS_FRAMES_ORIGIN] {
-            let filter = hstring(&format!("{origin}/*"));
-            match &webview22 {
-                Some(webview22) => {
-                    // SAFETY: `filter` is an owned HSTRING for the call; the kinds are
-                    // plain enum values.
-                    unsafe {
-                        webview22.AddWebResourceRequestedFilterWithRequestSourceKinds(
-                            &filter,
-                            COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL,
-                            COREWEBVIEW2_WEB_RESOURCE_REQUEST_SOURCE_KINDS_ALL,
-                        )
-                    }?;
-                }
-                None => {
-                    // SAFETY: `filter` is an owned HSTRING for the call.
-                    unsafe { self.webview.AddWebResourceRequestedFilter(&filter, COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL) }?;
-                }
-            }
+            filters.push(RequestFilter::add(&self.webview, &format!("{origin}/*"))?);
         }
 
         // Each handler holds the extras weakly and a strong reference for the
@@ -474,6 +459,7 @@ impl Inner {
             }),
         )?);
         *self.registrations.borrow_mut() = registrations;
+        *self.filters.borrow_mut() = filters;
 
         // The drop script is the same in every document and starts disabled.
         self.add_script(FILE_DROP_SCRIPT, None)
@@ -547,6 +533,8 @@ impl Inner {
             self.put_fail_closed_response(args);
             return;
         }
+        // `uri` was filled by `Request::Uri` just above with a NUL-terminated string WebView2
+        // allocated for us; `take_pwstr` reads it up to its NUL and frees it.
         let url = take_pwstr(uri);
 
         let has_handler = self.request_handler.borrow().is_some();
@@ -573,6 +561,8 @@ impl Inner {
         let mut method = PWSTR::null();
         // SAFETY: `method` is a local PWSTR for the call to fill; freed by `take_pwstr`.
         let method = match unsafe { request.Method(&mut method) } {
+            // Filled by `Method` on success with a NUL-terminated string allocated for us;
+            // read up to its NUL and freed.
             Ok(()) => take_pwstr(method),
             Err(_) => String::new(),
         };
@@ -621,8 +611,9 @@ impl Inner {
         headers: &str,
     ) -> windows::core::Result<ICoreWebView2WebResourceResponse> {
         // SAFETY: `self.env` is this webview's live environment; the strings are owned
-        // HSTRINGs for the call, and `body`, when present, a live IStream the caller
-        // holds a reference to until the call has taken its own.
+        // HSTRINGs for the call, and `body` is an `Option<&IStream>`, a borrowed COM
+        // reference that is alive for the whole call by its lifetime, so the call can
+        // take its own reference.
         unsafe { self.env.CreateWebResourceResponse(body, status, &hstring(reason), &hstring(headers)) }
     }
 
@@ -724,6 +715,8 @@ impl Inner {
         if unsafe { args.TryGetWebMessageAsString(&mut message) }.is_err() {
             return;
         }
+        // `message` was filled by `TryGetWebMessageAsString`, which succeeded, with a
+        // NUL-terminated string allocated for us; read up to its NUL and freed.
         if !is_file_drop_message(&take_pwstr(message)) || self.file_drop_handler.borrow().is_none() {
             return;
         }
@@ -785,6 +778,8 @@ impl Inner {
         let mut uri = PWSTR::null();
         // SAFETY: `uri` is a local PWSTR for the call to fill; freed by `take_pwstr`.
         let url = match unsafe { args.Uri(&mut uri) } {
+            // Filled by `NavigationStartingEventArgs::Uri` on success with a NUL-terminated
+            // string allocated for us; read up to its NUL and freed.
             Ok(()) => take_pwstr(uri),
             Err(_) => String::new(),
         };
@@ -838,6 +833,8 @@ impl Inner {
                 let mut source = PWSTR::null();
                 // SAFETY: `source` is a local PWSTR for the call to fill; freed by `take_pwstr`.
                 match unsafe { self.webview.Source(&mut source) } {
+                    // Filled by `Source` on success with a NUL-terminated string allocated
+                    // for us; read up to its NUL and freed.
                     Ok(()) => take_pwstr(source),
                     Err(_) => String::new(),
                 }
@@ -863,7 +860,8 @@ fn set_response(
 /// The request headers as the request handler receives them.
 fn read_request_headers_json(request: &ICoreWebView2WebResourceRequest) -> String {
     let mut headers = Vec::new();
-    // SAFETY: `request` is a COM reference the caller holds for the event being handled.
+    // SAFETY: `request` is a `&ICoreWebView2WebResourceRequest`, a borrowed COM reference
+    // alive for this whole function by its lifetime; no pointer is passed.
     let iterator = unsafe { request.Headers() }.and_then(|collection| {
         // SAFETY: `collection` is the COM reference `Headers` just returned, owned by this closure.
         unsafe { collection.GetIterator() }
@@ -879,6 +877,8 @@ fn read_request_headers_json(request: &ICoreWebView2WebResourceRequest) -> Strin
             // SAFETY: `name` and `value` are local PWSTRs for the call to fill;
             // both are freed by `take_pwstr`.
             if unsafe { iterator.GetCurrentHeader(&mut name, &mut value) }.is_ok() {
+                // Both filled by `GetCurrentHeader`, which succeeded, with NUL-terminated
+                // strings allocated for us; each is read up to its NUL and freed.
                 headers.push((take_pwstr(name), take_pwstr(value)));
             }
             // SAFETY: `has` is a local BOOL for the call to fill.
@@ -893,7 +893,8 @@ fn read_request_headers_json(request: &ICoreWebView2WebResourceRequest) -> Strin
 /// The whole request body, or `None` when the stream fails, so the handler
 /// never sees a body cut short.
 fn read_request_body(request: &ICoreWebView2WebResourceRequest) -> Option<Vec<u8>> {
-    // SAFETY: `request` is a COM reference the caller holds for the event being handled.
+    // SAFETY: `request` is a `&ICoreWebView2WebResourceRequest`, a borrowed COM reference
+    // alive for this whole function by its lifetime; no pointer is passed.
     let content = match unsafe { request.Content() } {
         Ok(content) => content,
         Err(e) if e.code().is_ok() => return Some(Vec::new()), // no body
@@ -945,6 +946,8 @@ fn read_dropped_paths(args: &ICoreWebView2WebMessageReceivedEventArgs) -> Vec<St
         if unsafe { file.Path(&mut path) }.is_err() {
             continue;
         }
+        // `path` was filled by `ICoreWebView2File::Path`, which succeeded, with a
+        // NUL-terminated string allocated for us; read up to its NUL and freed.
         let path = take_pwstr(path);
         if !path.is_empty() {
             paths.push(path);

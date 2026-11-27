@@ -3,7 +3,9 @@
 //! `sweetview-platform-loop`'s `MessageWindow`; registry keys are
 //! `windows-registry`'s `Key`, which closes itself.
 
-use windows::Win32::Foundation::{CloseHandle, HANDLE};
+use windows::core::HSTRING;
+use windows::Win32::Foundation::{CloseHandle, ERROR_ALREADY_EXISTS, HANDLE};
+use windows::Win32::System::Threading::CreateMutexW;
 use windows_registry::CURRENT_USER;
 
 use crate::ShellError;
@@ -18,13 +20,30 @@ pub(crate) fn registry_code(error: &windows::core::Error) -> u32 {
   (error.code().0 as u32) & 0xffff
 }
 
-/// A kernel handle this value owns and closes.
-pub(crate) struct OwnedHandle(pub(crate) HANDLE);
+/// A kernel handle this value owns and closes. The field is private to this
+/// module, and the only way to make one is the OS call that opens the handle
+/// ([`OwnedHandle::named_mutex`]), so no other code can wrap a handle it does not own.
+pub(crate) struct OwnedHandle(HANDLE);
+
+impl OwnedHandle {
+  /// Opens the named mutex `name` (`CreateMutexW`, not taken, default
+  /// security), creating it when no process has. Also returns whether it
+  /// existed already. The error is the Win32 error code.
+  pub(crate) fn named_mutex(name: &HSTRING) -> Result<(Self, bool), i32> {
+    // SAFETY: `name` is a NUL-terminated wide string that outlives the call; no security
+    // attributes are passed and the mutex is not taken.
+    let created = unsafe { CreateMutexW(None, false, name) };
+    // Read before anything else can overwrite the thread's last error.
+    let error = last_error();
+    let handle = created.map_err(|_| error)?;
+    Ok((Self(handle), error == ERROR_ALREADY_EXISTS.0 as i32))
+  }
+}
 
 impl Drop for OwnedHandle {
   fn drop(&mut self) {
-    // SAFETY: `self.0` was returned to this value alone by the call that opened it and is
-    // not used again.
+    // SAFETY: `self.0` was returned to this value alone by the call that opened it (the
+    // only constructor, `named_mutex`) and is not used again.
     let closed = unsafe { CloseHandle(self.0) };
     let _ = closed;
   }
@@ -61,11 +80,5 @@ pub(crate) mod test_support {
       }
       std::thread::sleep(Duration::from_millis(5));
     }
-  }
-
-  /// USER objects, GDI objects and kernel handles of this process.
-  pub(crate) fn counts() -> (u32, u32, u32) {
-    let counts = sweetview_platform_loop::resource_counts();
-    (counts.user_objects, counts.gdi_objects, counts.kernel_handles)
   }
 }
