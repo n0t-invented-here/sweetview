@@ -8,7 +8,9 @@
 #[cfg(windows)]
 mod imp {
   use windows::Win32::UI::Input::KeyboardAndMouse::GetDoubleClickTime;
-  use windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_CXSMICON};
+  use windows::Win32::UI::WindowsAndMessaging::SM_CXSMICON;
+
+  use crate::platform::metric;
 
   pub fn double_click_time_ms() -> u32 {
     // SAFETY: GetDoubleClickTime takes no arguments and only reads a user setting.
@@ -21,9 +23,7 @@ mod imp {
   }
 
   pub fn small_icon_size() -> u32 {
-    // SAFETY: GetSystemMetrics takes an index by value and only reads a system setting.
-    let size = unsafe { GetSystemMetrics(SM_CXSMICON) };
-    u32::try_from(size).ok().filter(|size| *size > 0).unwrap_or(16)
+    u32::try_from(metric(SM_CXSMICON, 16)).ok().filter(|size| *size > 0).unwrap_or(16)
   }
 }
 

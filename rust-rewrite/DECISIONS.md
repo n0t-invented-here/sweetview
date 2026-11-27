@@ -11,7 +11,7 @@ All under `crates/`, all from this repository; every dependency is from crates.i
 | `sweetview-runtime` | everything that lives on the UI thread, with no JavaScript in sight: the loop in both modes and the objects on it | so the behaviour is testable with `cargo test`, with closures where JavaScript functions will be | forbidden |
 | `sweetview-napi` | the binding: converts JavaScript values and functions and calls the runtime | the only crate that knows both N-API and the runtime; keeps N-API types out of everything else | forbidden |
 | `sweetview-platform-node` | the export table: the items that carry `#[napi]`, each forwarding to `sweetview-napi` | see D2 | generated only; none hand-written |
-| `sweetview-platform-loop` | the parts of the UI thread's loop `tao` has no API for: the window target while the loop runs, a wake and timers that arrive inside any modal loop | see D3 and D4 | yes |
+| `sweetview-platform-loop` | the parts of the UI thread's loop `tao` has no API for: the window target while the loop runs, a wake and timers that arrive inside any modal loop; and the three things every other platform crate needs of a thread's loop: a message-only window with a poster, the pump calls, the handle counts | see D3 and D4; the shared pieces live here so each exists once (D23) | yes |
 
 | `sweetview-http` | the rules of the webview's request handler that need no OS call: status and header validation, asset paths, origins, limits, the error codes | pure logic, ported with the C++ library's tests, shared by Windows now and macOS later | forbidden |
 | `sweetview-keycodes` | the tables that turn an OS key or mouse message into the values applications see | pure data and decisions for both platforms' hooks | forbidden |
@@ -50,11 +50,11 @@ Two consequences found by test:
 
 Alternative left open: `tao`'s `EventLoopProxy` for wakes and `ControlFlow::WaitUntil` for timeouts, which fails W1.8.
 
-## D4. `LoopHost` lends the loop's window target during a run, with one `unsafe` dereference
+## D4. `LoopHost` keeps a clone of the loop's window target
 
 `tao`'s `run_return` borrows the `EventLoop` mutably for the whole run and gives the window target only to its event handler. A callback that the OS delivers inside the run but outside that handler (a WebView2 handler, a signal, a tray click) still has to be able to create a window, because JavaScript can do so from any callback.
 
-Decision: `LoopHost::run` records the target `tao` passes to the handler and clears it through a drop guard when the run ends; `LoopHost::with_target` lends it. The pointer is valid exactly as long as the `run` frame is on the stack, which the type enforces without relying on callers. One `unsafe` block, in `crates/sweetview-platform-loop/src/loop_host.rs`.
+Decision: `LoopHost` takes a clone of the loop's `EventLoopWindowTarget` when the loop is handed to it and lends that through `LoopHost::with_target`, whether or not a run is in progress. `tao` 0.38's target is `Clone`, and a clone shares the loop's thread, message target and runner with the one `tao` passes to the handler. No `unsafe`. (The first form recorded the pointer `tao` passed to the handler and lent it during the run, with one `unsafe` dereference; the safety pass replaced it.)
 
 Alternative left open: route every callback through `tao`'s handler so the target is always at hand; it fails W1.8 for the reason in D3.
 
@@ -173,3 +173,17 @@ Activation comes from the existing window subclass (D8) as `WindowEvent::Activat
 - `WM_DPICHANGED` goes to `tao` first, so it records the new scale, then the rectangle the system suggests is applied. `tao` keeps its own size when the scale is unchanged and computes one from the old inner size otherwise.
 
 Alternative left open: arms for both messages in the subclass in `windows.rs` (one procedure, but every window would carry tab-frame state), or `muda`'s context menu with its event channel (an asynchronous tab menu).
+
+## D23. What the safety pass changed: two crates added, shared pieces in the loop crate
+
+A pass over every `unsafe` block, in the order `UNSAFE-POLICY.md` gives, took the workspace from 322 uses to 217 (178 in source, 39 in tests). `rust-rewrite/UNSAFE-LEDGER.md` has the reason for each that remains.
+
+- `windows-registry` 0.6.1 is added. It is Microsoft's safe registry API, from the same repository and release line as `windows` 0.62. Its `Key` closes on drop, and its create, set-string, delete-tree and get-type calls are the Win32 calls the hand-written code made, with the same access rights and the same Win32 error codes in the messages. It removed every hand-written registry use in `sweetview-platform-shell` (URL schemes) and `sweetview-platform-notify` (the toast identity key).
+- `dirs` 7.0.0 is used directly. It was already in `Cargo.lock` through `wry` and `tray-icon`. Its `config_dir` is `SHGetKnownFolderPath(FOLDERID_RoamingAppData)` with default flags, the call the C++ library made for the default WebView2 profile folder (D15).
+- `clipboard-win` 5.4.3 was read and not taken: its close impersonates the anonymous token and then reverts, which drops any impersonation the calling thread had, and its size check turns a lock failure into "no text". Both change behaviour.
+- One owning type for a message-only window (`MessageWindow`, with its `Poster` for other threads), the pump calls and the handle counts now live in `sweetview-platform-loop`, and the notifier, the single-instance window, the clipboard owner and the tests use them instead of each having its own.
+- Both window subclass procedures are safe `extern "system"` functions; `WebviewExtras::move_focus` is gone in favour of `wry`'s `WebView::focus`, which makes the same call.
+
+What was judged possible and not done, each because it changes behaviour: the clipboard on WinRT (ownership and retry differ), and the tab menu and system menu on `muda` (the choice would arrive as an event, D22).
+
+`tao` 0.38 leaves one wait thread behind for every event loop it makes (one USER object and two kernel handles). A process has one loop, so this costs nothing; the `LoopHost` handle test holds the host to no more than a bare `tao` loop for that reason.

@@ -242,7 +242,7 @@ impl Runtime {
 
   /// Lends the loop's window target, for building windows.
   pub fn with_target<R>(&self, f: impl FnOnce(&EventLoopWindowTarget<()>) -> R) -> Result<R> {
-    self.host.with_target(f).ok_or_else(|| Error::state("sweetview: the event loop is starting; no window can be made yet"))
+    Ok(self.host.with_target(f))
   }
 
   /// Adds a listener for the loop's events. Returns the token that removes it.

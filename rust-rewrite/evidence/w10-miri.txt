@@ -1,0 +1,32 @@
+W10: cargo miri test for the crates with unsafe forbidden
+
+Toolchain: nightly-x86_64-pc-windows-msvc, 1.102.0-nightly (6c709eb42 2026-11-25), component miri 0.1.0 (6c709eb428 2026-11-25),
+installed with: rustup component add --toolchain nightly-x86_64-pc-windows-msvc miri
+Run from <REPO>.
+
+$ cargo +nightly miri test -p sweetview-http
+     Running unittests src\lib.rs (target\miri\x86_64-pc-windows-msvc\debug\build\sweetview-http/...)
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+   Doc-tests: test result: ok. 0 passed; 0 failed
+exit 0
+
+$ cargo +nightly miri test -p sweetview-keycodes
+     Running unittests src\lib.rs (target\miri\x86_64-pc-windows-msvc\debug\build\sweetview-keycodes/...)
+test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+   Doc-tests: test result: ok. 0 passed; 0 failed
+exit 0
+
+$ cargo +nightly miri test -p sweetview-window-logic
+     Running unittests src\lib.rs (target\miri\x86_64-pc-windows-msvc\debug\build\sweetview-window-logic/...)
+test result: ok. 29 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+   Doc-tests: test result: ok. 0 passed; 0 failed
+exit 0
+
+No undefined behaviour reported in these crates or in what they call of their dependencies (serde_json).
+
+Crates that cannot run under Miri:
+
+sweetview-runtime: every test starts the UI thread's COM apartment, windows or the WebView2 runtime through the platform crates, which call the OS; Miri stops at the first foreign call:
+  test activation::tests::a_second_acquisition_hands_off_and_release_frees_the_id ... error: unsupported operation: can't call foreign function `CoInitializeEx` on OS `windows`
+
+sweetview-napi: it has no tests of its own (`cargo +nightly miri test -p sweetview-napi` runs 0 tests and passes); every function converts values through N-API, whose napi_* functions are provided by the host process (Bun) at load time, so none can run outside that host, under Miri or not. It is exercised by the Bun test suite.

@@ -7,7 +7,7 @@
 //! navigation in flight has its response, and the response may have to come
 //! from this thread's own JavaScript, which cannot run inside this pump.
 
-use windows::Win32::UI::WindowsAndMessaging::{DispatchMessageW, GetMessageW, TranslateMessage, MSG, WM_QUIT};
+use sweetview_platform_loop::{wait_message, Waited};
 
 /// How a pump ended.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -23,20 +23,15 @@ pub(super) enum PumpEnd {
 /// Dispatches this thread's messages while `more()` is true. Every callback
 /// the thread serves can run inside it, WebView2's and the loop's alike.
 pub(super) fn pump_while(mut more: impl FnMut() -> bool) -> PumpEnd {
-    let mut msg = MSG::default();
     while more() {
-        // SAFETY: `msg` is a local MSG for the call to fill; no window filter.
-        let got = unsafe { GetMessageW(&mut msg, None, 0, 0) };
-        if got.0 == -1 {
-            return PumpEnd::Failed;
+        match wait_message() {
+            Waited::Failed => return PumpEnd::Failed,
+            Waited::Quit => return PumpEnd::Quit,
+            Waited::Message(message) => {
+                message.translate();
+                message.dispatch();
+            }
         }
-        if got.0 == 0 || msg.message == WM_QUIT {
-            return PumpEnd::Quit;
-        }
-        // SAFETY: `msg` was filled by the GetMessageW call just above.
-        let _ = unsafe { TranslateMessage(&msg) };
-        // SAFETY: `msg` was filled by the GetMessageW call just above.
-        unsafe { DispatchMessageW(&msg) };
     }
     PumpEnd::Done
 }

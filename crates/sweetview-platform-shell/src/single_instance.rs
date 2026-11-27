@@ -60,47 +60,31 @@ pub fn is_valid_payload(payload_json: &str) -> bool {
 
 #[cfg(windows)]
 mod imp {
-  use std::cell::RefCell;
-  use std::collections::HashMap;
   use std::panic::{catch_unwind, AssertUnwindSafe};
-  use std::rc::Rc;
   use std::time::Duration;
 
+  use sweetview_platform_loop::MessageWindow;
   use windows::core::HSTRING;
-  use windows::Win32::Foundation::{ERROR_ALREADY_EXISTS, HWND, LPARAM, LRESULT, WPARAM};
+  use windows::Win32::Foundation::{ERROR_ALREADY_EXISTS, HWND, LPARAM, WPARAM};
   use windows::Win32::System::DataExchange::COPYDATASTRUCT;
   use windows::Win32::System::Threading::CreateMutexW;
   use windows::Win32::UI::WindowsAndMessaging::{
-    AllowSetForegroundWindow, DefWindowProcW, FindWindowExW, GetWindowThreadProcessId, SendMessageTimeoutW, HWND_MESSAGE,
-    SMTO_ABORTIFHUNG, WM_CLOSE, WM_COPYDATA,
+    AllowSetForegroundWindow, FindWindowExW, GetWindowThreadProcessId, SendMessageTimeoutW, HWND_MESSAGE, SMTO_ABORTIFHUNG,
+    WM_CLOSE, WM_COPYDATA,
   };
 
   use super::{is_valid_payload, mutex_name, window_title, COPYDATA_MAGIC, LOOKUPS, LOOKUP_INTERVAL_MS, SEND_TIMEOUT_MS, WINDOW_CLASS};
-  use crate::win::{last_error, MessageWindow, OwnedHandle};
+  use crate::win::{last_error, OwnedHandle};
   use crate::ShellError;
-
-  type Handler = Rc<dyn Fn(&str)>;
-
-  thread_local! {
-    /// The handler of each live primary window of this thread, by handle value.
-    static HANDLERS: RefCell<HashMap<isize, Handler>> = RefCell::new(HashMap::new());
-  }
 
   /// The primary's hold on an application id. Not `Send`: its window belongs
   /// to the thread that acquired it, whose message loop delivers handoffs.
-  /// Dropping it destroys the window and then releases the mutex.
+  /// Dropping it destroys the window (and with it the handler) and then
+  /// releases the mutex.
   pub struct SingleInstance {
-    window: MessageWindow,
+    _window: MessageWindow,
     /// Declared after the window so it is released after the window is gone, as today.
     _mutex: OwnedHandle,
-  }
-
-  impl Drop for SingleInstance {
-    fn drop(&mut self) {
-      // `try_with`: a lock kept in thread-local storage is dropped while the thread's
-      // storage is being torn down, when the table may already be gone.
-      let _ = HANDLERS.try_with(|handlers| handlers.borrow_mut().remove(&(self.window.hwnd().0 as isize)));
-    }
   }
 
   /// The outcome of [`acquire`].
@@ -132,9 +116,20 @@ mod imp {
       return Ok(Acquired::Secondary { handed_off });
     }
     // On failure the mutex is dropped, and so released, on the way out.
-    let window = MessageWindow::new(&HSTRING::from(WINDOW_CLASS), &title, Some(instance_procedure))?;
-    HANDLERS.with(|handlers| handlers.borrow_mut().insert(window.hwnd().0 as isize, Rc::new(on_second)));
-    Ok(Acquired::Primary(SingleInstance { window, _mutex: mutex }))
+    // The window procedure: called by the OS through `MessageWindow`, which also
+    // catches a panic; this one is caught here first so it is reported as today.
+    let procedure = move |message: u32, _wparam: usize, lparam: isize| match message {
+      WM_COPYDATA if lparam != 0 => Some(catch_unwind(AssertUnwindSafe(|| receive(LPARAM(lparam), &on_second))).unwrap_or_else(|_| {
+        eprintln!("sweetview: singleInstance WM_COPYDATA handler threw: a panic in the handler");
+        0
+      })),
+      // Only the owner tears this window down; an external WM_CLOSE is ignored.
+      WM_CLOSE => Some(0),
+      _ => None,
+    };
+    let window = MessageWindow::new(WINDOW_CLASS, &window_title(app_id), procedure)
+      .map_err(|e| ShellError(format!("sweetview: {}({WINDOW_CLASS}) failed ({})", e.call(), e.code())))?;
+    Ok(Acquired::Primary(SingleInstance { _window: window, _mutex: mutex }))
   }
 
   /// Looks for the primary's window and sends it the payload once found.
@@ -189,43 +184,24 @@ mod imp {
   }
 
   /// Reads a handoff. Answers 1 for a valid payload, 0 otherwise, as today.
-  fn receive(hwnd: HWND, lparam: LPARAM) -> LRESULT {
+  /// The handler may drop the lock whose window this runs in.
+  fn receive(lparam: LPARAM, on_second: &dyn Fn(&str)) -> isize {
     // SAFETY: for WM_COPYDATA the OS passes in lParam a COPYDATASTRUCT, copied into this
     // process, that stays valid until this window procedure returns; `lparam` was checked
     // to be non-null by the caller, and the struct's layout is the `windows` crate's.
     let data: &COPYDATASTRUCT = unsafe { &*(lparam.0 as *const COPYDATASTRUCT) };
     if data.dwData != COPYDATA_MAGIC || data.cbData == 0 || data.lpData.is_null() {
-      return LRESULT(0);
+      return 0;
     }
     // SAFETY: `lpData` points at `cbData` bytes the OS copied into this process for this
     // message; they stay valid and unchanged until the window procedure returns.
     let bytes = unsafe { std::slice::from_raw_parts(data.lpData.cast::<u8>(), data.cbData as usize) };
     let payload = String::from_utf8_lossy(bytes);
     if !is_valid_payload(&payload) {
-      return LRESULT(0);
+      return 0;
     }
-    // The handler is cloned out of the table first, so it may drop its own lock.
-    let handler = HANDLERS.try_with(|handlers| handlers.borrow().get(&(hwnd.0 as isize)).cloned()).ok().flatten();
-    if let Some(handler) = handler {
-      handler(&payload);
-    }
-    LRESULT(1)
-  }
-
-  /// The window procedure of the primary's window. Called by the OS; never unwinds.
-  extern "system" fn instance_procedure(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
-    if message == WM_COPYDATA && lparam.0 != 0 {
-      return catch_unwind(AssertUnwindSafe(|| receive(hwnd, lparam))).unwrap_or_else(|_| {
-        eprintln!("sweetview: singleInstance WM_COPYDATA handler threw: a panic in the handler");
-        LRESULT(0)
-      });
-    }
-    if message == WM_CLOSE {
-      // Only the owner tears this window down; an external WM_CLOSE is ignored.
-      return LRESULT(0);
-    }
-    // SAFETY: the arguments are the ones the OS passed to this window procedure for this message.
-    unsafe { DefWindowProcW(hwnd, message, wparam, lparam) }
+    on_second(&payload);
+    1
   }
 }
 

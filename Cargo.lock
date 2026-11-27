@@ -2143,6 +2143,7 @@ name = "sweetview-platform-input"
 version = "1.0.0"
 dependencies = [
  "sweetview-keycodes",
+ "sweetview-platform-loop",
  "windows",
 ]
 
@@ -2150,6 +2151,7 @@ dependencies = [
 name = "sweetview-platform-loop"
 version = "1.0.0"
 dependencies = [
+ "raw-window-handle",
  "tao",
  "windows",
 ]
@@ -2169,23 +2171,31 @@ dependencies = [
 name = "sweetview-platform-notify"
 version = "1.0.0"
 dependencies = [
+ "raw-window-handle",
+ "sweetview-platform-loop",
  "windows",
+ "windows-registry",
 ]
 
 [[package]]
 name = "sweetview-platform-shell"
 version = "1.0.0"
 dependencies = [
+ "raw-window-handle",
  "serde_json",
+ "sweetview-platform-loop",
  "windows",
+ "windows-registry",
 ]
 
 [[package]]
 name = "sweetview-platform-webview"
 version = "1.0.0"
 dependencies = [
+ "dirs",
  "serde_json",
  "sweetview-http",
+ "sweetview-platform-loop",
  "tao",
  "webview2-com",
  "windows",
@@ -2199,6 +2209,7 @@ version = "1.0.0"
 dependencies = [
  "muda",
  "raw-window-handle",
+ "sweetview-platform-loop",
  "sweetview-window-logic",
  "tao",
  "windows",
@@ -2851,6 +2862,17 @@ checksum = "6e2e40844ac143cdb44aead537bbf727de9b044e107a0f1220392177d15b0f26"
 dependencies = [
  "windows-core",
  "windows-link",
+]
+
+[[package]]
+name = "windows-registry"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "02752bf7fbdcce7f2a27a742f798510f3e5ad88dbe84871e5168e2120c3d5720"
+dependencies = [
+ "windows-link",
+ "windows-result",
+ "windows-strings",
 ]
 
 [[package]]

@@ -64,6 +64,17 @@ impl StreamingIStream {
     }
 }
 
+/// `ISequentialStream::Read` of up to `buf.len()` bytes into `buf`, with the
+/// number of bytes read written to `read`. The request body is read through
+/// here, and the tests read this crate's own stream the same way.
+pub(super) fn read_into(stream: &IStream, buf: &mut [u8], read: &mut u32) -> HRESULT {
+    // Larger buffers are read in part, as a short read is.
+    let len = u32::try_from(buf.len()).unwrap_or(u32::MAX);
+    // SAFETY: `buf` is a buffer the caller lends for the whole call and `len` is at
+    // most its length; `read` is a u32 the caller lends for the call to fill.
+    unsafe { stream.Read(buf.as_mut_ptr().cast(), len, Some(read)) }
+}
+
 impl Drop for StreamingIStream {
     fn drop(&mut self) {
         // The last COM reference is gone: nobody reads this body again.
@@ -138,10 +149,9 @@ mod tests {
     use windows::Win32::System::Com::{ISequentialStream, STATFLAG_NONAME, STREAM_SEEK_SET};
 
     fn read(stream: &IStream, buf: &mut [u8]) -> (HRESULT, u32) {
+        // Not 0, so a stream that left the count unwritten would show.
         let mut n = 99u32;
-        // SAFETY: `buf` is an owned buffer of `buf.len()` bytes for the whole call,
-        // and `n` is a local u32 for the call to fill.
-        let hr = unsafe { stream.Read(buf.as_mut_ptr().cast(), buf.len() as u32, Some(&mut n)) };
+        let hr = read_into(stream, buf, &mut n);
         (hr, n)
     }
 

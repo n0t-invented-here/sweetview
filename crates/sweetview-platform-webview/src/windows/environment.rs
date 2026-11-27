@@ -13,15 +13,13 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use sweetview_http::ErrorCode;
+use sweetview_platform_loop::ComApartment;
+use webview2_com::CreateCoreWebView2EnvironmentCompletedHandler;
 use webview2_com::Microsoft::Web::WebView2::Win32::{
-    CreateCoreWebView2EnvironmentWithOptions, GetAvailableCoreWebView2BrowserVersionString, ICoreWebView2Environment,
-    ICoreWebView2EnvironmentOptions,
+    CreateCoreWebView2EnvironmentWithOptions, ICoreWebView2Environment, ICoreWebView2EnvironmentOptions,
 };
-use webview2_com::{take_pwstr, CreateCoreWebView2EnvironmentCompletedHandler};
-use windows::core::{HRESULT, HSTRING, PCWSTR, PWSTR};
+use windows::core::{HRESULT, HSTRING, PCWSTR};
 use windows::Win32::Foundation::{ERROR_INVALID_STATE, E_POINTER};
-use windows::Win32::System::Com::{CoInitializeEx, COINIT_APARTMENTTHREADED};
-use windows::Win32::UI::Shell::{FOLDERID_RoamingAppData, SHGetKnownFolderPath, KF_FLAG_DEFAULT};
 
 use super::pump::{pump_while, PumpEnd};
 
@@ -37,23 +35,20 @@ fn invalid_state() -> HRESULT {
 /// (`CSIDL_APPDATA`) joined with the executable's file name, extension included
 /// (`%APPDATA%\bun.exe` for an application run by `bun.exe`). `None` when
 /// either cannot be read.
+///
+/// `dirs::config_dir` is `SHGetKnownFolderPath(FOLDERID_RoamingAppData)` with
+/// default flags and no token, the call the C++ makes.
 pub fn default_user_data_folder() -> Option<PathBuf> {
-    // SAFETY: a known-folder id from the `windows` crate, default flags and no
-    // token; the returned string is freed by `take_pwstr`.
-    let folder = unsafe { SHGetKnownFolderPath(&FOLDERID_RoamingAppData, KF_FLAG_DEFAULT, None) }.ok()?;
-    let folder = take_pwstr(folder);
+    let folder = dirs::config_dir()?;
     let exe = std::env::current_exe().ok()?;
     Some(Path::new(&folder).join(exe.file_name()?))
 }
 
-/// Whether a WebView2 Runtime is installed (the C++ `is_webview2_available`).
+/// Whether a WebView2 Runtime is installed (the C++ `is_webview2_available`):
+/// `wry::webview_version` is `GetAvailableCoreWebView2BrowserVersionString`
+/// with a null browser folder, as the C++ calls it.
 fn is_webview2_available() -> bool {
-    let mut version = PWSTR::null();
-    // SAFETY: a null browser folder asks for the installed runtime; `version` is a
-    // local PWSTR for the call to fill, freed by `take_pwstr`.
-    let found = unsafe { GetAvailableCoreWebView2BrowserVersionString(PCWSTR::null(), &mut version) }.is_ok();
-    let version = take_pwstr(version);
-    found && !version.is_empty()
+    wry::webview_version().is_ok_and(|version| !version.is_empty())
 }
 
 /// Creates a WebView2 environment exactly as the C++ fork's `embed()` does:
@@ -72,11 +67,13 @@ fn is_webview2_available() -> bool {
 /// waiting (it is consumed, as in the C++), [`ErrorCode::InvalidState`] when
 /// creation fails for good.
 pub fn create_environment(user_data_folder: Option<&Path>) -> Result<ICoreWebView2Environment, ErrorCode> {
-    // S_FALSE when the thread already is an STA; RPC_E_CHANGED_MODE when it is
-    // multithreaded, which WebView2 then refuses through the creation below.
-    // SAFETY: no reserved pointer is passed; the apartment stays for the thread's
-    // life, never uninitialised here, so no COM object outlives it.
-    let _ = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
+    // Entered (or counted again when the thread already is an STA) and kept for
+    // the thread's life: never left here, so no COM object outlives it. A thread
+    // that is multithreaded is refused, which WebView2 then refuses through the
+    // creation below.
+    if let Ok(apartment) = ComApartment::enter() {
+        std::mem::forget(apartment);
+    }
     if !is_webview2_available() {
         return Err(ErrorCode::MissingDependency);
     }
@@ -92,13 +89,12 @@ pub fn create_environment(user_data_folder: Option<&Path>) -> Result<ICoreWebVie
             }))
         };
         let options: Option<&ICoreWebView2EnvironmentOptions> = None;
-        let started = match &folder {
-            // SAFETY: a null browser folder, the folder as an owned HSTRING for the
-            // call, null options, and a live handler WebView2 keeps until it completes.
-            Some(folder) => unsafe { CreateCoreWebView2EnvironmentWithOptions(PCWSTR::null(), folder, options, &handler) },
-            // SAFETY: as above, with a null user data folder.
-            None => unsafe { CreateCoreWebView2EnvironmentWithOptions(PCWSTR::null(), PCWSTR::null(), options, &handler) },
-        };
+        // The folder, or null for WebView2's own default.
+        let folder_ptr = folder.as_ref().map_or(PCWSTR::null(), |folder| PCWSTR(folder.as_ptr()));
+        // SAFETY: a null browser folder; `folder_ptr` is null or points into the HSTRING
+        // above, which outlives the call; null options; and a live handler WebView2
+        // keeps its own reference to until it completes.
+        let started = unsafe { CreateCoreWebView2EnvironmentWithOptions(PCWSTR::null(), folder_ptr, options, &handler) };
         drop(handler);
         match started {
             Err(e) if e.code() == invalid_state() => return Err(ErrorCode::InvalidState),

@@ -66,16 +66,9 @@ pub enum WindowEvent {
   Destroyed,
 }
 
-/// The process's own state, for tests that check every handle is given back.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct HandleCounts {
-  /// `GetGuiResources(GR_USEROBJECTS)`: windows, icons, menus, hooks.
-  pub user_objects: u32,
-  /// `GetGuiResources(GR_GDIOBJECTS)`.
-  pub gdi_objects: u32,
-  /// `GetProcessHandleCount`: kernel handles.
-  pub kernel_handles: u32,
-}
+/// The process's own state, for tests that check every handle is given back:
+/// `sweetview-platform-loop`'s counts, read in one place for every platform crate.
+pub use sweetview_platform_loop::ResourceCounts as HandleCounts;
 
 /// Tests that count the process's handles run one at a time.
 #[cfg(test)]

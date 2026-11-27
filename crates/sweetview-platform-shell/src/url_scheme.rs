@@ -59,12 +59,11 @@ pub fn registry_values(scheme: &str, registration: &Registration) -> [(String, O
 
 #[cfg(windows)]
 mod imp {
-  use windows::core::HSTRING;
-  use windows::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_SUCCESS};
-  use windows::Win32::System::Registry::{RegDeleteTreeW, HKEY_CURRENT_USER};
+  use windows::Win32::Foundation::ERROR_FILE_NOT_FOUND;
+  use windows_registry::CURRENT_USER;
 
   use super::{registry_values, scheme_key, Registration};
-  use crate::win::set_reg_string;
+  use crate::win::{registry_code, set_reg_string};
   use crate::ShellError;
 
   pub fn register(scheme: &str, registration: &Registration) -> Result<(), ShellError> {
@@ -76,14 +75,12 @@ mod imp {
 
   pub fn unregister(scheme: &str) -> Result<(), ShellError> {
     let root = scheme_key(scheme);
-    let name = HSTRING::from(root.as_str());
-    // SAFETY: `name` is a NUL-terminated wide string that outlives the call; the predefined
-    // HKEY_CURRENT_USER needs no closing.
-    let status = unsafe { RegDeleteTreeW(HKEY_CURRENT_USER, &name) };
-    if status != ERROR_SUCCESS && status != ERROR_FILE_NOT_FOUND {
-      return Err(ShellError(format!("sweetview: RegDeleteTreeW({root}) failed ({})", status.0)));
+    match CURRENT_USER.remove_tree(&root) {
+      Err(e) if e.code() != ERROR_FILE_NOT_FOUND.to_hresult() => {
+        Err(ShellError(format!("sweetview: RegDeleteTreeW({root}) failed ({})", registry_code(&e))))
+      }
+      _ => Ok(()),
     }
-    Ok(())
   }
 }
 
@@ -148,22 +145,11 @@ mod tests {
   mod live {
     use super::super::*;
     use crate::win::test_support::counts;
-    use windows::core::{HSTRING, PCWSTR};
-    use windows::Win32::Foundation::ERROR_SUCCESS;
-    use windows::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_SZ};
+    use windows_registry::CURRENT_USER;
 
+    /// A `REG_SZ` value under `HKCU\<sub_key>`; `None` names the default value.
     fn read(sub_key: &str, value: Option<&str>) -> Option<String> {
-      let key = HSTRING::from(sub_key);
-      let value = value.map(HSTRING::from);
-      let value_ptr = value.as_ref().map_or(PCWSTR::null(), |v| PCWSTR(v.as_ptr()));
-      let mut buffer = [0u16; 2048];
-      let mut size = size_of_val(&buffer) as u32;
-      // SAFETY: `key` and `value` are NUL-terminated wide strings that outlive the call, and
-      // `buffer` and `size` are valid for it to fill, `size` being the buffer's length in bytes.
-      let status = unsafe {
-        RegGetValueW(HKEY_CURRENT_USER, &key, value_ptr, RRF_RT_REG_SZ, None, Some(buffer.as_mut_ptr().cast()), Some(&mut size))
-      };
-      (status == ERROR_SUCCESS).then(|| String::from_utf16_lossy(&buffer[..(size as usize / 2).saturating_sub(1)]))
+      CURRENT_USER.open(sub_key).ok()?.get_string(value.unwrap_or("")).ok()
     }
 
     fn unique_scheme() -> String {

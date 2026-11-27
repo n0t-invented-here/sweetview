@@ -20,15 +20,14 @@ use sweetview_window_logic::ResizeEdge;
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{CreateSolidBrush, DeleteObject, FillRect, InvalidateRect, HBRUSH, HDC};
-use windows::Win32::UI::Input::KeyboardAndMouse::ReleaseCapture;
-use windows::Win32::UI::Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass};
+use windows::Win32::UI::Shell::{RemoveWindowSubclass, SetWindowSubclass};
 use windows::Win32::UI::WindowsAndMessaging::{
-  AppendMenuW, CreatePopupMenu, DestroyMenu, EnableMenuItem, GetClientRect, GetForegroundWindow, GetSystemMenu, SendMessageW, SetForegroundWindow, SetMenuDefaultItem, TrackPopupMenu, HMENU, MENU_ITEM_FLAGS, MF_ENABLED,
+  AppendMenuW, CreatePopupMenu, DestroyMenu, EnableMenuItem, GetForegroundWindow, GetSystemMenu, SendMessageW, SetMenuDefaultItem, TrackPopupMenu, HMENU, MENU_ITEM_FLAGS, MF_ENABLED,
   MF_GRAYED, MF_SEPARATOR, MF_STRING, SC_CLOSE, SC_MAXIMIZE, SC_MINIMIZE, SC_MOVE, SC_RESTORE, SC_SIZE, TPM_RETURNCMD,
-  TPM_RIGHTBUTTON, WM_CLOSE, WM_DPICHANGED, WM_ERASEBKGND, WM_NCDESTROY, WM_NCLBUTTONDOWN, WM_SYSCOMMAND, WS_CLIPCHILDREN,
+  TPM_RIGHTBUTTON, WM_CLOSE, WM_DPICHANGED, WM_ERASEBKGND, WM_NCDESTROY, WM_SYSCOMMAND, WS_CLIPCHILDREN,
 };
 
-use crate::platform::{after_popup_menu, post_message};
+use crate::platform::{after_popup_menu, client_size, forward as forward_frame, post_message, press_frame, set_foreground};
 use crate::{dpi_scale, is_on_this_thread, is_zoomed, set_outer_bounds, ForeignWindow, NativeWindow, Point, Rect};
 
 /// The style bit a frame keeps on, so painting its background never draws
@@ -47,10 +46,7 @@ pub fn is_foreground(window: &impl NativeWindow) -> bool {
 /// loop ends (the button is released), unlike `tao`'s `drag_window`, which
 /// posts the press and returns at once.
 fn send_frame_press(hwnd: HWND, hit: u32) {
-  // SAFETY: `ReleaseCapture` has no preconditions; it fails only when nothing holds the capture.
-  let _released = unsafe { ReleaseCapture() };
-  // SAFETY: a window message with plain integer parameters to a handle named by `NativeWindow`.
-  let _result = unsafe { SendMessageW(hwnd, WM_NCLBUTTONDOWN, Some(WPARAM(hit as usize)), Some(LPARAM(0))) };
+  press_frame(hwnd, hit);
 }
 
 /// Moves the window with the mouse until the left button is released, as a press on a title bar does.
@@ -77,7 +73,7 @@ pub fn size_with_mouse(window: &impl NativeWindow, edge: ResizeEdge) {
 /// returns once the window has handled the request: its close listeners ran,
 /// or it was destroyed.
 pub fn request_close(window: &impl NativeWindow) {
-  // SAFETY: a plain message with no parameters to a handle named by `NativeWindow`.
+  // SAFETY: a message with no parameters to a handle the OS validates; a stale one makes the call fail.
   let _result = unsafe { SendMessageW(window.hwnd(), WM_CLOSE, None, None) };
 }
 
@@ -86,9 +82,7 @@ pub fn request_close(window: &impl NativeWindow) {
 /// sent a `WM_NULL` after, so the menu closes when the user clicks elsewhere
 /// and opens properly the next time (the documented pair for `TrackPopupMenu`).
 fn track(menu: HMENU, hwnd: HWND, at: Point) -> u32 {
-  // SAFETY: a window function on a handle named by `NativeWindow`. The OS may
-  // refuse the foreground to a process that does not hold it; that is not an error.
-  let _granted = unsafe { SetForegroundWindow(hwnd) };
+  set_foreground(hwnd);
   // SAFETY: `menu` is alive for the whole call (the caller owns or borrows it
   // from the window), `hwnd` is named by `NativeWindow`, and no rectangle is passed.
   let chosen = unsafe { TrackPopupMenu(menu, TPM_RIGHTBUTTON | TPM_RETURNCMD, at.x, at.y, None, hwnd, None) };
@@ -142,21 +136,19 @@ impl OwnedMenu {
   }
 
   fn append(&self, entry: &PopupEntry, command: usize) -> Result<(), String> {
-    match entry {
-      PopupEntry::Separator => {
-        // SAFETY: `self.menu` is owned by this value; a separator takes no text.
-        unsafe { AppendMenuW(self.menu, MF_SEPARATOR, 0, PCWSTR::null()) }
-      }
+    // A separator: no id and no text. An item: its id and its label, where a lone `&`
+    // (a mnemonic prefix) is doubled so it shows as itself.
+    let (flags, id, wide) = match entry {
+      PopupEntry::Separator => (MF_SEPARATOR, 0, None),
       PopupEntry::Item { label, enabled } => {
-        // A lone `&` is a mnemonic prefix: doubled, it shows as itself.
         let wide: Vec<u16> = label.replace('&', "&&").encode_utf16().chain(Some(0)).collect();
-        let flags = MF_STRING | if *enabled { MENU_ITEM_FLAGS(0) } else { MF_GRAYED };
-        // SAFETY: `self.menu` is owned by this value and `wide` is a NUL-terminated
-        // UTF-16 buffer that lives for the whole call; the menu copies the text.
-        unsafe { AppendMenuW(self.menu, flags, command, PCWSTR(wide.as_ptr())) }
+        (MF_STRING | if *enabled { MENU_ITEM_FLAGS(0) } else { MF_GRAYED }, command, Some(wide))
       }
-    }
-    .map_err(|e| format!("sweetview: AppendMenuW failed: {e}"))
+    };
+    let text = wide.as_ref().map_or(PCWSTR::null(), |wide| PCWSTR(wide.as_ptr()));
+    // SAFETY: `self.menu` is owned by this value; `text` is null for a separator or points
+    // into `wide`, a NUL-terminated UTF-16 buffer that lives for the whole call; the menu copies it.
+    unsafe { AppendMenuW(self.menu, flags, id, text) }.map_err(|e| format!("sweetview: AppendMenuW failed: {e}"))
   }
 }
 
@@ -350,29 +342,20 @@ impl Drop for FrameMessages {
 
 /// Fills the strip and the page area of `hwnd`'s client area with the backdrop.
 fn paint_backdrop(hwnd: HWND, hdc: HDC, state: &FrameState) -> bool {
-  let mut client = RECT::default();
-  // SAFETY: `client` is a RECT owned by this frame for the call to fill; the
-  // handle is the one the OS passed to the procedure.
-  if unsafe { GetClientRect(hwnd, &mut client) }.is_err() {
-    return false;
-  }
+  let Some((width, height)) = client_size(hwnd) else { return false };
+  let client = RECT { left: 0, top: 0, right: width, bottom: height };
   let scale = ForeignWindow::from_handle_value(hwnd.0 as isize).map_or(1.0, |window| dpi_scale(&window));
   let brushes = state.brushes.borrow();
   let strip = ((f64::from(brushes.strip_height) * scale).round() as i32).clamp(0, client.bottom.max(0));
   let strip_rect = RECT { bottom: strip, ..client };
   let page_rect = RECT { top: strip, ..client };
-  // SAFETY: `hdc` is the device context the OS passed with this WM_ERASEBKGND,
-  // valid for the message; the rectangle is owned by this frame and the brush
-  // by `state`, which the borrow keeps alive for the call.
-  let _filled = unsafe { FillRect(hdc, &strip_rect, brushes.strip.brush) };
-  // SAFETY: as above, for the page's rectangle and brush.
-  let _filled = unsafe { FillRect(hdc, &page_rect, brushes.page.brush) };
+  for (rect, brush) in [(&strip_rect, &brushes.strip), (&page_rect, &brushes.page)] {
+    // SAFETY: `hdc` is the device context the OS passed with this WM_ERASEBKGND, valid for
+    // the message; the rectangle is owned by this frame and the brush by `state`, which the
+    // borrow of `brushes` keeps alive for the call.
+    let _filled = unsafe { FillRect(hdc, rect, brush.brush) };
+  }
   true
-}
-
-fn forward_frame(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
-  // SAFETY: passes the message the OS gave the frame procedure on to the next procedure in the chain.
-  unsafe { DefSubclassProc(hwnd, message, wparam, lparam) }
 }
 
 /// What the frame procedure does with one message: `Some` when it is done
@@ -409,11 +392,11 @@ fn handle_frame(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> Opt
   }
 }
 
-// SAFETY: this is the subclass procedure the OS calls with the arguments of a
-// window message; it is `unsafe extern "system"` only because `SUBCLASSPROC`
-// requires that signature. It never unwinds: its body runs inside
-// `catch_unwind`, and a panic forwards the message unchanged.
-unsafe extern "system" fn frame_proc(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM, _id: usize, _data: usize) -> LRESULT {
+/// The frame procedure the OS calls with the arguments of a window message. A
+/// safe `extern "system"` function, which `SUBCLASSPROC`'s `unsafe` function
+/// pointer type accepts. It never unwinds: its body runs inside `catch_unwind`,
+/// and a panic forwards the message unchanged.
+extern "system" fn frame_proc(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM, _id: usize, _data: usize) -> LRESULT {
   let handled = catch_unwind(AssertUnwindSafe(|| handle_frame(hwnd, message, wparam, lparam))).unwrap_or(None);
   match handled {
     Some(result) => result,
