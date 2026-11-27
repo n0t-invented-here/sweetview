@@ -17,7 +17,7 @@ use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::{
   CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, KillTimer, PeekMessageW, PostMessageW,
-  RegisterClassExW, SetTimer, TranslateMessage, HWND_MESSAGE, MSG, PM_REMOVE, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP,
+  RegisterClassExW, SetTimer, TranslateMessage, HWND_MESSAGE, MSG, PM_NOREMOVE, PM_QS_INPUT, PM_QS_POSTMESSAGE, PM_QS_SENDMESSAGE, PM_REMOVE, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP,
   WM_QUIT, WM_TIMER, WNDCLASSEXW,
 };
 
@@ -226,6 +226,17 @@ pub fn discard_quit() -> bool {
     unsafe { DispatchMessageW(&message) };
   }
   false
+}
+
+/// True when a message is waiting in this thread's queue: one posted (a
+/// wake, a due timer, an application's own), input, or one sent from another
+/// thread. Paint requests, which a window keeps until it is drawn, do not
+/// count. Nothing is removed.
+pub fn messages_waiting() -> bool {
+  let mut message = MSG::default();
+  let filter = PM_NOREMOVE | PM_QS_POSTMESSAGE | PM_QS_INPUT | PM_QS_SENDMESSAGE;
+  // SAFETY: `message` is a valid MSG owned by this frame for the call to fill; nothing is removed.
+  unsafe { PeekMessageW(&mut message, None, 0, 0, filter) }.as_bool()
 }
 
 /// Sets this thread's quit request, as `PostQuitMessage(0)` does. For tests

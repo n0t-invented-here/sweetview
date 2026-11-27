@@ -18,7 +18,7 @@ use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
 use std::sync::{Mutex, PoisonError};
 
-use sweetview_platform_loop::{LoopHost, Signal, SignalWindow, TimerId, Waker};
+use sweetview_platform_loop::{ComApartment, LoopHost, Signal, SignalWindow, TimerId, Waker};
 use tao::event::Event;
 use tao::event_loop::{ControlFlow, EventLoop, EventLoopBuilder, EventLoopProxy, EventLoopWindowTarget};
 
@@ -34,6 +34,9 @@ const DEFERRED_TOKEN: u64 = 0;
 
 /// The exit code a pump ends its run with, told apart from the 0 of a `WM_QUIT`.
 const PUMP_DONE: i32 = 0x5357;
+
+/// The most rounds of `tao`'s loop one pump takes before it returns.
+const PUMP_ROUNDS: u32 = 256;
 
 /// The waker of the process's runtime, for [`wake`] on any thread.
 static WAKER: Mutex<Option<Waker>> = Mutex::new(None);
@@ -76,6 +79,8 @@ pub struct Runtime {
   drains: RefCell<HashMap<u64, Rc<dyn Fn()>>>,
   listeners: RefCell<Vec<(u64, EventListener)>>,
   next_listener: Cell<u64>,
+  /// Declared last so it is dropped last: the apartment is left after the loop and its windows.
+  _com: Option<ComApartment>,
 }
 
 impl Runtime {
@@ -97,6 +102,16 @@ impl Runtime {
   }
 
   fn new() -> Result<Self> {
+    // The single-threaded apartment WebView2 needs, entered before any window
+    // exists. A thread already in the multi-threaded one still gets a loop;
+    // what needs the STA reports that when it is made.
+    let com = match ComApartment::enter() {
+      Ok(com) => Some(com),
+      Err(error) => {
+        eprintln!("{error}");
+        None
+      }
+    };
     let event_loop = build_event_loop();
     let proxy = event_loop.create_proxy();
     let signals = SignalWindow::new(|signal| {
@@ -118,6 +133,7 @@ impl Runtime {
       drains: RefCell::new(HashMap::new()),
       listeners: RefCell::new(Vec::new()),
       next_listener: Cell::new(1),
+      _com: com,
     })
   }
 
@@ -177,11 +193,19 @@ impl Runtime {
   /// the pump: the caller should stop pumping, as `pumpEvents` has always
   /// reported. True otherwise.
   pub fn pump(&self) -> bool {
+    // `tao` clears its events after each message it takes in this mode, so a
+    // pump goes round until nothing posted is waiting, as `pumpEvents` always
+    // dispatched everything that was. Bounded, so a timer that is always due
+    // cannot hold the caller here.
+    let rounds = Cell::new(0u32);
     let ran = self.host.run(|event, target, control_flow| {
       *control_flow = ControlFlow::Poll;
       self.dispatch(&event, target);
       if matches!(event, Event::MainEventsCleared) {
-        *control_flow = ControlFlow::ExitWithCode(PUMP_DONE);
+        rounds.set(rounds.get() + 1);
+        if rounds.get() >= PUMP_ROUNDS || !sweetview_platform_loop::messages_waiting() {
+          *control_flow = ControlFlow::ExitWithCode(PUMP_DONE);
+        }
       }
     });
     let Ok(code) = ran else { return true };
@@ -372,6 +396,20 @@ mod tests {
   use super::testing::on_ui_thread;
   use super::*;
   use std::time::{Duration, Instant};
+
+  #[test]
+  fn one_pump_dispatches_everything_that_was_waiting() {
+    on_ui_thread(|runtime| {
+      let drained = Rc::new(Cell::new(0u32));
+      let count = drained.clone();
+      runtime.set_drain(9, Some(Rc::new(move || count.set(count.get() + 1))));
+      for _ in 0..5 {
+        assert!(wake(9));
+      }
+      assert!(runtime.pump());
+      assert_eq!(drained.get(), 5);
+    });
+  }
 
   #[test]
   fn a_quit_request_ends_a_pump_and_can_be_taken_back() {
