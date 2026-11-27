@@ -484,6 +484,14 @@ pub fn messages_waiting() -> bool {
   peek(None, 0, 0, PM_NOREMOVE | PM_QS_POSTMESSAGE | PM_QS_INPUT | PM_QS_SENDMESSAGE).is_some()
 }
 
+/// Looks at this thread's queue without removing anything, with no filter, as the message waits
+/// inside COM calls do. For tests of code that must survive what that does: when the next
+/// message is a repaint request for a window with no update region, the OS drops the request.
+#[doc(hidden)]
+pub fn peek_without_removing_for_tests() -> bool {
+  peek(None, 0, 0, PM_NOREMOVE).is_some()
+}
+
 /// Sets this thread's quit request, as `PostQuitMessage(0)` does. For tests
 /// of code that must survive one.
 #[doc(hidden)]

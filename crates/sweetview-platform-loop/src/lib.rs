@@ -31,7 +31,9 @@ mod platform;
 
 pub use com::{ComApartment, ComError};
 pub use loop_host::{AlreadyRunning, LoopHost};
-pub use platform::{discard_quit, dispatch_waiting, messages_waiting, post_quit_for_tests, resource_counts, SignalWindow, Waker};
+pub use platform::{
+  discard_quit, dispatch_waiting, messages_waiting, peek_without_removing_for_tests, post_quit_for_tests, resource_counts, SignalWindow, Waker,
+};
 #[cfg(windows)]
 pub use platform::{next_message, wait_message, MessageWindow, Poster, QueuedMessage, Waited, WindowError};
 

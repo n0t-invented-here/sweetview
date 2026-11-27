@@ -51,6 +51,11 @@ pub fn discard_quit() -> bool {
 #[doc(hidden)]
 pub fn post_quit_for_tests() {}
 
+#[doc(hidden)]
+pub fn peek_without_removing_for_tests() -> bool {
+  false
+}
+
 /// See the Windows implementation for the contract.
 pub fn messages_waiting() -> bool {
   false

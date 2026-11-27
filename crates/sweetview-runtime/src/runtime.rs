@@ -37,6 +37,8 @@ const PUMP_DONE: i32 = 0x5357;
 
 /// The most rounds of `tao`'s loop one pump takes before it returns.
 const PUMP_ROUNDS: u32 = 256;
+/// How often, while a pump is still running, the guard gives `tao` another message.
+const PUMP_GUARD_MS: u32 = 15;
 
 /// The waker of the process's runtime, for [`wake`] on any thread.
 static WAKER: Mutex<Option<Waker>> = Mutex::new(None);
@@ -77,6 +79,8 @@ pub struct Runtime {
   /// reports it and the next blocking run ends at once, as a quit message
   /// waiting in the thread's queue did.
   quit_pending: Cell<bool>,
+  /// The native timer that keeps a pump from waiting for good; set only while one runs.
+  pump_guard: Cell<Option<TimerId>>,
   deferred: RefCell<VecDeque<Box<dyn FnOnce()>>>,
   timers: RefCell<HashMap<u32, Timer>>,
   next_timer: Cell<u32>,
@@ -132,6 +136,7 @@ impl Runtime {
       exit_requested: Cell::new(false),
       blocking: Cell::new(false),
       quit_pending: Cell::new(false),
+      pump_guard: Cell::new(None),
       deferred: RefCell::new(VecDeque::new()),
       timers: RefCell::new(HashMap::new()),
       next_timer: Cell::new(1),
@@ -209,6 +214,16 @@ impl Runtime {
     // dispatched everything that was. Bounded, so a timer that is always due
     // cannot hold the caller here.
     let rounds = Cell::new(0u32);
+    // A pump must never wait. `tao` starts a run by waiting for a message, and in this mode it
+    // keeps one coming for itself: a repaint request on its own hidden window, renewed after each
+    // message it handles. That request can be lost: any `PeekMessageW` that looks without
+    // removing takes a window with no update region out of the repaint queue (`tao` works around
+    // its own such calls), and the message waits inside COM calls into WebView2 look that way.
+    // Seen with a tabbed window just shown and in front: the pump waited for good, and Bun's
+    // loop with it. So each pump posts `tao` a message of its own first, and a native timer
+    // posts another while the pump is still running; each makes `tao` renew its request.
+    let _ = self.proxy.send_event(());
+    self.pump_guard.set(self.signals.set_timer(PUMP_GUARD_MS).ok());
     let ran = self.host.run(|event, target, control_flow| {
       *control_flow = ControlFlow::Poll;
       self.dispatch(&event, target);
@@ -219,6 +234,9 @@ impl Runtime {
         }
       }
     });
+    if let Some(guard) = self.pump_guard.take() {
+      self.signals.cancel_timer(guard);
+    }
     let Ok(code) = ran else { return true };
     // A pumped loop always has its own repaint request queued, which the OS
     // serves before any timer; the timers are taken explicitly.
@@ -353,6 +371,10 @@ impl Runtime {
           drain();
         }
       }
+      Signal::Timer(native) if self.pump_guard.get() == Some(native) => {
+        // The pump in progress is still inside `tao`'s wait: give it another message.
+        let _ = self.proxy.send_event(());
+      }
       Signal::Timer(native) => self.on_timer(native),
     }
   }
@@ -446,6 +468,57 @@ mod tests {
         .expect("timeout");
       runtime.run_blocking().expect("blocking run");
       assert!(taken.get());
+    });
+  }
+
+  /// `tao` keeps its poll mode going with a repaint request on a hidden window of its own, and a
+  /// look at the queue that removes nothing (the message wait inside a COM call does one) makes
+  /// the OS drop that request. A pump must return all the same: without the wake and the guard
+  /// timer in `pump`, it waits for a message that never comes.
+  #[test]
+  fn a_pump_returns_though_a_handler_looked_at_the_queue_without_removing_anything() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{mpsc, Arc};
+    on_ui_thread(|runtime| {
+      let (finished, wait) = mpsc::channel::<()>();
+      let rescued = Arc::new(AtomicBool::new(false));
+      let flag = rescued.clone();
+      // A pump that waits cannot fail by itself: this thread gives it messages until it returns,
+      // so the test fails with a sentence instead of hanging.
+      let watchdog = std::thread::spawn(move || {
+        if wait.recv_timeout(Duration::from_secs(20)).is_ok() {
+          return;
+        }
+        flag.store(true, Ordering::SeqCst);
+        let limit = Instant::now() + Duration::from_secs(30);
+        while wait.recv_timeout(Duration::from_millis(50)).is_err() {
+          wake(78);
+          if Instant::now() > limit {
+            eprintln!("a pump is still waiting for a message after every rescue");
+            std::process::abort();
+          }
+        }
+      });
+      let looks = Rc::new(Cell::new(0u32));
+      let count = looks.clone();
+      runtime.set_drain(
+        77,
+        Some(Rc::new(move || {
+          sweetview_platform_loop::peek_without_removing_for_tests();
+          count.set(count.get() + 1);
+        })),
+      );
+      for _ in 0..300 {
+        assert!(wake(77));
+        assert!(runtime.pump());
+        sweetview_platform_loop::peek_without_removing_for_tests();
+        assert!(runtime.pump());
+      }
+      finished.send(()).expect("the watchdog is waiting");
+      watchdog.join().expect("watchdog");
+      runtime.set_drain(77, None);
+      assert_eq!(looks.get(), 300);
+      assert!(!rescued.load(Ordering::SeqCst), "a pump waited for a message instead of returning");
     });
   }
 
