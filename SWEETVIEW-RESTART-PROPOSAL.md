@@ -1,6 +1,6 @@
 # Sweetview restart proposal
 
-Status: proposal, awaiting decisions D, E and F at the end.
+Status: proposal. The three decisions it rests on are made and listed under Decisions.
 
 Basis, read on 2026-11-27:
 
@@ -146,7 +146,7 @@ The port goes one module at a time. After each step the tree works, with ported 
 | Risk | Action |
 |---|---|
 | A ported module behaves differently from its TypeScript original | Each module is ported against its existing tests and demo before the TypeScript version is deleted. Both versions exist side by side until the tests pass on the Rust one. |
-| The C++ webview library stays C++: upstream plus 8,646 lines of this project's additions | CI builds it with AddressSanitizer and runs the fork's own unit and functional tests under it on macOS and Linux. Decision D settles whether it is ported later. |
+| The C++ webview library stays C++: upstream plus 8,646 lines of this project's additions | CI builds it with AddressSanitizer and runs the fork's own unit and functional tests under it on macOS and Linux. |
 | A JavaScript callback must run on the UI thread while that thread is inside the blocking loop, which `bun:ffi` does today with `JSCallback` | Step 1 proves the N-API equivalent with the `web-app` demo before any module is ported: a page call answered by a `uiMethods` function while `run()` blocks. |
 | `unsafe` blocks spread through the Rust code | `#![forbid(unsafe_code)]` on every module outside the two platform folders. CI fails when the count of `unsafe` blocks rises without a matching entry in a tracked list. |
 | The OS event loop and Bun's loop interact differently through N-API than through `bun:ffi` | Step 1 ends with the `web-app` demo running, which exercises the blocking loop with a worker. Step 3 ends with `menubar-only` running, which exercises the timer-pumped loop with no window. |
@@ -165,13 +165,13 @@ The port goes one module at a time. After each step the tree works, with ported 
 | Tauri 2 directly | app developers must write Rust and use Tauri's tooling |
 | Keep the TypeScript FFI | the defect classes in "What the port fixes" stay possible in every native call |
 
-## Open decisions
+## Decisions
 
-D. Should the webview library also be ported from C++ to Rust later, or stay C++ permanently? It works today. It is upstream `webview/webview` plus 8,646 lines of this project's additions on `v1-drafting`. Porting it means rewriting both the WebView2 and WKWebView hosting that upstream provides and those additions.
-
-F. Which webview library branch does the port link: `sweetview` (2.7.0, published: background colour, assets, input hooks, permissions) or `v1-drafting` (2.8.0, unpublished: adds the request handler, streaming, external drop control, file drop paths and the teardown hardening)?
-
-E. Which branch is the source of the port? `main` has 2,779 lines of native code plus the native-tabs demo. `v1-drafting` has 6,916 lines and adds URL schemes, single instance, clipboard, WinRT toasts, screen info, the request handler and file drop. Recommended: port `main`, then bring `v1-drafting` features across one at a time, each reviewed as it is ported.
+| Decision | Choice | Reason |
+|---|---|---|
+| Language of the webview library | It stays C++ | It works, the fork carries 1,687 lines of its own tests, and upstream maintains the WebView2 and WKWebView hosting. Rewriting it means rewriting upstream's hosting and 8,646 lines of additions |
+| Sweetview branch the port starts from | `main` | It is the published line, 2,779 lines of native code plus the native-tabs demo, and every journey already runs on it. `v1-drafting` features (URL schemes, single instance, clipboard, WinRT toasts, screen info, request handler, file drop) cross over one at a time afterwards, each reviewed as it is ported |
+| Webview library branch the port links | `sweetview`, the published 2.7.0 | It is what `main` runs on today. The 2.8.0 additions on the library's `v1-drafting` branch come across together with the Sweetview features that use them |
 
 ## Sources
 
