@@ -92,7 +92,7 @@ All pure TypeScript, no FFI:
 
 ## Risks
 
-- `webviewjs/webview` is unverified under Bun in practice. Its docs were read; it was not run. Step 1 settles this before the fork is committed to.
+- `webviewjs/webview` states that it works with Bun (package README: "It works with Node.js, Bun, and Deno"), and its own repo is developed with Bun. This project has read its docs and has not run it. Step 1 settles that before the fork is committed to.
 - Upstream has one maintainer and open bugs in basics (file inputs on macOS, tray events without a window). Owning the fork removes the dependency.
 - Hit-region click-through is new native code in OS hit-testing, the one place unsafe Rust is unavoidable.
 - macOS shows no notifications from an unsigned bundle. That is an OS rule and stays.
