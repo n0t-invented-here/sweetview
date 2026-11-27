@@ -21,23 +21,22 @@ const probe = onWindows
       GetActiveWindow: { args: [], returns: FFIType.u64 },
       WindowFromPoint: { args: [FFIType.u64], returns: FFIType.u64 },
       GetAncestor: { args: [FFIType.u64, FFIType.u32], returns: FFIType.u64 },
-      GetGUIThreadInfo: { args: [FFIType.u32, FFIType.ptr], returns: FFIType.i32 },
       GetAsyncKeyState: { args: [FFIType.i32], returns: FFIType.i16 },
       GetKeyState: { args: [FFIType.i32], returns: FFIType.i16 },
       GetCursorPos: { args: [FFIType.ptr], returns: FFIType.i32 },
     }).symbols
   : undefined;
 
+const { inMoveSize: inMoveSizeOfThisThread } = onWindows ? await import("../../test/win32-os") : { inMoveSize: () => false };
+
 /** What the OS says about a drag in progress on this thread: read from inside the move loop when a drag test fails. */
 function dragState(): { inMoveSize: boolean; leftDown: boolean; leftDownForThisThread: boolean; cursor: { x: number; y: number } } {
-  const info = new Uint8Array(72); // GUITHREADINFO, x64: cbSize, flags, six handles, the caret rectangle
-  const view = new DataView(info.buffer);
-  view.setUint32(0, 72, true);
-  probe!.GetGUIThreadInfo(0, ptr(info)); // 0: the calling thread
   const point = new Int32Array(2);
   probe!.GetCursorPos(ptr(point));
   return {
-    inMoveSize: (view.getUint32(4, true) & 0x2) !== 0, // GUI_INMOVESIZE
+    // This thread's GUI_INMOVESIZE, read by thread id (test/win32-os.ts): GetGUIThreadInfo(0, ...)
+    // names the foreground thread, which may be another process's.
+    inMoveSize: inMoveSizeOfThisThread(),
     leftDown: probe!.GetAsyncKeyState(0x01) < 0,
     leftDownForThisThread: probe!.GetKeyState(0x01) < 0,
     cursor: { x: point[0]!, y: point[1]! },
