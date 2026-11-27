@@ -22,7 +22,9 @@ An app that grows stays on this stack. An app that wants to leave can move to Ta
 
 - One N-API addon. JavaScript never holds a pointer.
 - Built on `tao` (windows and the OS event loop) and `wry` (WebView2 on Windows, WKWebView on macOS, WebKitGTK on Linux). Both are the Tauri team's libraries and are usable without Tauri.
-- Starting point: a fork of `webviewjs/webview` (MIT), owned by this project. It already has windows, several webviews per window, tray with click events, menus, notifications, page messaging without TCP, custom protocols, and an event loop driven by a Bun timer that does not block JavaScript.
+- Starting point: a fork of `webviewjs/webview` (MIT), owned by this project.
+- It works in Bun. Its README says "It works with Node.js, Bun, and Deno", its examples run with Bun, and the project itself is developed with Bun.
+- It already has windows, several webviews per window, tray with click events, menus, notifications, page messaging without TCP, custom protocols, and an event loop driven by a Bun timer that does not block JavaScript.
 - Rust added to the fork:
   - hit-region click-through for transparent windows (regions, plus cursor tracking so the page still sees hover)
   - checkmarks, item icons and per-item updates on tray and app menus
@@ -81,7 +83,7 @@ All pure TypeScript, no FFI:
 
 ## Order of work
 
-1. Verify `webviewjs/webview` under Bun against the five journeys, including plain `bun build --compile`.
+1. Build the five journeys on `webviewjs/webview` as it is, to list exactly what the fork has to add. This includes compiling with plain `bun build --compile` in place of its own `webview build` command.
 2. Fork it and set up CI that produces the prebuilt binaries.
 3. `/tray` and `/notify`.
 4. `/webview` with the IPC port.
@@ -92,7 +94,7 @@ All pure TypeScript, no FFI:
 
 ## Risks
 
-- `webviewjs/webview` states that it works with Bun (package README: "It works with Node.js, Bun, and Deno"), and its own repo is developed with Bun. This project has read its docs and has not run it. Step 1 settles that before the fork is committed to.
+- The feature list for `webviewjs/webview` in this document comes from its docs. This project has not yet built anything on it, so gaps beyond the two named in Layer 1 may appear in step 1.
 - Upstream has one maintainer and open bugs in basics (file inputs on macOS, tray events without a window). Owning the fork removes the dependency.
 - Hit-region click-through is new native code in OS hit-testing, the one place unsafe Rust is unavoidable.
 - macOS shows no notifications from an unsigned bundle. That is an OS rule and stays.
