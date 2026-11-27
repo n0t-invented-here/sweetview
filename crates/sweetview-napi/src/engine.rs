@@ -9,6 +9,7 @@ use napi::bindgen_prelude::{BigInt, FnArgs, Function, Uint8Array};
 use napi::Env;
 use napi_derive::napi;
 use sweetview_runtime::engine::{self as runtime, Bounds, Host, SizeHint};
+use sweetview_runtime::Rect;
 
 use crate::callback::JsCallback;
 use crate::errors::OrThrow;
@@ -18,20 +19,9 @@ const INVALID_STATE: i32 = -3;
 /// `WEBVIEW_ERROR_INVALID_ARGUMENT`.
 const INVALID_ARGUMENT: i32 = -2;
 
-/// A rectangle in physical pixels.
-#[napi(object)]
-#[derive(Debug, Clone, Copy)]
-pub struct Rect {
-  pub x: i32,
-  pub y: i32,
-  pub width: u32,
-  pub height: u32,
-}
-
-impl From<Rect> for Bounds {
-  fn from(rect: Rect) -> Self {
-    Bounds { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
-  }
+/// A rectangle of the host window's client area, in physical pixels, as the engine takes it.
+fn bounds_of(rect: Rect) -> Bounds {
+  Bounds { x: rect.x, y: rect.y, width: rect.width.max(0) as u32, height: rect.height.max(0) as u32 }
 }
 
 /// A request handed to the request handler.
@@ -83,7 +73,7 @@ impl Engine {
 
   /// A child of `window`, at a rectangle of its client area.
   pub fn create_child(debug: bool, window: BigInt, bounds: Rect) -> napi::Result<Engine> {
-    let host = Host::Child(handle_value(&window), bounds.into());
+    let host = Host::Child(handle_value(&window), bounds_of(bounds));
     Ok(Engine { inner: runtime::Engine::create(debug, host).or_throw()? })
   }
 
@@ -114,7 +104,7 @@ impl Engine {
   }
 
   pub fn set_bounds(&self, bounds: Rect) {
-    self.inner.set_bounds(bounds.into());
+    self.inner.set_bounds(bounds_of(bounds));
   }
 
   pub fn set_visible(&self, visible: bool) {

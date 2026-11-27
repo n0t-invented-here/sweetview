@@ -20,15 +20,15 @@ pub fn quit_loop() -> napi::Result<()> {
 }
 
 /// Dispatches what is waiting in the OS loop and returns. Called from inside the loop it does nothing.
-/// Returns false when a quit was waiting, which it consumes.
+/// Returns false when a quit was waiting or the thread's quit request (`PostQuitMessage`) ended the pump; either is consumed.
 pub fn pump_events() -> napi::Result<bool> {
   Ok(Runtime::get().or_throw()?.pump())
 }
 
-/// Takes back a quit that is waiting, so it ends nothing.
-pub fn discard_quit() -> napi::Result<()> {
-  Runtime::get().or_throw()?.discard_quit();
-  Ok(())
+/// Takes back a quit request of this thread, dispatching what is waiting ahead of it.
+/// Returns at once when none was made and nothing waits. Returns whether one was taken back.
+pub fn discard_quit() -> napi::Result<bool> {
+  Ok(Runtime::get().or_throw()?.discard_quit())
 }
 
 /// True while `runLoop()` is on the stack.

@@ -14,51 +14,14 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use windows::core::w;
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
-use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::{
   CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, KillTimer, PeekMessageW, PostMessageW,
-  RegisterClassExW, SetTimer, HWND_MESSAGE, MSG, PM_REMOVE, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_TIMER,
-  WNDCLASSEXW,
+  RegisterClassExW, SetTimer, TranslateMessage, HWND_MESSAGE, MSG, PM_NOREMOVE, PM_QS_INPUT, PM_QS_POSTMESSAGE, PM_QS_SENDMESSAGE, PM_REMOVE, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP,
+  WM_QUIT, WM_TIMER, WNDCLASSEXW,
 };
 
 use crate::signal::{Signal, SignalError, TimerId};
-
-/// The UI thread's membership of a single-threaded COM apartment.
-///
-/// The TypeScript layer entered one before it made its first window and never
-/// left it, and applications make COM calls of their own on the UI thread
-/// through `bun:ffi` counting on that. `tao` enters one only when it creates a
-/// window, so the runtime holds this from its start.
-///
-/// Dropping it leaves the apartment, when entering it succeeded.
-pub struct ComApartment {
-  entered: bool,
-  /// The apartment belongs to the thread that entered it.
-  _not_send: PhantomData<*const ()>,
-}
-
-impl ComApartment {
-  /// Enters a single-threaded apartment on this thread. A thread that is
-  /// already in one stays in it; a thread in a multithreaded apartment is left
-  /// as it is.
-  pub fn single_threaded() -> Self {
-    // SAFETY: no reserved pointer is passed; the call only changes this thread's COM state.
-    let result = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
-    // S_OK and S_FALSE both count as entered and must be balanced; RPC_E_CHANGED_MODE must not.
-    Self { entered: result.is_ok(), _not_send: PhantomData }
-  }
-}
-
-impl Drop for ComApartment {
-  fn drop(&mut self) {
-    if self.entered {
-      // SAFETY: balances the successful CoInitializeEx made by `single_threaded` on this
-      // same thread (the type is not `Send`).
-      unsafe { CoUninitialize() };
-    }
-  }
-}
 
 /// The message a [`Waker`] posts. `wParam` carries the token.
 const WM_SWEETVIEW_WAKE: u32 = WM_APP + 0x53;
@@ -236,6 +199,54 @@ impl Drop for SignalWindow {
   }
 }
 
+/// Takes back a quit request (`PostQuitMessage`) of this thread.
+///
+/// The OS keeps a quit request as a flag and hands out `WM_QUIT` only once
+/// nothing posted is left in the queue, so the one way to remove it is to
+/// dispatch what is waiting until it comes out, and drop it. Returns at once
+/// when no quit was asked for and nothing waits. Works from inside any loop,
+/// a handler of `tao`'s own included, as a modal loop does.
+///
+/// Returns true when a quit request was taken back.
+pub fn discard_quit() -> bool {
+  // Bounded, so a handler that keeps posting cannot hold the caller here.
+  for _ in 0..10_000 {
+    let mut message = MSG::default();
+    // SAFETY: `message` is a valid MSG owned by this frame for the call to fill.
+    let found = unsafe { PeekMessageW(&mut message, None, 0, 0, PM_REMOVE) };
+    if !found.as_bool() {
+      return false;
+    }
+    if message.message == WM_QUIT {
+      return true;
+    }
+    // SAFETY: `message` was filled by the PeekMessageW call above.
+    let _translated = unsafe { TranslateMessage(&message) };
+    // SAFETY: `message` was filled by the PeekMessageW call above.
+    unsafe { DispatchMessageW(&message) };
+  }
+  false
+}
+
+/// True when a message is waiting in this thread's queue: one posted (a
+/// wake, a due timer, an application's own), input, or one sent from another
+/// thread. Paint requests, which a window keeps until it is drawn, do not
+/// count. Nothing is removed.
+pub fn messages_waiting() -> bool {
+  let mut message = MSG::default();
+  let filter = PM_NOREMOVE | PM_QS_POSTMESSAGE | PM_QS_INPUT | PM_QS_SENDMESSAGE;
+  // SAFETY: `message` is a valid MSG owned by this frame for the call to fill; nothing is removed.
+  unsafe { PeekMessageW(&mut message, None, 0, 0, filter) }.as_bool()
+}
+
+/// Sets this thread's quit request, as `PostQuitMessage(0)` does. For tests
+/// of code that must survive one.
+#[doc(hidden)]
+pub fn post_quit_for_tests() {
+  // SAFETY: `PostQuitMessage` sets the calling thread's quit flag and has no preconditions.
+  unsafe { windows::Win32::UI::WindowsAndMessaging::PostQuitMessage(0) };
+}
+
 /// The handler of the signal window `hwnd`, if it is one of this thread's.
 fn handler_of(hwnd: HWND) -> Option<Handler> {
   // `try_with`: a message can arrive while the thread's storage is being torn down.
@@ -350,24 +361,6 @@ mod tests {
   }
 
   #[test]
-  fn the_com_apartment_is_entered_once_per_holder_and_left_on_drop() {
-    let _serial = serial();
-    let first = ComApartment::single_threaded();
-    assert!(first.entered, "a fresh test thread enters the apartment");
-    // A second holder on the same thread shares the apartment and balances its own entry.
-    let second = ComApartment::single_threaded();
-    assert!(second.entered);
-    drop(second);
-    drop(first);
-    // Left completely: the thread can now choose the other model, which an entered thread cannot.
-    // SAFETY: no reserved pointer is passed; the call only changes this thread's COM state.
-    let multithreaded = unsafe { CoInitializeEx(None, windows::Win32::System::Com::COINIT_MULTITHREADED) };
-    assert!(multithreaded.is_ok());
-    // SAFETY: balances the successful CoInitializeEx just above.
-    unsafe { CoUninitialize() };
-  }
-
-  #[test]
   fn a_waker_outlives_its_window_and_then_reports_failure() {
     let _serial = serial();
     let window = SignalWindow::new(|_| {}).expect("signal window");
@@ -397,6 +390,20 @@ mod tests {
     assert_eq!(calls.get(), 1);
     assert!(slot.borrow().is_none());
     assert!(!waker.wake(8));
+  }
+
+  #[test]
+  fn a_quit_request_is_taken_back_after_what_was_posted_ahead_of_it() {
+    let _serial = serial();
+    let seen = Rc::new(Cell::new(0u32));
+    let count = seen.clone();
+    let window = SignalWindow::new(move |_| count.set(count.get() + 1)).expect("signal window");
+    assert!(window.waker().wake(5));
+    // SAFETY: `PostQuitMessage` sets this thread's quit flag and has no preconditions.
+    unsafe { windows::Win32::UI::WindowsAndMessaging::PostQuitMessage(0) };
+    assert!(discard_quit());
+    assert_eq!(seen.get(), 1, "the wake posted ahead of the quit was dispatched");
+    assert!(!discard_quit(), "nothing asked for, nothing waiting");
   }
 
   #[test]

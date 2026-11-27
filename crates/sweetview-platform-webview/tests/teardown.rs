@@ -67,13 +67,13 @@ fn teardown() {
     let view = ctx.view();
     ctx.load_index(&view);
     let responder = view.extras().responder();
-    let seen: Rc<RefCell<Vec<u64>>> = Rc::default();
+    let seen: Rc<RefCell<Vec<(u64, String)>>> = Rc::default();
     let (begun_tx, begun_rx) = mpsc::channel();
     {
         let seen = seen.clone();
         let responder = responder.clone();
         view.extras().set_request_handler(Some(Rc::new(move |req: RawRequest| {
-            seen.borrow_mut().push(req.id);
+            seen.borrow_mut().push((req.id, req.url.clone()));
             if req.url.ends_with("/open-stream") {
                 // Begun and fed, never ended: WebView2's reader blocks in Read().
                 assert_eq!(responder.begin(req.id, 200, None), ErrorCode::Ok);
@@ -86,12 +86,16 @@ fn teardown() {
     view.eval(&fetch_js("held", "/held", "{}"));
     view.eval(&fetch_js("frames-held", "http://frames.webview.localhost/held", "{ mode: 'no-cors' }"));
     view.eval(&fetch_js("open-stream", "/open-stream", "{}"));
-    let all = ctx.pump(Some(&view), Duration::from_secs(20), || seen.borrow().len() == 3);
-    assert!(all, "all three reached the handler: {:?} {:?}", seen.borrow(), view.messages.borrow());
+    // The page may also ask for /favicon.ico, which is left open as well.
+    let wanted = ["http://webview.localhost/held", "http://frames.webview.localhost/held", "http://webview.localhost/open-stream"];
+    let all = ctx.pump(Some(&view), Duration::from_secs(20), || {
+        wanted.iter().all(|url| seen.borrow().iter().any(|(_, u)| u == url))
+    });
+    assert!(all, "all three reached the handler: {:?}", seen.borrow());
     let stream_id = begun_rx.recv_timeout(Duration::from_secs(5)).unwrap();
     // Let the stream head reach WebView2, so a reader is waiting on it.
     ctx.settle(Some(&view), Duration::from_millis(500));
-    let held = seen.borrow()[0];
+    let held = seen.borrow().iter().find(|(_, u)| u.ends_with("/held")).map(|(id, _)| *id).unwrap();
 
     // A worker answering in a loop races the drop: every call returns Ok or
     // InvalidState, never anything else, and never crashes.
@@ -117,7 +121,7 @@ fn teardown() {
     let mut view = view;
     let started = Instant::now();
     drop(view.extras.take());
-    eprintln!("   extras dropped in {:?} with two requests and a stream open", started.elapsed());
+    eprintln!("   extras dropped in {:?} with requests and a stream open", started.elapsed());
     assert!(started.elapsed() < Duration::from_secs(5), "the drop never waits on WebView2's blocked reader");
     thread::sleep(Duration::from_millis(50));
     stop.store(true, Ordering::SeqCst);

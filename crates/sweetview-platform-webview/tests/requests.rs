@@ -223,7 +223,8 @@ fn request_path_on_a_real_webview() {
 
     scenario("several scripts added, then a navigation at once: every one runs");
     // `load_index` calls `load_url` straight after the last add, with no pump in
-    // between, so this fails unless `add_user_script` waits for WebView2.
+    // between: every script must be registered by the time `add_user_script`
+    // returns.
     let names = ["a", "b", "c", "d", "e"];
     let mut scripts = Vec::new();
     for name in names {

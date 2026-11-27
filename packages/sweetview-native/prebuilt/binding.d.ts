@@ -21,14 +21,6 @@ export interface RawRequest {
   body?: Uint8Array
 }
 
-/** A rectangle in physical pixels. */
-export interface Rect {
-  x: number
-  y: number
-  width: number
-  height: number
-}
-
 /**
  * One webview: `wry` on the platform's web view, plus Sweetview's request handling.
  * Numeric results are `webview_error_t` codes.
@@ -137,6 +129,66 @@ export declare class SingleInstance {
   dispose(): void
 }
 
+/** A native window: one Sweetview made, or a wrapper of any window by handle. */
+export declare class Window {
+  /** Makes a window, hidden. Show it once it is positioned and wired. */
+  static create(options: WindowInit): Window
+  /** Wraps a window by handle: one of Sweetview's own (sharing it), or an application's own window. */
+  static adopt(handle: bigint): Window
+  /** The `HWND`. */
+  get handle(): bigint
+  /** For a wrapper: the window's frame and resizability. */
+  get detected(): Detected | null
+  isVisible(): boolean
+  /** Restores a minimised window; brings any other to the front unless it is `noActivate` or topmost. */
+  show(): void
+  hide(): void
+  /** The outer frame. */
+  bounds(): Rect
+  setBounds(rect: Rect): void
+  moveTo(x: number, y: number): void
+  resize(width: number, height: number): void
+  /** The window's DPI over 96. */
+  scale(): number
+  setTitle(title: string): void
+  /** Caption and taskbar icons from `.ico` bytes; `null` for the stock icon. */
+  setIcon(ico?: Uint8Array | undefined | null): void
+  minimize(): void
+  /** A framed window maximises through the OS; a frameless one fills the work area of its screen. */
+  toggleMaximize(): void
+  isMaximized(): boolean
+  setTopmost(on: boolean): void
+  /** Hands the left button's press to the OS move loop. */
+  startDrag(): void
+  /** Resizes from `edge` ("left", "top-right", ...) until the left button is released. */
+  startResize(edge: string): void
+  /** The whole window lets clicks through, or none of it. Clears hit regions. */
+  setClickThrough(on: boolean): void
+  /**
+   * Only the packed polygons take clicks (`packRegions`); `null` restores normal hit testing.
+   * `refine(x, y, seq)` asks for the exact answer at a window-local point; reply with `answerHit`.
+   */
+  setHitRegions(packed?: Int32Array | undefined | null, refine?: ((arg0: number, arg1: number, arg2: number) => void) | undefined | null): void
+  /** The refiner's answer to the question numbered `seq`. */
+  answerHit(seq: number, solid: boolean): void
+  /** This wrapper's resize listener, with the outer bounds; `null` removes it. */
+  onResize(listener?: ((arg0: number, arg1: number, arg2: number, arg3: number) => void) | undefined | null): void
+  /** This wrapper's move listener, with the outer bounds; `null` removes it. */
+  onMove(listener?: ((arg0: number, arg1: number, arg2: number, arg3: number) => void) | undefined | null): void
+  /** This wrapper's close listener; while any wrapper has one, the window stays open on a close request. */
+  onCloseRequest(listener?: (() => void) | undefined | null): void
+  /** The owner's action for a close request no listener takes; without one the window is destroyed. */
+  onDefaultClose(action?: (() => void) | undefined | null): void
+  /** This wrapper's file-drop listener, with every path of one drop; `null` removes it. */
+  onFileDrop(listener?: ((arg: Array<string>) => void) | undefined | null): void
+  /** Saves the window's styles and outer bounds; returns the number `restoreGeometry` takes. */
+  preserveGeometry(): number
+  /** Puts back what `preserveGeometry` saved, once, and lays a mounted widget out. */
+  restoreGeometry(id: number): void
+  /** The owner destroys the window; a wrapper removes what it added. Safe to call twice. */
+  dispose(): void
+}
+
 /** Starts a streamed answer to a request of webview `handle`. Callable from any thread. */
 export declare function beginResponse(handle: number, id: bigint, status: number, headersJson?: string | undefined | null): number
 
@@ -155,20 +207,37 @@ export declare function clipboardWriteText(text: string): void
 /** Answers a request of webview `handle`. Callable from any thread. */
 export declare function completeRequest(handle: number, id: bigint, status: number, headersJson?: string | undefined | null, body?: Uint8Array | undefined | null): number
 
+/** The cursor's position on the screen. */
+export declare function cursor(): Point
+
 /** Test hook: toast event handlers alive in the process; zero once every notifier is disposed. */
 export declare function debugLiveToastHandlers(): number
 
 /** Calls `job` on a later turn of whichever loop the UI thread is in, a modal one included. */
 export declare function defer(job: () => void): void
 
-/** Takes back a quit that is waiting, so it ends nothing. */
-export declare function discardQuit(): void
+/** The chrome of a wrapped window, from its styles. */
+export interface Detected {
+  frame: boolean
+  resizable: boolean
+}
+
+/**
+ * Takes back a quit request of this thread, dispatching what is waiting ahead of it.
+ * Returns at once when none was made and nothing waits. Returns whether one was taken back.
+ */
+export declare function discardQuit(): boolean
 
 /** Ends a streamed answer. Callable from any thread. */
 export declare function endResponse(handle: number, id: bigint): number
 
 /** The permissions a feature needs, as a bit mask. An unknown feature needs none. */
 export declare function featurePermissions(feature: number): number
+
+/** One icon, as Sweetview's `Icon` type carries it. Windows uses `ico`. */
+export interface IconBytes {
+  ico?: Uint8Array
+}
 
 /** Installs the process's keyboard hook: `(event, code, raw, modifiers) => swallow`. Returns a `webview_error_t`. */
 export declare function installKeyboardHook(handler: (arg0: number, arg1: string, arg2: number, arg3: number) => boolean): number
@@ -191,6 +260,12 @@ export declare function permissionSetAutoRequest(on: boolean): void
 /** The state of one permission, as a `webview_error_t`: 0 granted, -5 missing, -1 not applicable. */
 export declare function permissionStatus(permission: number): number
 
+/** A point in screen coordinates. */
+export interface Point {
+  x: number
+  y: number
+}
+
 /**
  * After `delayMs`, from inside whichever loop the UI thread is in, calls `transform(input)` and
  * hands what native code received back to `done`: the returned string, or `null` when it threw.
@@ -199,7 +274,7 @@ export declare function probeRoundTrip(delayMs: number, input: string, transform
 
 /**
  * Dispatches what is waiting in the OS loop and returns. Called from inside the loop it does nothing.
- * Returns false when a quit was waiting, which it consumes.
+ * Returns false when a quit was waiting or the thread's quit request (`PostQuitMessage`) ended the pump; either is consumed.
  */
 export declare function pumpEvents(): boolean
 
@@ -208,6 +283,14 @@ export declare function pumpEvents(): boolean
  * `pumpEvents()` returns false, and the next `runLoop()` returns at once.
  */
 export declare function quitLoop(): void
+
+/** A rectangle in screen coordinates: physical pixels on Windows. */
+export interface Rect {
+  x: number
+  y: number
+  width: number
+  height: number
+}
 
 /** Tells the shell that program icons changed. Any thread. */
 export declare function refreshShellIcons(): void
@@ -230,17 +313,59 @@ export declare function scheduleInterval(intervalMs: number, job: () => void): n
 /** Calls `job` once, `delayMs` milliseconds from now, from inside whichever loop the UI thread is in. */
 export declare function scheduleTimeout(delayMs: number, job: () => void): number
 
+/** The monitor holding the point, else the nearest one. */
+export declare function screenAt(x: number, y: number): ScreenData
+
+/** One monitor. */
+export interface ScreenData {
+  bounds: Rect
+  workArea: Rect
+  scale: number
+  primary: boolean
+}
+
+/** The monitor a window is on: the one its outer frame overlaps most, else the nearest. */
+export declare function screenOf(handle: bigint): ScreenData
+
+/** Every monitor. */
+export declare function screens(): Array<ScreenData>
+
 /** Sets the function that `wake(token)` runs on the UI thread. `null` removes it. */
 export declare function setDrain(token: number, drain?: (() => void) | undefined | null): void
 
 /** Removes the current user's registration of `scheme`. Any thread. */
 export declare function unregisterUrlScheme(scheme: string): void
 
+/** The rectangle holding every monitor. */
+export declare function virtualScreen(): Rect
+
 /**
  * Runs the drain function registered under `token` on the UI thread.
  * Callable from any thread: this is how a `Worker` wakes the UI thread.
  */
 export declare function wake(token: number): boolean
+
+/** Everything a new window is made with. Bounds are the outer frame. */
+export interface WindowInit {
+  title: string
+  bounds?: Rect
+  minWidth?: number
+  minHeight?: number
+  frame: boolean
+  resizable: boolean
+  /** `"system"`, `"light"` or `"dark"`. */
+  appearance: string
+  icon?: IconBytes
+  transparent: boolean
+  colorKey?: string
+  opacity?: number
+  topmost: boolean
+  hideFromTaskbar: boolean
+  noActivate: boolean
+}
+
+/** How many things Sweetview keeps for the window `handle`. For tests that check nothing leaks. */
+export declare function windowTrackedCount(handle: bigint): number
 
 /** Appends body bytes to a streamed answer. Callable from any thread. */
 export declare function writeResponseChunk(handle: number, id: bigint, chunk: Uint8Array): number

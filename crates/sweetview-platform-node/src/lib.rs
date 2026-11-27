@@ -18,6 +18,9 @@ pub mod event_loop;
 pub mod input;
 pub mod notify;
 pub mod shell;
+pub mod screen;
+pub mod types;
+pub mod window;
 
 use napi_derive::napi;
 

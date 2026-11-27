@@ -215,7 +215,7 @@ impl Engine {
 
     let mount = |error: wry::Error| Error::os("the webview could not be created (is the WebView2 runtime installed?)", error);
     let foreign = |value: isize| {
-      ForeignWindow::from_handle_value(value).ok_or_else(|| Error::state("sweetview: the window handle given for the webview names no window"))
+      crate::window::mount_target(value).ok_or_else(|| Error::state("sweetview: the window handle given for the webview names no window"))
     };
     let (webview, window, window_value) = match host {
       Host::Own => {
@@ -312,7 +312,9 @@ impl Engine {
   pub fn set_title(&self, title: &str) {
     self.inner.with_live(|live| match &live.window {
       HostWindow::Own { window, .. } => window.set_title(title),
-      HostWindow::Foreign(window) => window.set_title(title),
+      HostWindow::Foreign(window) => {
+        sweetview_platform_window::set_title(window, title);
+      }
     });
   }
 
@@ -372,7 +374,7 @@ impl Engine {
 
   /// Moves the webview into another window without reloading it.
   pub fn reparent(&self, window: isize) -> Result<()> {
-    let parent = ForeignWindow::from_handle_value(window)
+    let parent = crate::window::mount_target(window)
       .ok_or_else(|| Error::state("sweetview: the window handle given to reparent names no window"))?;
     let moved = self.inner.with_live(|live| reparent(&live.webview, &parent));
     match moved {
@@ -664,7 +666,7 @@ fn window_value_of(_window: &TaoWindow) -> isize {
 #[cfg(windows)]
 fn reparent(webview: &WebView, parent: &ForeignWindow) -> std::result::Result<(), wry::Error> {
   use wry::WebViewExtWindows;
-  webview.reparent(parent.handle_value())
+  webview.reparent(sweetview_platform_window::handle_value(parent))
 }
 
 #[cfg(not(windows))]

@@ -13,7 +13,10 @@ pub mod input;
 pub mod notify;
 pub mod runtime;
 pub mod shell;
+pub mod screen;
 pub mod threads;
+pub mod window;
 
 pub use error::{Error, Result};
+pub use sweetview_window_logic::{Point, Rect, ResizeEdge};
 pub use runtime::{wake, Runtime, TimeoutId};

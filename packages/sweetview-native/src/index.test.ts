@@ -25,11 +25,20 @@ describe("public modules", () => {
       }
       return;
     }
-    // A bogus handle: no window is touched, IsWindowVisible just reports false.
-    const win = Window.fromHandle(1n);
-    expect(typeof win.show).toBe("function");
-    if (process.platform === "win32") expect(win.isVisible()).toBe(false);
-    win.dispose();
+    // Windows checks the handle names a window, so the wrapper wraps a real, hidden one.
+    const owner = new Window({ title: "index.test fromHandle" });
+    try {
+      const win = Window.fromHandle(owner.handle);
+      expect(typeof win.show).toBe("function");
+      expect(win.isVisible()).toBe(false);
+      // A wrapper does not own the window: dispose() leaves it alive.
+      win.dispose();
+      expect(Window.fromHandle(owner.handle).isVisible()).toBe(false);
+      // A handle that names no window is refused.
+      expect(() => Window.fromHandle(1n)).toThrow("sweetview: not a window: 0x1");
+    } finally {
+      owner.dispose();
+    }
   });
 
   test("pickFolder and createNotifier are plain synchronous functions", () => {

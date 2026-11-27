@@ -4,7 +4,9 @@ use napi::bindgen_prelude::{BigInt, FnArgs, Function, Uint8Array};
 use napi::Env;
 use napi_derive::napi;
 use sweetview_napi::engine as imp;
-use sweetview_napi::engine::{KeyData, RawRequest, Rect};
+use sweetview_napi::engine::{KeyData, RawRequest};
+
+use crate::types::Rect;
 
 /// One webview: `wry` on the platform's web view, plus Sweetview's request handling.
 /// Numeric results are `webview_error_t` codes.
@@ -22,7 +24,7 @@ impl Engine {
   /// A child of `window`, at a rectangle of its client area in physical pixels.
   #[napi(factory)]
   pub fn create_child(debug: bool, window: BigInt, bounds: Rect) -> napi::Result<Engine> {
-    imp::Engine::create_child(debug, window, bounds).map(Engine)
+    imp::Engine::create_child(debug, window, bounds.into()).map(Engine)
   }
 
   /// The live webview a handle names, or null.
@@ -62,7 +64,7 @@ impl Engine {
   /// Moves a child webview inside its host window.
   #[napi]
   pub fn set_bounds(&self, bounds: Rect) {
-    self.0.set_bounds(bounds)
+    self.0.set_bounds(bounds.into())
   }
 
   #[napi]

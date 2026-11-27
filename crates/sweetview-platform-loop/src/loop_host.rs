@@ -55,23 +55,25 @@ impl<T: 'static> LoopHost<T> {
     self.event_loop.try_borrow_mut().is_err()
   }
 
-  /// Runs the loop until `handler` sets `ControlFlow::Exit`.
+  /// Runs the loop until `handler` sets `ControlFlow::Exit` (or `ExitWithCode`),
+  /// or the thread's quit request ends it. Returns the exit code: the one the
+  /// handler set, or 0 when a `WM_QUIT` ended the run.
   ///
   /// A call made while a run is already on the stack returns
   /// [`AlreadyRunning`] and runs nothing.
-  pub fn run<F>(&self, mut handler: F) -> Result<(), AlreadyRunning>
+  pub fn run<F>(&self, mut handler: F) -> Result<i32, AlreadyRunning>
   where
     F: FnMut(Event<'_, T>, &EventLoopWindowTarget<T>, &mut ControlFlow),
   {
     let mut event_loop = self.event_loop.try_borrow_mut().map_err(|_| AlreadyRunning)?;
     let _guard = RunGuard(self);
-    event_loop.run_return(|event, target, control_flow| {
+    let code = event_loop.run_return(|event, target, control_flow| {
       // The same target every time; recorded on each event so it is in place
       // before the first callback that could ask for it.
       self.running.set(Some(NonNull::from(target)));
       handler(event, target, control_flow);
     });
-    Ok(())
+    Ok(code)
   }
 
   /// Lends the loop's window target, whether or not the loop is running.

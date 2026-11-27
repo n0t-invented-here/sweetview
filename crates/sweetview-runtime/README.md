@@ -10,3 +10,5 @@ It is safe Rust: `#![forbid(unsafe_code)]`. What needs an OS call no crate wraps
 |---|---|
 | `threads` | which thread is the UI thread, and the check every UI-thread entry point makes |
 | `runtime` | the loop in its blocking and pumped modes, deferred jobs, native timeouts, wakes from other threads |
+| `window` | windows made by `tao` and an application's own windows wrapped by handle: one record per native window with its subclass, listeners, hit-region poll and resize gesture; the lookup a webview mounts by |
+| `screen` | monitors, work areas, the screen at a point or of a window, the virtual screen, the cursor |

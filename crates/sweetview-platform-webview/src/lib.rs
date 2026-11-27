@@ -20,6 +20,8 @@
 #![deny(clippy::undocumented_unsafe_blocks)]
 #![deny(clippy::multiple_unsafe_ops_per_block)]
 #![deny(clippy::missing_safety_doc)]
+// The stand-in for other platforms uses only the public types.
+#![cfg_attr(not(windows), allow(dead_code))]
 
 use std::rc::Rc;
 use std::sync::Arc;

@@ -2004,6 +2004,8 @@ name = "sweetview-platform-window"
 version = "1.0.0"
 dependencies = [
  "raw-window-handle",
+ "sweetview-window-logic",
+ "tao",
  "windows",
 ]
 
@@ -2011,6 +2013,7 @@ dependencies = [
 name = "sweetview-runtime"
 version = "1.0.0"
 dependencies = [
+ "raw-window-handle",
  "serde",
  "serde_json",
  "sweetview-platform-input",
@@ -2019,9 +2022,14 @@ dependencies = [
  "sweetview-platform-shell",
  "sweetview-platform-webview",
  "sweetview-platform-window",
+ "sweetview-window-logic",
  "tao",
  "wry",
 ]
+
+[[package]]
+name = "sweetview-window-logic"
+version = "1.0.0"
 
 [[package]]
 name = "syn"
