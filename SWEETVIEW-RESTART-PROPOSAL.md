@@ -146,7 +146,8 @@ The port goes one module at a time. After each step the tree works, with ported 
 | Risk | Action |
 |---|---|
 | A ported module behaves differently from its TypeScript original | Each module is ported against its existing tests and demo before the TypeScript version is deleted. Both versions exist side by side until the tests pass on the Rust one. |
-| The C++ webview library stays C++ | The fork's diff against upstream `webview/webview` stays small and is listed in `webview/README.md`. CI builds it with AddressSanitizer and runs the webview tests under it on macOS and Linux. |
+| The C++ webview library stays C++: upstream plus 8,646 lines of this project's additions | CI builds it with AddressSanitizer and runs the fork's own unit and functional tests under it on macOS and Linux. Decision D settles whether it is ported later. |
+| A JavaScript callback must run on the UI thread while that thread is inside the blocking loop, which `bun:ffi` does today with `JSCallback` | Step 1 proves the N-API equivalent with the `web-app` demo before any module is ported: a page call answered by a `uiMethods` function while `run()` blocks. |
 | `unsafe` blocks spread through the Rust code | `#![forbid(unsafe_code)]` on every module outside the two platform folders. CI fails when the count of `unsafe` blocks rises without a matching entry in a tracked list. |
 | The OS event loop and Bun's loop interact differently through N-API than through `bun:ffi` | Step 1 ends with the `web-app` demo running, which exercises the blocking loop with a worker. Step 3 ends with `menubar-only` running, which exercises the timer-pumped loop with no window. |
 | macOS shows no notifications from an unsigned bundle | Unchanged from today: the `.app` builder signs the bundle. |
