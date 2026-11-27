@@ -53,8 +53,8 @@ Shared types every platform crate uses, all in `sweetview-platform-loop`: `Messa
 ### `crates/sweetview-platform-input/src/windows.rs` (8)
 
 - **Installing and removing a low-level hook** (3: `GetModuleHandleW`, `SetWindowsHookExW`, one `UnhookWindowsHookEx` in `OwnedHook::unhook`). Looked for: `tao` 0.38.0 `DeviceEvent` (https://docs.rs/tao/0.38.0/tao/event/enum.DeviceEvent.html) is raw input through its own handler and cannot swallow an event; no crate in the policy installs `WH_MOUSE_LL`/`WH_KEYBOARD_LL`; `SetWindowsHookExW` is `unsafe` (proposal, "API references"). Contained by `OwnedHook` (unhooked exactly once, by `remove` or `Drop`), `MouseHook`/`KeyboardHook` (not `Send`, one per process through `ProcessSlot`).
-- **The hook procedures' arguments** (3: the `MSLLHOOKSTRUCT` and `KBDLLHOOKSTRUCT` reads from `lParam`, one `CallNextHookEx` in `HookCall::pass_on`). No safe API can read the OS's `lParam`. Invariant: for `code >= 0` the OS passes a valid struct for the call, checked non-null and copied at once; `HookCall` is made only by the two procedures from their own arguments. The handler runs inside `catch_unwind`.
-- **Key state** (2: `GetAsyncKeyState`, `MapVirtualKeyW`). Looked for: `tao` `ModifiersState` exists only inside `tao`'s handler, which a hook procedure is not. Both take integers and read no memory of ours.
+- **The hook procedures' arguments** (3: the `MSLLHOOKSTRUCT` and `KBDLLHOOKSTRUCT` reads from `lParam`, one `CallNextHookEx` in `HookCall::pass_on`). Looked for: `windows` 0.62.2 passes a hook procedure its `LPARAM` as an integer and declares `CallNextHookEx` `unsafe` (https://docs.rs/windows/0.62.2/windows/Win32/UI/WindowsAndMessaging/fn.CallNextHookEx.html); `tao` 0.38.0 installs no hook (https://docs.rs/tao/0.38.0/tao/event/enum.DeviceEvent.html), so no safe API reads the OS's `lParam` or passes the event on. Invariant: for `code >= 0` the OS passes a valid struct for the call, checked non-null and copied at once; `HookCall` is made only by the two procedures from their own arguments. The handler runs inside `catch_unwind`.
+- **Key state** (2: `GetAsyncKeyState`, `MapVirtualKeyW`). Looked for: `tao` 0.38.0 `ModifiersState` (https://docs.rs/tao/0.38.0/tao/keyboard/struct.ModifiersState.html) exists only inside `tao`'s handler, which a hook procedure is not, and `tao` has no scan-code mapping; `windows` 0.62.2 declares both functions `unsafe` (https://docs.rs/windows/0.62.2/windows/Win32/UI/Input/KeyboardAndMouse/fn.GetAsyncKeyState.html, https://docs.rs/windows/0.62.2/windows/Win32/UI/Input/KeyboardAndMouse/fn.MapVirtualKeyW.html). Both take integers and read no memory of ours.
 
 ### `crates/sweetview-platform-input/tests/windows_hooks.rs` (7, test)
 
@@ -62,11 +62,13 @@ Drives the hooks with real input: `SetProcessDpiAwarenessContext` (physical pixe
 
 ## sweetview-platform-notify
 
-### `crates/sweetview-platform-notify/src/windows.rs` (9)
+### `crates/sweetview-platform-notify/src/windows.rs` (11: 9 source, 2 test)
 
-- **The balloon's icon** (4: `GetSystemMetrics`, `CreateIconFromResourceEx`, `LoadIconW`, `DestroyIcon`). Looked for: `tray-icon` 0.27.0 `Icon` (https://docs.rs/tray-icon/0.27.0/tray_icon/struct.Icon.html) and `muda` 0.22.0 `Icon` keep their `HICON` private, and `Shell_NotifyIconW` needs one. Contained by `BalloonIcon`: an icon it made is destroyed in `Drop` after the shell's icon is deleted; the stock icon is shared and never destroyed.
+- **The balloon's icon** (4: `GetSystemMetrics`, `CreateIconFromResourceEx`, `LoadIconW`, `DestroyIcon`). Looked for: `tray-icon` 0.27.0 `Icon` (https://docs.rs/tray-icon/0.27.0/tray_icon/struct.Icon.html) and `muda` 0.22.0 `Icon` keep their `HICON` private, and `Shell_NotifyIconW` needs one. Contained by `OwnedIcon` (an icon made from `.ico` bytes, destroyed in `Drop` after the shell's icon is deleted); the stock icon is `BalloonIcon::Stock`, which stores no handle (it is shared by the system and never destroyed, and `stock_icon` asks for it when a struct is built).
 - **The hidden notification-area icon** (2: `Shell_NotifyIconW` add and delete). Looked for: `tray-icon` 0.27.0 `TrayIcon` (https://docs.rs/tray-icon/0.27.0/tray_icon/struct.TrayIcon.html) has no balloon (`NIF_INFO`) call, and the fallback must not need the application's tray. Contained by `NotifyWindow`: every icon is deleted in `Drop` before its `MessageWindow` goes; `NOTIFYICONDATAW` is the `windows` crate's struct, built in the frame.
 - **WinRT on this thread** (3: `RoInitialize`, `RoUninitialize`, `CoIncrementMTAUsage`). Looked for: `windows` 0.62.2 activates WinRT types safely but has no safe initialisation. Contained by `RoInit` (not `Send`, balanced in `Drop` on the same thread) and `keep_com_loaded` (once per process, through a `OnceLock`).
+
+- Tests (2: `Shell_NotifyIconW(NIM_MODIFY)` and `Shell_NotifyIconGetRect`): read back from the shell that the fallback's icon exists and is hidden, with the same icon shown for one reading as the control. No safe API reads a notification-area icon's state.
 
 The window, its procedure and the posts from WinRT threads are `MessageWindow` and `Poster`; the AUMID key is `windows-registry` 0.6.1 (https://docs.rs/windows-registry/0.6.1/windows_registry/struct.Key.html), so none of them is here.
 

@@ -7,6 +7,7 @@
 //! Linux need nothing, and report every permission as not applicable.
 
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::OnceLock;
 
 /// A system permission a feature may need, as bits: the C API's
 /// `webview_permission_t` and the bindings' `Permission`.
@@ -102,7 +103,12 @@ pub const ERROR_INVALID_ARGUMENT: i32 = -2;
 
 /// On by default, so an application that never asks about permissions still
 /// gets the system's prompt the first time it installs a hook.
-static AUTO_REQUEST: AtomicBool = AtomicBool::new(true);
+/// A `OnceLock` holding the flag (a form of global state `UNSAFE-POLICY.md`
+/// lists): any thread may set it and any thread may install a hook.
+fn auto_request_flag() -> &'static AtomicBool {
+  static FLAG: OnceLock<AtomicBool> = OnceLock::new();
+  FLAG.get_or_init(|| AtomicBool::new(true))
+}
 
 /// The permissions a feature needs on this platform, as [`Permission`] bits;
 /// 0 when it needs none. On macOS both hooks need
@@ -138,12 +144,12 @@ pub fn ready(feature: Feature) -> bool {
 /// Whether an install that fails for a missing permission asks the system for
 /// it by itself, once per process, as [`request`] would.
 pub fn set_auto_request(on: bool) {
-  AUTO_REQUEST.store(on, Ordering::Relaxed);
+  auto_request_flag().store(on, Ordering::Relaxed);
 }
 
 /// The setting [`set_auto_request`] changes; `true` until it is changed.
 pub fn auto_request() -> bool {
-  AUTO_REQUEST.load(Ordering::Relaxed)
+  auto_request_flag().load(Ordering::Relaxed)
 }
 
 // Windows and Linux: no such permissions.

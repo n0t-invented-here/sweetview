@@ -11,6 +11,7 @@ use std::mem::ManuallyDrop;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::OnceLock;
 
 use sweetview_keycodes::{dom_code_from_windows_scan, win, KeysDown};
 use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
@@ -39,10 +40,19 @@ thread_local! {
   static KEYBOARD: RefCell<Option<Rc<KeyboardState>>> = const { RefCell::new(None) };
 }
 
-/// Whether the process has a mouse hook, on any thread.
-static MOUSE_INSTALLED: AtomicBool = AtomicBool::new(false);
-/// Whether the process has a keyboard hook, on any thread.
-static KEYBOARD_INSTALLED: AtomicBool = AtomicBool::new(false);
+/// Whether the process has a mouse hook, on any thread. A `OnceLock` holding the
+/// flag, one of the forms of global state `UNSAFE-POLICY.md` lists; any thread
+/// may install a hook, so the flag is process-wide.
+fn mouse_installed() -> &'static AtomicBool {
+  static FLAG: OnceLock<AtomicBool> = OnceLock::new();
+  FLAG.get_or_init(|| AtomicBool::new(false))
+}
+
+/// Whether the process has a keyboard hook, on any thread (as `mouse_installed`).
+fn keyboard_installed() -> &'static AtomicBool {
+  static FLAG: OnceLock<AtomicBool> = OnceLock::new();
+  FLAG.get_or_init(|| AtomicBool::new(false))
+}
 
 /// The process's one place for a hook of a kind, held while the hook lives
 /// and given back when this is dropped.
@@ -122,7 +132,7 @@ impl MouseHook {
   /// one, on any thread, or [`HookError::Os`] when the OS refuses. A handler
   /// that panics is caught; the event is not swallowed.
   pub fn install(handler: impl Fn(&MouseEvent) -> bool + 'static) -> Result<MouseHook, HookError> {
-    let slot = ProcessSlot::take(&MOUSE_INSTALLED)?;
+    let slot = ProcessSlot::take(mouse_installed())?;
     let handler: MouseHandler = Rc::new(handler);
     MOUSE.with(|mouse| mouse.borrow_mut().replace(handler));
     match OwnedHook::install(WH_MOUSE_LL, Some(mouse_proc), "WH_MOUSE_LL") {
@@ -175,7 +185,7 @@ impl KeyboardHook {
   /// one, on any thread, or [`HookError::Os`] when the OS refuses. A handler
   /// that panics is caught; the event is not swallowed.
   pub fn install(handler: impl Fn(&KeyEvent) -> bool + 'static) -> Result<KeyboardHook, HookError> {
-    let slot = ProcessSlot::take(&KEYBOARD_INSTALLED)?;
+    let slot = ProcessSlot::take(keyboard_installed())?;
     let state = Rc::new(KeyboardState { handler: Box::new(handler), keys: RefCell::new(KeysDown::new()) });
     KEYBOARD.with(|keyboard| keyboard.borrow_mut().replace(state));
     match OwnedHook::install(WH_KEYBOARD_LL, Some(keyboard_proc), "WH_KEYBOARD_LL") {
