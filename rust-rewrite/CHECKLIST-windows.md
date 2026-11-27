@@ -306,7 +306,7 @@ Source of truth for behaviour: the bindings repository's `docs/` and `test/`, an
 
 - [x] W7.2 `demos/native-tabs` runs; its `scripts/win-drive.ts` passes.
 
-    `rust-rewrite/evidence/w7-native-tabs.txt`, section "Runs": `just demos native-tabs app` started, showed its window titled "Tab 1 - Native Tabs" and exited 0 through its own close path; `just demos native-tabs drive <TEMP>/...` runs `scripts/win-drive.ts`:
+    `rust-rewrite/evidence/w7-native-tabs.txt`, section "Runs": `just demos native-tabs drive <TEMP>/...` builds the demo's page and runs `scripts/win-drive.ts`, which starts the demo's own app code, drives it and reads it back:
 
     ```
     ok   three tabs opened: 3
