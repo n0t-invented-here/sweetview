@@ -84,7 +84,7 @@ impl Notifier {
     self.inner.debug_pending_balloons()
   }
 
-  /// Test hook: later toasts are removed by the platform after `seconds` (0: never).
+  /// Test hook: later toasts show no banner and are removed by the platform after `seconds` (0: a banner, no expiry).
   #[napi]
   pub fn debug_set_toast_life(&self, seconds: u32) {
     self.inner.debug_set_toast_life(seconds);

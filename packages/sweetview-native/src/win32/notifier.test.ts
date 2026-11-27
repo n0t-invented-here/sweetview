@@ -24,6 +24,8 @@ function deleteAppId(appId: string): void {
   // Exit code 1 means the key was not there, which is the state wanted.
   spawnSync("reg", ["delete", appIdKey(appId), "/f"], { encoding: "utf8" });
   expect(displayName(appId)).toBeNull();
+  // The entry the notification platform keeps for every app id that has shown a toast.
+  spawnSync("reg", ["delete", String.raw`HKCU\Software\Microsoft\Windows\CurrentVersion\Notifications\Settings` + "\\" + appId, "/f"], { encoding: "utf8" });
 }
 
 /** Dispatches what the UI thread's loop has waiting: the posted toast and balloon events. */
@@ -45,8 +47,9 @@ function cookieOf(shown: string | null, kind: "toast" | "balloon"): number {
   return Number(shown!.slice(kind.length + 1));
 }
 
-// Seconds after which the platform removes a toast these tests show, so a run leaves none on the
-// screen or in the notification centre of a machine with nobody at it. Applications' toasts never expire.
+// The toasts these tests show go to the notification centre with no banner and are removed by the
+// platform after this many seconds, so a run leaves none on the screen of a machine with nobody at
+// it. Applications' toasts show a banner and never expire.
 const TEST_TOAST_LIFE = 4;
 
 describe.if(process.platform === "win32")("Windows notifier", () => {

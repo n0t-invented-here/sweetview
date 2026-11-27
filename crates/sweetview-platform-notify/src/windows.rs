@@ -402,8 +402,11 @@ impl Toasts {
     document.LoadXml(&HSTRING::from(xml)).map_err(hresult_error("IXmlDocumentIO.LoadXml"))?;
     let toast = ToastNotification::CreateToastNotification(&document).map_err(hresult_error("CreateToastNotification"))?;
     if let Some(seconds) = life {
-      // A test's toast: the platform takes it off the screen and out of the notification centre
-      // by itself, so a test run leaves nothing behind on a machine with nobody at it.
+      // A test's toast: it goes to the notification centre with no banner on the screen, and the
+      // platform removes it from there by itself. On a machine with nobody at it Windows keeps a
+      // banner up until someone comes back, hidden or expired or not, so a test run would leave
+      // its banners over the corner of the screen.
+      toast.SetSuppressPopup(true).map_err(hresult_error("IToastNotification2.put_SuppressPopup"))?;
       let expires = expiry_after(seconds).map_err(hresult_error("PropertyValue.CreateDateTime"))?;
       toast.SetExpirationTime(&expires).map_err(hresult_error("IToastNotification.put_ExpirationTime"))?;
     }
@@ -531,7 +534,7 @@ struct Inner {
   window: RefCell<Option<NotifyWindow>>,
   toasts: RefCell<ToastSlot>,
   forced: Cell<ForcedPath>,
-  /// Seconds after which the platform removes a toast by itself; `None`, as applications get, never.
+  /// A test's toasts: no banner, and removed by the platform after this many seconds. `None`, as applications get: a banner and no expiry.
   toast_life: Cell<Option<u32>>,
   /// Balloons the shell accepted, over this notifier's whole life.
   balloons_shown: Cell<u32>,
@@ -707,8 +710,8 @@ impl Notifier {
     self.inner.forced.set(path);
   }
 
-  /// Test hook: later toasts expire after `seconds`, when the platform removes them from the
-  /// screen and the notification centre by itself. `None`, what applications get, never expires.
+  /// Test hook: later toasts show no banner and expire after `seconds`, when the platform removes
+  /// them from the notification centre by itself. `None`, what applications get: a banner, and no expiry.
   pub fn set_toast_life(&self, seconds: Option<u32>) {
     self.inner.toast_life.set(seconds);
   }
@@ -821,7 +824,8 @@ mod tests {
     format!("Sweetview.{kind}.{}.{nanos}", std::process::id())
   }
 
-  /// Deletes the AUMID key a test registered, when it goes out of scope.
+  /// Deletes the AUMID key a test registered, when it goes out of scope, and the entry the
+  /// notification platform keeps for every app id that has shown a toast.
   struct AppIdKey(String);
 
   impl Drop for AppIdKey {
@@ -829,6 +833,9 @@ mod tests {
       if let Err(error) = CURRENT_USER.remove_tree(app_id_key(&self.0)) {
         assert_eq!(error.code(), ERROR_FILE_NOT_FOUND.to_hresult(), "RegDeleteTreeW: {error:?}");
       }
+      // The platform's own entry: there only when a toast was shown, and the platform may still
+      // be writing it, so a failure here fails nothing.
+      let _ = CURRENT_USER.remove_tree(format!(r"Software\Microsoft\Windows\CurrentVersion\Notifications\Settings\{}", self.0));
     }
   }
 

@@ -58,7 +58,7 @@ impl Notifier {
     self.inner.force_path(path);
   }
 
-  /// Test hook: later toasts are removed by the platform after `seconds`; `None` never.
+  /// Test hook: later toasts show no banner and are removed by the platform after `seconds`; `None`: a banner, no expiry.
   pub fn set_toast_life(&self, seconds: Option<u32>) {
     self.inner.set_toast_life(seconds);
   }

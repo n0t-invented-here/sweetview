@@ -119,8 +119,9 @@ impl Notifier {
     self.inner.as_ref().map_or(0, |n| n.pending_balloons() as u32)
   }
 
-  /// Test hook: later toasts are removed by the platform after `seconds` (0: never, as
-  /// applications get), so a test run leaves no toast on the screen or in the notification centre.
+  /// Test hook: later toasts show no banner and are removed by the platform after `seconds`
+  /// (0: a banner and no expiry, as applications get), so a test run leaves no toast on the
+  /// screen or in the notification centre.
   pub fn debug_set_toast_life(&self, seconds: u32) {
     if let Some(n) = &self.inner {
       n.set_toast_life((seconds > 0).then_some(seconds));
