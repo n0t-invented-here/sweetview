@@ -148,7 +148,7 @@ view.run();
 | Member | Meaning |
 |---|---|
 | `raw` | The underlying `RawWebview` instance (the `Webview` class of `@n1h/sweetview-native`). |
-| `window` | The `Window` this webview was attached to. For a tab's webview this is the borrowed child window the tab driver created (a pane on Windows, one `NSWindow` of the group on macOS), not the logical tabbed window; use `tab.window` for that. |
+| `window` | The `Window` this webview was attached to. For a tab's webview this is a borrowed wrapper the tab driver made (on Windows, of the frame the tab opened in; on macOS, of the tab's own `NSWindow`), not the logical tabbed window; use `tab.window` for that. |
 | `emit(name, payload)` | Delivers an event to the page by evaluating `__sweetview_emit(name, payload)`. A `payload` of `undefined` is sent as `null`. Listeners registered with `onEvent` do not see it. |
 | `notify(method, ...params)` | Posts a fire-and-forget call (`seq: null`) to the worker, with `params` sent as `null` when omitted. `uiMethods` are not consulted. Without a worker, logs `sweetview: <method>: this window has no worker` with `console.error` and sends nothing. |
 | `onEvent(fn)` | Registers `fn` for every event the worker sends, called before the page receives it. Returns an unsubscribe function. |
@@ -242,7 +242,7 @@ win.dispose(); // closes every tab still in this window
 
 Opens a new native tab hosting its own webview inside a tabbed `Window` created with `{ tabs: true }`:
 
-- **Windows**: creates a child pane inside the custom Windows 11 tab-strip frame, attaches a WebView2 instance, hooks accelerator keys (`Ctrl+T`, `Ctrl+W`, `Ctrl+Tab`, `Ctrl+1..9`, etc.), `NewWindowRequested` and `NavigationCompleted`, and wires native right-click menus (`Menu.popup`), tear-off dragging, and window merging.
+- **Windows**: creates a WebView2 webview as a child of the tabbed window's frame (the strip is one too), placed over the page area below the tab strip and shown while its tab is selected; hooks accelerator keys (`Ctrl+T`, `Ctrl+W`, `Ctrl+Tab`, `Ctrl+1..9`, etc.), new-window requests and failed navigations; and wires native right-click menus, tear-off dragging and window merging. Tear-off and merge move the tab's webview to the other window's frame without reloading its page.
 - **macOS**: creates an `NSWindow` participating in AppKit window tabbing (`addTabbedWindow:ordered:`), attaches a `WKWebView`, keeps the tab bar visible, hooks new-window requests and load errors, and detaches message handlers cleanly on close.
 
 Both platforms behave the same inside a tab:
@@ -297,17 +297,17 @@ Explorer or Finder. See [file drops](native/windows.md#file-drops).
 |---|---|
 | `after` (`TabOptions`) | Optional `TabHandle` to insert the new tab after. Honored only when that tab is open in the same tabbed window the new tab opens in; otherwise, as when omitted, the tab opens after the selected tab. |
 | `webview` | The `WebView` mounted inside this tab. |
-| `window` | The logical tabbed `Window` (`tabs: true`) currently hosting this tab. It changes when the tab is torn off into a new window or merged into another. Compare `tab.webview.window`, the borrowed child window the webview is attached to, which never changes and is rarely what app code wants. |
+| `window` | The logical tabbed `Window` (`tabs: true`) currently hosting this tab. It changes when the tab is torn off into a new window or merged into another. Compare `tab.webview.window`, the borrowed window the webview was attached to when the tab opened, which never changes and is rarely what app code wants. |
 | `title` | Current tab title. |
 | `setTitle(title)` | Updates the tab's title in the tab strip / title bar. |
 | `select()` | Focuses and activates this tab (and its hosting window). |
-| `close()` | Closes the tab: `onTabClose` fires. On the window's last tab it is a request to close the window. On Windows, `tab.close()` on the last tab (like the tab's close button and Ctrl+W) is offered to the window's `onClose` listeners first, and the tab stays when one intercepts it (hiding the window to the tray, say); with no listener the window is disposed and the tab with it. A close the user asks for on a macOS window's last tab (the close button, Close Tab) is offered to the `onClose` listeners first and closes nothing while one is registered. `dispose()` tears a tab down regardless. |
+| `close()` | Closes the tab: `onTabClose` fires. Closing a window's last tab is a request to close the window. On Windows it is offered to the window's `onClose` listeners first, by `close()` too: while one is registered (closing to the tray, say) the tab stays open; with none, the window and the tab close. On macOS `close()` always closes the last tab, then the window's `onClose` listeners run, or with none the window is disposed; only a close the user asks for there (the close button, Close Tab) is offered to the listeners first. `dispose()` closes a tab regardless. |
 | `moveToNewWindow()` | Detaches the tab into its own tabbed window (keeping its webview state intact) and resolves with the new `Window`. |
 | `dispose()` | Tears down the tab and its webview. |
 
 Tabs are host-aware: `showOnReady` and the ready watchdog reveal the tab's
 current logical host (its tabbed window) if that host is hidden, not the
-borrowed child window. They do not force the tab to be selected; call
+borrowed window the webview was attached to. They do not force the tab to be selected; call
 `tab.select()` when a specific tab should be in front. File drops over a tab's webview go to the `onFileDrop` listeners of the tab's
 current `tab.window`. After a tear-off or merge, drops go to the new host
 only.

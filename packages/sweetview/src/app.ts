@@ -11,7 +11,7 @@ import { createFrameAssembler, type AnyEvent, type EventMap, type MethodMap, typ
 import { RequestResponseAssembler, requestError, runNativeRequest, type NativeRequestResponse, type StreamingResponseFrame } from "./request-response";
 import type { HttpRequestMessage, InitMessage, NativeRequest, NativeResponse, WorkerCrashFrame } from "./messages";
 import { RawWebview, SizeHint, Window, quitEventLoop, runEventLoop, signalReady, type Rect, type TabHandle, type WindowOptions } from "@n1h/sweetview-native";
-import { discardQuit, emitWindowFileDrop, getWindowMeta, holdWindowNativeDispose, isWindowDisposed, onWindowDispose, onWindowFileDropListenersChange, preserveWindowGeometry, scheduleNativeTimeout, windowFileDropCount } from "@n1h/sweetview-native/internal";
+import { createChildWebview, discardQuit, emitWindowFileDrop, engineOf, getWindowMeta, holdWindowNativeDispose, isWindowDisposed, onWindowDispose, onWindowFileDropListenersChange, preserveWindowGeometry, scheduleNativeTimeout, windowFileDropCount } from "@n1h/sweetview-native/internal";
 import { Ring } from "./ring";
 import { webviewEngine, type WebviewHost, type WorkerWake } from "./webview-host";
 import { ASSET_ORIGIN } from "./webview-lib";
@@ -117,6 +117,13 @@ export type TabAttachHooks = {
    * are logged; the webview is destroyed anyway.
    */
   beforeDestroy?(): void;
+  /**
+   * Windows: makes the webview a child of the given window at `bounds` (its
+   * client coordinates, physical pixels) instead of filling it, and leaves
+   * the window's title, styles and bounds alone. The strip and the tabs of a
+   * tabbed window are such children of its frame.
+   */
+  mountChild?(): { window: bigint; bounds: Rect; visible: boolean };
 };
 
 /** Internal options key for `TabAttachHooks` (not exported from the package entry). */
@@ -329,14 +336,20 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
     const heightDips = Math.max(1, Math.round(winBounds.height / scale));
     // Frameless windows resize via Window.startResize(), not WS_THICKFRAME.
     const hint = meta.frame && meta.resizable ? SizeHint.NONE : SizeHint.FIXED;
-    const restoreGeometry = preserveWindowGeometry(window);
+    // A child webview is placed by its driver and changes nothing of the window it is in.
+    const child = tabHooks?.mountChild?.();
+    const restoreGeometry = child ? () => {} : preserveWindowGeometry(window);
     const createRaw = (): RawWebview => {
       // webview_create pumps messages while WebView2 initializes, so the window can be
       // closed under it. Hold the owned window's native dispose until the new view is
       // either kept or destroyed, so it is never created on, or left bound to, a dead HWND.
       const releaseCreateHold = meta.owned ? holdWindowNativeDispose(window) : undefined;
       try {
-        const created = new RawWebview(options.debug ?? false, { width: widthDips, height: heightDips, hint }, host);
+        const created = child
+          ? createChildWebview(options.debug ?? false, child.window, child.bounds)
+          : new RawWebview(options.debug ?? false, { width: widthDips, height: heightDips, hint }, host);
+        // A tab is shown by its driver once it is selected, never over the tab on show while it loads.
+        if (child && !child.visible) engineOf(created)?.setVisible(false);
         if (created.unsafeHandle === null || Number(created.unsafeHandle) === 0) {
           throw new Error(
             process.platform === "win32"
@@ -361,7 +374,7 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
 
     try {
       const engineHost = (view = engine.host(raw));
-      raw.title = title;
+      if (!child) raw.title = title;
       if (meta.owned && !meta.title && title) window.setTitle(title);
 
       const quit = () => {

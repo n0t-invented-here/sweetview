@@ -243,6 +243,22 @@ export function engineOf(webview: Webview): Engine | undefined {
   return engines.get(webview);
 }
 
+// Set only while createChildWebview runs the constructor.
+let childBounds: { x: number; y: number; width: number; height: number } | undefined;
+
+/**
+ * Internal, Windows: a webview made as a child of `window` at `bounds` (its
+ * client coordinates, physical pixels), for the tabs library's strip and tabs.
+ */
+export function createChildWebview(debug: boolean, window: bigint, bounds: { x: number; y: number; width: number; height: number }): Webview {
+  childBounds = bounds;
+  try {
+    return new Webview(debug, undefined, window);
+  } finally {
+    childBounds = undefined;
+  }
+}
+
 /**
  * Destroys every webview this process created through {@link Webview} that
  * is still alive. Installed mouse or keyboard hooks are not removed; dispose
@@ -319,7 +335,10 @@ export class Webview {
     } else {
       const host = window === null || window === 0 || window === 0n ? null : BigInt(window);
       try {
-        this.#engine = native.Engine.create(Boolean(debugOrHandle), host);
+        this.#engine =
+          childBounds !== undefined && host !== null
+            ? native.Engine.createChild(Boolean(debugOrHandle), host, childBounds)
+            : native.Engine.create(Boolean(debugOrHandle), host);
       } catch (err) {
         throw Object.assign(new WebviewError("webview_create", -1), { cause: err });
       }

@@ -13,7 +13,7 @@ macOS and Windows. The two are different shapes, because the platforms are:
 | | macOS | Windows |
 | --- | --- | --- |
 | The tab bar | the system's: AppKit window tabbing | ours: a webview where the title bar was |
-| A tab | an `NSWindow` hosting a `WKWebView` | a child window hosting a `WebView2` |
+| A tab | an `NSWindow` hosting a `WKWebView` | a `WebView2` webview, a child of the window |
 | New tab, close tab | `⌘T`, `⌘W`, File menu | `Ctrl+T`, `Ctrl+W` or `Ctrl+F4`, the tab's menu |
 | Next, previous tab | `⌃Tab`, `⌃⇧Tab` | `Ctrl+Tab`, `Ctrl+Shift+Tab`, `Ctrl+Page Down / Up`, `Ctrl+1` to `Ctrl+9` |
 | A tab to its own window | drag it out, or Window › Move Tab to New Window | drag it out, or right-click › Move tab to new window |
@@ -82,22 +82,23 @@ built the way Windows 11's own tabbed apps are: one window whose title bar is th
 
 ```
 the frame        a normal resizable window, minus its caption
-├─ the strip     a child window along the top, hosting the webview that draws the tabs
-└─ a pane a tab  child windows below it, one shown at a time, each hosting one tab's webview
+├─ the strip     a webview along the top, a child of the frame, that draws the tabs
+└─ a tab         a webview below it, a child of the frame; one shown at a time
 ```
 
 | Piece | File | What it does |
 | --- | --- | --- |
-| The frame & panes | [`packages/sweetview-native/src/win32/tab-window.ts`](../../packages/sweetview-native/src/win32/tab-window.ts), [`shortcuts.ts`](../../packages/sweetview-native/src/win32/shortcuts.ts), [`strip-shared.ts`](../../packages/sweetview-native/src/win32/strip-shared.ts) | webview-free frame and child panes: takes the caption off (`WM_NCCALCSIZE`), lays the panes out, hands drags to the window manager, shows native popup menus via `Menu.popup` and `Screen` |
+| The frame | [`crates/sweetview-runtime/src/window/tab_frame.rs`](../../crates/sweetview-runtime/src/window/tab_frame.rs), [`crates/sweetview-platform-window/src/tab_frame.rs`](../../crates/sweetview-platform-window/src/tab_frame.rs), [`packages/sweetview-native/src/win32/tab-window.ts`](../../packages/sweetview-native/src/win32/tab-window.ts), [`shortcuts.ts`](../../packages/sweetview-native/src/win32/shortcuts.ts), [`strip-shared.ts`](../../packages/sweetview-native/src/win32/strip-shared.ts) | a `tao` window with its caption taken off and the system's border and shadow kept; reports where the strip and the page go, hands drags to the window manager, shows the system menu and the tab menu |
 | The embedded strip | [`packages/sweetview/src/tabs/win-strip-assets.ts`](../../packages/sweetview/src/tabs/win-strip-assets.ts) | self-contained HTML/CSS/JS tab strip page drawing the tabs, `+`, and window buttons (no build step required) |
-| The tabs coordinator | [`packages/sweetview/src/tabs/win-tabs.ts`](../../packages/sweetview/src/tabs/win-tabs.ts) | which tabs are in which window, in what order, and which is shown; `WebView.attach` per tab pane |
-| WebView2 helpers | [`packages/sweetview/src/tabs/win-webview2.ts`](../../packages/sweetview/src/tabs/win-webview2.ts) | COM vtable calls the webview library does not expose: hide a tab's page, give one the keyboard, hear accelerator keys, take over "open a new window" |
+| The tabs coordinator | [`packages/sweetview/src/tabs/win-tabs.ts`](../../packages/sweetview/src/tabs/win-tabs.ts) | which tabs are in which window, in what order, and which is shown; `WebView.attach` per tab, as a child webview of the frame |
+| WebView2 helpers | [`packages/sweetview/src/tabs/win-webview2.ts`](../../packages/sweetview/src/tabs/win-webview2.ts) | what the tabs need of a webview beyond `RawWebview`, through the Rust engine: hide a tab's page, give one the keyboard, hear accelerator keys, take over "open a new window", hear a failed load |
 
 What the code does that is not obvious:
 
-- **The window is still the system's.** Only the caption is taken away: the frame keeps
-  `WS_OVERLAPPEDWINDOW`, so the shadow, the rounded corners, the side and bottom resize borders,
-  snapping, maximise and the taskbar are Windows' own. The top edge lost its resize border with the
+- **The window is still the system's.** Only the caption is taken away: the frame is `tao`'s
+  window without decorations but with its shadow, which keeps the caption and resize styles, so the
+  shadow, the rounded corners, the side and bottom resize borders, snapping, maximise and the
+  taskbar are Windows' own. The top edge lost its resize border with the
   caption, so the strip offers it back (a 4 pixel band, and the two top corners).
 - **A click in the strip never keeps the keyboard.** The strip is a webview, so a press on it
   takes the focus as any page would. After every call from the strip (and when its menu closes, or
@@ -113,19 +114,18 @@ What the code does that is not obvious:
   hand by a third of a quick drag.
 - **The keys work from any page, a site's too.** While a page has the focus no key reaches a
   window procedure of ours. WebView2 reports accelerator keys to its host
-  (`add_AcceleratorKeyPressed`), which needs a COM object to call: `win-webview2.ts` makes one out
-  of four `JSCallback`s. A site is given no function to call for this, so it cannot open or close
-  tabs by script.
+  (`add_AcceleratorKeyPressed`), which the Rust engine subscribes to. A site is given no function
+  to call for this, so it cannot open or close tabs by script.
 - **A link that asks for a new window gets a tab** (`add_NewWindowRequested`): an HTTP(S)
   `target="_blank"` link or `window.open()` opens a tab after the tab it was clicked in, and any
   other scheme is dropped. Left alone, WebView2 opens a bare popup window.
-- **A new tab is shown at once.** It is selected in the strip and its pane takes the place of the
+- **A new tab is shown at once.** It is selected in the strip and its webview takes the place of the
   one on show as soon as its webview is attached; its page draws as it loads.
 - **Tabs asked for in a row keep their order.** A new tab goes after the selected one and is
   selected itself, so the next goes after it; one asked for by a page goes after that page's tab
   and the tabs it asked for before.
-- **Moving a tab to another window moves its webview.** The pane is given a new parent
-  (`SetParent`); the page is not reloaded and keeps its state. A tab dragged out of the strip gets
+- **Moving a tab to another window moves its webview.** The webview is given the other frame as
+  its parent (`reparent`); the page is not reloaded and keeps its state. A tab dragged out of the strip gets
   a new window with the tab under the cursor where it was held, and the press is handed to the
   window manager, so the new window follows the cursor at once. Let go over another window's
   strip, it joins that window where it was dropped. A window's only tab takes the window with it.
@@ -142,9 +142,6 @@ What the code does that is not obvious:
 - **Closing a tab never happens inside its own call.** Everything that destroys, shows or moves a
   webview runs on a turn of Bun's loop of its own: a webview cannot be destroyed from inside the
   page call that asked for it, and the menu and a drag run a loop of their own.
-- **Destroying a webview asks the OS loop to end** (the webview library posts `WM_QUIT`), which is
-  right for an app's only window and wrong for one tab of several. `WebView.dispose()` takes the
-  request back (it consumes that `WM_QUIT`), so closing one tab leaves the others running.
 - **A site that cannot be loaded** shows the same "This site did not open" page as on macOS, with
   the address, the reason and a Try Again link, set when `NavigationCompleted` reports a failure.
   An HTTP error response is not a failure: the server's own page shows, as on macOS.

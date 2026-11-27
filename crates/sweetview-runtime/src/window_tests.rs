@@ -246,3 +246,56 @@ fn false_after_a_moment() -> bool {
   })
 }
 
+
+#[test]
+fn a_tab_frame_keeps_the_system_frame_and_lays_out_a_strip_and_a_page() {
+  use tab_frame::TabFrame;
+  const WS_THICKFRAME: u32 = 0x0004_0000;
+  const WS_MAXIMIZEBOX: u32 = 0x0001_0000;
+  const WS_CAPTION: u32 = 0x00c0_0000;
+  on_ui_thread(|_runtime| {
+    let frame = Window::create(WindowInit { tab_strip_height: Some(40), appearance: Appearance::Dark, ..init("rt tab frame") }).expect("frame");
+    let fixed = Window::create(WindowInit { tab_strip_height: Some(40), resizable: false, appearance: Appearance::Light, ..init("rt fixed tab frame") })
+      .expect("fixed frame");
+    let plain = Window::create(init("rt plain")).expect("plain");
+    assert!(TabFrame::of(plain.handle()).is_none(), "only frames are tab frames");
+    let tabs = TabFrame::of(frame.handle()).expect("a tab frame");
+    assert_eq!(TabFrame::all().len(), 2);
+
+    // The caption and the resize border stay in the styles: snap, maximise and the system menu are the system's.
+    let style = platform::style(&native(&frame));
+    assert_eq!(style & (WS_CAPTION | WS_THICKFRAME | WS_MAXIMIZEBOX), WS_CAPTION | WS_THICKFRAME | WS_MAXIMIZEBOX);
+    assert_eq!(style & platform::FRAME_STYLE, platform::FRAME_STYLE, "children are clipped");
+    assert_eq!(platform::style(&native(&fixed)) & (WS_THICKFRAME | WS_MAXIMIZEBOX), 0);
+
+    // With no bounds: a 1040 x 720 page under a 40 pixel strip, at the window's scale.
+    let scale = frame.scale();
+    let strip = tabs.strip_rect();
+    let page = tabs.page_rect();
+    assert_eq!(strip, Rect::new(0, 0, (1040.0 * scale).round() as i32, (40.0 * scale).round() as i32));
+    assert_eq!(page, Rect::new(0, strip.height, strip.width, (720.0 * scale).round() as i32));
+    // The caption is gone: the client area reaches the top of the frame (less the one pixel line Windows 11 draws).
+    let outer = frame.bounds();
+    let on_screen = tabs.strip_screen_rect();
+    assert!(on_screen.y - outer.y <= (scale.round() as i32), "strip starts at the top: {on_screen:?} in {outer:?}");
+
+    assert!(tabs.is_dark());
+    let light = TabFrame::of(fixed.handle()).expect("a tab frame");
+    light.set_system_dark(true);
+    assert!(!light.is_dark(), "an explicit appearance ignores the system");
+
+    let activations = Rc::new(RefCell::new(Vec::new()));
+    let sink = activations.clone();
+    tabs.on_activate(Some(Rc::new(move |active| sink.borrow_mut().push(active))));
+    assert!(!tabs.is_foreground());
+
+    let handle = frame.handle();
+    frame.dispose();
+    assert!(TabFrame::of(handle).is_none());
+    assert!(!tabs.is_live());
+    assert_eq!(tracked_count(handle), 0);
+    fixed.dispose();
+    plain.dispose();
+    assert!(TabFrame::all().is_empty());
+  });
+}

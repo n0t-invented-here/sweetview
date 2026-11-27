@@ -25,6 +25,9 @@ use crate::{Point, Rect, ResizeEdge};
 
 pub use platform::{Chrome, GeometrySnapshot};
 
+pub mod tab_frame;
+use tab_frame::TabState;
+
 /// How often the hit-region poll and the resize gesture read the cursor.
 const POLL_MS: u32 = 10;
 
@@ -69,6 +72,11 @@ pub struct WindowInit {
   pub topmost: bool,
   pub hide_from_taskbar: bool,
   pub no_activate: bool,
+  /// Makes the window the frame of a tabbed window: its caption is removed
+  /// and the top `tab_strip_height` device-independent pixels are the tab
+  /// strip. `frame`, `transparent` and `color_key` do not apply to it.
+  /// Default bounds: a 1040 x 720 page plus the strip, centred.
+  pub tab_strip_height: Option<u32>,
 }
 
 pub type RectListener = Rc<dyn Fn(Rect)>;
@@ -146,6 +154,8 @@ struct Core {
   icons: RefCell<Option<WindowIcons>>,
   /// Live wrappers of this window.
   wrappers: Cell<usize>,
+  /// The frame of a tabbed window: what [`tab_frame::TabFrame`] keeps.
+  tab: Option<TabState>,
 }
 
 thread_local! {
@@ -167,7 +177,7 @@ fn next_wrapper() -> u64 {
 }
 
 impl Core {
-  fn new(native: ForeignWindow, tao: Option<tao::window::Window>, chrome: Chrome, no_activate: bool, min: MinSize, topmost: bool) -> Rc<Self> {
+  fn new(native: ForeignWindow, tao: Option<tao::window::Window>, chrome: Chrome, no_activate: bool, min: MinSize, topmost: bool, tab: Option<TabState>) -> Rc<Self> {
     Rc::new(Self {
       handle: platform::handle_value(&native),
       owned: tao.is_some(),
@@ -190,6 +200,7 @@ impl Core {
       restore: Cell::new(None),
       icons: RefCell::new(None),
       wrappers: Cell::new(0),
+      tab,
     })
   }
 
@@ -333,6 +344,7 @@ impl Core {
     self.gesture.borrow_mut().take();
     let listeners = std::mem::take(&mut *self.listeners.borrow_mut());
     let default_close = self.default_close.borrow_mut().take();
+    let activate = self.tab.as_ref().and_then(TabState::take_listener);
     let subclass = self.subclass.borrow_mut().take();
     drop(subclass);
     let tao = self.tao.borrow_mut().take();
@@ -347,7 +359,7 @@ impl Core {
     let _ = WINDOWS.try_with(|w| w.borrow_mut().remove(&self.handle));
     // Listeners are dropped last, outside every borrow: one may own the last
     // reference to something whose drop calls back in.
-    drop((listeners, default_close));
+    drop((listeners, default_close, activate));
   }
 
   /// An adopted window nobody holds or listens to any more is let go: its
@@ -408,6 +420,13 @@ fn on_event(weak: &Weak<Core>, event: &WindowEvent) -> bool {
       listeners.iter().for_each(|l| l(paths.clone()));
       true
     }
+    WindowEvent::Activated(active) => {
+      let listener = core.tab.as_ref().and_then(TabState::listener);
+      if let Some(listener) = listener {
+        listener(*active);
+      }
+      false
+    }
     WindowEvent::Destroyed => {
       // Someone else destroyed the window: nothing kept for it is any use now.
       core.destroy();
@@ -437,9 +456,14 @@ impl Window {
   pub fn create(init: WindowInit) -> Result<Window> {
     let runtime = Runtime::get()?;
     let color_key = init.color_key.as_deref().map(logic::parse_color_key).transpose().map_err(Error::state)?;
+    let tabbed = init.tab_strip_height.is_some();
     let bounds = init.bounds.unwrap_or_else(default_bounds);
-    let frame = init.frame;
+    // A tab frame is framed: the system keeps its border, shadow, snap and
+    // maximise; only the caption goes, to the strip.
+    let frame = init.frame || tabbed;
     let resizable = frame && init.resizable;
+    let color_key = if tabbed { None } else { color_key };
+    let tab = init.tab_strip_height.map(|strip| TabState::new(strip, init.appearance));
     let theme = match init.appearance {
       Appearance::System => None,
       Appearance::Light => Some(Theme::Light),
@@ -449,22 +473,23 @@ impl Window {
       WindowBuilder::new()
         .with_visible(false)
         .with_title(init.title.clone())
-        .with_decorations(frame)
+        .with_decorations(frame && !tabbed)
         .with_resizable(resizable)
         .with_maximizable(resizable)
-        .with_transparent(init.transparent)
+        .with_transparent(init.transparent && !tabbed)
         .with_always_on_top(init.topmost)
         .with_focusable(!init.no_activate)
         .with_focused(!init.no_activate)
         .with_theme(theme)
         .with_position(PhysicalPosition::new(bounds.x, bounds.y))
         .with_inner_size(PhysicalSize::new(bounds.width.max(1) as u32, bounds.height.max(1) as u32)),
+      tab.as_ref(),
     );
     let tao = runtime.with_target(|target| builder.build(target))?.map_err(|e| Error::os("the window could not be made", e))?;
     let native = ForeignWindow::of(&tao);
     let min = MinSize::from_options(init.min_width, init.min_height);
     let min_options = (init.min_width, init.min_height);
-    let core = Core::new(native, Some(tao), Chrome { frame, resizable }, init.no_activate, min, init.topmost);
+    let core = Core::new(native, Some(tao), Chrome { frame, resizable }, init.no_activate, min, init.topmost, tab);
     WINDOWS.with(|w| w.borrow_mut().insert(core.handle, core.clone()));
     // From here on a failure must not leave a half-made window behind.
     let made = Self::finish(&core, &init, color_key, bounds, min_options);
@@ -479,8 +504,12 @@ impl Window {
     core.subclass()?;
     if let Some(subclass) = core.subclass.borrow().as_ref() {
       // The widget of a webview mounted in the window fills its client area.
-      subclass.set_fill_child(true);
+      // A tab frame's children (the strip and the tabs) are placed by the tabs library.
+      subclass.set_fill_child(core.tab.is_none());
       subclass.set_hold_visibility(true);
+      if core.tab.is_some() {
+        subclass.force_style(platform::FRAME_STYLE);
+      }
     }
     let layered = color_key.is_some() || init.opacity.is_some();
     core.set_policy(ExStylePolicy {
@@ -495,7 +524,9 @@ impl Window {
     }
     core.set_bounds(bounds);
     platform::refresh_frame(&core.native, init.topmost);
-    if min.0.is_some() || min.1.is_some() {
+    if let Some(tab) = &core.tab {
+      tab_frame::finish(core, tab, init.bounds.is_none(), min);
+    } else if min.0.is_some() || min.1.is_some() {
       core.with_tao(|tao| {
         // `tao` takes an inner minimum; the frame is what separates it from the outer one.
         let (outer, inner) = (tao.outer_size(), tao.inner_size());
@@ -529,7 +560,7 @@ impl Window {
     let native = ForeignWindow::from_handle_value(handle).ok_or_else(|| Error::state(format!("sweetview: not a window: {handle:#x}")))?;
     let chrome = platform::chrome(&native);
     let on_this_thread = platform::is_on_this_thread(&native);
-    let core = Core::new(native, None, chrome, false, logic::DEFAULT_MIN_SIZE, false);
+    let core = Core::new(native, None, chrome, false, logic::DEFAULT_MIN_SIZE, false, None);
     if on_this_thread {
       core.subclass()?;
     }
@@ -575,7 +606,7 @@ impl Window {
       tao.set_visible(true);
       tao.set_minimized(false);
     });
-    if core.owned {
+    if core.owned && core.tab.is_none() {
       platform::fill_first_child(&core.native);
     }
     core.start_hit_poll()
@@ -894,15 +925,21 @@ impl Drop for Window {
 }
 
 #[cfg(windows)]
-fn platform_builder(builder: WindowBuilder) -> WindowBuilder {
+fn platform_builder(builder: WindowBuilder, tab: Option<&TabState>) -> WindowBuilder {
   use tao::platform::windows::WindowBuilderExtWindows;
   // Drops arrive through the subclass, as `WM_DROPFILES`; `tao`'s OLE drop
-  // target would take them first. A frameless window has no shadow, as before.
-  builder.with_drag_and_drop(false).with_undecorated_shadow(false)
+  // target would take them first. A frameless window has no shadow, as before;
+  // a tab frame keeps the system's border and shadow with its caption removed,
+  // and paints the page's colour wherever no webview covers it.
+  let builder = builder.with_drag_and_drop(false).with_undecorated_shadow(tab.is_some());
+  match tab {
+    Some(tab) => builder.with_background_color(tab.backdrop()),
+    None => builder,
+  }
 }
 
 #[cfg(not(windows))]
-fn platform_builder(builder: WindowBuilder) -> WindowBuilder {
+fn platform_builder(builder: WindowBuilder, _tab: Option<&TabState>) -> WindowBuilder {
   builder
 }
 

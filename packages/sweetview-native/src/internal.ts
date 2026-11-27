@@ -1,6 +1,6 @@
 export { discardQuit, scheduleNativeTimeout } from "./event-loop";
 export { emitActivationUrl } from "./activation";
-export { engineOf } from "./webview";
+export { createChildWebview, engineOf } from "./webview";
 export type { Engine as NativeEngine } from "../prebuilt/binding";
 export { deferNative, openNativeDrain, quitNativeLoop, runNativeLoop, wakeNative } from "./ui-thread";
 export {
