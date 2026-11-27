@@ -1,33 +1,27 @@
-# Forks
+# Forks: none
 
-One crate is forked so this project can add what it lacks: `wry`. The fork lives under the same owner as this repository and is cloned beside it: `<repositories root>/<provider>/n0t-invented-here/wry`.
+No crate is forked. `tao`, `wry`, `muda`, `tray-icon` and `rfd` are used as published on crates.io, at the versions `SWEETVIEW-RESTART-PROPOSAL.md` lists. The workspace has no git dependency and no path dependency outside this repository.
 
-| Fork | Upstream | Base | Work branch |
-|---|---|---|---|
-| `n0t-invented-here/wry` | `tauri-apps/wry` | the commit that released version 0.58.2 | `sweetview` |
+## `wry`: five behaviours it lacks, each built outside it
 
-`tao`, `muda`, `tray-icon` and `rfd` are used as published. A fork of one of them is made only when a checklist item cannot be met without it, and is then added to this table with its reason in `rust-rewrite/DECISIONS.md`.
+`wry` 0.58.2 does not have these five behaviours as API. It does hand out the native objects they are built on, so each is written in this project's platform crate. References are to the crate's source at 0.58.2.
 
-## Why `tray-icon` is not forked
+| Behaviour | What `wry` has | How this project builds it |
+|---|---|---|
+| Streamed response bodies, Windows | A responder that takes the whole body: `RequestAsyncResponder::respond` (`src/lib.rs:451`), turned into one `SHCreateMemStream` (`src/webview2/mod.rs:1261`) | This project's own `WebResourceRequested` handler, registered on the `ICoreWebView2` from `WebViewExtWindows::webview()` with responses made by `environment()` (`src/lib.rs:2404-2407`), and its own `IStream` whose `Read` waits for the next chunk. No `wry` custom protocol is registered on Windows, so `wry` attaches no handler of its own (`src/webview2/mod.rs:536`). The same handler serves assets, the request handler and the frames origin, at exactly `http://webview.localhost` and `http://frames.webview.localhost`, the way the C++ library does today |
+| Streamed response bodies, macOS | One `didReceiveData` per response (`src/wkwebview/class/url_scheme_handler.rs`) | `WebViewBuilderExtMacos::with_webview_configuration` (`src/lib.rs:1672`): this project creates the `WKWebViewConfiguration` and registers its own `WKURLSchemeHandler` for the `webview` and `webview-frames` schemes, which calls `didReceiveData` per chunk. No `wry` custom protocol is registered for those schemes |
+| Page messages from the top-level document only, macOS | Its message handler does not check the frame | This project's own `WKScriptMessageHandler`, added through `WebViewExtMacOS::manager()` (`src/lib.rs:2555`), which returns early unless `frameInfo.isMainFrame`. `wry`'s own IPC handler is not used on macOS |
+| Navigation-failed event, macOS | No `didFailNavigation` or `didFailProvisionalNavigation`; `wry` installs its own navigation delegate (`src/wkwebview/mod.rs:680`) | A delegate of this project's that forwards every call to `wry`'s delegate and adds the two failure methods, set on the `WKWebView` from `WebViewExtMacOS::webview()` (`src/lib.rs:2553`) |
+| Drag routing, macOS: drags from other apps only, file drags to the handler, the rest to WebKit, one route per drag | A drag handler that is given `Enter`, `Over`, `Drop` and `Leave` with the dragged paths; returning `false` hands the drag to WebKit (`src/wkwebview/drag_drop.rs:79-81`). It is not given the drag's source | `with_drag_drop_handler`, with this project keeping the route chosen at `Enter` until `Drop` or `Leave`. Whether a drag began inside the page comes from the page itself: a main-frame script reports `dragstart` and `dragend` |
 
-`SWEETVIEW-RESTART-PROPOSAL.md` was first written against `main`, where a notification on Windows was a balloon on the tray's own icon, and it planned a `tray-icon` fork for that. On this branch the notifier no longer uses the tray: `packages/sweetview-native/src/win32/notifier.ts` shows WinRT toasts and falls back to a balloon on a hidden notification icon of its own (`NIM_ADD` with `NIS_HIDDEN` on the notifier's message window, one icon per notification, removed on click, timeout or hide). That fallback is this project's code in the platform crate, on `Shell_NotifyIconW`. It needs nothing from the tray, except the tray's current icon bytes for the balloon's picture.
+Already in `wry`, nothing to build: requests from service workers, shared workers and cross-origin iframes reaching a handler on Windows; requests held open until answered; page messages from the top-level document only on Windows.
 
-## How the workspace uses the fork
+Windows needs the first row only, and it is the C++ library's own design moved into Rust. The four macOS rows are designed from the source and have not been run: group M0 of `CHECKLIST-macos.md` builds and runs each one before anything depends on it.
 
-The Cargo workspace depends on the fork as a git dependency pinned to a commit of its `sweetview` branch (`rev = "..."`). A fork change is committed and pushed to the fork first; then the pinned commit here moves. No path dependency and no machine-local path is committed.
+## `tray-icon`
 
-## Additions to `wry`
+Used as published. The proposal once planned a balloon addition inside it; on this branch the notifier shows its fallback balloon on a hidden notification icon of its own (`packages/sweetview-native/src/win32/notifier.ts`), so that code is this project's, on `Shell_NotifyIconW`.
 
-`SWEETVIEW-RESTART-PROPOSAL.md`, section "Fork additions, located", names the file and function for each.
+## If a behaviour cannot be built through these handles
 
-1. Windows: streamed response bodies for custom protocols.
-2. macOS: streamed response bodies for custom protocols.
-3. macOS: drag routing for drags from other applications.
-4. macOS: page messages accepted from the top-level document only.
-5. macOS: a navigation-failed event.
-
-The Windows goal writes addition 1. The macOS goal writes 2 to 5. Each is written in the style of the code around it, with its own test, so it can be offered upstream. Offering it upstream is an owner action.
-
-## When the fork is missing
-
-Run `git ls-remote` against the fork's URL (this repository's `origin` URL with the repository name replaced by `wry`). If it does not answer, do every checklist group that does not need it, with the published `wry` 0.58.2 in its place: groups W0, W1, W3, W4, W5, W6, W8 and the transports group need no fork change. Streaming (W2.5) is the one Windows item that does. Record the missing fork in `rust-rewrite/OWNER-ACTIONS.md` and at the top of the session's report; the goal is not complete until W2.5 is ticked.
+Adjust the design first: another handle, another crate, or this project's own code for that one piece. A fork is the last choice. It needs a repository only the owner can create, so it is recorded in `rust-rewrite/DECISIONS.md` with the evidence and in `rust-rewrite/OWNER-ACTIONS.md`, and every item that does not depend on it is finished first.

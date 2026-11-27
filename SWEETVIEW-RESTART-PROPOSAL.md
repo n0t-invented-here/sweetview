@@ -33,7 +33,7 @@ Three facts about the tree that the design rests on:
 | JavaScript called from native code while the UI thread is inside the blocking loop, under Bun's N-API | **proven on Windows**; see "Proofs run" | on macOS: run the same proof on a Mac |
 | `tao`'s loop pumped from a Bun timer delivering tray events with no window, with Bun's timers and promises still running | **proven on Windows** | on macOS: run the same proof on a Mac |
 | `bun build --compile` embedding the `.node` binding into one executable | **proven on Windows** | on macOS: run the same proof on a Mac |
-| The five additions inside the `wry` fork: streaming on Windows and macOS, macOS drag routing, macOS top-level-only IPC, macOS navigation-failed event | located, file and function each; see "Fork additions, located" | nothing |
+| The five behaviours `wry` lacks: streaming on Windows and macOS, macOS drag routing, macOS top-level-only IPC, macOS navigation-failed event | no fork: each is built outside `wry` through the native objects it hands out; see "What `wry` lacks, and where each is built" and `rust-rewrite/FORKS.md` | Windows: nothing. macOS: checklist item M0.5 runs each of the four as a proof |
 | The Windows notification fallback (a balloon on a hidden icon) | this project's code in the platform crate, as `win32/notifier.ts` does it today; no `tray-icon` fork is needed | nothing |
 | The binding loaded a second time inside a Bun `Worker`, waking the UI thread | **not proven**; today the worker opens the C library itself and calls `webview_dispatch` | checklist item W1.7, before any webview work |
 | Every crate API the design names | read on docs.rs or in source, with version; see "API references" | nothing |
@@ -104,7 +104,7 @@ Crates for the N-API layer and for the Rust this project writes itself.
 | `objc2-user-notifications`, `objc2-core-graphics` | 0.3.2 | macOS notifications; the event tap for the input hooks |
 | `block2` | 0.6.2 | Objective-C blocks |
 
-One of the crates is used as a fork this project owns, carrying a short list of additions: `wry`. The additions are listed under "What this project writes in Rust". `tray-icon` is used as published; `rust-rewrite/FORKS.md` says why.
+No crate is forked. All of them are used as published on crates.io. What `wry` lacks is built outside it, through the native objects it hands out (`controller()`, `webview()`, `environment()`, `manager()`, `with_webview_configuration`); `rust-rewrite/FORKS.md` lists each behaviour with the `wry` source line it rests on.
 
 ## Memory safety
 
@@ -113,7 +113,6 @@ One of the crates is used as a fork this project owns, carrying a short list of 
 | `tao`, `wry`, `muda`, `tray-icon`, `rfd` | inside the crates; their public APIs are safe |
 | Sweetview's own crate, except the modules below | none: `#![forbid(unsafe_code)]` |
 | Sweetview's `platform` modules: input hooks, notifications, and the single OS calls listed below | yes, one `unsafe` block per OS call |
-| This project's additions inside its `wry` fork | yes, in the same style as the code around them |
 | JavaScript | no native calls at all |
 
 ## What the Rust types enforce
@@ -177,14 +176,14 @@ All kept.
 | Addition | C API today | Provided by |
 |---|---|---|
 | Background colour and transparency | `webview_set_background_color` | `wry`: `with_transparent`, `with_background_color` |
-| Assets at the page's own origin | `webview_set_asset` | `wry`: `with_custom_protocol` |
-| Request handler | `webview_set_request_handler`, `webview_complete_request` | `wry`: `with_asynchronous_custom_protocol`; header validation, status and size limits in Sweetview's safe Rust, ported from `http_request.hh` with its tests |
-| Frames origin, cross-origin from the page | part of the request handler | `wry`: a second custom protocol scheme |
-| Service-worker, shared-worker and cross-origin iframe requests reaching the handler on Windows | part of the request handler | `wry` as it is: its handler already calls `AddWebResourceRequestedFilterWithRequestSourceKinds` with all source kinds |
-| Streamed responses | `webview_begin_response`, `webview_write_response_chunk`, `webview_end_response` | the `wry` fork: a streaming body on WebView2 and `didReceiveData:` per chunk on WKWebView, ported from `streaming_istream.hh` and `cocoa_webkit.hh` |
-| External drop control with HTML drops inside the page still working | `webview_set_allow_external_drop` | Windows: `SetAllowExternalDrop` on `wry`'s `controller()`, from Sweetview `platform`. macOS: the `wry` fork, the C++ fork's drag routing |
-| File drop paths | `webview_set_file_drop_handler` | Windows: the C++ fork's drop script and `WebMessageReceived` handler on `wry`'s `webview()`, from Sweetview `platform`. macOS: the `wry` fork, the same drag routing |
-| Bindings reachable from the top-level document only | internal | Windows: `wry` as it is, plus a top-frame guard in the bridge script. macOS: the `wry` fork refuses messages from other frames |
+| Assets at the page's own origin | `webview_set_asset` | Sweetview `platform::webview`: the one request handler described under streamed responses below, which serves assets first |
+| Request handler | `webview_set_request_handler`, `webview_complete_request` | the same handler in Sweetview `platform::webview`; header validation, status and size limits in Sweetview's safe Rust, ported from `http_request.hh` with its tests |
+| Frames origin, cross-origin from the page | part of the request handler | the same handler, on a second origin: `http://frames.webview.localhost` on Windows, the `webview-frames` scheme on macOS |
+| Service-worker, shared-worker and cross-origin iframe requests reaching the handler on Windows | part of the request handler | the same handler, registering its filter with `AddWebResourceRequestedFilterWithRequestSourceKinds` and all source kinds, as `wry`'s own handler and the C++ fork both do |
+| Streamed responses | `webview_begin_response`, `webview_write_response_chunk`, `webview_end_response` | Sweetview `platform`, outside `wry`. Windows: its own `WebResourceRequested` handler on `wry`'s `webview()` with its own `IStream`, ported from `streaming_istream.hh`. macOS: its own `WKURLSchemeHandler` on a configuration passed to `with_webview_configuration`, calling `didReceiveData:` per chunk, ported from `cocoa_webkit.hh` |
+| External drop control with HTML drops inside the page still working | `webview_set_allow_external_drop` | Windows: `SetAllowExternalDrop` on `wry`'s `controller()`, from Sweetview `platform`. macOS: `wry`'s `with_drag_drop_handler`, with the C++ fork's drag routing kept in Sweetview `platform` |
+| File drop paths | `webview_set_file_drop_handler` | Windows: the C++ fork's drop script and `WebMessageReceived` handler on `wry`'s `webview()`, from Sweetview `platform`. macOS: the same drag handler and routing |
+| Bindings reachable from the top-level document only | internal | Windows: `wry` as it is, plus a top-frame guard in the bridge script. macOS: Sweetview's own script message handler, added through `wry`'s `manager()`, refuses messages from other frames |
 | System-wide mouse hook | `webview_mouse_hook_install`, `webview_mouse_hook_remove` | Sweetview `platform`: `SetWindowsHookExW(WH_MOUSE_LL)`, `CGEventTap`; ported from `mouse_hook.hh` |
 | System-wide keyboard hook, DOM key codes | `webview_keyboard_hook_install`, `webview_keyboard_hook_remove` | Sweetview `platform`: `WH_KEYBOARD_LL`, the same event tap; `key_codes.hh` ported with its tests |
 | Permission model for the hooks | `webview_feature_permissions`, `webview_permission_status`, `webview_permission_request`, `webview_permission_set_auto_request` | Sweetview `platform`: `CGPreflightPostEventAccess`, `CGRequestPostEventAccess` |
@@ -194,7 +193,7 @@ All kept.
 
 | Where | What | Unsafe |
 |---|---|---|
-| `wry` fork | streamed response bodies on Windows and macOS; on macOS the C++ fork's drag routing, top-level-only IPC and a navigation-failed event | yes |
+| Sweetview `platform::webview` | what `wry` lacks, built on the native objects it hands out: streamed response bodies on Windows and macOS; on macOS the C++ fork's drag routing, top-level-only IPC and a navigation-failed event | yes |
 | Sweetview `platform::input` | mouse hook, keyboard hook, permissions | yes |
 | Sweetview `platform::notify` | Windows: WinRT toasts and the hidden-icon balloon fallback. macOS: notifications | yes |
 | Sweetview `platform::adopt` | wrapping a window this process did not create through Sweetview (`Window.fromHandle`): its events by subclassing on Windows, and mounting a webview into it | yes |
@@ -208,21 +207,21 @@ Every function of Sweetview, the bindings and the C++ fork is treated as require
 
 | Function | Provided by | Check that exists today | Proven at |
 |---|---|---|---|
-| A transparent, frameless, topmost window that never takes focus, above the taskbar or Dock | `tao`, `platform::misc` for the macOS window level | `demos/desktop-pet`; `scripts/shot.ps1`, `scripts/flicker.ps1` | step 5 |
-| A transparent page background, alpha 0 | `wry` `with_transparent`, `with_background_color` | the fork's background colour tests; `demos/desktop-pet` | step 2 |
-| Whole-window click-through on and off | `tao` `set_ignore_cursor_events` | `scripts/settings-probe.ps1` | step 5 |
-| Hit regions: polygons from the page, 10 ms poll, exact answer from the page, no flip while a button is down | Sweetview `hit`, `platform::misc` | `hit-regions.test.ts`; `scripts/probe.ps1`, which sends real input and reports which window the OS hands each click to | step 5 |
-| System-wide mouse hook: move, left, right, middle, wheel, modifiers, swallow per event | Sweetview `platform::input` | `examples/input-hooks.ts`; the fork's unit tests | step 4 |
-| System-wide keyboard hook: down, up, repeat, DOM key codes, modifiers, swallow per event | Sweetview `platform::input` | `examples/input-hooks.ts`; the fork's key-code unit tests | step 4 |
-| macOS permission model for the hooks: needed, status, request, auto-request | Sweetview `platform::input` | `examples/input-hooks.ts` | step 4 |
-| Window move and resize driven by the page, every frame | `tao` | `demos/desktop-pet` | step 5 |
-| Every monitor: screen, screen at a point, virtual screen, scale | `tao` | `demos/desktop-pet` on a second monitor | step 5 |
-| Assets, models and textures served at the page's origin | `wry` custom protocol | `test/request-handler.test.ts` | step 2 |
-| Page calls answered on the UI thread and in the worker; events to the page | `wry` IPC, the ring | `demos/desktop-pet`, `demos/web-app` | step 2 |
-| Both loop modes | `tao` | `demos/web-app`, `demos/menubar-only` | step 1 |
-| One executable from `bun build --compile` | the `.node` binding | each demo's `compile` recipe | step 1 |
+| A transparent, frameless, topmost window that never takes focus, above the taskbar or Dock | `tao`, `platform::misc` for the macOS window level | `demos/desktop-pet`; `scripts/shot.ps1`, `scripts/flicker.ps1` | W4, M3 |
+| A transparent page background, alpha 0 | `wry` `with_transparent`, `with_background_color` | the fork's background colour tests; `demos/desktop-pet` | W2, M1 |
+| Whole-window click-through on and off | `tao` `set_ignore_cursor_events` | `scripts/settings-probe.ps1` | W4, M3 |
+| Hit regions: polygons from the page, 10 ms poll, exact answer from the page, no flip while a button is down | Sweetview `hit`, `platform::misc` | `hit-regions.test.ts`; `scripts/probe.ps1`, which sends real input and reports which window the OS hands each click to | W4, M3 |
+| System-wide mouse hook: move, left, right, middle, wheel, modifiers, swallow per event | Sweetview `platform::input` | `examples/input-hooks.ts`; the fork's unit tests | W3, M2 |
+| System-wide keyboard hook: down, up, repeat, DOM key codes, modifiers, swallow per event | Sweetview `platform::input` | `examples/input-hooks.ts`; the fork's key-code unit tests | W3, M2 |
+| macOS permission model for the hooks: needed, status, request, auto-request | Sweetview `platform::input` | `examples/input-hooks.ts` | W3, M2 |
+| Window move and resize driven by the page, every frame | `tao` | `demos/desktop-pet` | W4, M3 |
+| Every monitor: screen, screen at a point, virtual screen, scale | `tao` | `demos/desktop-pet` on a second monitor | W4, M3 |
+| Assets, models and textures served at the page's origin | Sweetview `platform::webview` request handler | `test/request-handler.test.ts` | W2, M1 |
+| Page calls answered on the UI thread and in the worker; events to the page | `wry` IPC, the ring | `demos/desktop-pet`, `demos/web-app` | W2, M1 |
+| Both loop modes | `tao` | `demos/web-app`, `demos/menubar-only` | W1, M0 |
+| One executable from `bun build --compile` | the `.node` binding | each demo's `compile` recipe | W1, M0 |
 
-Nothing in this table works until its step is built and its check passes. This document is a design; it proves nothing by itself.
+Nothing in this table works until its checklist group is built and its check passes. This document is a design; it proves nothing by itself.
 
 The gate:
 
@@ -232,7 +231,7 @@ The gate:
 - A game moves to the result by following `docs/upgrading.md`. The dependents run of requirement R2 does that to a copy of each real application and runs its own checks before the goal can complete.
 - A function that cannot be made to work in Rust is first a reason to adjust the design. It stops the work only when no adjustment keeps the requirements, as R9 states.
 
-## Fork additions, located
+## What `wry` lacks, and where each is built
 
 ### `tray-icon`: no fork needed
 
@@ -249,7 +248,9 @@ Read in `src/platform_impl/windows/mod.rs` on the crate's `dev` branch.
 
 The file has no `NIF_INFO`, no `NIN_*` constant and no notification code today.
 
-### `wry`: what it already does, and the five additions
+### `wry`: what it already does, and the five behaviours it lacks
+
+No fork. `rust-rewrite/FORKS.md` says how each of the five is built outside `wry`. The tables below record where `wry`'s own code stops, which is why each one is this project's to write.
 
 Read on the crate's `dev` branch: `src/webview2/mod.rs`, `src/webview2/drag_drop.rs`, `src/wkwebview/mod.rs`, `src/wkwebview/drag_drop.rs`, `src/wkwebview/class/url_scheme_handler.rs`, `src/wkwebview/class/wry_web_view.rs`, `src/wkwebview/class/wry_web_view_delegate.rs`.
 
@@ -262,7 +263,7 @@ Already in `wry`, so no addition is needed:
 | Windows page messages from the top-level document only | `attach_ipc_handler` subscribes `add_WebMessageReceived` on the top-level `ICoreWebView2` only |
 | Custom scheme mapped to an `http://` origin on Windows | `custom_protocol_workaround` |
 
-Four of the five additions, each with the function it changes:
+Four of the five, each with the `wry` function that shows the gap. The "Change" column says what the behaviour is; it is built in Sweetview `platform`, not in `wry`:
 
 | Addition | File and function in `wry` | Change | Reference in the C++ fork |
 |---|---|---|---|
@@ -279,11 +280,11 @@ Done outside `wry`, in Sweetview's `platform` code, through `WebViewExtWindows::
 | File drop paths, Windows, with WebView2's own drop target left in place | the C++ fork's method: an initialization script that posts the dropped `File` objects with `postMessageWithAdditionalObjects`, and a `WebMessageReceived` handler on `webview()` that reads each `ICoreWebView2File` path. `wry`'s own `with_drag_drop_handler` is not used on Windows, because `DragDropController` in `src/webview2/drag_drop.rs` revokes WebView2's drop targets and rejects non-file drags |
 | Bridge and drop scripts in the top-level document only, Windows | each script starts with `if (window !== window.top) return`, as the C++ fork's do. `wry` adds scripts to every frame on Windows |
 
-The fifth addition, needed by tabs for the "This site did not open" page:
+The fifth, needed by tabs for the "This site did not open" page:
 
 | Addition | File in `wry` | Change |
 |---|---|---|
-| Navigation-failed event, macOS | `src/wkwebview/class/wry_navigation_delegate.rs`: `WryNavigationDelegate` implements `decidePolicyForNavigationAction`, `decidePolicyForNavigationResponse`, `didFinishNavigation`, `didCommitNavigation`, the two download methods and `webViewWebContentProcessDidTerminate`. It does not implement `webView:didFailNavigation:withError:` or `webView:didFailProvisionalNavigation:withError:`, and no builder callback reports a failed load | add the two methods and a handler ivar beside `on_page_load_handler`. `wry` owns the navigation delegate, so the tabs demo's own delegate cannot be installed |
+| Navigation-failed event, macOS | `src/wkwebview/class/wry_navigation_delegate.rs`: `WryNavigationDelegate` implements `decidePolicyForNavigationAction`, `decidePolicyForNavigationResponse`, `didFinishNavigation`, `didCommitNavigation`, the two download methods and `webViewWebContentProcessDidTerminate`. It does not implement `webView:didFailNavigation:withError:` or `webView:didFailProvisionalNavigation:withError:`, and no builder callback reports a failed load | built outside `wry`: a delegate of this project's that forwards every call to `wry`'s delegate and adds the two failure methods, set on the `WKWebView` from `WebViewExtMacOS::webview()`. Replacing `wry`'s delegate outright would lose its page-load, policy and download handling, so the delegate forwards |
 | Navigation-failed event, Windows | none | outside `wry`: `add_NavigationCompleted` on `WebViewExtWindows::webview()`, with the failure rules `win-webview2.ts` has today |
 
 ## API references
@@ -506,7 +507,7 @@ Today a `JSCallback` lets the OS call JavaScript on the UI thread while that thr
 
 | Hop | Today | After |
 |---|---|---|
-| page to UI thread | `webview_bind` of `__sweetview_rpc` | `wry`'s IPC handler |
+| page to UI thread | `webview_bind` of `__sweetview_rpc` | `wry`'s IPC handler on Windows; Sweetview's own script message handler on macOS, which refuses frames other than the top-level document |
 | UI thread to worker | `worker.postMessage` | the same |
 | worker to UI thread | frame into the ring, then `webview_dispatch` with a `JSCallback` pointer | frame into the ring, then `wake(handle)`, which sends a `tao` user event; the UI thread runs the function given to `setDrain` |
 | UI thread to page | `webview_return`, `webview_eval` | `wry` `evaluate_script` |
@@ -516,7 +517,7 @@ Today a `JSCallback` lets the OS call JavaScript on the UI thread while that thr
 - `Overlay.handle`, `WebviewApp.windowHandle` and `Webview.unsafeWindowHandle` stay the real OS handles, as `docs/native.md` and the bindings' docs define them: the `HWND` on Windows, the `NSWindow` pointer on macOS. `tao` returns them from `WindowExtWindows::hwnd()` and `WindowExtMacOS::ns_window()`.
 - `Webview.unsafeHandle` and the `handle` argument of the worker functions stay in the API as an opaque number that names the webview. The library checks it against its table of live webviews.
 - `assetOrigin` keeps its values: `http://webview.localhost` on Windows, `webview://localhost` on macOS.
-- `framesOrigin` on Windows is `http://frames.webview.localhost` today. A `wry` custom protocol named `webview` was observed to get the origin `http://webview.localhost`, so a protocol named `frames.webview` is expected to get today's frames origin. Checklist item W2.4 checks it. If it does not hold, the origin changes, apps read it from the getter, and the change gets its row in `docs/upgrading.md`.
+- `framesOrigin` keeps its values: `http://frames.webview.localhost` on Windows, `webview-frames://localhost` on macOS. This project's own request handler serves those origins, so they do not depend on how `wry` names a custom protocol.
 - `WEBVIEW_PATH` pointed at a custom engine build. `SWEETVIEW_NATIVE_PATH` points at a custom build of the binding.
 
 ## Packaging
@@ -534,16 +535,16 @@ Today a `JSCallback` lets the OS call JavaScript on the UI thread while that thr
 | `win32/event-loop.ts`, `darwin/event-loop.ts` | 91 | `tao` event loop |
 | `win32/window.ts`, `darwin/window.ts`, `win32/message-window.ts` | 213 | `tao` windows and events |
 | `win32/overlay.ts`, `darwin/overlay.ts` | 869 | `tao`, Sweetview `hit` and `resize`, `platform::misc` |
-| `win32/tray.ts`, `darwin/tray.ts` | 359 | `tray-icon` fork, Sweetview `click` |
+| `win32/tray.ts`, `darwin/tray.ts` | 359 | `tray-icon`, Sweetview `click` |
 | `win32/menu.ts`, `darwin/menu.ts`, `darwin/app-menu.ts` | 283 | `muda`, Sweetview `menu` |
 | `win32/notifier.ts`, `win32/winrt-toast.ts`, `darwin/notifier.ts` | 169 on `main` | `platform::notify` |
 | `win32/icon.ts`, `darwin/image.ts`, `darwin/app-icon.ts` | 142 | the crates' `Icon` types; `platform::misc` for SF Symbols and the Dock icon |
 | `win32/folder-picker.ts`, `darwin/folder-picker.ts` | 150 | `rfd` |
 | the bindings' `src/` | 2,014 | Sweetview `engine` on `wry` |
-| C++ fork: backends, `engine_base.hh` | upstream plus 8,646 added | `wry` and its fork additions |
+| C++ fork: backends, `engine_base.hh` | upstream plus 8,646 added | `wry`, and Sweetview `platform::webview` for what `wry` lacks |
 | C++ fork: `http_request.hh` | 683 | Sweetview `http`, safe Rust |
 | C++ fork: `input_hooks.hh`, `mouse_hook.hh`, `keyboard_hook.hh`, `key_codes.hh` | 1,617 | Sweetview `platform::input` |
-| C++ fork: `streaming_istream.hh` | 373 | `wry` fork |
+| C++ fork: `streaming_istream.hh` | 373 | Sweetview `platform::webview` |
 
 Kept as TypeScript, untouched: `hit-regions.ts`, `icon.ts`, `menu.ts`, `ring.ts`, the IPC modules, `html.ts`, `build.ts`, `make-app.ts`, `settings-store.ts`, `window-chrome.ts`, `page.ts`.
 
@@ -563,7 +564,7 @@ Every file of `demos/native-tabs` on `main` and of the tabs library on `v1-draft
 | `target="_blank"` and `window.open` become a tab | `wry` `with_new_window_req_handler` |
 | Keyboard returned to the page after a strip action | `MoveFocus` on `controller()` |
 | Popups follow the window when it moves | `NotifyParentWindowPositionChanged` on `controller()` |
-| "This site did not open" page on a failed load | a navigation-failed event from the `wry` fork; the rules for which failures count stay as `win-webview2.ts` has them |
+| "This site did not open" page on a failed load | `add_NavigationCompleted` on `wry`'s `webview()`, from Sweetview `platform`; the rules for which failures count stay as `win-webview2.ts` has them |
 | Tab context menu and the window's system menu | `muda` context menu; `GetSystemMenu` and `TrackPopupMenu` in `platform` |
 | Strip drag moves the window; top edge and corners resize it | `tao` `drag_window`, `drag_resize_window` |
 | Minimum size, DPI change, dark title bar following the system | `tao` `with_inner_size_constraints`, `ScaleFactorChanged`, `set_theme` |
@@ -582,7 +583,7 @@ What goes away: the eight hand-built COM vtables in `win-webview2.ts`, their slo
 | File, View and Window menus with the tab items and key equivalents | `muda` |
 | Close, become-main, resize and move per tab window | `tao` window events |
 | Popups become a tab | `wry` `with_new_window_req_handler` |
-| Failed-load page | the navigation-failed event from the `wry` fork |
+| Failed-load page | Sweetview `platform`: a navigation delegate that forwards to `wry`'s and adds the two failure methods |
 | Every native call inside an autorelease pool | `objc2::rc::autoreleasepool` |
 | Draining the main dispatch queue twice before a tab's webview is destroyed | not needed: it exists because the C++ engine queues replies holding a plain pointer to itself. `wry` guards each task with `check_task_is_valid` |
 
@@ -645,7 +646,7 @@ Linux is the third goal, `CHECKLIST-linux.md`, scoped as the Linux section above
 | A rebuilt module behaves differently from today. Every game-critical path is re-implemented under this proposal, so each one can differ | Each is accepted against its existing tests and demo, and the dependents run of R2 upgrades a copy of each real application and runs its own checks. The published packages and tag `pre-rust-rewrite` stay as they are. |
 | The worker cannot load the binding a second time, or cannot wake the UI thread through it | Item W1.7 proves it before any webview work. If it fails, the wake goes through a `SharedArrayBuffer` flag the pump reads plus a thread message posted by a tiny `setup:` FFI call, recorded in `rust-rewrite/DECISIONS.md`. |
 | `tao` queues window events while its handler is already running, so a handler that opens a modal loop sees no resize, move or close until it returns | Item W1.8 tests it. Page calls and worker replies arrive through WebView2's own callbacks and the wake message, not through `tao`'s event handler, so they are served inside the modal loop; window events that arrive late are delivered when the handler returns, as the OS queue would deliver them. |
-| The `wry` fork drifts from upstream | Each addition is one commit on top of a pinned upstream version, and is offered upstream. |
+| A later `wry` release changes one of the native objects this project builds on | `wry` is pinned in `Cargo.lock`. Each of the five behaviours has its own test, so an upgrade that breaks one fails that test. |
 | `unsafe` spreads | `#![forbid(unsafe_code)]` on every Sweetview module outside `platform`. CI counts `unsafe` blocks and fails when the count rises without an entry in a tracked list. |
 
 ## Alternatives ruled out

@@ -8,10 +8,10 @@ For each behaviour, take the first that provides it:
 
 1. A safe API of `tao`, `wry`, `muda`, `tray-icon` or `rfd`.
 2. A safe method of an `objc2` framework crate, or a safe wrapper type of the `windows` crate. Most AppKit methods in `objc2-app-kit` are safe; `SWEETVIEW-RESTART-PROPOSAL.md` lists the ones this project needs with their safety.
-3. An addition to this project's `wry` fork, written in the style of the code around it.
+3. A typed interface of `webview2-com` or `objc2-web-kit`, reached through a native object one of those crates hands out (`wry`'s `controller()`, `webview()`, `environment()`, `manager()`).
 4. An `unsafe` block in one of this project's platform crates, under the rules below.
 
-Record the choice for anything that lands on 3 or 4 in `rust-rewrite/UNSAFE-LEDGER.md`: the behaviour, the crate API that was looked for and its docs.rs page, and why it does not serve.
+No crate is forked. Record the choice for anything that lands on 3 or 4 in `rust-rewrite/UNSAFE-LEDGER.md`: the behaviour, the crate API that was looked for and its docs.rs page, and why it does not serve.
 
 ## Where `unsafe` may appear
 
@@ -19,7 +19,6 @@ Record the choice for anything that lands on 3 or 4 in `rust-rewrite/UNSAFE-LEDG
 |---|---|
 | a platform crate: `crates/sweetview-platform`, or `crates/sweetview-platform-<name>` when the work is split (per OS, or input hooks apart from windows) | allowed, under the rules below |
 | every other crate in the workspace | forbidden: `#![forbid(unsafe_code)]` at the crate root |
-| the fork | as its upstream code does it |
 
 How many crates there are and where their boundaries fall is a design choice of the work: a crate has one job a maintainer can name in a sentence. What is fixed is that `unsafe` stays inside crates whose name starts with `sweetview-platform`, because `verify.ts` and a reviewer find it by that name.
 
