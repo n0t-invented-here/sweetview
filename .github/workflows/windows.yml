@@ -40,5 +40,17 @@ jobs:
       - name: bun run typecheck
         run: bun run typecheck
 
+      # A failure is repeated as annotations (failing tests first, then the tail of the output),
+      # so it can be read from the run's summary page.
       - name: bun test
-        run: bun test
+        shell: pwsh
+        run: |
+          bun test 2>&1 | Tee-Object -FilePath test-output.txt
+          $code = $LASTEXITCODE
+          if ($code -ne 0) {
+            $lines = Get-Content test-output.txt
+            $lines | Select-String -Pattern '\(fail\)|^error|panicked|Segmentation|SIGABRT' | Select-Object -First 10 | ForEach-Object { "::error::$($_.Line)" }
+            $lines | Select-Object -Last 10 | ForEach-Object { "::warning::$_" }
+            $lines | Select-String -Pattern 'pass$|fail$|skip$|Ran \d+ tests' | Select-Object -Last 6 | ForEach-Object { "::notice::$($_.Line)" }
+            exit $code
+          }
