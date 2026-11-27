@@ -595,3 +595,14 @@ Pure TypeScript and the same on every OS, so it is done once, here. The contract
 
     `rust-rewrite/OWNER-ACTIONS.md`, seven sections: merging the branch (nothing was merged, no pull request opened); publishing to npm (nothing was published; the eight packages, what changed for a consumer of each, the checks to run first, and the two package names and the wire names this work chose); running the upgrade against the real applications (decision D19); what only a person at the desk can do (a tray click and a toast click by hand, a drag out of Explorer, a second monitor at another scale); upstream findings for `tao`, `wry`, `muda` and WebView2, each with the place here that handles it (no issue or pull request was opened on a repository the owner does not own); the state of the two forks; housekeeping.
 
+    ```
+    $ grep -n "^## " rust-rewrite/OWNER-ACTIONS.md
+    5:## 1. Merge the branch
+    11:## 2. Publish to npm
+    30:## 3. Run the upgrade against the real applications
+    40:## 4. Things only a person at the desk can do
+    46:## 5. Upstream
+    63:## 6. The forks
+    68:## 7. Housekeeping
+    ```
+
