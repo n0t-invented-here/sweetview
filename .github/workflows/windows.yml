@@ -1,0 +1,44 @@
+name: windows
+
+# Builds the Rust binding and runs every check on Windows.
+on:
+  push:
+    branches: [v1-rust-rewrite, main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: extractions/setup-just@v3
+
+      - name: Install JavaScript dependencies
+        run: bun install
+
+      - name: Build the binding
+        run: just native
+
+      - name: cargo test
+        run: cargo test --workspace
+
+      - name: cargo clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: bun run typecheck
+        run: bun run typecheck
+
+      - name: bun test
+        run: bun test

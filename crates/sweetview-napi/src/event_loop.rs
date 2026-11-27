@@ -1,0 +1,97 @@
+//! Both loop modes, deferred jobs, native timeouts, and the wake a `Worker` calls.
+
+use napi::bindgen_prelude::Function;
+use napi::Env;
+use sweetview_runtime::{Runtime, TimeoutId};
+
+use crate::callback::JsCallback;
+use crate::errors::OrThrow;
+
+/// Stays inside the OS loop until `quitLoop()`. JavaScript runs only as callbacks from inside it.
+pub fn run_loop() -> napi::Result<()> {
+  Runtime::get().or_throw()?.run_blocking().or_throw()
+}
+
+/// Ends the `runLoop()` in progress. With none in progress it does nothing.
+pub fn quit_loop() -> napi::Result<()> {
+  Runtime::get().or_throw()?.request_exit();
+  Ok(())
+}
+
+/// Dispatches what is waiting in the OS loop and returns. Called from inside the loop it does nothing.
+pub fn pump_events() -> napi::Result<()> {
+  Runtime::get().or_throw()?.pump();
+  Ok(())
+}
+
+/// True while `runLoop()` is on the stack.
+pub fn is_loop_blocking() -> napi::Result<bool> {
+  Ok(Runtime::get().or_throw()?.is_blocking())
+}
+
+/// Calls `job` on a later turn of whichever loop the UI thread is in, a modal one included.
+pub fn defer(env: Env, job: Function<'_, (), ()>) -> napi::Result<()> {
+  let job = JsCallback::new(env, &job, "a deferred job")?;
+  Runtime::get().or_throw()?.defer(move || {
+    job.call(());
+  });
+  Ok(())
+}
+
+/// Calls `job` once, `delayMs` milliseconds from now, from inside whichever loop the UI thread is in.
+pub fn schedule_timeout(env: Env, delay_ms: u32, job: Function<'_, (), ()>) -> napi::Result<u32> {
+  let job = JsCallback::new(env, &job, "a native timeout")?;
+  let id = Runtime::get()
+    .or_throw()?
+    .set_timeout(delay_ms, move || {
+      job.call(());
+    })
+    .or_throw()?;
+  Ok(id.0)
+}
+
+/// Calls `job` every `intervalMs` milliseconds until it is cancelled.
+pub fn schedule_interval(env: Env, interval_ms: u32, job: Function<'_, (), ()>) -> napi::Result<u32> {
+  let job = JsCallback::new(env, &job, "a native interval")?;
+  let id = Runtime::get()
+    .or_throw()?
+    .set_interval(interval_ms, move || {
+      job.call(());
+    })
+    .or_throw()?;
+  Ok(id.0)
+}
+
+/// Cancels a timeout or an interval. Cancelling one that is gone does nothing.
+pub fn cancel_timeout(id: u32) -> napi::Result<()> {
+  Runtime::get().or_throw()?.clear_timeout(TimeoutId(id));
+  Ok(())
+}
+
+/// Sets the function that `wake(token)` runs on the UI thread. `null` removes it.
+pub fn set_drain(env: Env, token: u32, drain: Option<Function<'_, (), ()>>) -> napi::Result<()> {
+  if token == 0 {
+    return Err(napi::Error::from_reason("sweetview: wake token 0 is reserved"));
+  }
+  let runtime = Runtime::get().or_throw()?;
+  match drain {
+    Some(drain) => {
+      let drain = JsCallback::new(env, &drain, "a drain function")?;
+      runtime.set_drain(
+        u64::from(token),
+        Some(std::rc::Rc::new(move || {
+          drain.call(());
+        })),
+      );
+    }
+    None => runtime.set_drain(u64::from(token), None),
+  }
+  Ok(())
+}
+
+/// Runs the drain function registered under `token` on the UI thread.
+/// Callable from any thread: this is how a `Worker` wakes the UI thread.
+/// Returns false when there is nothing to wake.
+pub fn wake(token: u32) -> bool {
+  token != 0 && sweetview_runtime::wake(u64::from(token))
+}

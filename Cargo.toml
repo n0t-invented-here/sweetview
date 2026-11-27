@@ -1,0 +1,53 @@
+# The Rust half of Sweetview: the native layer Bun reaches through N-API.
+# rust-rewrite/DECISIONS.md says why the crates are divided the way they are.
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+exclude = ["rust-rewrite/spike", "demos"]
+
+[workspace.package]
+version = "1.0.0"
+edition = "2021"
+rust-version = "1.85"
+license = "MIT OR 0BSD"
+repository = "https://github.com/n0t-invented-here/sweetview"
+publish = false
+
+[workspace.dependencies]
+# The crates the design rests on, as published on crates.io. No crate is forked.
+tao = "0.38.0"
+wry = { version = "0.58.2", features = ["devtools"] }
+muda = "0.22.0"
+tray-icon = "0.27.0"
+rfd = { version = "0.18.0", default-features = false }
+napi = { version = "3.16.3", default-features = false, features = ["napi8"] }
+napi-derive = "3.7.2"
+napi-build = "2.7.0"
+windows = "0.62.2"
+windows-core = "0.62.2"
+webview2-com = "0.39.1"
+raw-window-handle = "0.6"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+sweetview-http = { path = "crates/sweetview-http" }
+sweetview-keycodes = { path = "crates/sweetview-keycodes" }
+sweetview-window-logic = { path = "crates/sweetview-window-logic" }
+sweetview-runtime = { path = "crates/sweetview-runtime" }
+sweetview-napi = { path = "crates/sweetview-napi" }
+sweetview-platform-loop = { path = "crates/sweetview-platform-loop" }
+sweetview-platform-webview = { path = "crates/sweetview-platform-webview" }
+sweetview-platform-input = { path = "crates/sweetview-platform-input" }
+sweetview-platform-window = { path = "crates/sweetview-platform-window" }
+sweetview-platform-notify = { path = "crates/sweetview-platform-notify" }
+sweetview-platform-shell = { path = "crates/sweetview-platform-shell" }
+
+[profile.release]
+opt-level = 2
+debug = false
+strip = "symbols"
+# OS callbacks convert a panic into their failure value with catch_unwind.
+panic = "unwind"
+
+[profile.dev]
+debug = "line-tables-only"

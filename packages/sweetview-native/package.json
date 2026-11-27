@@ -36,6 +36,12 @@
   "engines": {
     "bun": ">=1.4.2"
   },
+  "napi": {
+    "binaryName": "sweetview",
+    "targets": [
+      "x86_64-pc-windows-msvc"
+    ]
+  },
   "dependencies": {
     "@n1h/sweetview-settings": "workspace:*"
   }

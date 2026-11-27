@@ -13,13 +13,19 @@ mod webview
 install:
     bun install
 
+# Builds the Rust binding for this machine into packages/sweetview-native/prebuilt/, where the
+# native package loads it from, and regenerates its TypeScript declarations from the Rust.
+native: install
+    bunx napi build --platform --release --cwd packages/sweetview-native --manifest-path ../../crates/sweetview-platform-node/Cargo.toml --output-dir prebuilt --no-js --dts binding.d.ts
+
 typecheck: install
     bun run typecheck
 
 test: install
     bun test
 
-check: typecheck test
+# The binding is built first: the typecheck reads its generated declarations and the tests load it.
+check: native typecheck test
 
 compile: demos::web-app::compile demos::desktop-pet::compile demos::menubar-only::compile demos::menubar-notify::compile
 

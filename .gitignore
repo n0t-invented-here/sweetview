@@ -24,3 +24,6 @@ build/
 # bun writes cross-compile targets here when compiling for another OS
 .bun-cache/
 
+# Rust: cargo's build directory, and the binding `just native` builds into the native package
+target/
+packages/sweetview-native/prebuilt/*.node

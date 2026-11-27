@@ -10,8 +10,21 @@ Items name today's API members to say which behaviour is meant. The API may chan
 
 ## W0. Ground
 
-- [ ] W0.1 Tag `pre-rust-rewrite` exists on the commit before the first change and is pushed.
-- [ ] W0.2 Baseline recorded: `bun run typecheck` and `bun test` on that tag, output saved to `rust-rewrite/evidence/baseline-windows.txt`. Every test that passes here passes at the end.
+- [x] W0.1 Tag `pre-rust-rewrite` exists on the commit before the first change and is pushed.
+
+    ```
+    $ git rev-parse pre-rust-rewrite
+    0cb0f2e6c71f7c104537b2f82d50abd9b7546522
+    $ git push origin pre-rust-rewrite
+     * [new tag]         pre-rust-rewrite -> pre-rust-rewrite
+    $ git ls-remote --tags origin pre-rust-rewrite
+    0cb0f2e6c71f7c104537b2f82d50abd9b7546522	refs/tags/pre-rust-rewrite
+    ```
+
+- [x] W0.2 Baseline recorded: `bun run typecheck` and `bun test` on that tag, output saved to `rust-rewrite/evidence/baseline-windows.txt`. Every test that passes here passes at the end.
+
+    `rust-rewrite/evidence/baseline-windows.txt`: typecheck exit 0; `bun test` 174 pass, 17 skip, 0 fail, 766 expect() calls, 191 tests across 30 files. Each test is listed by name.
+
 - [ ] W0.3 A Cargo workspace exists at the repository root, under `crates/`. Each crate has one job that its `README.md` states in a sentence. The binding (the `napi` crate) and the logic crates forbid `unsafe`; only crates named `sweetview-platform` or `sweetview-platform-<name>` may hold it. The crate layout and the reason for each boundary are in `rust-rewrite/DECISIONS.md`.
 - [ ] W0.4 Every crate comes from crates.io at a version pinned in `Cargo.lock`. `cargo metadata` shows no git dependency and no path dependency outside this repository: no crate is forked.
 - [ ] W0.5 `just native` builds the binding for the host and places it where the loader finds it. `just check` builds it first.

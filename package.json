@@ -25,11 +25,12 @@
     "test": "bun test"
   },
   "devDependencies": {
+    "@n1h/sweetview-webview-bun": "^2.7.0",
+    "@napi-rs/cli": "^3",
     "@types/bun": "latest",
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",
-    "typescript": "^5.9.0",
-    "@n1h/sweetview-webview-bun": "^2.7.0"
+    "typescript": "^5.9.0"
   },
   "private": true
 }

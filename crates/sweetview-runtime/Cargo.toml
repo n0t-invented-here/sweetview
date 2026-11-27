@@ -1,0 +1,13 @@
+[package]
+name = "sweetview-runtime"
+description = "Everything that lives on Sweetview's UI thread, with no JavaScript in sight."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+sweetview-platform-loop.workspace = true
+tao.workspace = true

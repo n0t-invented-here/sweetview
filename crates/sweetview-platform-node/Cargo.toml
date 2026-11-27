@@ -1,0 +1,20 @@
+[package]
+name = "sweetview-platform-node"
+description = "The export table of the binding: the items that carry the #[napi] attribute."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+napi.workspace = true
+napi-derive.workspace = true
+sweetview-napi.workspace = true
+
+[build-dependencies]
+napi-build.workspace = true
