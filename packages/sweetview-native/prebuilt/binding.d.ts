@@ -129,6 +129,27 @@ export declare class SingleInstance {
   dispose(): void
 }
 
+/**
+ * A notification-area icon. Clicks, double clicks and the right-click menu call the functions
+ * it was made with, from inside whichever loop the UI thread is in.
+ */
+export declare class Tray {
+  /**
+   * `openMenu` is called each time the menu is about to open and returns it; `menuChosen` is
+   * called after it closes with the chosen item's `id`.
+   */
+  constructor(tooltip: string, icon: IconBytes | undefined | null, hasMenu: boolean, onClick: (() => void) | undefined | null, onDoubleClick: (() => void) | undefined | null, openMenu: () => Array<MenuItemData>, menuChosen: (arg: number) => void)
+  setTooltip(text: string): void
+  /** `null` shows the stock application icon. */
+  setIcon(icon?: IconBytes | undefined | null): void
+  /** Whether a right click opens the menu. */
+  setHasMenu(has: boolean): void
+  /** The icon's own window, which the shell posts its mouse messages to. `0n` once disposed. */
+  get windowHandle(): bigint
+  /** Removes the icon. Safe to call twice. */
+  dispose(): void
+}
+
 /** A native window: one Sweetview made, or a wrapper of any window by handle. */
 export declare class Window {
   /** Makes a window, hidden. Show it once it is positioned and wired. */
@@ -213,6 +234,12 @@ export declare function cursor(): Point
 /** Test hook: toast event handlers alive in the process; zero once every notifier is disposed. */
 export declare function debugLiveToastHandlers(): number
 
+/**
+ * The RGBA a tray or menu icon decodes to at `size` pixels a side; `null` when it carries
+ * nothing this platform uses.
+ */
+export declare function decodeIcon(icon: IconBytes, size: number): Uint8Array | null
+
 /** Calls `job` on a later turn of whichever loop the UI thread is in, a modal one included. */
 export declare function defer(job: () => void): void
 
@@ -239,6 +266,17 @@ export interface IconBytes {
   ico?: Uint8Array
 }
 
+/** One icon, as Sweetview's `Icon` type carries it. Windows reads `ico`, then `png`. */
+export interface IconBytes {
+  ico?: Uint8Array
+  png?: Uint8Array
+  symbol?: string
+  template?: boolean
+}
+
+/** macOS: the application menu (About, Quit) and the Edit menu. Windows: nothing. */
+export declare function installAppMenu(appName: string, aboutText: string): void
+
 /** Installs the process's keyboard hook: `(event, code, raw, modifiers) => swallow`. Returns a `webview_error_t`. */
 export declare function installKeyboardHook(handler: (arg0: number, arg1: string, arg2: number, arg3: number) => boolean): number
 
@@ -251,6 +289,20 @@ export declare function isLoopBlocking(): boolean
 /** True on the thread that loaded the binding first. */
 export declare function isUiThread(): boolean
 
+/**
+ * One menu entry. `kind` says which fields are read: an `item` has `id` (from 1), `label`,
+ * `enabled`, `checked` and `icon`; a `submenu` has `label`, `enabled`, `icon` and `items`.
+ */
+export interface MenuItemData {
+  kind: 'item' | 'submenu' | 'separator'
+  id?: number
+  label?: string
+  enabled?: boolean
+  checked?: boolean
+  icon?: IconBytes
+  items?: Array<MenuItemData>
+}
+
 /** Asks the OS for one permission and returns its state, as `permissionStatus` does. */
 export declare function permissionRequest(permission: number): number
 
@@ -260,11 +312,29 @@ export declare function permissionSetAutoRequest(on: boolean): void
 /** The state of one permission, as a `webview_error_t`: 0 granted, -5 missing, -1 not applicable. */
 export declare function permissionStatus(permission: number): number
 
+/**
+ * The OS folder dialog, owned by the window `owner` when given. Blocks until it closes and
+ * returns the chosen folder's path, or `null` when cancelled.
+ */
+export declare function pickFolder(owner: bigint | undefined | null, title: string): string | null
+
 /** A point in screen coordinates. */
 export interface Point {
   x: number
   y: number
 }
+
+/** A point on the screen, in physical pixels. */
+export interface Point {
+  x: number
+  y: number
+}
+
+/**
+ * Shows `menu` as a popup menu owned by the window `owner`, at the screen point `at` (physical
+ * pixels) or at the cursor, and returns the chosen item's `id` after it closes; `null` when dismissed.
+ */
+export declare function popupMenu(owner: bigint, menu: Array<MenuItemData>, at?: Point | undefined | null): number | null
 
 /**
  * After `delayMs`, from inside whichever loop the UI thread is in, calls `transform(input)` and
@@ -329,6 +399,12 @@ export declare function screenOf(handle: bigint): ScreenData
 
 /** Every monitor. */
 export declare function screens(): Array<ScreenData>
+
+/** macOS: the process's activation policy. Windows: nothing. */
+export declare function setActivationPolicy(policy: 'regular' | 'accessory' | 'prohibited'): void
+
+/** macOS: the running application's Dock icon. Windows: nothing. */
+export declare function setAppIcon(icon: IconBytes): void
 
 /** Sets the function that `wake(token)` runs on the UI thread. `null` removes it. */
 export declare function setDrain(token: number, drain?: (() => void) | undefined | null): void

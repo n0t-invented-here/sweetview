@@ -11,11 +11,16 @@ pub mod engine;
 mod error;
 pub mod input;
 pub mod notify;
+pub mod app;
+pub mod dialogs;
+pub mod icon;
+pub mod menu;
 pub mod runtime;
 pub mod shell;
 pub mod screen;
 pub mod threads;
 pub mod window;
+pub mod tray;
 
 pub use error::{Error, Result};
 pub use sweetview_window_logic::{Point, Rect, ResizeEdge};

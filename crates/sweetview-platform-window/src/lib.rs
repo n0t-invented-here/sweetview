@@ -68,3 +68,8 @@ pub struct HandleCounts {
 /// Tests that count the process's handles run one at a time.
 #[cfg(test)]
 pub(crate) static TEST_SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+mod metrics;
+mod popup;
+
+pub use metrics::{double_click_time_ms, small_icon_size};
+pub use popup::{check_item, show_popup, OwnerWindow, PopupAt};

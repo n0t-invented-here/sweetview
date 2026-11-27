@@ -15,6 +15,7 @@ crate-type = ["cdylib"]
 napi.workspace = true
 napi-derive.workspace = true
 sweetview-napi.workspace = true
+sweetview-runtime.workspace = true
 
 [build-dependencies]
 napi-build.workspace = true

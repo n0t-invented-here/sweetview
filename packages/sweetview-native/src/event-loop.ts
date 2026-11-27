@@ -18,11 +18,17 @@ export type EventLoopOptions = {
 type Backend = {
   pumpEvents(): boolean;
   discardQuit(): void;
-  setActivationPolicy(policy: ActivationPolicy): void;
   scheduleNativeTimeout(ms: number, fn: () => void): () => void;
 };
 const impl = backend<Backend>(
   () => require("./win32/event-loop"),
+  () => require("./darwin/event-loop"),
+);
+
+// Windows keeps it with the other application-wide settings it has no use for.
+type PolicyBackend = { setActivationPolicy(policy: ActivationPolicy): void };
+const policyImpl = backend<PolicyBackend>(
+  () => require("./win32/app-menu"),
   () => require("./darwin/event-loop"),
 );
 
@@ -96,5 +102,5 @@ export function quitEventLoop(): void {
  * presence is per window, set with `WindowOptions.hideFromTaskbar`.
  */
 export function setActivationPolicy(policy: ActivationPolicy): void {
-  impl().setActivationPolicy(policy);
+  policyImpl().setActivationPolicy(policy);
 }

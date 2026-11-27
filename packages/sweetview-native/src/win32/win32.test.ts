@@ -3,6 +3,34 @@
 
 import { describe, expect, test } from "bun:test";
 import { dotIco } from "../icon";
+import type { MenuTemplate } from "../menu";
+
+/** Shows `template` as a popup menu, reads it back from the OS while it is open, and closes it. */
+async function popupAndRead(template: MenuTemplate) {
+  const { binding } = await import("../binding");
+  const { Menu } = await import("../menu");
+  const { createMessageWindow } = await import("./message-window");
+  const { VK, menuOfWindow, openPopupMenu, pressKeys, readMenu } = await import("./os-probe.test-support");
+  type Shown = ReturnType<typeof readMenu>;
+  const native = binding();
+  const owner = createMessageWindow(() => {});
+  let shown: Shown = [];
+  const started = Date.now();
+  const id = native.scheduleInterval(10, () => {
+    const menuWindow = openPopupMenu();
+    if (menuWindow !== 0n) {
+      native.cancelTimeout(id);
+      shown = readMenu(menuOfWindow(menuWindow));
+      pressKeys(menuWindow, VK.ESCAPE);
+    } else if (Date.now() - started > 5000) native.cancelTimeout(id);
+  });
+  try {
+    Menu.popup(owner.hwnd, template, { x: 160, y: 160 });
+  } finally {
+    owner.destroy();
+  }
+  return shown;
+}
 
 const onWindows = process.platform === "win32";
 
@@ -55,27 +83,6 @@ describe.if(onWindows)("win32 FFI", () => {
     win.destroy();
   });
 
-  test("notifyIconData lays out the balloon fields where Windows expects them", async () => {
-    const t = await import("./tray");
-    const nid = t.notifyIconData(0x1234n, 7, 0x55n, "tip", { title: "T", body: "B", silent: true, hIcon: 0x99n });
-    const dv = new DataView(nid.buffer);
-    expect(nid.length).toBe(976);
-    expect(dv.getUint32(0, true)).toBe(976);
-    expect(dv.getBigUint64(t.NID_HWND, true)).toBe(0x1234n);
-    expect(dv.getUint32(t.NID_UID, true)).toBe(7);
-    expect(dv.getUint32(t.NID_FLAGS, true)).toBe(0x1 | 0x2 | 0x4 | 0x10); // MESSAGE|ICON|TIP|INFO
-    expect(dv.getBigUint64(t.NID_HICON, true)).toBe(0x55n);
-    expect(Buffer.from(nid.subarray(t.NID_TIP, t.NID_TIP + 8)).toString("utf16le")).toBe("tip\0");
-    expect(Buffer.from(nid.subarray(t.NID_INFO, t.NID_INFO + 4)).toString("utf16le")).toBe("B\0");
-    expect(Buffer.from(nid.subarray(t.NID_INFO_TITLE, t.NID_INFO_TITLE + 4)).toString("utf16le")).toBe("T\0");
-    expect(dv.getUint32(t.NID_INFO_FLAGS, true)).toBe(0x4 | 0x20 | 0x80 | 0x10); // USER|LARGE_ICON|QUIET_TIME|NOSOUND
-    expect(dv.getBigUint64(t.NID_BALLOON_ICON, true)).toBe(0x99n);
-    // Without a balloon: no NIF_INFO, info fields empty.
-    const plain = t.notifyIconData(1n, 1, 0n, "x");
-    expect(new DataView(plain.buffer).getUint32(t.NID_FLAGS, true)).toBe(0x7);
-    expect(plain[t.NID_INFO]).toBe(0);
-  });
-
   test("the 32px balloon icon loads from the generated .ico", async () => {
     const { loadIcon } = await import("./icon");
     const { SM_CXICON, user32 } = await import("./api");
@@ -123,42 +130,24 @@ describe.if(onWindows)("win32 FFI", () => {
     }
   });
 
-  test("escapeLabel doubles ampersands", async () => {
-    const { escapeLabel } = await import("./menu");
-    expect(escapeLabel("Fish & Chips")).toBe("Fish && Chips");
+  test("a literal ampersand in a menu label is doubled, so the OS shows it instead of an access key", async () => {
+    const shown = await popupAndRead([{ label: "Fish & Chips" }]);
+    expect(shown[0]!.label).toBe("Fish && Chips");
   });
 });
 
 describe.if(onWindows)("win32 icons", () => {
-  test("iconBitmap makes a DIB section at the asked size and premultiplies", async () => {
-    const { iconBitmap } = await import("./icon");
-    const { gdi32 } = await import("./api");
-    const hbm = iconBitmap(dotIco({ color: "#ff0000", sizes: [32] }), 16); // 32 -> 16: the resample path
-    expect(hbm).not.toBe(0n);
-    gdi32.DeleteObject(hbm);
-  });
-
-  test("bitmapItemInfo lays out MENUITEMINFOW for hbmpItem", async () => {
-    const { bitmapItemInfo, MII_SIZE, MII_MASK, MII_HBMPITEM } = await import("./menu");
-    const mii = bitmapItemInfo(0xabcdn);
-    const dv = new DataView(mii.buffer);
-    expect(mii.length).toBe(MII_SIZE);
-    expect(dv.getUint32(0, true)).toBe(80);
-    expect(dv.getUint32(MII_MASK, true)).toBe(0x80);
-    expect(dv.getBigUint64(MII_HBMPITEM, true)).toBe(0xabcdn);
+  test("a menu icon decodes at the asked size from a larger .ico image (the resample path)", async () => {
+    const { binding } = await import("../binding");
+    const rgba = binding().decodeIcon({ ico: dotIco({ color: "#ff0000", sizes: [32] }) }, 16)!; // 32 -> 16
+    expect(rgba.length).toBe(16 * 16 * 4);
+    const centre = (8 * 16 + 8) * 4;
+    expect([...rgba.subarray(centre, centre + 4)]).toEqual([255, 0, 0, 255]);
   });
 
   test("a menu with an icon builds and the bitmap is set on the item", async () => {
-    // Builds the HMENU the way popupMenuAtCursor does, without showing it.
-    const { iconBitmap } = await import("./icon");
-    const { bitmapItemInfo } = await import("./menu");
-    const { user32, gdi32, wstr } = await import("./api");
-    const hmenu = user32.CreatePopupMenu();
-    user32.AppendMenuW(hmenu, 0, 1n, wstr("With icon"));
-    const hbm = iconBitmap(dotIco());
-    expect(user32.SetMenuItemInfoW(hmenu, 0, 1, bitmapItemInfo(hbm))).not.toBe(0);
-    user32.DestroyMenu(hmenu);
-    gdi32.DeleteObject(hbm);
+    const shown = await popupAndRead([{ label: "With icon", icon: { windows: { ico: dotIco() } } }]);
+    expect(shown[0]).toMatchObject({ label: "With icon", hasBitmap: true });
   });
 
   test("setWindowIcon on a message window does not fail and replaces its handles", async () => {
@@ -172,17 +161,25 @@ describe.if(onWindows)("win32 icons", () => {
     win.destroy();
   });
 
-  test("buildMenu and destroyMenu handle submenus, separators, checkmarks, and icons", async () => {
-    const { buildMenu, destroyMenu } = await import("./menu");
-    const built = buildMenu([
+  test("menus handle submenus, separators, checkmarks, and icons, and each showing frees what it made", async () => {
+    const { menuData } = await import("./menu");
+    const { guiObjects } = await import("./os-probe.test-support");
+    const template: MenuTemplate = [
       { label: "One", checked: true, icon: { windows: { ico: dotIco() } }, click: () => {} },
       { type: "separator" },
       { type: "submenu", label: "Sub", submenu: [{ label: "Child", enabled: false }] },
-    ]);
-    expect(built.hmenu).not.toBe(0n);
-    expect(built.commands.size).toBe(2);
-    expect(built.bitmaps.length).toBe(1);
-    destroyMenu(built);
+    ];
+    expect(menuData(template).handlers.size).toBe(2);
+    const shown = await popupAndRead(template);
+    expect(shown[0]).toMatchObject({ label: "One", checked: true, hasBitmap: true });
+    expect(shown[1]!.separator).toBe(true);
+    expect(shown[2]!.submenu?.[0]).toMatchObject({ label: "Child", disabled: true });
+    // Built fresh for each showing and released after it: the process's GDI and USER objects return to where they were.
+    const before = guiObjects();
+    for (let i = 0; i < 10; i++) await popupAndRead(template);
+    const after = guiObjects();
+    expect(after.gdi).toBeLessThanOrEqual(before.gdi);
+    expect(after.user).toBeLessThanOrEqual(before.user);
   });
 
   test("Screen.of(hwnd) resolves the monitor hosting a message window", async () => {

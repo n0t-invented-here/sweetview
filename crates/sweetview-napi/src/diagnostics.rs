@@ -28,3 +28,12 @@ pub fn probe_round_trip(
     .or_throw()?;
   Ok(())
 }
+
+/// The RGBA a tray or menu icon decodes to at `size` pixels a side, as the binding decodes it;
+/// `null` when the icon carries nothing this platform uses. Throws with the reason it cannot be decoded.
+pub fn decode_icon(icon: sweetview_runtime::icon::IconBytes, size: u32) -> napi::Result<Option<Vec<u8>>> {
+  if !(1..=256).contains(&size) {
+    return Err(napi::Error::from_reason(format!("sweetview: an icon size is 1 to 256 pixels, not {size}")));
+  }
+  icon.rgba(size).map(|image| image.map(|image| image.pixels)).map_err(|e| napi::Error::from_reason(format!("sweetview: {e}")))
+}

@@ -21,6 +21,7 @@ pub mod shell;
 pub mod screen;
 pub mod types;
 pub mod window;
+pub mod menus;
 
 use napi_derive::napi;
 

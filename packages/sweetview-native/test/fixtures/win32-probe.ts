@@ -20,6 +20,9 @@ const user32 = dlopen("user32.dll", {
   SendMessageW: { args: [FFIType.u64, FFIType.u32, FFIType.u64, FFIType.u64], returns: FFIType.i64 },
   SetWindowPos: { args: [FFIType.u64, FFIType.u64, FFIType.i32, FFIType.i32, FFIType.i32, FFIType.i32, FFIType.u32], returns: FFIType.i32 },
   GetDC: { args: [FFIType.u64], returns: FFIType.u64 },
+  GetForegroundWindow: { args: [], returns: FFIType.u64 },
+  SetForegroundWindow: { args: [FFIType.u64], returns: FFIType.i32 },
+  SendInput: { args: [FFIType.u32, FFIType.ptr, FFIType.i32], returns: FFIType.u32 },
   ReleaseDC: { args: [FFIType.u64, FFIType.u64], returns: FFIType.i32 },
 }).symbols;
 const gdi32 = dlopen("gdi32.dll", {
@@ -140,4 +143,27 @@ export function systemUsesDarkApps(): boolean {
     ptr(size),
   );
   return status === 0 && data[0] === 0;
+}
+
+/** Asks for the foreground for `hwnd`; true when it has it afterwards. */
+export function takeForeground(hwnd: number | bigint | null): boolean {
+  user32.SetForegroundWindow(h(hwnd));
+  return user32.GetForegroundWindow() === h(hwnd);
+}
+
+/**
+ * Presses and releases one key, as one SendInput batch, only while `hwnd` is
+ * the foreground window, so no other window on the shared desktop gets it and
+ * the key is never left down. False when `hwnd` was not in the foreground.
+ */
+export function tapKey(hwnd: number | bigint | null, virtualKey: number): boolean {
+  if (user32.GetForegroundWindow() !== h(hwnd)) return false;
+  const INPUT_SIZE = 40; // sizeof(INPUT) on x64
+  const inputs = new DataView(new ArrayBuffer(INPUT_SIZE * 2));
+  for (const [i, up] of [[0, false], [1, true]] as const) {
+    inputs.setUint32(i * INPUT_SIZE, 1, true); // INPUT_KEYBOARD
+    inputs.setUint16(i * INPUT_SIZE + 8, virtualKey, true);
+    inputs.setUint32(i * INPUT_SIZE + 12, up ? 0x0002 : 0, true); // KEYEVENTF_KEYUP
+  }
+  return user32.SendInput(2, ptr(inputs.buffer), INPUT_SIZE) === 2;
 }

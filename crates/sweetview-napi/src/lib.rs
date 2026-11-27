@@ -20,6 +20,7 @@ pub mod window;
 pub use sweetview_runtime::screen::ScreenInfo;
 pub use sweetview_runtime::window::{Appearance, Chrome, WindowInit};
 pub use sweetview_runtime::{Point, Rect};
+pub mod menus;
 
 /// Runs when the binding is loaded, once per JavaScript thread that loads it.
 /// The first thread to load it is the UI thread.
