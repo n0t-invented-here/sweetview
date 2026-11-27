@@ -14,8 +14,8 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-use muda::{CheckMenuItem, ContextMenu, IconMenuItem, IsMenuItem, Menu, MenuId, MenuItem as MudaItem, PredefinedMenuItem, Submenu};
-use sweetview_platform_window::{check_item, is_on_this_thread, set_command_id, show_popup, show_system_menu, ForeignWindow, PopupAt};
+use muda::{CheckMenuItem, IconMenuItem, IsMenuItem, Menu, MenuId, MenuItem as MudaItem, PredefinedMenuItem, Submenu};
+use sweetview_platform_window::{check_item, is_on_this_thread, menu_handle_value, set_command_id, show_popup, show_system_menu, ForeignWindow, PopupAt};
 pub use sweetview_platform_window::PopupCorner;
 
 use crate::error::{Error, Result};
@@ -227,7 +227,10 @@ thread_local! {
 pub fn build_handed_out(data: &[MenuItem]) -> Result<isize> {
   Runtime::get()?;
   let built = build(data)?;
-  let handle = built.menu.hpopupmenu();
+  let handle = menu_handle_value(&built.menu);
+  if handle == 0 {
+    return Err(Error::state("sweetview: a menu handle for TrackPopupMenu is a Windows call"));
+  }
   HANDED_OUT.with(|menus| menus.borrow_mut().insert(handle, built));
   Ok(handle)
 }

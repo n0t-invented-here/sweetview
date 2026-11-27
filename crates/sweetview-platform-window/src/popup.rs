@@ -101,6 +101,10 @@ mod imp {
     set_item_info(menu, path, &info)
   }
 
+  pub fn menu_handle_value(menu: &muda::Menu) -> isize {
+    menu.hpopupmenu()
+  }
+
   pub fn set_command_id(menu: &muda::Menu, path: &[u32], id: u32) -> bool {
     let info = MENUITEMINFOW { cbSize: size_of::<MENUITEMINFOW>() as u32, fMask: MIIM_ID, wID: id, ..Default::default() };
     set_item_info(menu, path, &info)
@@ -120,6 +124,11 @@ mod imp {
   /// Not ported.
   pub fn check_item(_menu: &muda::Menu, _path: &[u32], _enabled: bool) -> bool {
     false
+  }
+
+  /// Not ported: no OS menu handle.
+  pub fn menu_handle_value(_menu: &muda::Menu) -> isize {
+    0
   }
 
   /// Not ported.
@@ -158,6 +167,13 @@ pub fn check_item(menu: &muda::Menu, path: &[u32], enabled: bool) -> bool {
 /// `WM_COMMAND` carries 16 bits. False when no item is at `path`.
 pub fn set_command_id(menu: &muda::Menu, path: &[u32], id: u32) -> bool {
   imp::set_command_id(menu, path, id)
+}
+
+/// The value of the popup menu handle (`HMENU`) `menu` owns, for an
+/// application's own `TrackPopupMenu`; valid while `menu` lives. 0 where the
+/// platform has no such handle.
+pub fn menu_handle_value(menu: &muda::Menu) -> isize {
+  imp::menu_handle_value(menu)
 }
 
 #[cfg(all(test, windows))]
