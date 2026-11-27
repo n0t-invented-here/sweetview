@@ -1,6 +1,6 @@
 # Unsafe ledger
 
-Rewritten by `bun rust-rewrite/verify.ts <platform> --ledger`. 209 uses in 20 files.
+Rewritten by `bun rust-rewrite/verify.ts <platform> --ledger`. 217 uses in 20 files.
 
 | File | Uses of `unsafe` |
 |---|---|
@@ -20,9 +20,9 @@ Rewritten by `bun rust-rewrite/verify.ts <platform> --ledger`. 209 uses in 20 fi
 | `crates/sweetview-platform-window/src/metrics.rs` | 1 |
 | `crates/sweetview-platform-window/src/popup.rs` | 4 |
 | `crates/sweetview-platform-window/src/size_hint.rs` | 1 |
-| `crates/sweetview-platform-window/src/tab_frame.rs` | 13 |
-| `crates/sweetview-platform-window/src/tab_frame_tests.rs` | 6 |
-| `crates/sweetview-platform-window/src/windows.rs` | 38 |
+| `crates/sweetview-platform-window/src/tab_frame.rs` | 16 |
+| `crates/sweetview-platform-window/src/tab_frame_tests.rs` | 12 |
+| `crates/sweetview-platform-window/src/windows.rs` | 37 |
 | `crates/sweetview-platform-window/src/windows_tests.rs` | 9 |
 
 ## Reasons
@@ -129,15 +129,15 @@ All of it reaches WebView2 through the objects `wry` 0.58.2 hands out (`WebViewE
 
 `tao` 0.38.0 (https://docs.rs/tao/0.38.0/tao/window/struct.Window.html, `WindowExtWindows`) has an API for most of these on windows it made; this crate serves every window of the thread through `NativeWindow`, an application's own (`ForeignWindow`) included, which `tao` cannot wrap, and DECISIONS D8 and D9 say why even `tao`'s own windows go through it (events held back, `SW_SHOW` activating, style rewrites). Every window function validates its handle and fails on one that is gone.
 
-### `crates/sweetview-platform-window/src/windows.rs` (38)
+### `crates/sweetview-platform-window/src/windows.rs` (37)
 
 - **Naming a window** (5: `WindowHandle::borrow_raw`, `IsWindow`, `GetWindowThreadProcessId`, `GetCurrentThreadId`, `PostMessageW`). `raw-window-handle` 0.6.2 `borrow_raw` is `unsafe`. `ForeignWindow` is checked with `IsWindow` when named and again when lent, is not `Send`, and its borrow is tied to `&self`. A handle that crosses to JavaScript is an integer validated once (the design).
 - **Reading a window** (7: `IsWindowVisible`, `GetActiveWindow`, one `IsIconic` in `is_iconic`, `IsZoomed`, `GetWindowRect`, one `GetDpiForWindow` in `dpi_of`, `GetWindowLongPtrW`). `tao`'s readers exist only for its own windows. Out-structs are locals.
-- **Changing a window** (12: one `SetWindowLongPtrW` in `set_style_of`, which writes `GWL_STYLE` or `GWL_EXSTYLE` only, one `SetWindowPos` in `set_window_pos`, `ShowWindow`, `SetForegroundWindow`, `SetWindowTextW`, `ReleaseCapture`, `SendMessageW` for the caption press, `SendMessageW` for the test close, `GetWindow`, one `GetClientRect` in `client_size`, `MoveWindow`, `SetLayeredWindowAttributes`). `tao` sets an outer position and an inner size as two calls, shows with `SW_SHOW`, rewrites the extended style from its own flags, and has no layered attributes (README of this crate).
+- **Changing a window** (11: one `SetWindowLongPtrW` in `set_style_of`, which writes `GWL_STYLE` or `GWL_EXSTYLE` only, one `SetWindowPos` in `set_window_pos`, `ShowWindow`, one `SetForegroundWindow` in `set_foreground`, `SetWindowTextW`, `ReleaseCapture` and `SendMessageW` for the frame press in `press_frame` (the caption for `start_os_drag`, any edge for the tab frame), `GetWindow`, one `GetClientRect` in `client_size`, `MoveWindow`, `SetLayeredWindowAttributes`). `tao` sets an outer position and an inner size as two calls, shows with `SW_SHOW`, rewrites the extended style from its own flags, and has no layered attributes (README of this crate).
 - **Destroying a `tao` window now** (1: `DestroyWindow` in `destroy_now`): `tao` destroys later, from its own loop; the caller drops the `tao` window next.
 - **Window icons** (5: `CreateIconFromResourceEx`, `LoadIconW`, `DestroyIcon`, one `GetSystemMetrics` in `metric`, `SendMessageW` for `WM_SETICON`). `tao` `Window::set_window_icon` takes one RGBA image for both sizes. Contained by `OwnedIcon` (destroyed in `Drop`) and `WindowIcons` (kept until the next icon replaces it).
 - **Buttons and work area** (2: `GetAsyncKeyState`, `GetMonitorInfoW`). `tao`'s `MonitorHandle` has no work area; button state outside `tao`'s handler has no API.
-- **The subclass** (6: `SetWindowSubclass`, `RemoveWindowSubclass`, `DefSubclassProc`, `DragQueryFileW` in `Drop_::query`, `DragFinish`, the `STYLESTRUCT` borrow in `style_change`). No crate offers subclassing. Contained by `WindowSubclass` (removed in `Drop` or on `WM_NCDESTROY`; state found by handle in a thread-local table), `Drop_` (the `HDROP` finished once in `Drop`), and `style_change` (the borrow is tied to the procedure's own `lParam`). `subclass_proc` is a safe `extern "system"` function whose body runs inside `catch_unwind`.
+- **The subclass** (6: `SetWindowSubclass`, `RemoveWindowSubclass`, one `DefSubclassProc` in `forward`, which the tab frame's procedure also forwards through, `DragQueryFileW` in `Drop_::query`, `DragFinish`, the `STYLESTRUCT` borrow in `style_change`). No crate offers subclassing. Contained by `WindowSubclass` (removed in `Drop` or on `WM_NCDESTROY`; state found by handle in a thread-local table), `Drop_` (the `HDROP` finished once in `Drop`), and `style_change` (the borrow is tied to the procedure's own `lParam`). `subclass_proc` is a safe `extern "system"` function whose body runs inside `catch_unwind`.
 
 ### `crates/sweetview-platform-window/src/popup.rs` (4)
 
@@ -156,12 +156,17 @@ All of it reaches WebView2 through the objects `wry` 0.58.2 hands out (`WebViewE
 
 `TestWindow`, a plain `STATIC` window an application would hand over (`CreateWindowExW`, `DestroyWindow`, `SendMessageW`), and a shell file drop built as the shell builds one (`GlobalAlloc`, `GlobalLock`, the `DROPFILES` write, the path copy, `GlobalUnlock`, and `GlobalSize` to see that `DragFinish` freed it).
 
-### `crates/sweetview-platform-window/src/tab_frame.rs` (13) — to be refreshed after the tab work merges
+### `crates/sweetview-platform-window/src/tab_frame.rs` (16)
 
-- **Foreground and frame presses** (5: `GetForegroundWindow`, `ReleaseCapture`, `SendMessageW` for `WM_NCLBUTTONDOWN`, `SendMessageW` for `WM_CLOSE`, `SetForegroundWindow`). Same reasons as `windows.rs`; `send_frame_press` repeats `start_os_drag`'s two calls and `request_close` repeats `send_close_for_tests`'s, so one helper each would take 3 away.
-- **The system menu** (3: `GetSystemMenu`, `EnableMenuItem`, `SetMenuDefaultItem`). Neither `tao` nor `muda` reaches a window's system menu.
-- **The tab popup menu** (5: `CreatePopupMenu`, `AppendMenuW` twice, `TrackPopupMenu`, `DestroyMenu`). `muda`'s menus report the chosen item through `MenuEvent`, not as `TrackPopupMenu`'s `TPM_RETURNCMD` result. Contained by `OwnedMenu`, destroyed in `Drop`.
+The frame of a tabbed window is a `tao` window without decorations whose caption is drawn by the strip's webview. Its presses, foreground and close go through `windows.rs`'s `press_frame`, `set_foreground`, `forward` and `client_size`, so they are not here.
 
-### `crates/sweetview-platform-window/src/tab_frame_tests.rs` (6, test) — to be refreshed after the tab work merges
+- **Foreground and close** (2: `GetForegroundWindow`, `SendMessageW` for `WM_CLOSE` in `request_close`, which `send_close_for_tests` also uses). `tao` 0.38.0 has `Window::is_focused` for its own windows only and no synchronous close request (`request_close` returns once the window's close listeners ran). No pointer is passed; the OS validates the handle.
+- **The system menu** (4: `GetSystemMenu`, `EnableMenuItem`, `SetMenuDefaultItem`, `TrackPopupMenu` in `track`, which the popup menu also uses). Neither `tao` nor `muda` 0.22.0 reaches a window's own system menu (`muda` builds its own menus); the menu belongs to the window and is not destroyed here.
+- **The tab popup menu** (3: `CreatePopupMenu`, one `AppendMenuW`, `DestroyMenu`). Looked for: `muda` 0.22.0 `ContextMenu::show_context_menu_for_hwnd` (https://docs.rs/muda/0.22.0/muda/trait.ContextMenu.html) is itself `unsafe` and reports the chosen item through `MenuEvent`, not as `TrackPopupMenu`'s `TPM_RETURNCMD` result the caller waits for. Contained by `OwnedMenu`: not `Send`, destroyed in `Drop`; the item text is a NUL-terminated buffer alive for the call.
+- **The backdrop** (4: `CreateSolidBrush`, `DeleteObject`, `InvalidateRect`, one `FillRect` for both areas). Looked for: `tao` 0.38.0 `Window::set_background_color` (https://docs.rs/tao/0.38.0/tao/window/struct.Window.html#method.set_background_color; `tao-0.38.0/src/platform_impl/windows/window.rs`) paints one colour and the frame needs two (the strip's and the page's); `Window::request_redraw` is `RedrawWindow(.., RDW_INTERNALPAINT)`, which does not erase the background, hence `InvalidateRect` with erase. Contained by `OwnedBrush` (deleted in `Drop`, never selected into a device context) and `Brushes`; the device context is the one `WM_ERASEBKGND` passes, valid for the message.
+- **The frame's own procedure** (2: `SetWindowSubclass`, `RemoveWindowSubclass`). Looked for: `tao` 0.38.0 `EventLoopBuilderExtWindows::with_msg_hook` (`tao-0.38.0/src/platform/windows.rs`; called from the loop's `GetMessage` in `platform_impl/windows/event_loop.rs`) sees queued messages only, and `WM_ERASEBKGND` and `WM_DPICHANGED` are sent ones. Contained by `FrameMessages`: removed in `Drop` or on `WM_NCDESTROY`, state found by handle in a thread-local table and checked to be the same frame before it is forgotten; `frame_proc` is a safe `extern "system"` function whose body runs inside `catch_unwind`.
+- **The suggested rectangle of a DPI change** (1: the `RECT` read from `lParam` in `WM_DPICHANGED`). No API reads the OS's `lParam`; the OS passes a `RECT` it owns for the message, checked non-null and copied at once. `tao` applies its own size instead of the suggested one.
 
-A window of its own (`GetModuleHandleW`, `CreateWindowExW`, `DestroyWindow`), its style read and rewritten (`GetWindowLongPtrW`, `SetWindowLongPtrW`) and activation sent (`SendMessageW`). `windows_tests.rs`'s `TestWindow`, the crate's `style` and `set_style_of` would take 5 away.
+### `crates/sweetview-platform-window/src/tab_frame_tests.rs` (12, test)
+
+Reads what the frame erased into a bitmap of the test's own (`GetDC`, `CreateCompatibleDC`, `CreateCompatibleBitmap`, `SelectObject` twice, `SendMessageW` for `WM_ERASEBKGND`, one `GetPixel`, `DeleteObject`, `DeleteDC`, `ReleaseDC`), and sends a `WM_DPICHANGED` with a `RECT` and reads the window's rectangle back (`SendMessageW`, `GetWindowRect`). The window is `windows_tests.rs`'s `TestWindow`.
