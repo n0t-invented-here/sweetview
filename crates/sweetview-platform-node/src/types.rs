@@ -28,6 +28,14 @@ impl From<Rect> for imp::Rect {
   }
 }
 
+/// One line of a popup menu: an item with a label, or a separator.
+#[napi(object)]
+pub struct MenuEntryData {
+  /// The item's text; `	` separates a shortcut shown at the right. Absent for a separator.
+  pub label: Option<String>,
+  pub enabled: bool,
+}
+
 /// A point in screen coordinates.
 #[napi(object)]
 pub struct Point {
@@ -93,6 +101,9 @@ pub struct WindowInit {
   pub topmost: bool,
   pub hide_from_taskbar: bool,
   pub no_activate: bool,
+  /// Windows: makes the window a tabbed window's frame, with a tab strip this
+  /// many device-independent pixels tall where the caption was.
+  pub tab_strip_height: Option<f64>,
 }
 
 impl From<WindowInit> for imp::WindowInit {
@@ -113,6 +124,7 @@ impl From<WindowInit> for imp::WindowInit {
       topmost: o.topmost,
       hide_from_taskbar: o.hide_from_taskbar,
       no_activate: o.no_activate,
+      tab_strip_height: o.tab_strip_height.map(|h| h.round().max(0.0) as u32),
     }
   }
 }

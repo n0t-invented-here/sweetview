@@ -129,6 +129,50 @@ export declare class SingleInstance {
   dispose(): void
 }
 
+/**
+ * Windows: the tab side of a tabbed window's frame (a `Window` made with `tabStripHeight`).
+ * The strip and the tabs are `Engine.createChild` webviews placed in `stripRect()` and `pageRect()`.
+ */
+export declare class TabFrame {
+  /** The frame with this handle, or null when the handle names no live tab frame. */
+  static of(handle: bigint): TabFrame | null
+  /** Every live tab frame. */
+  static all(): Array<TabFrame>
+  /** The frame's `HWND`. */
+  get handle(): bigint
+  /** False once the window is destroyed. */
+  get live(): boolean
+  /** The strip's height in physical pixels. */
+  stripHeight(): number
+  /** The strip in the frame's client coordinates, physical pixels. */
+  stripRect(): Rect
+  /** The page area below the strip, in the frame's client coordinates. */
+  pageRect(): Rect
+  /** The strip on the screen. */
+  stripScreenRect(): Rect
+  /** True when the frame is the foreground window. */
+  isForeground(): boolean
+  /** The frame's activation listener, called with `true` on activation; `null` removes it. */
+  onActivate(listener?: ((arg: boolean) => void) | undefined | null): void
+  /**
+   * Hands the left button's press to the OS move loop; returns when it is released.
+   * `heldX`/`heldY`: where in the strip the press was, in device-independent pixels.
+   */
+  startDrag(heldX?: number | undefined | null, heldY?: number | undefined | null): void
+  /** Hands the left button's press to the OS size loop from `edge`; returns when it is released. */
+  startResize(edge: string, heldX?: number | undefined | null, heldY?: number | undefined | null): void
+  /** The window's system menu at the cursor; the chosen command is carried out. */
+  showSystemMenu(): void
+  /** A popup menu at the cursor; returns the chosen entry's index once it closes, or -1. */
+  showMenu(entries: Array<MenuEntryData>): number
+  /** `"system"`, `"light"` or `"dark"`. */
+  appearance(): string
+  /** The frame's effective dark state. */
+  isDark(): boolean
+  /** The system's dark state; changes only a frame whose appearance is `"system"`. */
+  setSystemDark(dark: boolean): void
+}
+
 /** A native window: one Sweetview made, or a wrapper of any window by handle. */
 export declare class Window {
   /** Makes a window, hidden. Show it once it is positioned and wired. */
@@ -251,6 +295,16 @@ export declare function isLoopBlocking(): boolean
 /** True on the thread that loaded the binding first. */
 export declare function isUiThread(): boolean
 
+/** True while the left mouse button is down. */
+export declare function leftButtonDown(): boolean
+
+/** One line of a popup menu: an item with a label, or a separator. */
+export interface MenuEntryData {
+  /** The item's text; `	` separates a shortcut shown at the right. Absent for a separator. */
+  label?: string
+  enabled: boolean
+}
+
 /** Asks the OS for one permission and returns its state, as `permissionStatus` does. */
 export declare function permissionRequest(permission: number): number
 
@@ -333,6 +387,9 @@ export declare function screens(): Array<ScreenData>
 /** Sets the function that `wake(token)` runs on the UI thread. `null` removes it. */
 export declare function setDrain(token: number, drain?: (() => void) | undefined | null): void
 
+/** True when the system's app theme is dark. */
+export declare function systemIsDark(): boolean
+
 /** Removes the current user's registration of `scheme`. Any thread. */
 export declare function unregisterUrlScheme(scheme: string): void
 
@@ -344,6 +401,9 @@ export declare function virtualScreen(): Rect
  * Callable from any thread: this is how a `Worker` wakes the UI thread.
  */
 export declare function wake(token: number): boolean
+
+/** True when `handle` names a window now. */
+export declare function windowExists(handle: bigint): boolean
 
 /** Everything a new window is made with. Bounds are the outer frame. */
 export interface WindowInit {
@@ -362,6 +422,11 @@ export interface WindowInit {
   topmost: boolean
   hideFromTaskbar: boolean
   noActivate: boolean
+  /**
+   * Windows: makes the window a tabbed window's frame, with a tab strip this
+   * many device-independent pixels tall where the caption was.
+   */
+  tabStripHeight?: number
 }
 
 /** How many things Sweetview keeps for the window `handle`. For tests that check nothing leaks. */

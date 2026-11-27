@@ -27,6 +27,15 @@ mod platform;
 
 pub use platform::*;
 
+#[cfg(windows)]
+#[path = "tab_frame.rs"]
+mod tab_frame;
+#[cfg(not(windows))]
+#[path = "tab_frame_unported.rs"]
+mod tab_frame;
+
+pub use tab_frame::*;
+
 /// The chrome of a window as its styles say: what `Window.fromHandle` reports.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Chrome {
@@ -47,6 +56,8 @@ pub enum WindowEvent {
   CloseRequested,
   /// Files were dropped on the window: every path of one drop, in order.
   FilesDropped(Vec<String>),
+  /// The window became the active window (`true`) or stopped being it (`false`).
+  Activated(bool),
   /// The window is being destroyed. The last delivery; the subclass is gone after it.
   Destroyed,
 }

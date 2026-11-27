@@ -35,14 +35,14 @@ use windows::Win32::UI::WindowsAndMessaging::{
   IDI_APPLICATION, LAYERED_WINDOW_ATTRIBUTES_FLAGS, LR_DEFAULTCOLOR, LWA_ALPHA, LWA_COLORKEY, SET_WINDOW_POS_FLAGS,
   SHOW_WINDOW_CMD, SIZE_MINIMIZED, SM_CXICON, SM_CXSMICON, STYLESTRUCT, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE,
   SWP_NOSIZE, SWP_NOZORDER, SW_HIDE, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE, SW_SHOW, SW_SHOWNOACTIVATE, WM_CLOSE,
-  WM_DROPFILES, WM_MOVE, WM_NCDESTROY, WM_NCLBUTTONDOWN, WM_SETICON, WM_SIZE, WM_STYLECHANGING, WS_POPUP, WS_THICKFRAME, WS_VISIBLE,
+  WM_ACTIVATE, WM_DROPFILES, WM_MOVE, WM_NCDESTROY, WM_NCLBUTTONDOWN, WM_SETICON, WM_SIZE, WM_STYLECHANGING, WS_POPUP, WS_THICKFRAME, WS_VISIBLE,
 };
 
 use crate::{Chrome, ExStylePolicy, HandleCounts, Rect, WindowEvent};
 
 // ---- naming a window ---------------------------------------------------------------
 
-mod sealed {
+pub(crate) mod sealed {
   /// Gives the crate the handle of a window type it accepts. Not nameable
   /// outside the crate, so no other crate can implement it or call it.
   pub trait Sealed {
@@ -533,6 +533,8 @@ struct SubclassState {
   policy: Cell<ExStylePolicy>,
   fill_child: Cell<bool>,
   hold_visibility: Cell<bool>,
+  /// `GWL_STYLE` bits kept on through every style rewrite.
+  forced_style: Cell<u32>,
 }
 
 thread_local! {
@@ -584,6 +586,7 @@ impl WindowSubclass {
       policy: Cell::new(ExStylePolicy::default()),
       fill_child: Cell::new(false),
       hold_visibility: Cell::new(false),
+      forced_style: Cell::new(0),
     });
     SUBCLASSES.with(|table| table.borrow_mut().insert(hwnd.0 as isize, state));
     // SAFETY: installs this crate's procedure on a window of this thread (checked
@@ -618,6 +621,21 @@ impl WindowSubclass {
   pub fn set_hold_visibility(&self, on: bool) {
     if let Some(state) = state_of(self.hwnd) {
       state.hold_visibility.set(on);
+    }
+  }
+
+  /// Keeps the `GWL_STYLE` bits `bits` on from now on, through every later
+  /// rewrite of the style (by `tao` or anyone), and turns them on now.
+  pub fn force_style(&self, bits: u32) {
+    if let Some(state) = state_of(self.hwnd) {
+      state.forced_style.set(bits);
+    }
+    let current = style_of(self.hwnd, GWL_STYLE) as u32;
+    if current & bits != bits {
+      // SAFETY: writes the style of the window this subclass is installed on
+      // (alive: the subclass is removed when it is destroyed); the value is the
+      // current style with `bits` added.
+      let _previous = unsafe { SetWindowLongPtrW(self.hwnd, GWL_STYLE, (current | bits) as isize) };
     }
   }
 
@@ -707,6 +725,12 @@ fn handle(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> Option<LR
       Some(result)
     }
     WM_CLOSE => deliver(&state, &WindowEvent::CloseRequested).then_some(LRESULT(0)),
+    WM_ACTIVATE => {
+      let result = forward(hwnd, message, wparam, lparam);
+      // The low word is WA_INACTIVE (0), WA_ACTIVE or WA_CLICKACTIVE.
+      deliver(&state, &WindowEvent::Activated(wparam.0 & 0xffff != 0));
+      Some(result)
+    }
     WM_DROPFILES => {
       if state.policy.get().accept_files != Some(true) {
         return None;
@@ -730,12 +754,15 @@ fn handle(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> Option<LR
       }
       None
     }
-    WM_STYLECHANGING if wparam.0 as i32 == GWL_STYLE.0 && state.hold_visibility.get() => {
+    WM_STYLECHANGING if wparam.0 as i32 == GWL_STYLE.0 && (state.hold_visibility.get() || state.forced_style.get() != 0) => {
       let change = lparam.0 as *mut STYLESTRUCT;
       if !change.is_null() {
         // SAFETY: for WM_STYLECHANGING the OS passes a STYLESTRUCT it owns for the duration of the message.
         let current: STYLESTRUCT = unsafe { *change };
-        let held = (current.styleNew & !WS_VISIBLE.0) | (current.styleOld & WS_VISIBLE.0);
+        let mut held = current.styleNew | state.forced_style.get();
+        if state.hold_visibility.get() {
+          held = (held & !WS_VISIBLE.0) | (current.styleOld & WS_VISIBLE.0);
+        }
         // SAFETY: the same STYLESTRUCT; the OS reads `styleNew` back after the message returns.
         unsafe { (*change).styleNew = held };
       }
