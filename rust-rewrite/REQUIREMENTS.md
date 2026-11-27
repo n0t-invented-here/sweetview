@@ -4,9 +4,20 @@ These hold for the Windows goal and the macOS goal alike. When two documents dis
 
 Each requirement has a check. A requirement counts as met only when its check has been run and its output is in the session.
 
-## R1. Nothing is removed
+## What the rewrite is for
 
-Everything that works on branch `v1-rust-rewrite` at tag `pre-rust-rewrite` works afterwards. That covers three bodies of code:
+Take Sweetview as it stands on branch `v1-rust-rewrite` and end with the same product, where the native layer is no longer TypeScript calling the OS through `bun:ffi`:
+
+- Native code is written in Rust, in a well-organised set of crates that a maintainer can read, test and change.
+- Everything that can reasonably be memory safe is memory safe. What cannot is small, contained and justified.
+- A small amount of FFI that is needed to set things up is acceptable. A layer of it is not.
+- No functionality is lost, and every existing application has a clear way to upgrade.
+
+Rust that repeats the old code as `unsafe` blocks misses the purpose as much as leaving it in TypeScript does.
+
+## R1. No functionality is removed
+
+Every capability that works on branch `v1-rust-rewrite` at tag `pre-rust-rewrite` works afterwards. That covers three bodies of code:
 
 - Sweetview itself: every export of the six packages under `packages/`, with the behaviour `docs/` describes, on the platform the goal covers.
 - The Bun bindings, `n0t-invented-here/sweetview-webview-bun` branch `v1-drafting`: every export of `src/index.ts`, including `installMouseHook`, `installKeyboardHook`, `permissions`, the worker functions, and every `Webview` method.
@@ -14,14 +25,17 @@ Everything that works on branch `v1-rust-rewrite` at tag `pre-rust-rewrite` work
 
 Rules that follow from it:
 
-- A behaviour with no ready-made crate API is written by this project in Rust. "No crate has it" is never a reason to leave it out.
-- A value an app can observe stays the same: `assetOrigin` and `framesOrigin` on each platform, error codes of `WebviewError`, error message texts that `docs/` quotes, limits such as title and body lengths, wire formats such as the single-instance window class, mutex name, `WM_COPYDATA` magic and port name.
-- Window handles the API exposes (`Window.handle`, `Webview.unsafeWindowHandle`) stay the real `HWND` on Windows and the real `NSWindow` pointer on macOS, because applications pass them to their own native calls.
-- An application's own `bun:ffi` calls on the UI thread, including its own modal dialogs and popup menus, keep working inside Sweetview's event loop.
-- Both ways of running the loop stay: the blocking loop, and the loop pumped from a Bun timer.
-- An existing test is changed only where it reaches into `bun:ffi` plumbing that no longer exists, and then its assertions stay.
+The requirement is on what an application can do, not on how the API spells it:
 
-Check: `bun rust-rewrite/verify.ts <platform>` passes its `tests`, `demos` and `api-surface` checks, and every item of the platform checklist carries its evidence.
+- The API may change. A name, a signature, a module boundary, a constant an application can observe (an origin, an error code, a message text, a limit, a wire format) may change where the new design is better for it. Each change costs existing applications an upgrade step, so each has a reason and a row in `docs/upgrading.md` (R2).
+- No capability goes with the change. Whatever an application could do before, it can do after: the same behaviour reached through the new form.
+- A behaviour with no ready-made crate API is written by this project in Rust. "No crate has it" is never a reason to leave it out.
+- An application can still get the real OS window handle (`HWND` on Windows, the `NSWindow` pointer on macOS), because applications pass it to their own native calls.
+- An application's own `bun:ffi` calls on the UI thread, including its own modal dialogs and popup menus, keep working inside Sweetview's event loop.
+- Both ways of running the loop stay available: the blocking loop, and the loop pumped from a Bun timer.
+- An existing test keeps what it proves. Where the API it calls changed, the test is rewritten for the new form and still asserts the same behaviour. A test is deleted only when the thing it tested is `bun:ffi` plumbing that no longer exists.
+
+Check: `bun rust-rewrite/verify.ts <platform>` passes its `tests`, `demos` and `api-surface` checks, and every item of the platform checklist carries its evidence. The `api-surface` check accepts an export that is gone when `docs/upgrading.md` has a row for it.
 
 ## R2. Every existing application has an upgrade path
 
@@ -43,9 +57,9 @@ Sweetview's packages make no `bun:ffi` call on the platform the goal covers. `ru
 
 Check: the `ffi` check of `verify.ts`.
 
-## R4. Memory safety is the point
+## R4. Well-organised Rust, memory safe wherever it reasonably can be
 
-The result is safe Rust wherever a safe API exists, and disciplined Rust where none does. Moving the same unchecked calls from TypeScript into `unsafe` blocks does not meet this requirement.
+Native code lives in a set of Rust crates with clear boundaries, each with one job, that a maintainer can read, test and change. It is safe Rust wherever a safe API exists, and disciplined Rust where none does. Moving the same unchecked calls from TypeScript into `unsafe` blocks does not meet this requirement.
 
 `UNSAFE-POLICY.md` is the rule. In short: a safe crate API is used when one exists; `unsafe` lives only in the platform crate; every `unsafe` block does one thing, sits inside a safe function whose types carry the invariant, and has a `SAFETY:` comment; every OS resource has an owning type that frees it on drop.
 
@@ -91,7 +105,7 @@ Check: `bun test` on the other platform's non-live tests where a machine for it 
 
 ## R9. When to stop
 
-The goal stops early in one case: a requirement above cannot be met under any design that keeps the others. Then:
+The goal stops early in one case: something turns out to have been completely wrong, and no sensible adjustment of the design stays inside the requirements above. Adjusting the design is the first answer; stopping is what is left when no adjustment works. Then:
 
 1. Write `rust-rewrite/BLOCKED.md`: the requirement, what was built and observed, each design tried and why it fails, and what change to the requirements would unblock it.
 2. Print that file in the session, then the single line `SWEETVIEW-REWRITE <PLATFORM>: BLOCKED`.

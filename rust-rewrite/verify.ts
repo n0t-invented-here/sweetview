@@ -195,17 +195,28 @@ check("api-surface", false, () => {
     return names;
   };
   const before = sh(["git", "ls-tree", "-r", "--name-only", TAG, "--", "packages"]).out.split(/\r?\n/).filter((f) => /^packages\/[^/]+\/src\/index\.ts$/.test(f));
-  const missing: string[] = [];
+  // The API may change. An export that is gone or renamed is accounted for by a table row
+  // of docs/upgrading.md that names it in backticks and says what replaces it.
+  const guideRows = has("docs/upgrading.md") ? read("docs/upgrading.md").split(/\r?\n/).filter((l) => l.trimStart().startsWith("|")) : [];
+  const inGuide = (name: string) => guideRows.some((row) => row.includes("`" + name + "`") || new RegExp("`[^`]*\\b" + name.replace(/\$/g, "\\$") + "\\b[^`]*`").test(row));
+  const unaccounted: string[] = [];
   let count = 0;
+  let kept = 0;
+  let changed = 0;
   for (const file of before) {
     const old = exportsOf(sh(["git", "show", `${TAG}:${file}`]).out);
     const now = has(file) ? exportsOf(read(file)) : new Set<string>();
     for (const name of old) {
       count++;
-      if (!now.has(name)) missing.push(`${file}: export ${name} is gone`);
+      if (now.has(name)) kept++;
+      else if (inGuide(name)) changed++;
+      else unaccounted.push(`${file}: export ${name} is gone and docs/upgrading.md has no row for it`);
     }
   }
-  return { ok: missing.length === 0 && count > 0, lines: [`${count} exports of ${before.length} package entry points at ${TAG}, ${missing.length} missing now`, ...missing] };
+  return {
+    ok: unaccounted.length === 0 && count > 0,
+    lines: [`${count} exports of ${before.length} package entry points at ${TAG}: ${kept} kept, ${changed} changed with an upgrade row, ${unaccounted.length} unaccounted for`, ...unaccounted],
+  };
 });
 
 // ---- upgrade guide -----------------------------------------------------------

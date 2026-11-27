@@ -2,6 +2,8 @@
 
 Runs after the Windows goal is complete, on a Mac. Same rule for ticking as the Windows checklist: an item is ticked when its acceptance has been run and the output is pasted under it or saved under `rust-rewrite/evidence/`.
 
+Items name today's API members to say which behaviour is meant. The API may change (R1): the item is met by the same behaviour through the new form, with its row in `docs/upgrading.md`.
+
 Read `rust-rewrite/HANDOFF-macos.md` first. It was written by the Windows goal and lists what already compiles for macOS and what is stubbed.
 
 ## M0. Ground
@@ -26,7 +28,7 @@ Read `rust-rewrite/HANDOFF-macos.md` first. It was written by the Windows goal a
 
 - [ ] M2.1 `installMouseHook` and `installKeyboardHook` on one shared event tap, re-enabled when the system disables it.
 - [ ] M2.2 `permissions`: Device Control and Data Access and Input Monitoring, status, request, auto-request.
-- [ ] M2.3 `examples/input-hooks.ts` runs unchanged, from a signed `.app`.
+- [ ] M2.3 `examples/input-hooks.ts` runs from a signed `.app`, edited only for API changes that `docs/upgrading.md` records.
 
 ## M3. Loop, windows, overlays
 

@@ -1,6 +1,6 @@
 # Unsafe code policy
 
-The rewrite exists to end unchecked native calls. Rust that wraps every call in `unsafe` and passes raw handles around is the same code in a different file, and it does not meet requirement R4.
+The rewrite moves native code out of TypeScript `bun:ffi` and into well-organised Rust. Rust that wraps every call in `unsafe` and passes raw handles around is the same code in a different file, and it does not meet requirement R4.
 
 ## Order of preference
 

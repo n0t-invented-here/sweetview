@@ -4,7 +4,9 @@ An item is ticked when its acceptance has been run and the output is pasted unde
 
 Do the groups in order. Inside a group the order is free. After each group the tree works: commit and push it.
 
-Reference for every item: `SWEETVIEW-RESTART-PROPOSAL.md` (design), `rust-rewrite/reference/` (what today's code does, file by file), `docs/` (the behaviour that must not change).
+Reference for every item: `SWEETVIEW-RESTART-PROPOSAL.md` (design), `rust-rewrite/reference/` (what today's code does, file by file), `docs/` (the behaviour applications rely on).
+
+Items name today's API members to say which behaviour is meant. The API may change (R1): where the rewrite renames or reshapes a member, or changes a constant an application can observe, the item is met by the same behaviour through the new form, with its row in `docs/upgrading.md`.
 
 ## W0. Ground
 
@@ -28,13 +30,13 @@ Reference for every item: `SWEETVIEW-RESTART-PROPOSAL.md` (design), `rust-rewrit
 
 Source of truth for behaviour: the bindings repository's `docs/` and `test/`, and the C++ fork's `sweetview/` pages.
 
-- [ ] W2.1 `RawWebview` (the bindings' `Webview` class) keeps every member: constructor forms, `title`, `size`, `navigate`, `setHTML`, `init`, `eval`, `bind`, `bindRaw`, `unbind`, `return`, `run`, `destroy`, `unsafeHandle`, `unsafeWindowHandle`, and `unload`.
+- [ ] W2.1 Every capability of `RawWebview` (the bindings' `Webview` class) is available: constructor forms, `title`, `size`, `navigate`, `setHTML`, `init`, `eval`, `bind`, `bindRaw`, `unbind`, `return`, `run`, `destroy`, `unsafeHandle`, `unsafeWindowHandle`, and `unload`.
 - [ ] W2.2 `setAsset` and `assetOrigin`: `http://webview.localhost`, path matching and validation exactly as `assets.md` states.
 - [ ] W2.3 `setBackgroundColor`: alpha 0 and 255, the error for any other alpha, transparency through to the desktop.
 - [ ] W2.4 `setRequestHandler`, `completeRequest`, `completeWebviewRequest` from a worker, `framesOrigin` equal to `http://frames.webview.localhost`, header validation, the 404 and 500 rules, requests from service workers.
 - [ ] W2.5 Streaming: `beginResponse`, `writeResponseChunk`, `endResponse` and the worker forms, with the duplicate-begin error and the chunk rules of `request-handler.md`.
 - [ ] W2.6 `setAllowExternalDrop` and `setFileDropHandler`, with HTML drops inside the page still reaching the page.
-- [ ] W2.7 The bindings' `test/request-handler.test.ts` and its fixtures are brought into this repository and pass unchanged in what they assert.
+- [ ] W2.7 The bindings' `test/request-handler.test.ts` and its fixtures are brought into this repository and pass, rewritten for the new API where it changed and asserting the same behaviour.
 - [ ] W2.8 Sweetview's own webview tests pass: `request-handler.test.ts`, `app.test.ts`, `worker.test.ts`, `webview-lib.test.ts`.
 - [ ] W2.9 Teardown: destroying a webview with requests open, from inside a handler, and from a worker racing the destroy, each behave as `requests.md` states. A test covers each.
 
@@ -44,7 +46,7 @@ Source of truth for behaviour: the bindings repository's `docs/` and `test/`, an
 - [ ] W3.2 `installKeyboardHook`: down, up, repeat, DOM codes, raw code, modifiers after the event, swallow per event.
 - [ ] W3.3 `permissions`: `needed`, `status`, `request`, `ready`, `autoRequest`, with the Windows answers.
 - [ ] W3.4 The key-code tables of `key_codes.hh` are ported with every test of the C++ fork that covers them.
-- [ ] W3.5 The bindings' `examples/input-hooks.ts` runs unchanged against the new package.
+- [ ] W3.5 The bindings' `examples/input-hooks.ts` runs against the new package, edited only for API changes that `docs/upgrading.md` records.
 
 ## W4. Loop, windows, overlays
 
