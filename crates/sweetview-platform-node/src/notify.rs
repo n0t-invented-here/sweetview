@@ -17,6 +17,7 @@ impl Notifier {
   /// `appId`/`appName`: the toast identity (`null` uses `Sweetview.DesktopApp`); `iconIco`: the
   /// `.ico` the balloon shows (`null`: the stock icon); `onClick(id, dataJson)` runs on the UI thread.
   #[napi(
+    catch_unwind,
     constructor,
     ts_args_type = "appId: string | null, appName: string | null, iconIco: Uint8Array | null, onClick: ((id: string, dataJson: string | null) => void) | null"
   )]
@@ -31,80 +32,80 @@ impl Notifier {
   }
 
   /// Shows a notification. True when it was handed to the OS; false once disposed.
-  #[napi]
+  #[napi(catch_unwind)]
   pub fn notify(&self, id: String, title: String, body: String, silent: bool, data_json: Option<String>) -> bool {
     self.inner.notify(id, title, body, silent, data_json)
   }
 
   /// Replaces the `.ico` the balloon fallback shows. Throws on bytes that are not an icon.
-  #[napi]
+  #[napi(catch_unwind)]
   pub fn set_icon(&self, icon_ico: Option<Uint8Array>) -> napi::Result<()> {
     self.inner.set_icon(icon_ico.map(|b| b.to_vec()))
   }
 
   /// Releases the notifier. Safe to call twice.
-  #[napi]
+  #[napi(catch_unwind)]
   pub fn dispose(&mut self) {
     self.inner.dispose()
   }
 
   /// Test hook: `"auto"`, `"balloonOnly"`, `"toastShowFails"` or `"toastHeld"`.
-  #[napi]
+  #[napi(catch_unwind)]
   pub fn debug_force_path(&self, path: String) -> napi::Result<()> {
     self.inner.debug_force_path(path)
   }
 
   /// Test hook: `notify`, reporting `"toast:<cookie>"`, `"balloon:<uid>"` or `null`.
-  #[napi]
+  #[napi(catch_unwind)]
   pub fn debug_show(&self, id: String, title: String, body: String, silent: bool, data_json: Option<String>) -> Option<String> {
     self.inner.debug_show(id, title, body, silent, data_json)
   }
 
   /// Test hook: a toast's `"dismissed"`, `"activated"` or `"failed"` event, through the handler WinRT holds.
-  #[napi]
+  #[napi(catch_unwind)]
   pub fn debug_simulate_toast_event(&self, cookie: u32, event: String) -> napi::Result<bool> {
     self.inner.debug_simulate_toast_event(cookie, event)
   }
 
   /// Test hook: a balloon's `"clicked"`, `"timedOut"` or `"hidden"` event, posted as the shell would.
-  #[napi]
+  #[napi(catch_unwind)]
   pub fn debug_simulate_balloon_event(&self, uid: u32, event: String) -> napi::Result<bool> {
     self.inner.debug_simulate_balloon_event(uid, event)
   }
 
   /// Test hook: toasts shown that have not reported an event.
-  #[napi]
+  #[napi(catch_unwind)]
   pub fn debug_pending_toasts(&self) -> u32 {
     self.inner.debug_pending_toasts()
   }
 
   /// Test hook: balloons shown that have not been clicked, timed out or hidden.
-  #[napi]
+  #[napi(catch_unwind)]
   pub fn debug_pending_balloons(&self) -> u32 {
     self.inner.debug_pending_balloons()
   }
 
   /// Test hook: later toasts show no banner and are removed by the platform after `seconds` (0: a banner, no expiry).
-  #[napi]
+  #[napi(catch_unwind)]
   pub fn debug_set_toast_life(&self, seconds: u32) {
     self.inner.debug_set_toast_life(seconds);
   }
 
   /// Test hook: balloons the shell accepted since the notifier was made.
-  #[napi]
+  #[napi(catch_unwind)]
   pub fn debug_balloons_shown(&self) -> u32 {
     self.inner.debug_balloons_shown()
   }
 
   /// Test hook: whether WinRT toasts are in use.
-  #[napi]
+  #[napi(catch_unwind)]
   pub fn debug_toasts_available(&self) -> bool {
     self.inner.debug_toasts_available()
   }
 }
 
 /// Test hook: toast event handlers alive in the process; zero once every notifier is disposed.
-#[napi]
+#[napi(catch_unwind)]
 pub fn debug_live_toast_handlers() -> u32 {
   imp::debug_live_toast_handlers()
 }

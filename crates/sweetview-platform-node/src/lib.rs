@@ -34,7 +34,7 @@ pub fn on_load(_exports: napi::bindgen_prelude::Object) -> napi::Result<()> {
 }
 
 /// True on the thread that loaded the binding first.
-#[napi]
+#[napi(catch_unwind)]
 pub fn is_ui_thread() -> bool {
   sweetview_napi::is_ui_thread()
 }
