@@ -13,7 +13,7 @@
 
 import { dlopen, FFIType, ptr, toArrayBuffer } from "bun:ffi";
 import { packRegions } from "../../src/hit-regions";
-import { TRAY, VK, doubleClickTime, endMenu, openPopupMenu, postTrayMouse, pressKeys } from "../../src/win32/os-probe.test-support";
+import { TRAY, VK, doubleClickTime, endMenu, openPopupMenu, postTrayMouse, pressKeys } from "../win32-os";
 import { finish, native, report, watchdog } from "./kit";
 
 watchdog(50_000);

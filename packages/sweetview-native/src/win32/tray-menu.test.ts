@@ -8,7 +8,6 @@ import { binding } from "../binding";
 import { dotIco, dotPng } from "../icon";
 import { Menu, type MenuTemplate } from "../menu";
 import { Tray } from "../tray";
-import { createMessageWindow } from "./message-window";
 import {
   TRAY,
   VK,
@@ -21,6 +20,7 @@ import {
   menuOfWindow,
   openPopupMenu,
   ownWindows,
+  ownWindow,
   ownerOf,
   post,
   postTrayMouse,
@@ -29,7 +29,7 @@ import {
   registeredMessage,
   windowRect,
   type MenuEntry,
-} from "./os-probe.test-support";
+} from "../../test/win32-os";
 import { createTray, currentTray } from "./tray";
 
 const onWindows = process.platform === "win32";
@@ -121,7 +121,7 @@ describe.if(onWindows)("Menu.popup (binding: muda)", () => {
   const icon = { windows: { ico: dotIco(RED) } };
 
   test("at a point: check marks, icons, submenus, separators and disabled items are on the real menu, and the chosen item runs", () => {
-    const owner = createMessageWindow(() => {});
+    const owner = ownWindow();
     try {
       let shown: MenuEntry[] = [];
       let at = { left: 0, top: 0 };
@@ -163,7 +163,7 @@ describe.if(onWindows)("Menu.popup (binding: muda)", () => {
   });
 
   test("an item in a submenu is chosen; a dismissed menu chooses nothing; the function form is called on each open", () => {
-    const owner = createMessageWindow(() => {});
+    const owner = ownWindow();
     try {
       let built = 0;
       let clicked = "";
@@ -198,7 +198,7 @@ describe.if(onWindows)("Menu.popup (binding: muda)", () => {
   });
 
   test("at the cursor when no point is given", () => {
-    const owner = createMessageWindow(() => {});
+    const owner = ownWindow();
     try {
       let rect = { left: 0, top: 0, right: 0, bottom: 0 };
       let at = { x: 0, y: 0 };
@@ -239,7 +239,7 @@ describe.if(onWindows)("Tray (binding: tray-icon)", () => {
   });
 
   test("making and disposing trays and their menus returns every GDI and USER object", async () => {
-    const { guiObjects } = await import("./os-probe.test-support");
+    const { guiObjects } = await import("../../test/win32-os");
     const icon = { windows: { ico: dotIco({ sizes: [16, 32] }) } };
     const round = async () => {
       let opened = 0;
@@ -463,7 +463,7 @@ describe.if(onWindows)("pickFolder (binding: rfd)", () => {
 
   test("returns the chosen folder, with the dialog owned by the given window", () => {
     const { pickFolder } = require("../folder-picker") as typeof import("../folder-picker");
-    const owner = createMessageWindow(() => {});
+    const owner = ownWindow();
     const folder = require("node:fs").mkdtempSync(require("node:path").join(require("node:os").tmpdir(), "sweetview-pick-"));
     const cwd = process.cwd();
     try {

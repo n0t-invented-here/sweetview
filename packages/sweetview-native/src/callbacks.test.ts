@@ -19,7 +19,7 @@
 // from every kind straight through the binding, in a process of its own.
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { dlopen, FFIType, ptr, toArrayBuffer } from "bun:ffi";
+import { dlopen, FFIType, ptr } from "bun:ffi";
 import { runFixture } from "../test/run-fixture";
 import { _resetActivationForTest, onOpenUrl, signalReady, singleInstance, type SecondInstanceEvent } from "./activation";
 import { binding } from "./binding";
@@ -111,17 +111,7 @@ const buttonsDown = () => [0x01, 0x02, 0x04].some(keyDown);
 
 /** Sends `paths` to `hwnd` as a WM_DROPFILES, as the shell does for a drop. */
 async function sendDrop(hwnd: bigint, paths: string[]): Promise<void> {
-  const { GMEM_MOVEABLE, WM_DROPFILES, kernel32, user32: api } = await import("./win32/api");
-  const body = Buffer.from(paths.join("\0") + "\0\0", "utf16le");
-  const dropFiles = Buffer.alloc(20 + body.length);
-  dropFiles.writeUInt32LE(20, 0); // DROPFILES.pFiles
-  dropFiles.writeInt32LE(1, 16); // fWide
-  body.copy(dropFiles, 20);
-  const drop = kernel32.GlobalAlloc(GMEM_MOVEABLE, BigInt(dropFiles.length));
-  const memory = kernel32.GlobalLock(drop)!;
-  new Uint8Array(toArrayBuffer(memory, 0, dropFiles.length)).set(dropFiles);
-  kernel32.GlobalUnlock(drop);
-  api.SendMessageW(hwnd, WM_DROPFILES, drop, 0n);
+  (await import("../test/win32-os")).sendDrop(hwnd, paths);
 }
 
 const sendClose = (hwnd: bigint) => user32!.SendMessageW(hwnd, WM_CLOSE, 0n, null);
@@ -153,7 +143,7 @@ const singleInstanceWindow = (appId: string) =>
  * A menu still open 3 s later is closed, so a failing test never leaves one up.
  */
 async function whenMenuOpens(step: (menuWindow: bigint) => void): Promise<void> {
-  const { endMenu, openPopupMenu } = await import("./win32/os-probe.test-support");
+  const { endMenu, openPopupMenu } = await import("../test/win32-os");
   const native = binding();
   const started = Date.now();
   const id = native.scheduleInterval(10, () => {
@@ -175,7 +165,7 @@ async function whenMenuOpens(step: (menuWindow: bigint) => void): Promise<void> 
  * unchosen is opened again, up to `attempts` times. Returns the attempts used.
  */
 async function chooseFirstTrayItem(trayWindow: bigint, chosen: () => boolean, attempts = 3): Promise<number> {
-  const { TRAY, VK, openPopupMenu, postTrayMouse, pressKeys } = await import("./win32/os-probe.test-support");
+  const { TRAY, VK, openPopupMenu, postTrayMouse, pressKeys } = await import("../test/win32-os");
   for (let attempt = 1; attempt <= attempts; attempt++) {
     let shown = false;
     await whenMenuOpens((menuWindow) => {
@@ -652,7 +642,7 @@ describe.if(onWindows)("W1.3 / W1.4 the hit-region refiner", () => {
 
 describe.if(onWindows)("W1.3 / W1.4 the tray's click, menu function and menu item", () => {
   test("W1.3 a click handler that throws is logged with today's message, and the next click is delivered", async () => {
-    const { TRAY, doubleClickTime, postTrayMouse } = await import("./win32/os-probe.test-support");
+    const { TRAY, doubleClickTime, postTrayMouse } = await import("../test/win32-os");
     const { createTray } = await import("./win32/tray");
     let clicks = 0;
     const log = captureErrors();
@@ -678,7 +668,7 @@ describe.if(onWindows)("W1.3 / W1.4 the tray's click, menu function and menu ite
   }, 20_000);
 
   test("W1.4 a click handler disposes the tray from inside its own call", async () => {
-    const { TRAY, doubleClickTime, postTrayMouse } = await import("./win32/os-probe.test-support");
+    const { TRAY, doubleClickTime, postTrayMouse } = await import("../test/win32-os");
     const { createTray, currentTray } = await import("./win32/tray");
     let clicks = 0;
     const tray = createTray({
@@ -703,7 +693,7 @@ describe.if(onWindows)("W1.3 / W1.4 the tray's click, menu function and menu ite
   }, 20_000);
 
   test("W1.3 a menu function that throws is logged with today's message and opens no menu; the next right click opens one", async () => {
-    const { TRAY, VK, openPopupMenu, postTrayMouse, pressKeys } = await import("./win32/os-probe.test-support");
+    const { TRAY, VK, openPopupMenu, postTrayMouse, pressKeys } = await import("../test/win32-os");
     const { createTray } = await import("./win32/tray");
     let opened = 0;
     let shown = 0;
@@ -737,7 +727,7 @@ describe.if(onWindows)("W1.3 / W1.4 the tray's click, menu function and menu ite
   }, 20_000);
 
   test("W1.4 a menu function disposes the tray from inside its own call", async () => {
-    const { TRAY, VK, openPopupMenu, postTrayMouse, pressKeys } = await import("./win32/os-probe.test-support");
+    const { TRAY, VK, openPopupMenu, postTrayMouse, pressKeys } = await import("../test/win32-os");
     const { createTray } = await import("./win32/tray");
     let opened = 0;
     const tray = createTray({
@@ -765,7 +755,7 @@ describe.if(onWindows)("W1.3 / W1.4 the tray's click, menu function and menu ite
   }, 20_000);
 
   test("W1.3 a menu item's click that throws is logged with today's message, and the next choice runs", async () => {
-    const { openPopupMenu } = await import("./win32/os-probe.test-support");
+    const { openPopupMenu } = await import("../test/win32-os");
     const { createTray } = await import("./win32/tray");
     let clicks = 0;
     const log = captureErrors();
@@ -793,7 +783,7 @@ describe.if(onWindows)("W1.3 / W1.4 the tray's click, menu function and menu ite
   }, 20_000);
 
   test("W1.4 a menu item's click disposes the tray from inside the binding's call", async () => {
-    const { openPopupMenu } = await import("./win32/os-probe.test-support");
+    const { openPopupMenu } = await import("../test/win32-os");
     const { createTray } = await import("./win32/tray");
     let clicks = 0;
     const tray = createTray({

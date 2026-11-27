@@ -1,0 +1,60 @@
+W9.2: what the documents still say about bun:ffi, the C++ library and the bindings package.
+
+$ git grep -n -i "bun:ffi\|dlopen\|JSCallback\|sweetview-webview-bun\|WEBVIEW_PATH\|libwebview" -- docs README.md ':!docs/upgrading.md'
+README.md:8:Windows (macOS calls the OS through `bun:ffi` until the macOS goal of the
+README.md:50:goal of the Rust rewrite, the webview comes from `@n1h/sweetview-webview-bun`
+README.md:68:On macOS, also add `"@n1h/sweetview-webview-bun": "^2.7.0"` to its
+README.md:88:bun add @n1h/sweetview@^1.0.0 @n1h/sweetview-webview-bun
+README.md:98:`WEBVIEW_PATH`, which has no effect there; see
+README.md:105:that arrive with `@n1h/sweetview-webview-bun` 2.8.0, which the range
+README.md:112:`WEBVIEW_PATH` to a library built from the `v1-drafting` branches; see
+docs/app.md:13:`@n1h/sweetview-webview-bun` ([the webview](webview-library.md)).
+docs/app.md:169:3. Gets the webview engine: on Windows the Rust binding, which has every feature; on macOS, until the macOS goal of the Rust rewrite, the webview library path from `WEBVIEW_PATH` or `@n1h/sweetview-webview-bun` (ca
+docs/app.md:200:- `Error` `sweetview: onRequest requires webview_set_request_handler and webview_complete_request from @n1h/sweetview-webview-bun >= 2.8.0 or a compatible WEBVIEW_PATH` when `onRequest` is set and the library lacks
+docs/app.md:212:- `Error` `sweetview: this webview library has no webview_set_asset; it needs the library @n1h/sweetview-webview-bun ships (is WEBVIEW_PATH pointing at a stock one?)`, in asset mode only, on macOS only.
+docs/app.md:474:Re-exported from `@n1h/sweetview-native` (its `Webview` class is re-exported as `RawWebview` to avoid colliding with sweetview's `WebView`). It is the class `@n1h/sweetview-webview-bun` exported as `Webview`; on Wi
+docs/app.md:495:On Windows the webview is part of the Rust binding in `@n1h/sweetview-native`, loaded once per process (`SWEETVIEW_NATIVE_PATH` names a custom build). On macOS, until the macOS goal of the Rust rewrite, the native 
+docs/app.md:611:`@n1h/sweetview-webview-bun` 2.8.0, which the `^2.7.0` peer range accepts;
+docs/app.md:612:before 2.8.0 is published, set `WEBVIEW_PATH` to a library rebuilt from the
+docs/build.md:3:Build-time helpers for shipping an app: the icon files a build uses, and the macOS `.app` bundle around the compiled binary. They run on any OS in any build script and load neither `bun:ffi` nor the webview library
+docs/native.md:13:| OS entry points: on Windows the Rust binding (N-API), on macOS `bun:ffi` until the macOS goal of the Rust rewrite | `Window`, `Screen`, `Menu.popup`, `Tray`, `Notifier`, `pickFolder`, `Clipboard`, `setAppMenu`,
+docs/native.md:28:the Rust rewrite, they call AppKit through `bun:ffi`. Either way an
+docs/native.md:29:application's own `bun:ffi` calls on the UI thread, its own modal dialogs and
+docs/native.md:34:(`@n1h/sweetview-webview-bun`) for these; the `RawWebview` class and the
+docs/native.md:63:The hit-region helpers are also importable alone, without `bun:ffi`, from
+docs/native/overlays-and-hit-regions.md:182:Its script uses the browser-safe import path that loads no `bun:ffi`:
+docs/page.md:6:bundles for the browser without Bun or `bun:ffi`. The host side is in
+docs/settings-store.md:3:A settings file for a small app: one JSON document in the user's per-app folder, read once at start and written whole on every change. Every call is synchronous, so the UI thread can use it after `run()` h
+docs/settings-store.md:59:and the macOS bundle (`makeMacApp`). It is plain data with no `bun:ffi` or
+docs/webview-library.md:15:  installed, and `bun:ffi` is not involved.
+docs/webview-library.md:18:  shipped in the optional peer `@n1h/sweetview-webview-bun` and called through
+docs/webview-library.md:19:  `bun:ffi`.
+docs/webview-library.md:50:- `@n1h/sweetview-webview-bun` is not needed on Windows and is not loaded.
+docs/webview-library.md:54:- The library ships in [`@n1h/sweetview-webview-bun`](https://github.com/n0t-invented-here/sweetview-webview-bun),
+docs/webview-library.md:63:  published, point `WEBVIEW_PATH` at a library rebuilt from the `v1-drafting`
+docs/webview-library.md:306:`WEBVIEW_PATH` has no effect on Windows. The binding has every addition, so
+docs/webview-library.md:310:`@n1h/sweetview` loads the library the way `@n1h/sweetview-webview-bun` does:
+docs/webview-library.md:311:`WEBVIEW_PATH` when set, otherwise `libwebview.dll`, `libwebview.dylib` or
+docs/webview-library.md:312:`libwebview-<arch>.so` from `@n1h/sweetview-webview-bun/build/`. The
+docs/webview-library.md:324:| Requests | `webview_set_request_handler`, `webview_complete_request` | Setting `onRequest` throws `sweetview: onRequest requires webview_set_request_handler and webview_complete_request from @n1h/swee
+docs/webview-library.md:350:  `n0t-invented-here/sweetview-webview-bun`, branch `v1-drafting`, published
+docs/webview-library.md:351:  as `@n1h/sweetview-webview-bun`.
+docs/webview-library.md:388:2. Set `WEBVIEW_PATH` to the built file (`libwebview.dylib`; Sweetview on
+docs/window-chrome.md:3:A window chrome drawn by the page: the title bar, the minimise, maximise and close buttons and the resize handles are HTML, and the UI thread carries them out on the native window. The module has two halves
+
+Every line above is one of these, and none tells a Windows reader that Sweetview calls the OS
+through bun:ffi:
+
+- a statement that macOS runs on bun:ffi, the C++ library and the optional peer
+  @n1h/sweetview-webview-bun until the macOS goal of the Rust rewrite (README.md, docs/app.md,
+  docs/native.md, docs/webview-library.md, docs/worker.md, docs/page.md, docs/native/*.md), each
+  under a sentence or heading that says macOS;
+- a statement that WEBVIEW_PATH has no effect on Windows, with the pointer to docs/upgrading.md;
+- an error text that only the macOS path can raise, quoted verbatim and marked macOS-only;
+- a statement that an application's own bun:ffi calls keep working inside Sweetview's loop;
+- a statement that a module loads no bun:ffi on any platform (docs/build.md, docs/page.md,
+  docs/settings-store.md, docs/window-chrome.md, docs/native.md and
+  docs/native/overlays-and-hit-regions.md on the browser-safe import paths);
+- the history of a name, with the pointer to docs/upgrading.md.
+
+docs/upgrading.md is the guide itself and names the old forms in every row; it is left out of the search.

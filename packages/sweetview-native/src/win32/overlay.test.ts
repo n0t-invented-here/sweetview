@@ -9,15 +9,10 @@ const onWindows = process.platform === "win32";
 
 /** GetLayeredWindowAttributes: the colour key, alpha and flags of a layered window. */
 async function layeredAttributes(hwnd: bigint): Promise<{ key: number; alpha: number; flags: number }> {
-  const { dlopen, FFIType } = await import("bun:ffi");
-  const user32 = dlopen("user32.dll", {
-    GetLayeredWindowAttributes: { args: [FFIType.u64, FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: FFIType.i32 },
-  }).symbols;
-  const key = new Uint32Array(1);
-  const alpha = new Uint8Array(1);
-  const flags = new Uint32Array(1);
-  expect(user32.GetLayeredWindowAttributes(hwnd, key, alpha, flags)).not.toBe(0);
-  return { key: key[0]!, alpha: alpha[0]!, flags: flags[0]! };
+  const { layeredAttributes: read } = await import("../../test/win32-os");
+  const attributes = read(hwnd);
+  expect(attributes).not.toBeNull();
+  return attributes!;
 }
 
 describe.if(onWindows)("colorKey", () => {

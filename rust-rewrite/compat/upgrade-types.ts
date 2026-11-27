@@ -213,6 +213,9 @@ import type { WsTransport as WsTransport__sweetview__ipc_ws } from "@n1h/sweetvi
 import type { WsTransport as WsTransport__sweetview__ipc_ws__client } from "@n1h/sweetview/ipc-ws/client";
 import type { WsTransport as WsTransport__sweetview_ipc_ws } from "@n1h/sweetview-ipc-ws";
 import type { WsTransport as WsTransport__sweetview_ipc_ws__client } from "@n1h/sweetview-ipc-ws/client";
+import type { FrameCallbacks as FrameCallbacks__sweetview_native__win32__tab_window } from "@n1h/sweetview-native/win32/tab-window";
+import type { FrameWindow as FrameWindow__sweetview_native__win32__tab_window } from "@n1h/sweetview-native/win32/tab-window";
+import type { NativeEngine as NativeEngine__sweetview_native__internal } from "@n1h/sweetview-native/internal";
 
 export type AppOptions__sweetview_bounds = AppOptions__sweetview["bounds"];
 export type AppOptions__sweetview_resizable = AppOptions__sweetview["resizable"];
@@ -291,6 +294,18 @@ export type Window__sweetview_native_startDrag = Window__sweetview_native["start
 export type Window__sweetview_native_toggleMaximize = Window__sweetview_native["toggleMaximize"];
 export type WsHost__sweetview__ipc_ws_dispose = WsHost__sweetview__ipc_ws["dispose"];
 export type WsTransport__sweetview__ipc_ws_dispose = WsTransport__sweetview__ipc_ws["dispose"];
+export type FrameCallbacks__sweetview_native__win32__tab_window_onActivate = FrameCallbacks__sweetview_native__win32__tab_window["onActivate"];
+export type FrameCallbacks__sweetview_native__win32__tab_window_onMoved = FrameCallbacks__sweetview_native__win32__tab_window["onMoved"];
+export type FrameCallbacks__sweetview_native__win32__tab_window_onResized = FrameCallbacks__sweetview_native__win32__tab_window["onResized"];
+export type FrameWindow__sweetview_native__win32__tab_window_pageRect = FrameWindow__sweetview_native__win32__tab_window["pageRect"];
+export type FrameWindow__sweetview_native__win32__tab_window_pageSize = FrameWindow__sweetview_native__win32__tab_window["pageSize"];
+export type FrameWindow__sweetview_native__win32__tab_window_stripBounds = FrameWindow__sweetview_native__win32__tab_window["stripBounds"];
+export type FrameWindow__sweetview_native__win32__tab_window_stripRect = FrameWindow__sweetview_native__win32__tab_window["stripRect"];
+export type NativeEngine__sweetview_native__internal_reparent = NativeEngine__sweetview_native__internal["reparent"];
+export type NativeEngine__sweetview_native__internal_setBounds = NativeEngine__sweetview_native__internal["setBounds"];
+export type NativeEngine__sweetview_native__internal_setVisible = NativeEngine__sweetview_native__internal["setVisible"];
+export type Tab__sweetview_window = Tab__sweetview["window"];
+export type Webview__sweetview_native_destroy = Webview__sweetview_native["destroy"];
 
 // Types an application declares in its own code (rows whose "Write now" is a declaration).
 export type MessageHandler = (message: number, wParam: bigint, lParam: bigint) => void;

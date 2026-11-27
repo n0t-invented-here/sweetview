@@ -69,9 +69,6 @@
       "@n1h/sweetview-native/internal": [
         "./packages/sweetview-native/src/internal.ts"
       ],
-      "@n1h/sweetview-native/win32/api": [
-        "./packages/sweetview-native/src/win32/api.ts"
-      ],
       "@n1h/sweetview-native/win32/shortcuts": [
         "./packages/sweetview-native/src/win32/shortcuts.ts"
       ],
@@ -86,9 +83,6 @@
       ],
       "@n1h/sweetview-native/win32/menu": [
         "./packages/sweetview-native/src/win32/menu.ts"
-      ],
-      "@n1h/sweetview-native/win32/message-window": [
-        "./packages/sweetview-native/src/win32/message-window.ts"
       ],
       "@n1h/sweetview-native/darwin/objc": [
         "./packages/sweetview-native/src/darwin/objc.ts"

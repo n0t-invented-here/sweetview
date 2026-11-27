@@ -1,7 +1,8 @@
 // Part C rows that changed behaviour, run against a real webview: the opaque
 // `unsafeHandle` (accepted by the worker functions and by `new Webview(handle)`),
 // the real `HWND` of `unsafeWindowHandle`, and `bindRaw`'s third argument as
-// any value. Run with WEBVIEW_PATH set to a file that does not exist: it has
+// any value; destroy() as the one teardown, after which the handles are null
+// and the checked calls throw code -3. Run with WEBVIEW_PATH set to a file that does not exist: it has
 // no effect on Windows. Prints one JSON line.
 
 import { SizeHint, Webview, WebviewError, Window, completeWebviewRequest, endWebviewResponse, pumpEvents } from "@n1h/sweetview-native";
@@ -29,9 +30,14 @@ const unknown = handle + 1_000_003;
 report.completeOnUnknownHandle = errorOf(() => completeWebviewRequest(unknown, 1n, { status: 200 }));
 report.wrapUnknownHandle = errorOf(() => new Webview(unknown));
 
-// new Webview(handle) wraps the live webview.
+// new Webview(handle) wraps the live webview, and leaves its window's size alone
+// (the bindings package's constructor set the default 1024x768 on it).
+const sizeBefore = Window.fromHandle(webview.unsafeWindowHandle!);
+const boundsBefore = sizeBefore.bounds();
 const wrapped = new Webview(handle);
 report.wrapSameHandle = wrapped.unsafeHandle === handle;
+report.wrapKeepsSize = JSON.stringify(sizeBefore.bounds()) === JSON.stringify(boundsBefore);
+sizeBefore.dispose();
 
 // unsafeWindowHandle is the real HWND: Window.fromHandle accepts it (a non-window throws).
 const hwnd = webview.unsafeWindowHandle!;
@@ -63,5 +69,8 @@ report.bindRaw = seen ?? "the page never called the binding";
 webview.destroy();
 report.handleAfterDestroy = webview.unsafeHandle;
 report.completeAfterDestroy = errorOf(() => completeWebviewRequest(handle, 1n, {}));
+report.windowHandleAfterDestroy = webview.unsafeWindowHandle;
+report.setRequestHandlerAfterDestroy = errorOf(() => webview.setRequestHandler(null));
+report.destroyTwice = errorOf(() => webview.destroy());
 console.log(JSON.stringify(report));
 process.exit(0);

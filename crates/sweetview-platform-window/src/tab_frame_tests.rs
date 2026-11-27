@@ -105,8 +105,9 @@ fn popup_menus_give_every_handle_back() {
     drop(build());
   }
   let after = handle_counts();
-  assert_eq!(after.user_objects, before.user_objects, "USER objects returned to the starting count");
-  assert_eq!(after.gdi_objects, before.gdi_objects, "GDI objects returned to the starting count");
+  // `<=`: another test's thread may be exiting meanwhile, freeing objects of its own.
+  assert!(after.user_objects <= before.user_objects, "USER objects returned to the starting count: {before:?} -> {after:?}");
+  assert!(after.gdi_objects <= before.gdi_objects, "GDI objects returned to the starting count: {before:?} -> {after:?}");
 }
 
 #[test]

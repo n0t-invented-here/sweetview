@@ -3,7 +3,6 @@
 // Windows only; creates hidden windows so nothing flashes on screen.
 
 import { describe, expect, test } from "bun:test";
-import { FFIType, dlopen, ptr, toArrayBuffer } from "bun:ffi";
 import { defineAppIdentity } from "@n1h/sweetview-settings";
 import { Screen } from "../screen";
 import { closeToTrayOnLastWindow, createWindow, getWindowMeta, holdWindowNativeDispose, isWindowDisposed, onWindowDispose, Window } from "../window";
@@ -12,7 +11,7 @@ const onWindows = process.platform === "win32";
 
 describe.if(onWindows)("win32 Window", () => {
   test("close-to-tray destroys the secondary window and hides the last visible owned window", async () => {
-    const { WM_CLOSE, user32 } = await import("./api");
+    const { WM_CLOSE, user32 } = await import("../../test/win32-os");
     const main = new Window({ title: "Main", noActivate: true });
     const secondary = new Window({ title: "Secondary", noActivate: true });
     const hidden = new Window();
@@ -47,7 +46,7 @@ describe.if(onWindows)("win32 Window", () => {
   });
 
   test("identity sets a window's title and icon, and explicit options win", async () => {
-    const { user32 } = await import("./api");
+    const { user32 } = await import("../../test/win32-os");
     const identity = defineAppIdentity({
       appId: "com.example.shell",
       appName: "Example Shell",
@@ -67,11 +66,10 @@ describe.if(onWindows)("win32 Window", () => {
   });
 
   test("delivers Unicode file drops and cleans up owned, tabbed and borrowed listeners", async () => {
-    const { GWL_EXSTYLE, GMEM_MOVEABLE, WM_DROPFILES, kernel32, user32 } = await import("./api");
-    const { createMessageWindow } = await import("./message-window");
-    const { _debugTrackedCount } = await import("./window");
+    const { GWL_EXSTYLE, kernel32, ownWindow, sendDrop, user32 } = await import("../../test/win32-os");
+        const { _debugTrackedCount } = await import("./window");
     const paths = ["C:\\example\\日本語 🥐.txt", "C:\\example\\second.bin"];
-    const native = createMessageWindow(() => {});
+    const native = ownWindow();
     const owned = new Window();
     const tabs = new Window({ tabs: true });
     const borrowed = Window.fromHandle(native.hwnd);
@@ -82,20 +80,7 @@ describe.if(onWindows)("win32 Window", () => {
         const delivered: string[][] = [];
         const off = win.onFileDrop((files) => delivered.push(files));
         expect(user32.GetWindowLongPtrW(hwnd, GWL_EXSTYLE) & 0x10n).toBe(0x10n); // WS_EX_ACCEPTFILES
-        const body = Buffer.from(paths.join("\0") + "\0\0", "utf16le");
-        const dropFiles = Buffer.alloc(20 + body.length);
-        dropFiles.writeUInt32LE(20, 0); // pFiles offset
-        dropFiles.writeInt32LE(1, 16); // fWide
-        body.copy(dropFiles, 20);
-        const drop = kernel32.GlobalAlloc(GMEM_MOVEABLE, BigInt(dropFiles.length));
-        const memory = kernel32.GlobalLock(drop);
-        if (!memory) {
-          if (drop) kernel32.GlobalFree(drop);
-          throw new Error("could not allocate DROPFILES");
-        }
-        new Uint8Array(toArrayBuffer(memory, 0, dropFiles.length)).set(dropFiles);
-        kernel32.GlobalUnlock(drop);
-        user32.SendMessageW(hwnd, WM_DROPFILES, drop, 0n);
+        const drop = sendDrop(hwnd, paths);
         expect(delivered).toEqual([paths]);
         expect(kernel32.GlobalSize(drop)).toBe(0n);
         off();
@@ -116,7 +101,7 @@ describe.if(onWindows)("win32 Window", () => {
     }
   });
   test("creates hidden framed and frameless windows and disposes cleanly & idempotently", async () => {
-    const { user32 } = await import("./api");
+    const { user32 } = await import("../../test/win32-os");
     const { _debugTrackedCount, asHwnd } = await import("./window");
 
     const framed = new Window({ title: "Test Framed", bounds: { x: 100, y: 100, width: 400, height: 300 } });
@@ -144,7 +129,7 @@ describe.if(onWindows)("win32 Window", () => {
   });
 
   test("closing one window disposes it without posting WM_QUIT to kill the app loop", async () => {
-    const { user32, WM_CLOSE } = await import("./api");
+    const { user32, WM_CLOSE } = await import("../../test/win32-os");
     const { pumpEvents } = await import("./event-loop");
     const { _debugTrackedCount, asHwnd } = await import("./window");
 
@@ -166,7 +151,7 @@ describe.if(onWindows)("win32 Window", () => {
   });
 
   test("onClose intercepts WM_CLOSE and unsubscribing restores default close-and-dispose", async () => {
-    const { user32, WM_CLOSE } = await import("./api");
+    const { user32, WM_CLOSE } = await import("../../test/win32-os");
     const { asHwnd } = await import("./window");
 
     const win = new Window({ title: "Intercept Close" });
@@ -188,7 +173,7 @@ describe.if(onWindows)("win32 Window", () => {
   });
 
   test("a native-dispose hold keeps the HWND until the last hold is released (dispose() and WM_CLOSE)", async () => {
-    const { user32, WM_CLOSE } = await import("./api");
+    const { user32, WM_CLOSE } = await import("../../test/win32-os");
     const { asHwnd } = await import("./window");
 
     for (const close of ["dispose", "WM_CLOSE"] as const) {
@@ -277,9 +262,8 @@ describe.if(onWindows)("win32 Window", () => {
   });
 
   test("Window.fromHandle intercepts events non-mutatingly and dispose does not destroy the external HWND", async () => {
-    const { createMessageWindow } = await import("./message-window");
-    const { user32, WM_CLOSE } = await import("./api");
-    const msg = createMessageWindow(() => {});
+    const { ownWindow, user32, WM_CLOSE } = await import("../../test/win32-os");
+    const msg = ownWindow();
     try {
       const wrapped = Window.fromHandle(msg.hwnd);
       let closes = 0;
@@ -297,7 +281,7 @@ describe.if(onWindows)("win32 Window", () => {
   });
 
   test("tabbed windows honor topmost on creation and setTopmost afterwards", async () => {
-    const { GWL_EXSTYLE, user32 } = await import("./api");
+    const { GWL_EXSTYLE, user32 } = await import("../../test/win32-os");
     const win = new Window({ tabs: true, topmost: true });
     try {
       const hwnd = BigInt(win.handle!);
@@ -315,7 +299,7 @@ describe.if(onWindows)("win32 Window", () => {
   });
 
   test("tabbed windows apply resizable, opacity, hideFromTaskbar, noActivate and outer minimum size", async () => {
-    const { GWL_EXSTYLE, GWL_STYLE, WM_GETMINMAXINFO, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_THICKFRAME, WS_MAXIMIZEBOX, user32 } = await import("./api");
+    const { GWL_EXSTYLE, GWL_STYLE, minTrackSize, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_THICKFRAME, WS_MAXIMIZEBOX, user32 } = await import("../../test/win32-os");
     const win = new Window({ tabs: true, resizable: false, opacity: 0.5, hideFromTaskbar: true, noActivate: true, minWidth: 700, minHeight: 500 });
     try {
       const hwnd = BigInt(win.handle!);
@@ -326,9 +310,7 @@ describe.if(onWindows)("win32 Window", () => {
       expect(ex & BigInt(WS_EX_TOOLWINDOW)).toBe(BigInt(WS_EX_TOOLWINDOW));
       expect(ex & BigInt(WS_EX_NOACTIVATE)).toBe(BigInt(WS_EX_NOACTIVATE));
       // MINMAXINFO.ptMinTrackSize is outer physical pixels: caller minimums apply unscaled.
-      const info = new Int32Array(10);
-      user32.SendMessageW(hwnd, WM_GETMINMAXINFO, 0n, BigInt(ptr(info)));
-      expect([info[6], info[7]]).toEqual([700, 500]);
+      expect(minTrackSize(hwnd)).toEqual([700, 500]);
     } finally {
       win.dispose();
     }
@@ -336,10 +318,10 @@ describe.if(onWindows)("win32 Window", () => {
 
   test("tabbed windows keep per-frame appearance; system updates only touch system frames", async () => {
     const { getTabFrame, setDarkWindows } = await import("./tab-window");
-    const dwm = dlopen("dwmapi.dll", { DwmGetWindowAttribute: { args: [FFIType.u64, FFIType.u32, FFIType.ptr, FFIType.u32], returns: FFIType.i32 } }).symbols;
+    const { dwmapi } = await import("../../test/win32-os");
     const dwmDark = (hwnd: bigint) => {
       const value = new Int32Array(1);
-      expect(dwm.DwmGetWindowAttribute(hwnd, 20, value, 4)).toBe(0); // DWMWA_USE_IMMERSIVE_DARK_MODE
+      expect(dwmapi.DwmGetWindowAttribute(hwnd, 20, value, 4)).toBe(0); // DWMWA_USE_IMMERSIVE_DARK_MODE
       return value[0] !== 0;
     };
     const darkWin = new Window({ tabs: true, appearance: "dark" });
@@ -397,7 +379,7 @@ describe.if(onWindows)("win32 Window", () => {
   });
 
   test("disposing a Window.fromHandle wrapper of an owned Window preserves the owner's onClose listener", async () => {
-    const { user32, WM_CLOSE } = await import("./api");
+    const { user32, WM_CLOSE } = await import("../../test/win32-os");
     const { asHwnd } = await import("./window");
     const owner = new Window({ title: "Owned Close Preservation" });
     const hwnd = asHwnd(owner.handle);

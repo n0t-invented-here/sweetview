@@ -380,10 +380,61 @@ Pure TypeScript and the same on every OS, so it is done once, here. The contract
 
 ## W9. Removal and documents
 
-- [ ] W9.1 Every Windows file in `rust-rewrite/reference/ffi-files.md` is deleted or free of `bun:ffi`. The three shared files that hold FFI for both platforms today (`packages/sweetview/src/app.ts`, `webview-lib.ts`, `worker.ts`) no longer import it; what macOS still needs of that code sits in macOS-only files. `ffi-allowlist.txt` holds macOS-only files and probes, each with its reason, and at most three `setup:` entries.
-- [ ] W9.2 `docs/` describes the result: no page tells a Windows reader that Sweetview calls the OS through `bun:ffi`.
-- [ ] W9.3 `docs/upgrading.md` exists with one row per export of the three old API surfaces, and `rust-rewrite/compat/` exercises each row.
-- [ ] W9.4 When `rust-rewrite/local/dependents.txt` exists, each listed application was upgraded in a temp copy and its own checks run; the result is in `rust-rewrite/local/dependents-result.md`.
+- [x] W9.1 Every Windows file in `rust-rewrite/reference/ffi-files.md` is deleted or free of `bun:ffi`. The three shared files that hold FFI for both platforms today (`packages/sweetview/src/app.ts`, `webview-lib.ts`, `worker.ts`) no longer import it; what macOS still needs of that code sits in macOS-only files. `ffi-allowlist.txt` holds macOS-only files and probes, each with its reason, and at most three `setup:` entries.
+
+    `packages/sweetview-native/src/win32/api.ts`, `message-window.ts`, `init.ts`, `icon.ts`, `tabbed-window.ts`, `winrt-toast.ts` are deleted; every other Windows source file imports no `bun:ffi`. The only files under `win32/` that still import it are two tests, listed as probes:
+
+    ```
+    $ git grep -l -E "(from|import\()[[:space:]]*[\"']bun:ffi[\"']|require\([\"']bun:ffi[\"']\)" -- packages/sweetview/src/app.ts packages/sweetview/src/worker.ts packages/sweetview/src/webview-lib.ts packages/sweetview-native/src/win32
+    packages/sweetview-native/src/win32/activation.test.ts
+    packages/sweetview-native/src/win32/window-native.test.ts
+    $ bun rust-rewrite/verify.ts windows --quick
+    PASS  ffi
+          27 files import bun:ffi, 27 allowlisted, 0 of them as setup
+    ```
+
+    `packages/sweetview/src/app.ts`, `webview-lib.ts` and `worker.ts` import none; what macOS still needs of that code is in `darwin-webview-host.ts`, `darwin-webview-lib.ts` and `darwin-worker-wake.ts` (decision D18). `rust-rewrite/ffi-allowlist.txt` holds 10 macOS-only sources, each with what macOS uses it for until the macOS goal, and 17 probes (tests, fixtures and demo scripts that read real OS state or drive real OS input); no `setup:` entry. One test went with the deleted files: "the message window's JSCallback window procedure runs (WM_CREATE arrives synchronously)", which tested `message-window.ts`'s own window procedure; the icon and monitor tests that called `api.ts` are rewritten on `Window#setIcon` and `Screen.at` and assert the same OS state.
+
+- [x] W9.2 `docs/` describes the result: no page tells a Windows reader that Sweetview calls the OS through `bun:ffi`.
+
+    `rust-rewrite/evidence/w9-docs.txt`: every line of `docs/` and the root `README.md` that names `bun:ffi`, `dlopen`, `JSCallback`, the bindings package, `WEBVIEW_PATH` or the C++ library, with the kinds they fall into. Each is a statement about macOS until its goal, about an application's own `bun:ffi`, about a module that loads none, or the history of a name; the pages that explain mechanism (`README.md`, `docs/native.md`, `docs/app.md`, `docs/webview-library.md`, `docs/worker.md`, `docs/native/event-loop-and-icons.md`) say Rust through N-API on Windows.
+
+- [x] W9.3 `docs/upgrading.md` exists with one row per export of the three old API surfaces, and `rust-rewrite/compat/` exercises each row.
+
+    `docs/upgrading.md`: Part A (the published 0.1.x and 0.2.x API), Part B (the `v1-drafting` API, with the internal modules applications imported by file path) and Part C (the bindings package), one row per export, each naming what an application writes now.
+
+    ```
+    $ grep -c "^|" docs/upgrading.md
+    1081
+    $ bun rust-rewrite/verify.ts windows --quick
+    PASS  api-surface
+          194 exports of 12 package entry points at pre-rust-rewrite: 194 kept, 0 changed with an upgrade row
+          32 exports of the bindings package: 32 exported by Sweetview, 0 with an upgrade row
+          0 unaccounted for
+    PASS  upgrade-guide
+          docs/upgrading.md: present
+          rust-rewrite/compat: 3 test files
+    $ bun test rust-rewrite/compat
+     20 pass
+     0 fail
+     52 expect() calls
+    Ran 20 tests across 3 files.
+    ```
+
+    `rust-rewrite/compat/upgrade-guide.test.ts` reads the guide's own tables and imports the new form of every row (and type-checks the type rows through `upgrade-types.ts`); `behaviour.test.ts` runs the rows whose behaviour changed (the webview class, tabs on the Rust frame, an application's own window, the removed start-up helpers) in fixtures of their own.
+
+- [x] W9.4 When `rust-rewrite/local/dependents.txt` exists, each listed application was upgraded in a temp copy and its own checks run; the result is in `rust-rewrite/local/dependents-result.md`.
+
+    `rust-rewrite/local/dependents.txt` does not exist on this machine, so there was no application to upgrade:
+
+    ```
+    $ bun rust-rewrite/verify.ts windows --quick
+    PASS  dependents
+          no rust-rewrite/local/dependents.txt on this machine: nothing to verify
+    ```
+
+    This work did not make the file, because that means searching the owner's private repositories (decision D19, requirement R6); `rust-rewrite/OWNER-ACTIONS.md`, section 3, says how the owner runs it.
+
 
 ## W10. Safety and handoff
 

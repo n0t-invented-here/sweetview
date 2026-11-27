@@ -1,19 +1,21 @@
-// FFI checks that show nothing on screen: no tray icon, no visible window.
-// They run only on Windows.
+// Windows checks that show nothing on screen: no tray icon, no visible window.
+// What Sweetview did is read back from the OS through test/win32-os.ts. They
+// run only on Windows.
 
 import { describe, expect, test } from "bun:test";
 import { dotIco } from "../icon";
 import type { MenuTemplate } from "../menu";
 
+const probe = () => import("../../test/win32-os");
+
 /** Shows `template` as a popup menu, reads it back from the OS while it is open, and closes it. */
 async function popupAndRead(template: MenuTemplate) {
   const { binding } = await import("../binding");
   const { Menu } = await import("../menu");
-  const { createMessageWindow } = await import("./message-window");
-  const { VK, menuOfWindow, openPopupMenu, pressKeys, readMenu } = await import("./os-probe.test-support");
+  const { VK, menuOfWindow, openPopupMenu, ownWindow, pressKeys, readMenu } = await probe();
   type Shown = ReturnType<typeof readMenu>;
   const native = binding();
-  const owner = createMessageWindow(() => {});
+  const owner = ownWindow();
   let shown: Shown = [];
   const started = Date.now();
   const id = native.scheduleInterval(10, () => {
@@ -32,44 +34,32 @@ async function popupAndRead(template: MenuTemplate) {
   return shown;
 }
 
+/** The caption (ICON_SMALL) and taskbar (ICON_BIG) icons the OS holds for a window. */
+async function windowIcons(hwnd: bigint): Promise<{ small: bigint; big: bigint }> {
+  const { ICON_BIG, ICON_SMALL, WM_GETICON, user32 } = await probe();
+  return { small: BigInt.asUintN(64, user32.SendMessageW(hwnd, WM_GETICON, ICON_SMALL, 0n)), big: BigInt.asUintN(64, user32.SendMessageW(hwnd, WM_GETICON, ICON_BIG, 0n)) };
+}
+
 const onWindows = process.platform === "win32";
 
-describe.if(onWindows)("win32 FFI", () => {
-  test("CreateIconFromResourceEx accepts a generated .ico image", async () => {
-    const { loadIcon } = await import("./icon");
-    const { user32 } = await import("./api");
-    const icon = loadIcon(dotIco());
-    expect(icon.owned).toBe(true); // false would mean it fell back to the stock icon
-    expect(icon.handle).not.toBe(0n);
-    user32.DestroyIcon(icon.handle);
-  });
-
-  test("the message window's JSCallback window procedure runs (WM_CREATE arrives synchronously)", async () => {
-    const { createMessageWindow } = await import("./message-window");
-    const seen: number[] = [];
-    const win = createMessageWindow((message) => seen.push(message));
-    expect(win.hwnd).not.toBe(0n);
-    // CreateWindowExW sends WM_NCCREATE (0x81) and WM_CREATE (0x01) before returning,
-    // but the handler is registered only after the hwnd is known. Post one and pump it.
-    const { user32 } = await import("./api");
-    const WM_APP = 0x8000;
-    user32.PostMessageW(win.hwnd, WM_APP + 7, 0n, 0n);
-    // No message loop in a test, so send one directly through DefWindowProc path:
-    // SendMessage is synchronous and goes through our procedure.
-    const { dlopen, FFIType } = await import("bun:ffi");
-    const u = dlopen("user32.dll", {
-      SendMessageW: { args: [FFIType.u64, FFIType.u32, FFIType.u64, FFIType.i64], returns: FFIType.i64 },
-    }).symbols;
-    u.SendMessageW(win.hwnd, WM_APP + 8, 0n, 0n);
-    expect(seen).toContain(WM_APP + 8);
-    win.destroy();
+describe.if(onWindows)("win32 OS state", () => {
+  test("a generated .ico becomes the window's small and 32px big icon", async () => {
+    const { Window } = await import("../window");
+    const win = new Window({ title: "win32.test icon" });
+    try {
+      win.setIcon({ windows: { ico: dotIco({ sizes: [16, 32] }) } });
+      const icons = await windowIcons(BigInt(win.handle!));
+      expect(icons.small).not.toBe(0n); // 0 would mean the OS took no icon from the .ico
+      expect(icons.big).not.toBe(0n);
+    } finally {
+      win.dispose();
+    }
   });
 
   test("Window.fromHandle onClose swallows WM_CLOSE and the window survives", async () => {
-    const { createMessageWindow } = await import("./message-window");
     const { Window } = await import("../window");
-    const { user32, WM_CLOSE } = await import("./api");
-    const win = createMessageWindow(() => {});
+    const { ownWindow, user32, WM_CLOSE } = await probe();
+    const win = ownWindow();
     const wrapped = Window.fromHandle(win.hwnd);
     let closeRequests = 0;
     const restore = wrapped.onClose(() => closeRequests++);
@@ -78,45 +68,28 @@ describe.if(onWindows)("win32 FFI", () => {
     expect(user32.IsWindow(win.hwnd)).not.toBe(0);
     restore();
     user32.SendMessageW(win.hwnd, WM_CLOSE, 0n, 0n);
-    expect(closeRequests).toBe(1); // default chain again (the message window ignores WM_CLOSE itself)
+    expect(closeRequests).toBe(1); // default chain again (the window's own procedure ignores WM_CLOSE)
     wrapped.dispose();
     win.destroy();
   });
 
-  test("the 32px balloon icon loads from the generated .ico", async () => {
-    const { loadIcon } = await import("./icon");
-    const { SM_CXICON, user32 } = await import("./api");
-    const icon = loadIcon(dotIco(), SM_CXICON);
-    expect(icon.owned).toBe(true);
-    user32.DestroyIcon(icon.handle);
-  });
-
-  test("MonitorFromRect + GetMonitorInfoW: a point on the primary monitor maps to its rect, a point off every monitor to the nearest", async () => {
-    const { user32, MONITORINFO_SIZE, MONITOR_DEFAULTTONEAREST, SM_CXSCREEN, SM_CYSCREEN } = await import("./api");
+  test("Screen.at: a point on the primary monitor maps to its rect, a point off every monitor to the nearest", async () => {
+    const { Screen } = await import("../screen");
+    const { SM_CXSCREEN, SM_CYSCREEN, user32 } = await probe();
     const width = user32.GetSystemMetrics(SM_CXSCREEN);
     const height = user32.GetSystemMetrics(SM_CYSCREEN);
-    const monitorAt = (x: number, y: number) => {
-      const rect = new Int32Array([x, y, x + 1, y + 1]);
-      const monitor = user32.MonitorFromRect(rect, MONITOR_DEFAULTTONEAREST);
-      expect(monitor).not.toBe(0n);
-      const info = new Int32Array(MONITORINFO_SIZE / 4);
-      info[0] = MONITORINFO_SIZE;
-      expect(user32.GetMonitorInfoW(monitor, info)).not.toBe(0);
-      return { x: info[1]!, y: info[2]!, width: info[3]! - info[1]!, height: info[4]! - info[2]! };
-    };
-    expect(monitorAt(Math.floor(width / 2), Math.floor(height / 2))).toEqual({ x: 0, y: 0, width, height });
+    expect(Screen.at({ x: Math.floor(width / 2), y: Math.floor(height / 2) }).bounds).toEqual({ x: 0, y: 0, width, height });
     // Far above every monitor: the nearest one answers, and it is a real monitor.
-    const nearest = monitorAt(Math.floor(width / 2), -100000);
+    const nearest = Screen.at({ x: Math.floor(width / 2), y: -100000 }).bounds;
     expect(nearest.width).toBeGreaterThan(0);
     expect(nearest.height).toBeGreaterThan(0);
   });
 
   test("discardQuit takes a PostQuitMessage back, after dispatching what was waiting ahead of it", async () => {
-    const { createMessageWindow } = await import("./message-window");
     const { discardQuit, pumpEvents } = await import("./event-loop");
-    const { user32, WM_APP } = await import("./api");
+    const { ownWindow, user32, WM_APP } = await probe();
     const seen: number[] = [];
-    const win = createMessageWindow((message) => seen.push(message));
+    const win = ownWindow((message) => seen.push(message));
     try {
       user32.PostMessageW(win.hwnd, WM_APP + 21, 0n, 0n);
       user32.PostQuitMessage(0);
@@ -150,20 +123,32 @@ describe.if(onWindows)("win32 icons", () => {
     expect(shown[0]).toMatchObject({ label: "With icon", hasBitmap: true });
   });
 
-  test("setWindowIcon on a message window does not fail and replaces its handles", async () => {
-    const { clearWindowIcon, setWindowIcon } = await import("./icon");
-    const { createMessageWindow } = await import("./message-window");
-    const win = createMessageWindow(() => undefined);
-    setWindowIcon(win.hwnd, dotIco());
-    setWindowIcon(win.hwnd, dotIco({ color: "#00ff00" })); // frees the first pair
-    setWindowIcon(win.hwnd, undefined); // back to stock
-    clearWindowIcon(win.hwnd);
-    win.destroy();
+  test("setIcon on an application's own window replaces its icons, and back to the stock icon", async () => {
+    const { Window } = await import("../window");
+    const { ownWindow } = await probe();
+    const own = ownWindow();
+    const wrapped = Window.fromHandle(own.hwnd);
+    try {
+      wrapped.setIcon({ windows: { ico: dotIco() } });
+      const first = await windowIcons(own.hwnd);
+      expect(first.small).not.toBe(0n);
+      expect(first.big).not.toBe(0n);
+      wrapped.setIcon({ windows: { ico: dotIco({ color: "#00ff00" }) } }); // frees the first pair
+      const second = await windowIcons(own.hwnd);
+      expect(second.small).not.toBe(0n);
+      expect(second.small).not.toBe(first.small);
+      wrapped.setIcon(undefined); // back to stock
+      const stock = await windowIcons(own.hwnd);
+      expect(stock.small).not.toBe(second.small);
+    } finally {
+      wrapped.dispose();
+      own.destroy();
+    }
   });
 
   test("menus handle submenus, separators, checkmarks, and icons, and each showing frees what it made", async () => {
     const { menuData } = await import("./menu");
-    const { guiObjects } = await import("./os-probe.test-support");
+    const { guiObjects } = await probe();
     const template: MenuTemplate = [
       { label: "One", checked: true, icon: { windows: { ico: dotIco() } }, click: () => {} },
       { type: "separator" },
@@ -182,10 +167,10 @@ describe.if(onWindows)("win32 icons", () => {
     expect(after.user).toBeLessThanOrEqual(before.user);
   });
 
-  test("Screen.of(hwnd) resolves the monitor hosting a message window", async () => {
+  test("Screen.of(hwnd) resolves the monitor hosting an application's own window", async () => {
     const { Screen } = await import("../screen");
-    const { createMessageWindow } = await import("./message-window");
-    const win = createMessageWindow(() => {});
+    const { ownWindow } = await probe();
+    const win = ownWindow();
     try {
       const info = Screen.of(win.hwnd);
       expect(info.bounds.width).toBeGreaterThan(0);

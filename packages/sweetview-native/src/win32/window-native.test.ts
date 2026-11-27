@@ -5,7 +5,7 @@
 // (released in a finally). Titles are unique so other sessions are not touched.
 
 import { describe, expect, test } from "bun:test";
-import { FFIType, dlopen, ptr, toArrayBuffer } from "bun:ffi";
+import { FFIType, dlopen, ptr } from "bun:ffi";
 import { binding } from "../binding";
 import { pumpEvents, quitEventLoop, runEventLoop } from "../event-loop";
 import { Screen } from "../screen";
@@ -21,8 +21,22 @@ const probe = onWindows
       GetActiveWindow: { args: [], returns: FFIType.u64 },
       WindowFromPoint: { args: [FFIType.u64], returns: FFIType.u64 },
       GetAncestor: { args: [FFIType.u64, FFIType.u32], returns: FFIType.u64 },
+      GetGUIThreadInfo: { args: [FFIType.u32, FFIType.ptr], returns: FFIType.i32 },
+      GetAsyncKeyState: { args: [FFIType.i32], returns: FFIType.i16 },
+      GetCursorPos: { args: [FFIType.ptr], returns: FFIType.i32 },
     }).symbols
   : undefined;
+
+/** What the OS says about a drag in progress on this thread: read from inside the move loop when a drag test fails. */
+function dragState(): { inMoveSize: boolean; leftDown: boolean; cursor: { x: number; y: number } } {
+  const info = new Uint8Array(72); // GUITHREADINFO, x64: cbSize, flags, six handles, the caret rectangle
+  const view = new DataView(info.buffer);
+  view.setUint32(0, 72, true);
+  probe!.GetGUIThreadInfo(0, ptr(info)); // 0: the calling thread
+  const point = new Int32Array(2);
+  probe!.GetCursorPos(ptr(point));
+  return { inMoveSize: (view.getUint32(4, true) & 0x2) !== 0, leftDown: probe!.GetAsyncKeyState(0x01) < 0, cursor: { x: point[0]!, y: point[1]! } }; // GUI_INMOVESIZE
+}
 const dwm = onWindows ? dlopen("dwmapi.dll", { DwmGetWindowAttribute: { args: [FFIType.u64, FFIType.u32, FFIType.ptr, FFIType.u32], returns: FFIType.i32 } }).symbols : undefined;
 
 const WS_EX_TOPMOST = 0x8n;
@@ -39,7 +53,7 @@ let serial = 0;
 const unique = (what: string) => `window-native.test ${what} ${process.pid}.${++serial}`;
 
 async function api() {
-  return await import("./api");
+  return await import("../../test/win32-os");
 }
 
 async function styles(handle: bigint) {
@@ -370,8 +384,11 @@ describe.if(onWindows)("Window on the binding: click-through, hit regions, the r
       // The OS runs its own move loop from here until the button is released, so the cursor is
       // moved and the button released from native timeouts, which fire inside that loop.
       let duringDrag: ReturnType<Window["bounds"]> | undefined;
+      const states: Record<string, ReturnType<typeof dragState>> = { beforeStartDrag: dragState() };
+      native.scheduleTimeout(60, () => (states.inLoopBeforeTheMove = dragState()));
       native.scheduleTimeout(120, () => moveCursorAsInput(grip.x + 60, grip.y + 45));
       native.scheduleTimeout(320, () => {
+        states.inLoopAfterTheMove = dragState();
         duringDrag = win.bounds();
         leftButton(false);
         pressed = false;
@@ -379,6 +396,7 @@ describe.if(onWindows)("Window on the binding: click-through, hit regions, the r
       win.startDrag();
       await settle(1500, () => !pressed);
       await settle(60);
+      if (duringDrag?.x !== bounds.x + 60) console.warn(`window-native.test: startDrag: the window did not follow; ${JSON.stringify(states)}`);
       expect(duringDrag).toEqual({ x: bounds.x + 60, y: bounds.y + 45, width: 300, height: 200 });
       expect(win.bounds()).toEqual({ x: bounds.x + 60, y: bounds.y + 45, width: 300, height: 200 });
       // Released: the cursor no longer carries the window.
@@ -395,8 +413,8 @@ describe.if(onWindows)("Window on the binding: click-through, hit regions, the r
 
 describe.if(onWindows)("Window.fromHandle on an application's own window (made here through bun:ffi)", () => {
   test("onResize, onMove, onClose and onFileDrop arrive; dispose leaves the window alive", async () => {
-    const { GMEM_MOVEABLE, WM_CLOSE, WM_DROPFILES, WS_OVERLAPPEDWINDOW, hInstance, kernel32, user32, wstr } = await api();
-    const hwnd = user32.CreateWindowExW(0, wstr("STATIC"), wstr(unique("own")), WS_OVERLAPPEDWINDOW, 50, 50, 300, 200, 0n, 0n, hInstance(), null);
+    const { WM_CLOSE, WS_OVERLAPPEDWINDOW, hInstance, sendDrop, user32, wide } = await api();
+    const hwnd = user32.CreateWindowExW(0, wide("STATIC"), wide(unique("own")), WS_OVERLAPPEDWINDOW, 50, 50, 300, 200, 0n, 0n, hInstance(), null);
     expect(hwnd).not.toBe(0n);
     const wrapped = Window.fromHandle(hwnd);
     try {
@@ -416,16 +434,7 @@ describe.if(onWindows)("Window.fromHandle on an application's own window (made h
       expect(user32.IsWindow(hwnd)).not.toBe(0); // the listener took the request
 
       const paths = ["C:\\example\\one.txt", "C:\\example\\two.txt"];
-      const body = Buffer.from(paths.join("\0") + "\0\0", "utf16le");
-      const dropFiles = Buffer.alloc(20 + body.length);
-      dropFiles.writeUInt32LE(20, 0);
-      dropFiles.writeInt32LE(1, 16);
-      body.copy(dropFiles, 20);
-      const drop = kernel32.GlobalAlloc(GMEM_MOVEABLE, BigInt(dropFiles.length));
-      const memory = kernel32.GlobalLock(drop)!;
-      new Uint8Array(toArrayBuffer(memory, 0, dropFiles.length)).set(dropFiles);
-      kernel32.GlobalUnlock(drop);
-      user32.SendMessageW(hwnd, WM_DROPFILES, drop, 0n);
+      sendDrop(hwnd, paths);
       expect(drops).toEqual([paths]);
 
       wrapped.dispose();
