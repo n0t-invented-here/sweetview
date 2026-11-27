@@ -2,7 +2,7 @@
 
 Status: proposal and design.
 
-Rule: no functionality is removed. Everything Sweetview, the bindings and the C++ webview fork do today, they do afterwards.
+Rule: no functionality is removed. Everything Sweetview, the bindings and the C++ webview fork do today exists afterwards. Where a crate lacks something, this project writes it in Rust.
 
 ## What Sweetview is
 
@@ -10,49 +10,138 @@ Sweetview lets a Bun app open a webview window, put an icon in the tray or menu 
 
 ## The change
 
-TypeScript stops calling native code through `bun:ffi`. One native library written in Rust takes over those calls. Bun reaches it through N-API.
+All native code becomes Rust. Bun reaches it through N-API. No C++ and no `bun:ffi` remain.
 
 | Piece | Today | After |
 |---|---|---|
-| The webview engine | the C++ fork of `webview/webview`, `libwebview.dll` / `.dylib` | the same file, unchanged |
-| The wrapper around the engine | `@n1h/sweetview-webview-bun`: 2,014 lines of TypeScript `bun:ffi` | Rust, calling the same C API |
-| Windows, overlays, click-through, tray, menus, notifications, dialogs, event loop | 2,779 lines of TypeScript `bun:ffi` on `main` | Rust, making the same OS calls |
-| How Bun reaches native code | `bun:ffi` | N-API |
+| The webview | a C++ fork of `webview/webview`, reached through a `bun:ffi` wrapper package | `wry`, plus this project's additions for what the C++ fork has and `wry` lacks |
+| Windows, transparent overlays, click-through, event loop | TypeScript `bun:ffi` calling Win32 and AppKit | `tao` |
+| Tray or menu-bar icon | TypeScript `bun:ffi` | `tray-icon` |
+| Menus | TypeScript `bun:ffi` | `muda` |
+| Folder dialog | TypeScript `bun:ffi` | `rfd` |
+| Notifications | TypeScript `bun:ffi` | Rust written by this project on `windows` and `objc2-user-notifications`; `notify-rust` on Linux |
+| System-wide mouse and keyboard hooks, permission model | C++ in the webview fork | Rust written by this project on `windows` and `objc2-core-graphics` |
+| How Bun reaches native code | `bun:ffi` | N-API through `napi` |
 
 ## Rust crates
 
+Crates that already wrap the OS behind safe APIs. They are the libraries Tauri 2 is built on.
+
+| Crate | Version read | Job |
+|---|---|---|
+| `tao` | 0.38.0 | windows and the OS event loop |
+| `wry` | 0.58.2 | the webview: WebView2 on Windows, WKWebView on macOS, WebKitGTK on Linux |
+| `muda` | 0.22.0 | menus: `MenuItem`, `CheckMenuItem`, `IconMenuItem`, `Submenu`, `PredefinedMenuItem` |
+| `tray-icon` | 0.27.0 | tray and menu-bar icon with click events; the `ksni` feature gives Linux clicks |
+| `rfd` | pinned at step 1 | file and folder dialogs |
+| `notify-rust` | pinned at step 1 | Linux notifications |
+
+Crates for the N-API layer and for the Rust this project writes itself.
+
 | Crate | Job |
 |---|---|
-| `napi`, `napi-derive`, `napi-build` | The N-API layer. Rust functions and classes marked `#[napi]` become the JavaScript API, and the crate generates the `.d.ts` from the Rust signatures |
+| `napi`, `napi-derive`, `napi-build` | The N-API layer. Rust marked `#[napi]` becomes the JavaScript API, and the crate generates the `.d.ts` from the Rust signatures |
 | `windows` | Microsoft's Rust bindings for Win32, COM and WinRT, generated from Windows' own metadata |
-| `objc2` | The Objective-C runtime: typed message sends, class definition with `define_class!`, `Retained<T>` for retain and release, `MainThreadMarker` |
-| `objc2-foundation`, `objc2-app-kit`, `objc2-user-notifications` | Typed bindings for Foundation, AppKit and UserNotifications |
-| `block2` | Objective-C blocks, for notification completion handlers |
-| `libloading` | Loads the webview engine library at run time |
-| `bindgen` (build time) | Generates the Rust declarations of the engine's C API from the fork's `api.h` and `types.h` |
+| `objc2`, `objc2-foundation`, `objc2-app-kit` | Typed Objective-C: message sends, `define_class!`, `Retained<T>`, `MainThreadMarker` |
+| `objc2-user-notifications`, `objc2-core-graphics`, `block2` | macOS notifications, the event tap for the input hooks, Objective-C blocks |
 
-Versions are pinned in `Cargo.lock`.
+Two of the crates are used as forks this project owns, each carrying a short list of additions: `wry` and `tray-icon`. The additions are listed under "What this project writes in Rust".
+
+## Memory safety
+
+| Code | Unsafe |
+|---|---|
+| `tao`, `wry`, `muda`, `tray-icon`, `rfd` | inside the crates; their public APIs are safe |
+| Sweetview's own crate, except the modules below | none: `#![forbid(unsafe_code)]` |
+| Sweetview's `platform` modules: input hooks, notifications, and the single OS calls listed below | yes, one `unsafe` block per OS call |
+| This project's additions inside its `wry` and `tray-icon` forks | yes, in the same style as the code around them |
+| JavaScript | no native calls at all |
 
 ## What the Rust types enforce
 
-Each row is something the TypeScript `bun:ffi` code does by hand today and the Rust compiler checks afterwards.
+Each row is something the TypeScript `bun:ffi` code does by hand today.
 
 | Today, in TypeScript | In Rust | Example in this repository |
 |---|---|---|
-| Every handle is a `bigint`: windows, menus, icons, Objective-C objects | Each is its own type: `HWND`, `HMENU`, `HICON`, `Retained<NSWindow>`, `Retained<NSMenuItem>`. Passing one where another belongs does not compile | `src/native/win32/api.ts`: every handle is `FFIType.u64` |
-| Function signatures are written by hand, one `FFIType` list per call | Signatures come from the OS metadata. A wrong argument count or type does not compile | commit `83d7411`: `isZoomed` read with the wrong return type, `orderFrontRegardless` called with the wrong arity |
-| One hand-made `objc_msgSend` variant per signature shape | Typed AppKit methods | `src/native/darwin/objc.ts`: `sendRectUIntUIntBool`, `sendPtrSelPtrVoid` and 30 more |
-| Structs are byte arrays with numeric offsets | Real structs with named fields: `NOTIFYICONDATAW`, `WNDCLASSEXW`, `MENUITEMINFOW`, `MSG`, `MONITORINFO` | `win32/tray.ts`: `new Uint8Array(976)` with `NID_INFO = 304` |
-| COM methods are called by vtable slot number | Typed interfaces: `IFileOpenDialog::SetOptions`, `IShellItem::GetDisplayName` | `win32/folder-picker.ts`: slots 3, 9, 10, 17, 20 |
-| Struct returns need workarounds | Returned by value | `darwin/overlay.ts`: `NSInvocation` to read `+[NSEvent mouseLocation]`, `valueForKey:` to read a frame |
-| Release is called by hand | Ownership: `Retained<T>` releases on drop; icons, menus and bitmaps sit in types whose `Drop` frees them | `darwin/menu.ts`: `release(inited)`, `release(sub)`, `release(menu)` |
+| Every handle is a `bigint` | Each is its own type: `tao::window::Window`, `wry::WebView`, `muda::Menu`, `tray_icon::TrayIcon`. Passing one where another belongs does not compile | `src/native/win32/api.ts`: every handle is `FFIType.u64` |
+| Function signatures are written by hand, one `FFIType` list per call | The crates' signatures are checked by the compiler | commit `83d7411`: `isZoomed` read with the wrong return type, `orderFrontRegardless` called with the wrong arity |
+| One hand-made `objc_msgSend` variant per signature shape | Typed methods | `src/native/darwin/objc.ts`: `sendRectUIntUIntBool`, `sendPtrSelPtrVoid` and 30 more |
+| Structs are byte arrays with numeric offsets | Real structs with named fields | `win32/tray.ts`: `new Uint8Array(976)` with `NID_INFO = 304` |
+| COM methods are called by vtable slot number | Typed interfaces | `win32/folder-picker.ts`: slots 3, 9, 10, 17, 20 |
+| Release is called by hand | Ownership: values free their OS resources when dropped | `darwin/menu.ts`: `release(inited)`, `release(sub)`, `release(menu)` |
 | Callbacks are `JSCallback` pointers kept alive in module-level arrays | The library owns each callback for exactly as long as the OS can call it | `objc.ts`: `const retained: JSCallback[] = []`, never freed |
-| Thread rules are comments | UI-thread objects are not `Send`. Using one from a worker thread does not compile | "Thread: UI thread" in every section of `docs/native.md` |
+| Thread rules are comments | UI-thread types are not `Send`. Using one from a worker thread does not compile | "Thread: UI thread" throughout `docs/native.md` |
 | Return codes are checked where someone remembered | `Result<T, E>`; an unchecked result is a compiler warning | `win32/menu.ts`: `AppendMenuW` results are not checked |
-| Options are strings and numbers | Enums: `ResizeEdge`, `ActivationPolicy`, the hit-test state | `"top-left"` matched with `edge.includes("left")` |
-| TypeScript types for native calls are written by hand | The `.d.ts` is generated from the Rust, so the two cannot drift | every `dlopen` table |
+| Options are strings and numbers | Enums | `edge.includes("left")` |
+| TypeScript types for native calls are written by hand | The `.d.ts` is generated from the Rust | every `dlopen` table |
 
-What the types do not do: each call into Win32, COM, AppKit or the C++ engine is an `unsafe` block, because those interfaces are unsafe. The blocks are confined to the modules listed under Module map. Every other module carries `#![forbid(unsafe_code)]`.
+## Every behaviour, and what provides it
+
+### Sweetview on `main`
+
+| Behaviour | Provided by |
+|---|---|
+| Create a window hidden, frameless or framed, transparent, topmost, not focusable, off the taskbar | `tao`: `WindowBuilder::with_visible`, `with_decorations`, `with_transparent`, `with_always_on_top`, `with_focusable`, `with_skip_taskbar`, `with_no_redirection_bitmap` |
+| Show, hide, move, resize, raise, bounds | `tao`: `set_visible`, `set_outer_position`, `set_inner_size`, `set_always_on_top`, `outer_position`, `outer_size` |
+| Whole-window click-through | `tao`: `set_ignore_cursor_events` |
+| Hit regions: 10 ms poll, polygons, the refine round trip to the page | Sweetview's `hit` module (safe Rust): `tao` `cursor_position` and `set_ignore_cursor_events` |
+| "Never flip click-through while a mouse button is down" | Sweetview `platform`: `GetAsyncKeyState` on Windows, `NSEvent::pressedMouseButtons` on macOS |
+| Screen, screen at a point, virtual screen, scale | `tao`: `primary_monitor`, `available_monitors`, `monitor_from_point`, `scale_factor` |
+| Work area | Sweetview `platform`: `SystemParametersInfoW`, `NSScreen::visibleFrame` |
+| Title-bar drag from the page | `tao`: `drag_window` |
+| Edge resize from the page, minimum 160x120 | Sweetview's own gesture, as today, in safe Rust on `cursor_position` and `set_outer_position` |
+| Minimise; maximise to the work area and back | `tao` `set_minimized`; Sweetview's own toggle, as today |
+| Window icon; light, dark or system frame | `tao`: `set_window_icon`, `set_theme` |
+| `colorKey` and `opacity` | Sweetview `platform`: `SetLayeredWindowAttributes`, `NSWindow::setAlphaValue` |
+| macOS: above the Dock, on every Space, out of window cycling, over full-screen apps | Sweetview `platform`: `NSWindow::setLevel`, `setCollectionBehavior` |
+| Close button hides the window | `tao`: the `CloseRequested` event |
+| Activation policy | `tao`: `EventLoopExtMacOS::set_activation_policy` |
+| Tray icon, tooltip, click and double click, menu | `tray-icon`, with the single and double click timing in safe Rust |
+| Menus with check marks, icons, submenus, rebuilt on every open | `muda` |
+| SF Symbol icons on macOS | Sweetview `platform`: `NSImage::imageWithSystemSymbolName` |
+| Windows notifications as the tray's balloon, with click | the `tray-icon` fork: one function and one event |
+| macOS notifications with click, data round trip, banners while frontmost | Sweetview `platform` on `objc2-user-notifications` |
+| Folder dialog | `rfd` |
+| macOS app menu with About, Quit and Edit | `muda` predefined items; the About alert through `rfd` |
+| Dock icon at run time | Sweetview `platform`: `NSApplication::setApplicationIconImage` |
+| `run()`: the blocking loop | `tao`: `EventLoop::run` |
+| `runEventLoop`: the loop pumped from a Bun timer | `tao`: `run_return`, called once per tick |
+| Webview in a window, or a child webview with bounds | `wry`: `build`, `build_as_child`, `with_bounds` |
+| Page-to-host calls with no TCP | `wry`: `with_ipc_handler` |
+| Host-to-page replies and events | `wry`: `evaluate_script` |
+| The worker's wake-up of the UI thread | `tao`: `EventLoopProxy::send_event` |
+
+### Every addition in the C++ webview fork
+
+All kept.
+
+| Addition | C API today | Provided by |
+|---|---|---|
+| Background colour and transparency | `webview_set_background_color` | `wry`: `with_transparent`, `with_background_color` |
+| Assets at the page's own origin | `webview_set_asset` | `wry`: `with_custom_protocol` |
+| Request handler | `webview_set_request_handler`, `webview_complete_request` | `wry`: `with_asynchronous_custom_protocol`; header validation, status and size limits in Sweetview's safe Rust, ported from `http_request.hh` with its tests |
+| Frames origin, cross-origin from the page | part of the request handler | `wry`: a second custom protocol scheme |
+| Service-worker, shared-worker and cross-origin iframe requests reaching the handler on Windows | part of the request handler | the `wry` fork: `AddWebResourceRequestedFilterWithRequestSourceKinds` |
+| Streamed responses | `webview_begin_response`, `webview_write_response_chunk`, `webview_end_response` | the `wry` fork: a streaming body on WebView2 and `didReceiveData:` per chunk on WKWebView, ported from `streaming_istream.hh` and `cocoa_webkit.hh` |
+| External drop control with HTML drops inside the page still working | `webview_set_allow_external_drop` | the `wry` fork: the C++ fork's drag routing |
+| File drop paths | `webview_set_file_drop_handler` | the `wry` fork: the same drag routing |
+| Bindings reachable from the top-level document only | internal | the `wry` fork: IPC messages from other frames are refused |
+| System-wide mouse hook | `webview_mouse_hook_install`, `webview_mouse_hook_remove` | Sweetview `platform`: `SetWindowsHookExW(WH_MOUSE_LL)`, `CGEventTap`; ported from `mouse_hook.hh` |
+| System-wide keyboard hook, DOM key codes | `webview_keyboard_hook_install`, `webview_keyboard_hook_remove` | Sweetview `platform`: `WH_KEYBOARD_LL`, the same event tap; `key_codes.hh` ported with its tests |
+| Permission model for the hooks | `webview_feature_permissions`, `webview_permission_status`, `webview_permission_request`, `webview_permission_set_auto_request` | Sweetview `platform`: `CGPreflightPostEventAccess`, `CGRequestPostEventAccess` |
+| Teardown hardening | internal | Rust ownership: a webview, its handlers and its open requests are freed together when the `WebView` value is dropped |
+
+### What this project writes in Rust
+
+| Where | What | Unsafe |
+|---|---|---|
+| `wry` fork | streamed response bodies; all request source kinds on Windows; the C++ fork's drag routing; top-level-only IPC | yes |
+| `tray-icon` fork | the balloon notification and its click event on Windows | yes |
+| Sweetview `platform::input` | mouse hook, keyboard hook, permissions | yes |
+| Sweetview `platform::notify` | macOS notifications | yes |
+| Sweetview `platform::misc` | mouse-button state, work area, `colorKey` and `opacity`, window level and collection behaviour, SF Symbols, Dock icon | yes, one call each |
+| Sweetview `hit`, `http`, `menu`, `click`, `resize` | hit-region poll and refine state machine; header validation; menu data; click timing; the resize gesture | no |
+| Sweetview `napi_surface`, `callbacks`, `registry`, `threads` | the N-API layer | no |
 
 ## Architecture
 
@@ -61,34 +150,18 @@ What the types do not do: each call into Win32, COM, AppKit or the C++ engine is
 | App | the developer's single `.ts` file | TypeScript |
 | Sweetview API | the public API of today, unchanged | TypeScript |
 | Binding | `sweetview.<target>.node`, loaded with `require` | Rust |
-| Engine | `libwebview.dll` / `.dylib`, loaded by the binding | C++, unchanged |
 
-Sweetview's native layer already has the seam this design uses. Each module declares a `Backend` type and picks an implementation with `backend(win32, darwin)` in `src/native/platform.ts`:
-
-| Module | `Backend` today |
-|---|---|
-| `event-loop.ts` | `pumpEvents()`, `discardQuit()`, `setActivationPolicy(policy)` |
-| `window.ts` | `nativeWindow(handle)` |
-| `overlay.ts` | `makeOverlay(handle, options)`, `createOverlayWindow(options)` |
-| `tray.ts` | `createTray(options)` |
-| `notifications.ts` | `createNotifier(options)` |
-| `folder-picker.ts` | `pickFolder(owner, title)` |
-| `app-menu.ts` | `installAppMenu(options)` |
-| `app-icon.ts` | `setAppIcon(icon)` |
-
-The Rust library implements those eight `Backend` types. `platform.ts` returns the Rust implementation in place of the `win32/` or `darwin/` TypeScript folder. Nothing above that line changes.
+Sweetview's native layer already has the seam this design uses. Each module declares a `Backend` type and picks an implementation with `backend(win32, darwin)` in `src/native/platform.ts`: `event-loop`, `window`, `overlay`, `tray`, `notifications`, `folder-picker`, `app-menu`, `app-icon`. The Rust library implements those eight `Backend` types and `platform.ts` returns it. The bindings' `Webview` class keeps its public shape and calls the Rust library in place of `lib.symbols.*`.
 
 ## The N-API surface
 
-Internal to the package; app developers never import it. Signatures below are the generated TypeScript.
-
-### Engine wrapper
+Internal to the package. Signatures are the generated TypeScript.
 
 ```ts
 class Engine {
-  static create(debug: boolean, window: bigint | null): Engine;   // webview_create
-  readonly handle: bigint;                                        // unsafeHandle
-  readonly windowHandle: bigint;                                  // webview_get_window
+  static create(debug: boolean, window: bigint | null): Engine;
+  readonly handle: bigint;
+  readonly windowHandle: bigint;
   setTitle(title: string): void;
   setSize(width: number, height: number, hint: number): void;
   navigate(url: string): void;
@@ -98,7 +171,7 @@ class Engine {
   bind(name: string, fn: (seq: string, req: string) => void): number;
   unbind(name: string): number;
   returnValue(seq: string, status: number, result: string): void;
-  run(): void;                                                    // webview_run, blocks
+  run(): void;
   terminate(): void;
   destroy(): void;
   setAsset(path: string, mime: string, data: Uint8Array): number;
@@ -106,15 +179,15 @@ class Engine {
   setRequestHandler(fn: ((req: RawRequest) => void) | null): number;
   setFileDropHandler(fn: ((paths: string[]) => void) | null): number;
   setAllowExternalDrop(allow: boolean): number;
-  setDrain(fn: (() => void) | null): void;                        // the ring's UI-thread drain
+  setDrain(fn: (() => void) | null): void;
 }
 
-// Callable from any thread, as the C API documents:
+// Callable from any thread:
 function completeRequest(handle: bigint, id: bigint, status: number, headersJson: string | null, body: Uint8Array | null): number;
 function beginResponse(handle: bigint, id: bigint, status: number, headersJson: string | null): number;
 function writeResponseChunk(handle: bigint, id: bigint, chunk: Uint8Array): number;
 function endResponse(handle: bigint, id: bigint): number;
-function wake(handle: bigint): void;                              // webview_dispatch -> the drain
+function wake(handle: bigint): void;
 
 function installMouseHook(fn: (event: number, x: number, y: number, wheel: number, modifiers: number) => boolean): number;
 function removeMouseHook(): number;
@@ -124,13 +197,7 @@ function featurePermissions(feature: number): number;
 function permissionStatus(permission: number): number;
 function permissionRequest(permission: number): number;
 function permissionSetAutoRequest(on: boolean): number;
-```
 
-The bindings' `Webview` class, the worker functions, `installMouseHook`, `installKeyboardHook` and `permissions` keep their public shape. Their bodies call the functions above in place of `lib.symbols.*`. Numeric results are the engine's `webview_error_t` codes, so `WebviewError` and every documented code stay as they are.
-
-### Native layer
-
-```ts
 function pumpEvents(): boolean;
 function discardQuit(): void;
 function setActivationPolicy(policy: ActivationPolicy): void;
@@ -157,13 +224,13 @@ class Overlay {
 }
 
 class Tray {
-  constructor(init: TrayInit);            // icon bytes, tooltip, onClick, onDoubleClick, openMenu, menuChosen
+  constructor(init: TrayInit);   // icon, tooltip, onClick, onDoubleClick, openMenu, menuChosen
   setTooltip(text: string): void; setIcon(icon: IconBytes): void; setHasMenu(has: boolean): void; dispose(): void;
-  showBalloon(n: BalloonInit): boolean;   // Windows: the notifier's channel, as today
+  showBalloon(n: BalloonInit): boolean;
   onBalloonClick(fn: (() => void) | null): void;
 }
 
-class Notifier {                          // macOS: UNUserNotificationCenter, as today
+class Notifier {
   constructor(onClick: ((id: string, dataJson: string | null) => void) | null);
   notify(n: NotificationInit): boolean; dispose(): void;
 }
@@ -173,146 +240,132 @@ function installAppMenu(appName: string, aboutText: string): void;
 function setAppIcon(icon: IconBytes): void;
 ```
 
-Menus stay data, as today. When a menu is about to open, the library calls `openMenu()`. TypeScript resolves the template (calling the app's function form), keeps the click handlers in a table by item number, and returns plain data: labels, flags, icon bytes, nesting. The library builds the native menu, tracks it, and calls `menuChosen(itemNumber)`. The library never holds a per-item JavaScript function.
+- Numeric results keep the `webview_error_t` codes of today, so `WebviewError` and every documented code stay as they are.
+- Menus stay data. When a menu is about to open the library calls `openMenu()`; TypeScript resolves the template, keeps the click handlers by item number, and returns plain data. The library builds the `muda` menu and calls `menuChosen(itemNumber)`.
 
 ## Threads
 
 | Thread | May call |
 |---|---|
 | UI thread: the Bun main thread | everything |
-| Worker threads | `completeRequest`, `beginResponse`, `writeResponseChunk`, `endResponse`, `wake`. These are the calls the C API documents as safe from any thread |
+| Worker threads | `completeRequest`, `beginResponse`, `writeResponseChunk`, `endResponse`, `wake`, as today |
 
-- UI-thread state lives in `thread_local!` storage and in types that are not `Send`. A worker cannot reach it.
+- UI-thread state lives in `thread_local!` storage and in types that are not `Send`.
 - Any other function called from a worker throws `sweetview: this call must be made on the UI thread`. Today that mistake is undefined behaviour.
-- A worker loads the same `.node` file. The Rust statics the two threads share are `Send + Sync`: the engine library handle and the table of drain trampolines.
+- A worker reaches the UI thread through `tao`'s `EventLoopProxy`, which is `Send`.
 
 ## Callbacks from native code into JavaScript
 
-Today a `JSCallback` lets the OS call JavaScript on the UI thread while that thread is inside `webview_run` or `pumpEvents`. The N-API equivalent:
+Today a `JSCallback` lets the OS call JavaScript on the UI thread while that thread is inside the loop.
 
 - The library keeps a reference to each JavaScript function and calls it synchronously on the UI thread, inside the native call that is running the loop.
-- Each call opens its own handle scope, so an app that runs for days does not accumulate handles.
-- A JavaScript exception is caught at the boundary and logged with the message the TypeScript logs today, for example `sweetnative: tray handler threw:`. Nothing unwinds into the OS or the engine. The fallback results match today's: a hook returns "do not swallow", a request handler answers 500.
-- A callback may remove or replace itself, or destroy its owner, from inside its own call. The library holds the callback for the duration of the call and frees it afterwards. The bindings' `NativeCallback`, `HookCallback`, `closeReleasedCallbacks` and `closeOrphans` exist only to do this by hand and go away. `Webview.destroy()`'s deferral of the native teardown until the callback has returned stays in TypeScript, unchanged.
-- Callbacks that arrive on a background thread (the macOS notification completion handlers) log from Rust directly.
+- Each call opens its own handle scope.
+- A JavaScript exception is caught at the boundary and logged with the message the TypeScript logs today. Nothing unwinds into the OS. The fallback results match today's: a hook returns "do not swallow", a request handler answers 500.
+- A callback may remove or replace itself, or destroy its owner, from inside its own call. The library holds it for the duration of the call. The bindings' `NativeCallback`, `HookCallback`, `closeReleasedCallbacks` and `closeOrphans` exist only to do this by hand and go away.
 
 ## Event loop
 
-Both modes are kept.
-
 | Mode | Today | After |
 |---|---|---|
-| `run()` | `webview_run` through `bun:ffi`, blocking | `Engine.run()`, the same call |
-| `runEventLoop` | a Bun `setInterval` calling `pumpEvents`, which is `PeekMessageW` / `DispatchMessageW` on Windows and `nextEventMatchingMask:` / `sendEvent:` on macOS | the same TypeScript timer calling the Rust `pumpEvents`, which makes the same OS calls |
+| `run()` | `webview_run`, blocking | `EventLoop::run`, blocking, entered from `Engine.run()` |
+| `runEventLoop` | a Bun `setInterval` calling `pumpEvents`: `PeekMessageW` and `DispatchMessageW`, or `nextEventMatchingMask:` and `sendEvent:` | the same Bun timer calling `pumpEvents`, which calls `run_return` and exits it when the queue is empty |
 
-`discardQuit`, the hidden first window on Windows, the STA and DPI setup in `createOverlayWindow`, and the timers (hit poll, resize gesture, single-click delay) are ported as they are.
+`tao` documents that `run_return` does not return while a window is being resized. Today's pump has the same property: `DispatchMessageW` does not return during the OS's modal size loop.
 
 ## Transport
 
-Unchanged in shape. `Ring`, `ringBytes` and their documented behaviour stay, because the ring is pure TypeScript over a `SharedArrayBuffer`.
+`Ring`, `ringBytes` and their documented behaviour stay; the ring is pure TypeScript over a `SharedArrayBuffer`.
 
 | Hop | Today | After |
 |---|---|---|
-| page to UI thread | `webview_bind` of `__sweetview_rpc` | `Engine.bind` |
+| page to UI thread | `webview_bind` of `__sweetview_rpc` | `wry`'s IPC handler |
 | UI thread to worker | `worker.postMessage` | the same |
-| worker to UI thread | frame into the ring, then `webview_dispatch` with the pointer of a `JSCallback` | frame into the ring, then `wake(handle)`. The library calls `webview_dispatch` with its own trampoline, which runs the function given to `setDrain` on the UI thread |
-| UI thread to page | `webview_return`, `webview_eval` | `Engine.returnValue`, `Engine.eval` |
+| worker to UI thread | frame into the ring, then `webview_dispatch` with a `JSCallback` pointer | frame into the ring, then `wake(handle)`, which sends a `tao` user event; the UI thread runs the function given to `setDrain` |
+| UI thread to page | `webview_return`, `webview_eval` | `wry` `evaluate_script` |
 
-The init message to the worker loses `drainCallbackPtr` and `libPath`.
+## Handles and constants
 
-## Handles
+- `Webview.unsafeHandle`, `Webview.unsafeWindowHandle`, `Overlay.handle` and the `handle` argument of the worker functions stay in the API as opaque numbers. The library checks each one against its table of live objects.
+- `assetOrigin` keeps its values: `http://webview.localhost` on Windows, `webview://localhost` on macOS.
+- `framesOrigin` on Windows becomes `http://webview-frames.localhost`; today it is `http://frames.webview.localhost`. Apps read it from the getter.
+- `WEBVIEW_PATH` pointed at a custom engine build. `SWEETVIEW_NATIVE_PATH` points at a custom build of the binding.
 
-The public API exposes native handles today and keeps doing so: `Webview.unsafeHandle`, `Webview.unsafeWindowHandle`, `Overlay.handle`, `WindowHandle`, and the `handle` argument of the worker functions. They stay opaque numbers. JavaScript no longer builds, reads or frees native memory through them. The library checks every handle it receives against its own table of live windows, and the engine checks webview handles against its registry of live webviews.
+## Packaging
 
-## Loading the engine and packaging
-
-- The engine stays a separate library, the file the bindings ship today. The Rust binding loads it with `libloading`.
-- `WEBVIEW_PATH` keeps working: when set, that file is loaded.
-- The per-feature probing stays: each group of fork functions (assets and background colour, request handler, streaming, external drop, file drop, hooks, permissions) is looked up on first use, so a library without one group still serves the others, as `src/webview.ts` does today.
-- One npm package holds the TypeScript, the `.node` binding per target and the engine library per target: Windows x64, macOS (universal, macOS 11.0 and later, as today), Linux x64.
-- The binding is loaded with a literal `require` per platform; the engine library is imported `with { type: "file" }`, as today. Both are forms `bun build --compile` embeds.
-- CI builds the binding with `cargo` and the engine with the fork's existing CMake recipe, on one runner per OS. Consumers install no Rust and no C++ toolchain.
+- One npm package holds the TypeScript and one `.node` binding per target: Windows x64, macOS arm64 and x64, Linux x64.
+- The binding is loaded with a literal `require` per platform, the form `bun build --compile` embeds.
+- CI builds with `cargo` on one runner per OS. Consumers install no Rust.
+- `@n1h/sweetview-webview-bun` is folded into the one package; its API is re-exported unchanged.
 
 ## Module map
 
-Every native file on `main`, and where its code goes. "Unsafe" marks modules that contain OS calls.
-
-| TypeScript today | Lines | Rust module | Unsafe | OS interfaces |
-|---|---|---|---|---|
-| `win32/api.ts` | 234 | none: replaced by the `windows` crate | n/a | n/a |
-| `win32/event-loop.ts` | 43 | `win32::event_loop` | yes | `PeekMessageW`, `TranslateMessage`, `DispatchMessageW` |
-| `win32/window.ts` | 77 | `win32::window` | yes | `ShowWindow`, `IsWindowVisible`, `IsIconic`, `SetForegroundWindow`, `SetWindowSubclass` |
-| `win32/message-window.ts` | 72 | `win32::message_window` | yes | `RegisterClassExW`, `CreateWindowExW`, a window procedure |
-| `win32/tray.ts` | 230 | `win32::tray` | yes | `Shell_NotifyIconW`, `SetTimer`, `GetDoubleClickTime`, the `TaskbarCreated` message |
-| `win32/menu.ts` | 107 | `win32::menu` | yes | `CreatePopupMenu`, `AppendMenuW`, `SetMenuItemInfoW`, `TrackPopupMenu` |
-| `win32/notifier.ts` | 28 | `notifier` | no | none; it drives the tray's balloon |
-| `win32/icon.ts` | 85 | `win32::icon` | yes | `CreateIconFromResourceEx`, `CreateDIBSection`, `WM_SETICON` |
-| `win32/folder-picker.ts` | 121 | `win32::folder_picker` | yes | `IFileOpenDialog`, `IShellItem` |
-| `win32/overlay.ts` | 521 | `win32::overlay` | yes | window styles, `SetLayeredWindowAttributes`, `DwmEnableBlurBehindWindow`, `DwmSetWindowAttribute`, `SetWindowPos`, monitors, DPI |
-| hit-test logic inside both `overlay.ts` files | about 80 each | `hit` | no | none: the polygon test and the refine state machine, shared by both platforms |
-| `darwin/objc.ts` | 251 | none: replaced by `objc2` and `block2` | n/a | n/a |
-| `darwin/event-loop.ts` | 48 | `darwin::event_loop` | yes | `NSApplication` event dequeue and dispatch |
-| `darwin/window.ts` | 64 | `darwin::window` | yes | `NSWindow`, the close button's target and action |
-| `darwin/overlay.ts` | 348 | `darwin::overlay` | yes | `NSWindow` style, level, collection behaviour; `NSScreen`; `NSEvent`; `NSTimer` |
-| `darwin/tray.ts` | 129 | `darwin::tray` | yes | `NSStatusItem` and its button |
-| `darwin/menu.ts` | 88 | `darwin::menu` | yes | `NSMenu`, `NSMenuItem` |
-| `darwin/notifier.ts` | 141 | `darwin::notifier` | yes | `UNUserNotificationCenter`, its delegate, completion blocks |
-| `darwin/app-menu.ts` | 88 | `darwin::app_menu` | yes | `NSMenu`, `NSAlert` |
-| `darwin/image.ts`, `app-icon.ts`, `folder-picker.ts` | 86 | `darwin::image`, `app_icon`, `folder_picker` | yes | `NSImage`, `NSOpenPanel` |
-| the bindings' `src/ffi.ts`, `webview.ts`, `mouse-hook.ts`, `keyboard-hook.ts`, `permissions.ts`, `input-hooks.ts` | 2,014 | `engine` | yes | the engine's C API, declared by `bindgen` |
-| none | new | `napi_surface`, `callbacks`, `registry`, `threads` | no | none |
+| TypeScript or C++ today | Lines | After |
+|---|---|---|
+| `win32/api.ts`, `darwin/objc.ts` | 485 | gone: the crates replace them |
+| `win32/event-loop.ts`, `darwin/event-loop.ts` | 91 | `tao` event loop |
+| `win32/window.ts`, `darwin/window.ts`, `win32/message-window.ts` | 213 | `tao` windows and events |
+| `win32/overlay.ts`, `darwin/overlay.ts` | 869 | `tao`, Sweetview `hit` and `resize`, `platform::misc` |
+| `win32/tray.ts`, `darwin/tray.ts` | 359 | `tray-icon` fork, Sweetview `click` |
+| `win32/menu.ts`, `darwin/menu.ts`, `darwin/app-menu.ts` | 283 | `muda`, Sweetview `menu` |
+| `win32/notifier.ts`, `darwin/notifier.ts` | 169 | `tray-icon` fork balloon; `platform::notify` |
+| `win32/icon.ts`, `darwin/image.ts`, `darwin/app-icon.ts` | 142 | the crates' `Icon` types; `platform::misc` for SF Symbols and the Dock icon |
+| `win32/folder-picker.ts`, `darwin/folder-picker.ts` | 150 | `rfd` |
+| the bindings' `src/` | 2,014 | Sweetview `engine` on `wry` |
+| C++ fork: backends, `engine_base.hh` | upstream plus 8,646 added | `wry` and its fork additions |
+| C++ fork: `http_request.hh` | 683 | Sweetview `http`, safe Rust |
+| C++ fork: `input_hooks.hh`, `mouse_hook.hh`, `keyboard_hook.hh`, `key_codes.hh` | 1,617 | Sweetview `platform::input` |
+| C++ fork: `streaming_istream.hh` | 373 | `wry` fork |
 
 Kept as TypeScript, untouched: `hit-regions.ts`, `icon.ts`, `menu.ts`, `ring.ts`, the IPC modules, `html.ts`, `build.ts`, `make-app.ts`, `settings-store.ts`, `window-chrome.ts`, `page.ts`.
 
 ## Not designed yet
 
-Listed so nothing is assumed. For each, the calls it makes are counted and its files have not been read line by line.
+Their native calls are counted; their files have not been read line by line.
 
-| Part | Size | Native interfaces it uses |
-|---|---|---|
-| `demos/native-tabs` on `main` | 2,004 lines, 3 files with FFI, 6 `JSCallback`s | `ICoreWebView2`, `ICoreWebView2Controller`, `ICoreWebView2AcceleratorKeyPressedEventArgs`, `ICoreWebView2NewWindowRequestedEventArgs`; 34 Win32 and CoreGraphics functions; 59 Objective-C selectors |
-| `v1-drafting`: URL schemes and single instance | 431 lines, 2 `JSCallback`s | not read |
-| `v1-drafting`: clipboard | 98 lines | not read |
-| `v1-drafting`: WinRT toast notifications | 398 lines | not read |
-| `v1-drafting`: screen information | 316 lines, 1 `JSCallback` | not read |
-| `v1-drafting`: tabs as library API | 1,763 lines, 8 `JSCallback`s | not read |
-| Linux | none exists | the engine's upstream GTK backend; everything else is new |
+| Part | Size |
+|---|---|
+| `demos/native-tabs` on `main` | 2,004 lines, 3 files with FFI, 6 `JSCallback`s |
+| `v1-drafting`: URL schemes and single instance | 431 lines |
+| `v1-drafting`: clipboard | 98 lines |
+| `v1-drafting`: WinRT toast notifications | 398 lines |
+| `v1-drafting`: screen information | 316 lines |
+| `v1-drafting`: tabs as library API | 1,763 lines |
+| Linux | none exists |
 
-Each is designed at its own step, by the same method: its `Backend` seam, its N-API functions, its module map row.
+Each is designed at its own step by the same method: what provides each behaviour, its N-API functions, its module map row.
 
 ## Order of work
 
-After every step the tree works, with moved modules in Rust and the rest still on `bun:ffi`.
-
-1. Binding skeleton: `napi` entry point, the engine loaded with `libloading`, CI producing the binaries. Proves the callback mechanism: a function bound with `Engine.bind` is called from the page while `run()` blocks. Accepted by the bindings' `examples/basic.ts` and `examples/bind.ts`.
-2. The engine wrapper in full, hooks and permissions included. Accepted by `test/request-handler.test.ts` and `examples/input-hooks.ts`, unchanged.
-3. Event loop and `NativeWindow`. Accepted by `demos/web-app` and by `demos/menubar-only` on the timer-pumped loop.
-4. Overlays and hit regions. Accepted by `demos/desktop-pet`.
-5. Tray, menus, notifier, folder picker, app menu, app icon. Accepted by `demos/menubar-notify`.
-6. Native tabs. Accepted by `demos/native-tabs`.
-7. Delete `src/native/win32/`, `src/native/darwin/` and the bindings' FFI files.
-8. The `v1-drafting` features, one at a time.
-9. Tauri 2 and Electron IPC transports: page code identical across webview, WebSocket, Tauri 2 and Electron.
-10. Linux.
+1. Binding skeleton on `napi`, `tao` and `wry`; CI producing the binaries. Proves two mechanisms: a JavaScript function called from the page while `run()` blocks, and a tray-only app with no window receiving clicks under the timer-pumped loop on Windows and macOS. Accepted by the bindings' `examples/basic.ts`, `examples/bind.ts` and `demos/menubar-only`.
+2. The `Webview` API on `wry`: assets, background colour, bind, the request handler. Accepted by the parts of `test/request-handler.test.ts` that cover them.
+3. The `wry` fork additions: streaming, request source kinds, drag routing, top-level-only IPC. Accepted by the rest of `test/request-handler.test.ts`, unchanged.
+4. Input hooks and permissions. Accepted by the ported key-code tests and `examples/input-hooks.ts`.
+5. Windows, overlays, hit regions. Accepted by `demos/web-app` and `demos/desktop-pet`.
+6. Tray, menus, notifications, folder dialog, app menu, app icon. Accepted by `demos/menubar-notify`.
+7. Native tabs. Accepted by `demos/native-tabs`.
+8. Delete the TypeScript FFI, the bindings package and the dependency on the C++ fork.
+9. The `v1-drafting` features, one at a time.
+10. Tauri 2 and Electron IPC transports: page code identical across webview, WebSocket, Tauri 2 and Electron.
+11. Linux.
 
 ## Risks and actions
 
 | Risk | Action |
 |---|---|
-| A JavaScript function called from native code while the UI thread is inside the blocking loop does not behave under Bun's N-API as it does under `bun:ffi` | Step 1 exists to prove it, with the bindings' own examples, before any module is ported. |
-| A ported module behaves differently | Each module is accepted against its existing tests and demo before its TypeScript version is deleted. Both exist side by side until then. |
-| `unsafe` blocks spread | `#![forbid(unsafe_code)]` on every module marked "no" in the module map. CI counts `unsafe` blocks and fails when the count rises without an entry in a tracked list. |
-| The C++ engine has memory errors | CI builds it with AddressSanitizer and runs the fork's 1,687 lines of tests under it on macOS and Linux. |
-| A compiled app embeds binaries for platforms it does not target | Step 1 measures the size of a compiled `examples/basic.ts` per target and the build helper excludes the other targets' files. |
+| A JavaScript function called from native code while the UI thread is inside the loop does not behave under Bun's N-API as it does under `bun:ffi` | Step 1 proves it before anything else is built. |
+| `tao`'s `run_return` under a Bun timer does not deliver tray events with no window | Step 1 proves it with `demos/menubar-only`. The fix belongs in the pump function, which then dequeues OS events itself with `windows` and `objc2`, the calls today's `pumpEvents` makes. |
+| A rebuilt module behaves differently from today | Each is accepted against its existing tests and demo before the TypeScript version is deleted. |
+| The forks of `wry` and `tray-icon` drift from upstream | Each addition is one commit on top of a pinned upstream version, and is offered upstream. |
+| `unsafe` spreads | `#![forbid(unsafe_code)]` on every Sweetview module outside `platform`. CI counts `unsafe` blocks and fails when the count rises without an entry in a tracked list. |
 
 ## Alternatives ruled out
 
 | Option | Why not |
 |---|---|
-| Replace the C++ engine with `wry` | It removes functionality: streamed responses, service-worker request interception, HTML drops alongside file drops, the system-wide input hooks |
-| Replace Sweetview's windows with `tao` | `tao` runs its own event loop; Sweetview's two loop modes are kept |
+| Keep the C++ webview engine | It stays memory-unsafe C++ |
+| Port each OS call to Rust by hand with `windows` and `objc2` only | Every OS call becomes an `unsafe` block; the safe crates already wrap most of them |
 | Keep the TypeScript FFI | No compiler checks on any native call |
-| `webviewjs/webview` | Built on `wry`; its tray does not deliver events without a window |
+| `webviewjs/webview` | Its tray does not deliver events without a window; no check marks or icons in menus; one maintainer |
 | Electrobun | own CLI and toolchain, no `bun build --compile`, IPC over a localhost WebSocket; excluded by the project owner |
 | Tauri 2 directly | app developers must write Rust and use Tauri's tooling |
 
@@ -321,15 +374,19 @@ After every step the tree works, with moved modules in Rust and the rest still o
 - `n0t-invented-here/sweetview-webview-bun`, branch `v1-drafting`: every file in `src/`, the README, every page in `docs/`, `scripts/build.ts`, the justfile.
 - `n0t-invented-here/sweetview-webview`, branch `v1-drafting`: every page in `sweetview/`; the full diff against upstream `f1a9d6b` of `engine_base.hh`, `win32_edge.hh` and `cocoa_webkit.hh`; `input_hooks.hh`.
 - This repository on `main`: `README.md`, `docs/app.md`, `docs/native.md`, `docs/webview-library.md`, `src/app.ts`, `src/worker.ts`, `src/webview-lib.ts`, `src/ring.ts`, and every file under `src/native/` except `icon.ts` and `hit-regions.ts`.
-- Line and file counts come from git.
+- docs.rs pages of `tao` 0.38.0 (`Window`, `WindowBuilder`, `WindowBuilderExtWindows`, `EventLoopExtRunReturn`), `wry` 0.58.2 (`WebViewBuilder`), `muda` 0.22.0 and `tray-icon` 0.27.0 (crate pages).
 
 ## Sources
 
+- https://docs.rs/tao/latest/tao/window/struct.Window.html
+- https://docs.rs/tao/latest/tao/window/struct.WindowBuilder.html
+- https://docs.rs/tao/latest/x86_64-pc-windows-msvc/tao/platform/windows/trait.WindowBuilderExtWindows.html
+- https://docs.rs/tao/latest/tao/platform/run_return/trait.EventLoopExtRunReturn.html
+- https://docs.rs/wry/latest/wry/struct.WebViewBuilder.html
+- https://docs.rs/muda/latest/muda/
+- https://docs.rs/tray-icon/latest/tray_icon/
 - https://github.com/napi-rs/napi-rs
-- https://napi.rs/docs/concepts/function
-- https://napi.rs/docs/concepts/threadsafe-function
 - https://github.com/microsoft/windows-rs
 - https://github.com/madsmtm/objc2
 - https://bun.com/docs/api/node-api
 - https://bun.com/docs/compiler/executables
-- https://github.com/webview/webview
