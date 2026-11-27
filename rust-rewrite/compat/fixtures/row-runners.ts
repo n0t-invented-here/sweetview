@@ -783,6 +783,28 @@ export const RUNNERS: Record<string, Runner> = {
     const { result, seen } = await popupRun(ctx, () => fn(hwndOf(owner), MENU));
     must(seen && result === false, "the menu opened and, dismissed, chose nothing", { seen, result });
   }),
+  buildMenu: desktop((fn, ctx) => {
+    const built = fn(MENU);
+    try {
+      must(typeof built.hmenu === "bigint" && ctx.os.user32.IsMenu(built.hmenu) !== 0, "an HMENU the OS knows", built.hmenu);
+      must(same([...built.commands.keys()], [1, 2]) && same(built.bitmaps, []), "command ids from 1 in template order, no bitmaps to free", [...built.commands.keys()]);
+      must(ctx.os.menuItemId(built.hmenu, 0) === 1 && ctx.os.menuItemId(built.hmenu, 2) === 2, "the OS items carry those ids", [ctx.os.menuItemId(built.hmenu, 0), ctx.os.menuItemId(built.hmenu, 2)]);
+    } finally {
+      require("@n1h/sweetview-native/win32/menu").destroyMenu(built);
+    }
+  }),
+  destroyMenu: desktop((fn, ctx) => {
+    const built = require("@n1h/sweetview-native/win32/menu").buildMenu(MENU);
+    fn(built);
+    must(ctx.os.user32.IsMenu(built.hmenu) === 0, "the menu is gone");
+    fn(built); // safe twice
+  }),
+  windowMenu: desktop(async (fn, ctx) => {
+    const win = ctx.window();
+    win.show();
+    const { seen } = await popupRun(ctx, () => fn(hwndOf(win)));
+    must(seen && !ctx.os.user32.IsIconic(hwndOf(win)), "the system menu of a plain window opened and, dismissed, did nothing", seen);
+  }),
   resolveMenu: here((fn) => {
     const template = [{ label: "A", click() {} }];
     must(fn(template) === template && fn(() => template) === template && same(fn(undefined), []), "a template, a function of one, or nothing");
@@ -1304,5 +1326,5 @@ export function scratch(): { tmp: string; dispose(): void } {
   return { tmp, dispose: () => rmSync(tmp, { recursive: true, force: true }) };
 }
 
-/** The Old names of rows another change owns (the menu rows being rewritten), whose runners come with that change. */
-export const ROWS_OF_ANOTHER_CHANGE = new Set(["buildMenu", "destroyMenu", "windowMenu"]);
+/** The Old names of rows another change owns, whose runners come with that change. None now: the menu rows have theirs above. */
+export const ROWS_OF_ANOTHER_CHANGE = new Set<string>();
