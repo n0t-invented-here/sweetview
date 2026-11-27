@@ -6,19 +6,37 @@
 //! an `UnsafeCell` that `webview2-com`'s own generated handlers hold), so a
 //! handler re-entered from a nested message loop inside an application's
 //! callback is still sound. Every `Invoke` runs its body inside
-//! `catch_unwind`: nothing unwinds into WebView2.
+//! `catch_unwind`: nothing unwinds into WebView2, and a body that panicked
+//! returns `E_UNEXPECTED` to WebView2 instead of `S_OK`.
+//!
+//! The objects are declared `Agile = false`: they hold `Rc` and `Weak` values
+//! of the UI thread, and WebView2 calls and releases them on the thread that
+//! registered them. Answers from other threads reach the UI thread through the
+//! `Responder`'s queue, never through these objects.
 
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
 use webview2_com::Microsoft::Web::WebView2::Win32::*;
-use windows::core::{implement, Ref, HRESULT, PCWSTR};
+use windows::core::{implement, Interface, Ref, HRESULT, HSTRING, PCWSTR};
+use windows::Win32::Foundation::E_UNEXPECTED;
 
-/// Runs `f`, turning a panic into nothing: the callers are OS callbacks.
-pub(super) fn guarded(f: impl FnOnce()) {
-    let _ = catch_unwind(AssertUnwindSafe(f));
+/// Runs `f`, turning a panic into `E_UNEXPECTED`: the callers are OS callbacks,
+/// which must not unwind and must not report success for a body that did not finish.
+pub(super) fn guarded(f: impl FnOnce()) -> windows::core::Result<()> {
+    catch_unwind(AssertUnwindSafe(f)).map_err(|_| E_UNEXPECTED.into())
 }
 
-#[implement(ICoreWebView2WebResourceRequestedEventHandler)]
+/// Hands `args` to an event handler's closure. An `Invoke` with no arguments does
+/// nothing and succeeds; a closure that panicked is `E_UNEXPECTED`. Every event
+/// handler below is this call and nothing else.
+fn invoke_with<T: windows::core::Type<T>>(args: Ref<T>, f: impl FnOnce(&T)) -> windows::core::Result<()> {
+    match args.as_ref() {
+        Some(args) => guarded(|| f(args)),
+        None => Ok(()),
+    }
+}
+
+#[implement(ICoreWebView2WebResourceRequestedEventHandler, Agile = false)]
 pub(super) struct ResourceRequested(Box<dyn Fn(&ICoreWebView2WebResourceRequestedEventArgs)>);
 
 impl ResourceRequested {
@@ -29,14 +47,11 @@ impl ResourceRequested {
 
 impl ICoreWebView2WebResourceRequestedEventHandler_Impl for ResourceRequested_Impl {
     fn Invoke(&self, _sender: Ref<ICoreWebView2>, args: Ref<ICoreWebView2WebResourceRequestedEventArgs>) -> windows::core::Result<()> {
-        if let Some(args) = args.as_ref() {
-            guarded(|| (self.0)(args));
-        }
-        Ok(())
+        invoke_with(args, |args| (self.0)(args))
     }
 }
 
-#[implement(ICoreWebView2WebMessageReceivedEventHandler)]
+#[implement(ICoreWebView2WebMessageReceivedEventHandler, Agile = false)]
 pub(super) struct MessageReceived(Box<dyn Fn(&ICoreWebView2WebMessageReceivedEventArgs)>);
 
 impl MessageReceived {
@@ -47,14 +62,11 @@ impl MessageReceived {
 
 impl ICoreWebView2WebMessageReceivedEventHandler_Impl for MessageReceived_Impl {
     fn Invoke(&self, _sender: Ref<ICoreWebView2>, args: Ref<ICoreWebView2WebMessageReceivedEventArgs>) -> windows::core::Result<()> {
-        if let Some(args) = args.as_ref() {
-            guarded(|| (self.0)(args));
-        }
-        Ok(())
+        invoke_with(args, |args| (self.0)(args))
     }
 }
 
-#[implement(ICoreWebView2ContentLoadingEventHandler)]
+#[implement(ICoreWebView2ContentLoadingEventHandler, Agile = false)]
 pub(super) struct ContentLoading(Box<dyn Fn(&ICoreWebView2ContentLoadingEventArgs)>);
 
 impl ContentLoading {
@@ -65,14 +77,11 @@ impl ContentLoading {
 
 impl ICoreWebView2ContentLoadingEventHandler_Impl for ContentLoading_Impl {
     fn Invoke(&self, _sender: Ref<ICoreWebView2>, args: Ref<ICoreWebView2ContentLoadingEventArgs>) -> windows::core::Result<()> {
-        if let Some(args) = args.as_ref() {
-            guarded(|| (self.0)(args));
-        }
-        Ok(())
+        invoke_with(args, |args| (self.0)(args))
     }
 }
 
-#[implement(ICoreWebView2NavigationStartingEventHandler)]
+#[implement(ICoreWebView2NavigationStartingEventHandler, Agile = false)]
 pub(super) struct NavigationStarting(Box<dyn Fn(&ICoreWebView2NavigationStartingEventArgs)>);
 
 impl NavigationStarting {
@@ -83,14 +92,11 @@ impl NavigationStarting {
 
 impl ICoreWebView2NavigationStartingEventHandler_Impl for NavigationStarting_Impl {
     fn Invoke(&self, _sender: Ref<ICoreWebView2>, args: Ref<ICoreWebView2NavigationStartingEventArgs>) -> windows::core::Result<()> {
-        if let Some(args) = args.as_ref() {
-            guarded(|| (self.0)(args));
-        }
-        Ok(())
+        invoke_with(args, |args| (self.0)(args))
     }
 }
 
-#[implement(ICoreWebView2NavigationCompletedEventHandler)]
+#[implement(ICoreWebView2NavigationCompletedEventHandler, Agile = false)]
 pub(super) struct NavigationCompleted(Box<dyn Fn(&ICoreWebView2NavigationCompletedEventArgs)>);
 
 impl NavigationCompleted {
@@ -101,14 +107,11 @@ impl NavigationCompleted {
 
 impl ICoreWebView2NavigationCompletedEventHandler_Impl for NavigationCompleted_Impl {
     fn Invoke(&self, _sender: Ref<ICoreWebView2>, args: Ref<ICoreWebView2NavigationCompletedEventArgs>) -> windows::core::Result<()> {
-        if let Some(args) = args.as_ref() {
-            guarded(|| (self.0)(args));
-        }
-        Ok(())
+        invoke_with(args, |args| (self.0)(args))
     }
 }
 
-#[implement(ICoreWebView2AcceleratorKeyPressedEventHandler)]
+#[implement(ICoreWebView2AcceleratorKeyPressedEventHandler, Agile = false)]
 pub(super) struct AcceleratorKeyPressed(Box<dyn Fn(&ICoreWebView2AcceleratorKeyPressedEventArgs)>);
 
 impl AcceleratorKeyPressed {
@@ -119,16 +122,13 @@ impl AcceleratorKeyPressed {
 
 impl ICoreWebView2AcceleratorKeyPressedEventHandler_Impl for AcceleratorKeyPressed_Impl {
     fn Invoke(&self, _sender: Ref<ICoreWebView2Controller>, args: Ref<ICoreWebView2AcceleratorKeyPressedEventArgs>) -> windows::core::Result<()> {
-        if let Some(args) = args.as_ref() {
-            guarded(|| (self.0)(args));
-        }
-        Ok(())
+        invoke_with(args, |args| (self.0)(args))
     }
 }
 
 /// The completion of `AddScriptToExecuteOnDocumentCreated`: the script's id,
 /// or `None` when WebView2 refused the script.
-#[implement(ICoreWebView2AddScriptToExecuteOnDocumentCreatedCompletedHandler)]
+#[implement(ICoreWebView2AddScriptToExecuteOnDocumentCreatedCompletedHandler, Agile = false)]
 pub(super) struct ScriptAdded(Box<dyn Fn(Option<String>)>);
 
 impl ScriptAdded {
@@ -140,10 +140,72 @@ impl ScriptAdded {
 impl ICoreWebView2AddScriptToExecuteOnDocumentCreatedCompletedHandler_Impl for ScriptAdded_Impl {
     fn Invoke(&self, errorcode: HRESULT, result: &PCWSTR) -> windows::core::Result<()> {
         guarded(|| {
+            // `result` was filled by WebView2 for this completion: on success a
+            // NUL-terminated id string it owns until `Invoke` returns, which
+            // `string_from_pcwstr` reads up to its NUL (null reads as empty).
             let id = errorcode.is_ok().then(|| webview2_com::string_from_pcwstr(result));
             (self.0)(id.filter(|id| !id.is_empty()));
-        });
-        Ok(())
+        })
+    }
+}
+
+/// One web-resource filter added to a webview: requests to `uri` reach the
+/// `WebResourceRequested` handlers. Holds a reference to the object it was
+/// added to and removes the filter there when dropped, so a filter never
+/// outlives the extras that answer it (and is gone if a later registration of
+/// theirs fails). Where the runtime has `ICoreWebView2_22` the filter takes
+/// every request source kind, so it also catches service workers, shared
+/// workers and cross-origin iframes; an older runtime gets the legacy filter.
+pub(super) enum RequestFilter {
+    WithSourceKinds { webview: ICoreWebView2_22, uri: HSTRING },
+    Legacy { webview: ICoreWebView2, uri: HSTRING },
+}
+
+impl RequestFilter {
+    pub(super) fn add(webview: &ICoreWebView2, uri: &str) -> windows::core::Result<Self> {
+        let uri = HSTRING::from(uri);
+        match webview.cast::<ICoreWebView2_22>() {
+            Ok(webview22) => {
+                // SAFETY: `webview22` is a COM reference this frame holds (from `cast`); `uri`
+                // is an owned HSTRING for the call; the kinds are plain enum values.
+                unsafe {
+                    webview22.AddWebResourceRequestedFilterWithRequestSourceKinds(
+                        &uri,
+                        COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL,
+                        COREWEBVIEW2_WEB_RESOURCE_REQUEST_SOURCE_KINDS_ALL,
+                    )
+                }?;
+                Ok(Self::WithSourceKinds { webview: webview22, uri })
+            }
+            Err(_) => {
+                // SAFETY: `webview` is a COM reference the extras hold (from `wry`); `uri` is
+                // an owned HSTRING for the call.
+                unsafe { webview.AddWebResourceRequestedFilter(&uri, COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL) }?;
+                Ok(Self::Legacy { webview: webview.clone(), uri })
+            }
+        }
+    }
+}
+
+impl Drop for RequestFilter {
+    fn drop(&mut self) {
+        // Each call removes the filter its own `add` added, with the same arguments, on
+        // the object this value holds a reference to. A failure (the webview already
+        // closed) leaves nothing to undo: WebView2 drops its filters on close.
+        let _ = match self {
+            // SAFETY: `webview` and `uri` are the ones `add` used; `uri` is owned by this value.
+            Self::WithSourceKinds { webview, uri } => unsafe {
+                webview.RemoveWebResourceRequestedFilterWithRequestSourceKinds(
+                    &*uri,
+                    COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL,
+                    COREWEBVIEW2_WEB_RESOURCE_REQUEST_SOURCE_KINDS_ALL,
+                )
+            },
+            // SAFETY: `webview` and `uri` are the ones `add` used; `uri` is owned by this value.
+            Self::Legacy { webview, uri } => unsafe {
+                webview.RemoveWebResourceRequestedFilter(&*uri, COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL)
+            },
+        };
     }
 }
 
@@ -251,5 +313,71 @@ impl Drop for Registration {
             // SAFETY: `token` came from `add_AcceleratorKeyPressed` on this `controller`.
             Source::AcceleratorKeyPressed(controller) => unsafe { controller.remove_AcceleratorKeyPressed(token) },
         };
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use windows::core::{ComObject, BOOL};
+    use windows::Win32::Foundation::{E_FAIL, E_NOTIMPL};
+
+    /// Event arguments that answer nothing: the handlers under test never read them.
+    #[implement(ICoreWebView2ContentLoadingEventArgs)]
+    struct NoArgs;
+
+    impl ICoreWebView2ContentLoadingEventArgs_Impl for NoArgs_Impl {
+        fn IsErrorPage(&self, _value: *mut BOOL) -> windows::core::Result<()> {
+            Err(E_NOTIMPL.into())
+        }
+
+        fn NavigationId(&self, _value: *mut u64) -> windows::core::Result<()> {
+            Err(E_NOTIMPL.into())
+        }
+    }
+
+    // The six event handlers are each one `invoke_with` call; this drives one of them. A panic in the
+    // application's closure is caught and reported to WebView2 as a failure.
+    #[test]
+    fn an_event_handler_that_panics_reports_failure_and_does_not_unwind() {
+        let args: ICoreWebView2ContentLoadingEventArgs = NoArgs.into();
+        let panicking = ComObject::new(ContentLoading(Box::new(|_| panic!("provoked by the test"))));
+        let result = ICoreWebView2ContentLoadingEventHandler_Impl::Invoke(&*panicking, Ref::default(), Ref::from(&args));
+        assert_eq!(result.map_err(|e| e.code()), Err(E_UNEXPECTED));
+
+        let calls = std::rc::Rc::new(std::cell::Cell::new(0));
+        let counted = calls.clone();
+        let calm = ComObject::new(ContentLoading(Box::new(move |_| counted.set(counted.get() + 1))));
+        assert!(ICoreWebView2ContentLoadingEventHandler_Impl::Invoke(&*calm, Ref::default(), Ref::from(&args)).is_ok());
+        assert_eq!(calls.get(), 1);
+        // No arguments: nothing to hand on, and nothing failed.
+        assert!(ICoreWebView2ContentLoadingEventHandler_Impl::Invoke(&*calm, Ref::default(), Ref::default()).is_ok());
+        assert_eq!(calls.get(), 1);
+    }
+
+    #[test]
+    fn a_script_completion_that_panics_reports_failure_and_does_not_unwind() {
+        let panicking = ComObject::new(ScriptAdded(Box::new(|_| panic!("provoked by the test"))));
+        let result = ICoreWebView2AddScriptToExecuteOnDocumentCreatedCompletedHandler_Impl::Invoke(&*panicking, E_FAIL, &PCWSTR::null());
+        assert_eq!(result.map_err(|e| e.code()), Err(E_UNEXPECTED));
+
+        let seen = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let record = seen.clone();
+        let calm = ComObject::new(ScriptAdded(Box::new(move |id| record.borrow_mut().push(id))));
+        assert!(ICoreWebView2AddScriptToExecuteOnDocumentCreatedCompletedHandler_Impl::Invoke(&*calm, E_FAIL, &PCWSTR::null()).is_ok());
+        assert_eq!(*seen.borrow(), vec![None]);
+    }
+
+    // F31: the handlers hold state of the UI thread, so they do not tell COM they may be
+    // called from any thread (no IAgileObject, no free-threaded marshaler).
+    #[test]
+    fn the_handlers_are_not_agile() {
+        let event: ICoreWebView2ContentLoadingEventHandler = ContentLoading::create(|_| {});
+        assert!(event.cast::<windows_core::imp::IAgileObject>().is_err());
+        assert!(event.cast::<windows_core::imp::IMarshal>().is_err());
+        let accelerator: ICoreWebView2AcceleratorKeyPressedEventHandler = AcceleratorKeyPressed::create(|_| {});
+        assert!(accelerator.cast::<windows_core::imp::IAgileObject>().is_err());
+        let script = ScriptAdded::create(|_| {});
+        assert!(script.cast::<windows_core::imp::IAgileObject>().is_err());
     }
 }

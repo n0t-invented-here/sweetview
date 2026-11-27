@@ -8,6 +8,7 @@
 //! today's product must create it the C++'s way.
 
 use std::cell::RefCell;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::Duration;
@@ -19,13 +20,47 @@ use webview2_com::Microsoft::Web::WebView2::Win32::{
     CreateCoreWebView2EnvironmentWithOptions, ICoreWebView2Environment, ICoreWebView2EnvironmentOptions,
 };
 use windows::core::{HRESULT, HSTRING, PCWSTR};
-use windows::Win32::Foundation::{ERROR_INVALID_STATE, E_POINTER};
+use windows::Win32::Foundation::{ERROR_INVALID_STATE, E_POINTER, E_UNEXPECTED};
 
 use super::pump::{pump_while, PumpEnd};
 
 /// The C++ fork's attempts and the wait between them (`m_max_attempts`, `m_sleep_ms`).
 const MAX_ATTEMPTS: u32 = 60;
 const RETRY_WAIT: Duration = Duration::from_millis(200);
+
+thread_local! {
+    /// This thread's single-threaded apartment, entered by the first
+    /// `create_environment` on the thread that succeeds in entering it and left
+    /// when the thread ends, after the thread's later-made values (the runtime's
+    /// environment and webviews) have been dropped.
+    static APARTMENT: RefCell<Option<ComApartment>> = const { RefCell::new(None) };
+}
+
+/// Makes this thread a COM single-threaded apartment for the rest of its life,
+/// once. A thread that is multithreaded is refused (and asked again on the next
+/// call), which WebView2 then refuses through the creation.
+fn enter_apartment_once() {
+    APARTMENT.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        if slot.is_none() {
+            *slot = ComApartment::enter().ok();
+        }
+    });
+}
+
+/// The closure `webview2-com`'s completion handler calls: hands the outcome to
+/// `on_done` inside `catch_unwind`, and reports a panic to WebView2 as
+/// `E_UNEXPECTED` instead of unwinding into it.
+type Completed = Box<dyn FnOnce(windows::core::Result<()>, Option<ICoreWebView2Environment>) -> windows::core::Result<()>>;
+
+fn guarded_completion(on_done: impl FnOnce(windows::core::Result<ICoreWebView2Environment>) + 'static) -> Completed {
+    Box::new(move |result, environment| {
+        catch_unwind(AssertUnwindSafe(move || {
+            on_done(result.and_then(|()| environment.ok_or_else(|| E_POINTER.into())));
+        }))
+        .map_err(|_| E_UNEXPECTED.into())
+    })
+}
 
 fn invalid_state() -> HRESULT {
     HRESULT::from_win32(ERROR_INVALID_STATE.0)
@@ -60,20 +95,17 @@ fn is_webview2_available() -> bool {
 /// `ERROR_INVALID_STATE` (a running instance on the same folder with other
 /// options), which gives up at once.
 ///
-/// The calling thread is made a COM single-threaded apartment first, for the
-/// rest of its life, as `wry` does before it creates each webview (the C++
+/// The calling thread is made a COM single-threaded apartment first, once, for
+/// the rest of its life, as `wry` does before it creates each webview (the C++
 /// does the same for a window it owns). Errors: [`ErrorCode::MissingDependency`] without a
 /// WebView2 Runtime, [`ErrorCode::Canceled`] when a `WM_QUIT` arrives while
 /// waiting (it is consumed, as in the C++), [`ErrorCode::InvalidState`] when
 /// creation fails for good.
 pub fn create_environment(user_data_folder: Option<&Path>) -> Result<ICoreWebView2Environment, ErrorCode> {
-    // Entered (or counted again when the thread already is an STA) and kept for
-    // the thread's life: never left here, so no COM object outlives it. A thread
-    // that is multithreaded is refused, which WebView2 then refuses through the
-    // creation below.
-    if let Ok(apartment) = ComApartment::enter() {
-        std::mem::forget(apartment);
-    }
+    // Entered once per thread (or counted once more when the thread already is
+    // an STA) and kept for the thread's life, so no COM object of the thread
+    // outlives it.
+    enter_apartment_once();
     if !is_webview2_available() {
         return Err(ErrorCode::MissingDependency);
     }
@@ -82,10 +114,8 @@ pub fn create_environment(user_data_folder: Option<&Path>) -> Result<ICoreWebVie
         let slot: Rc<RefCell<Option<windows::core::Result<ICoreWebView2Environment>>>> = Rc::default();
         let handler = {
             let slot = slot.clone();
-            CreateCoreWebView2EnvironmentCompletedHandler::create(Box::new(move |result, environment| {
-                let outcome = result.and_then(|()| environment.ok_or_else(|| E_POINTER.into()));
+            CreateCoreWebView2EnvironmentCompletedHandler::create(guarded_completion(move |outcome| {
                 *slot.borrow_mut() = Some(outcome);
-                Ok(())
             }))
         };
         let options: Option<&ICoreWebView2EnvironmentOptions> = None;
@@ -117,4 +147,35 @@ pub fn create_environment(user_data_folder: Option<&Path>) -> Result<ICoreWebVie
         // counter.
     }
     Err(ErrorCode::InvalidState)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use windows::Win32::Foundation::E_FAIL;
+
+    #[test]
+    fn a_completion_that_panics_reports_failure_and_does_not_unwind() {
+        let panicking = guarded_completion(|_| panic!("provoked by the test"));
+        assert_eq!(panicking(Err(E_FAIL.into()), None).map_err(|e| e.code()), Err(E_UNEXPECTED));
+
+        let seen = Rc::new(RefCell::new(None));
+        let record = seen.clone();
+        let calm = guarded_completion(move |outcome| *record.borrow_mut() = Some(outcome.map_err(|e| e.code())));
+        assert!(calm(Ok(()), None).is_ok());
+        // Success without an environment is WebView2 breaking its contract: E_POINTER.
+        assert_eq!(seen.borrow_mut().take().map(|outcome| outcome.err()), Some(Some(E_POINTER)));
+    }
+
+    #[test]
+    fn the_apartment_is_entered_once_per_thread() {
+        std::thread::spawn(|| {
+            for _ in 0..3 {
+                enter_apartment_once();
+            }
+            assert!(APARTMENT.with(|slot| slot.borrow().is_some()));
+        })
+        .join()
+        .unwrap();
+    }
 }

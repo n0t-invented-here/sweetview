@@ -70,15 +70,16 @@ impl StreamingIStream {
 pub(super) fn read_into(stream: &IStream, buf: &mut [u8], read: &mut u32) -> HRESULT {
     // Larger buffers are read in part, as a short read is.
     let len = u32::try_from(buf.len()).unwrap_or(u32::MAX);
-    // SAFETY: `buf` is a buffer the caller lends for the whole call and `len` is at
-    // most its length; `read` is a u32 the caller lends for the call to fill.
+    // SAFETY: `buf` is a `&mut [u8]`, so it is writable for `buf.len()` bytes for the whole
+    // call, and `len` is at most that length; `read` is a `&mut u32`, writable for the call.
     unsafe { stream.Read(buf.as_mut_ptr().cast(), len, Some(read)) }
 }
 
 impl Drop for StreamingIStream {
     fn drop(&mut self) {
-        // The last COM reference is gone: nobody reads this body again.
-        self.state.on_consumer_released();
+        // The last COM reference is gone: nobody reads this body again. This runs
+        // inside COM's `Release` on WebView2's thread, so nothing may unwind.
+        let _ = catch_unwind(AssertUnwindSafe(|| self.state.on_consumer_released()));
     }
 }
 
@@ -130,11 +131,13 @@ impl IStream_Impl for StreamingIStream_Impl {
         if pstatstg.is_null() {
             return Err(STG_E_INVALIDPOINTER.into());
         }
-        let stat = STATSTG { r#type: STGTY_STREAM.0 as u32, cbSize: 0, ..Default::default() };
-        // SAFETY: `pstatstg` is non-null, and the `IStream::Stat` contract makes it
-        // a writable STATSTG for the call; the struct is the `windows` crate's.
-        unsafe { pstatstg.write(stat) };
-        Ok(())
+        catch_unwind(AssertUnwindSafe(|| {
+            let stat = STATSTG { r#type: STGTY_STREAM.0 as u32, cbSize: 0, ..Default::default() };
+            // SAFETY: `pstatstg` is non-null, and the `IStream::Stat` contract makes it
+            // a writable STATSTG for the call; the struct is the `windows` crate's.
+            unsafe { pstatstg.write(stat) };
+        }))
+        .map_err(|_| E_UNEXPECTED.into())
     }
 
     fn Clone(&self) -> windows::core::Result<IStream> {
@@ -203,6 +206,18 @@ mod tests {
         assert!(aborted.push(b"kept?"));
         aborted.abort();
         assert_eq!(read(&stream, &mut buf), (E_ABORT, 0));
+    }
+
+    // Nothing unwinds out of the last `Release`: a panic in what the stream's release runs
+    // (here the abandon callback the request path sets) stays inside the stream.
+    #[test]
+    fn a_panic_during_the_last_release_does_not_unwind() {
+        let state = Arc::new(StreamState::new());
+        state.set_on_abandoned(|| panic!("provoked by the test"));
+        let stream = StreamingIStream::create(state.clone());
+        drop(stream);
+        assert!(state.is_abandoned());
+        assert_eq!(Arc::strong_count(&state), 1);
     }
 
     // C++: "Streaming IStream: Read contract" (a NULL buffer for a non-zero
