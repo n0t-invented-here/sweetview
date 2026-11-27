@@ -131,6 +131,8 @@ const hosts = new Map<Window, WinTabHost>();
 const hostOrder: WinTabHost[] = [];
 const tabRecordByApi = new WeakMap<object, WinTabRecord>();
 let nextTabId = 1;
+/** Test hook (`_debugWinTabs.failNextStrip`): the next strip attach fails after it loaded, as a failed attach does. */
+let failNextStrip = false;
 
 function stripState(host: WinTabHost): StripState {
   return {
@@ -630,6 +632,11 @@ async function ensureHost(window: Window): Promise<WinTabHost> {
       strip.dispose();
       throw new Error("sweetview: the window was disposed while its tab strip was loading");
     }
+    if (failNextStrip) {
+      failNextStrip = false;
+      strip.dispose();
+      throw new Error("sweetview: the tab strip failed (a test asked for it)");
+    }
     host.strip = strip;
     host.stripWin = stripWin;
 
@@ -670,11 +677,15 @@ export function mergeAllWindows(intoWindow?: Window): void {
 }
 
 /**
- * Test hooks: the strip webview of a tabbed window, and an accelerator key
+ * Test hooks: the strip webview of a tabbed window; an accelerator key
  * handed to the handler a tab's (or, without a tab, the strip's) webview has
- * registered, as WebView2 hands it one. Returns whether the key was taken.
+ * registered, as WebView2 hands it one (returns whether the key was taken);
+ * and a failure of the next strip attach, after its webview loaded.
  */
 export const _debugWinTabs = {
+  failNextStrip(): void {
+    failNextStrip = true;
+  },
   strip: (window: Window): WebView<StripMethods, StripEvents> | undefined => hosts.get(window)?.strip,
   pressKey(window: Window, key: Key, tab?: Tab<any, any>): boolean | undefined {
     if (tab !== undefined) return tabRecordByApi.get(tab)?.onKey(key);

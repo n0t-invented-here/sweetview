@@ -169,6 +169,9 @@ struct Inner {
   /// `bind` was not yet registered, in the order asked; carried out once
   /// every script is.
   held: RefCell<VecDeque<PageOp>>,
+  /// How many times the webview was told its window moved (a test hook: the
+  /// position WebView2 keeps for its window is not readable from outside).
+  moves_told: Cell<u32>,
 }
 
 /// Something the host asked of the page that must happen after the scripts
@@ -278,6 +281,7 @@ impl Engine {
       init_scripts: RefCell::new(Vec::new()),
       new_window,
       held: RefCell::new(VecDeque::new()),
+      moves_told: Cell::new(0),
     });
     *slot.borrow_mut() = Rc::downgrade(&inner);
 
@@ -408,7 +412,15 @@ impl Engine {
 
   /// Tells the webview its host window moved, so its popups follow.
   pub fn notify_moved(&self) {
-    self.inner.with_live(|live| live.extras.notify_parent_window_position_changed());
+    let told = self.inner.with_live(|live| live.extras.notify_parent_window_position_changed());
+    if told.is_some() {
+      self.inner.moves_told.set(self.inner.moves_told.get().saturating_add(1));
+    }
+  }
+
+  /// Test hook: how many times [`Engine::notify_moved`] reached a live webview.
+  pub fn moves_told(&self) -> u32 {
+    self.inner.moves_told.get()
   }
 
   /// Moves the webview into another window without reloading it.

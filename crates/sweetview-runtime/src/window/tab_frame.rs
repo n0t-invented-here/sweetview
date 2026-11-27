@@ -29,9 +29,12 @@ const DEFAULT_PAGE: (f64, f64) = (1040.0, 720.0);
 /// The smallest page the frame can be resized to when no minimum is given.
 const DEFAULT_MIN_PAGE: (f64, f64) = (560.0, 420.0);
 
-/// The colour the frame paints where no webview covers it: the page's, light or dark.
-const PAGE_LIGHT: (u8, u8, u8, u8) = (0xf9, 0xf9, 0xfb, 0xff);
-const PAGE_DARK: (u8, u8, u8, u8) = (0x15, 0x16, 0x1a, 0xff);
+/// The colours the frame paints where no webview covers it: the strip's
+/// across the top, the page's below, light or dark (red, green, blue).
+const STRIP_LIGHT: (u8, u8, u8) = (0xe9, 0xea, 0xee);
+const STRIP_DARK: (u8, u8, u8) = (0x29, 0x2a, 0x30);
+const PAGE_LIGHT: (u8, u8, u8) = (0xf9, 0xf9, 0xfb);
+const PAGE_DARK: (u8, u8, u8) = (0x15, 0x16, 0x1a);
 
 /// Called with `true` when the frame becomes the active window, `false` when it stops being it.
 pub type ActivateListener = Rc<dyn Fn(bool)>;
@@ -43,6 +46,10 @@ pub(super) struct TabState {
   /// The frame's effective dark state: its explicit appearance, or the last system state.
   dark: Cell<bool>,
   activate: RefCell<Option<ActivateListener>>,
+  /// The frame's own answers to its backdrop and DPI changes; `None` until
+  /// [`finish`] installs them, or when they could not be installed (the frame
+  /// then paints the page's colour only, through `tao`).
+  messages: RefCell<Option<platform::FrameMessages>>,
 }
 
 impl TabState {
@@ -52,14 +59,22 @@ impl TabState {
       Appearance::Light => false,
       Appearance::Dark => true,
     };
-    Self { strip_height, appearance, dark: Cell::new(dark), activate: RefCell::new(None) }
+    Self { strip_height, appearance, dark: Cell::new(dark), activate: RefCell::new(None), messages: RefCell::new(None) }
   }
 
+  /// The page's colour, for `tao`'s background: what shows if the frame's own backdrop is not installed.
   pub(super) fn backdrop(&self) -> (u8, u8, u8, u8) {
-    if self.dark.get() {
-      PAGE_DARK
-    } else {
-      PAGE_LIGHT
+    let (red, green, blue) = self.colours().page;
+    (red, green, blue, 0xff)
+  }
+
+  /// The strip's and the page's colours for the frame's dark state now.
+  fn colours(&self) -> platform::Backdrop {
+    let dark = self.dark.get();
+    platform::Backdrop {
+      strip_height: self.strip_height,
+      strip: if dark { STRIP_DARK } else { STRIP_LIGHT },
+      page: if dark { PAGE_DARK } else { PAGE_LIGHT },
     }
   }
 
@@ -110,6 +125,8 @@ pub(super) fn finish(core: &Rc<Core>, tab: &TabState, default_bounds: bool, min:
     tab.dark.set(dark);
     core.with_tao(|tao| tao.set_background_color(Some(tab.backdrop())));
   }
+  // A frame that cannot answer its own backdrop still works: `tao` paints the page's colour.
+  *tab.messages.borrow_mut() = platform::FrameMessages::install(&core.native, tab.colours()).ok();
 }
 
 /// The outer frame less the client area: what the system's border takes.
@@ -313,6 +330,9 @@ impl TabFrame {
       tao.set_theme(Some(if dark { Theme::Dark } else { Theme::Light }));
       tao.set_background_color(Some(tab.backdrop()));
     });
+    if let Some(messages) = tab.messages.borrow().as_ref() {
+      let _ = messages.set_backdrop(tab.colours());
+    }
   }
 }
 

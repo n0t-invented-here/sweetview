@@ -5,23 +5,31 @@
 //! is the foreground window, handing a press on the strip to
 //! the OS move and size loops (synchronously, so the caller knows where the
 //! window ended up), the window's system menu, a popup menu that answers with
-//! the chosen item, and the system's light or dark app theme.
+//! the chosen item, the system's light or dark app theme, and the two
+//! messages the frame answers itself ([`FrameMessages`]): its backdrop and a
+//! DPI change.
 
+use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::ffi::c_void;
 use std::marker::PhantomData;
+use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::rc::Rc;
 
 use sweetview_window_logic::ResizeEdge;
 use windows::core::PCWSTR;
-use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
+use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, RECT, WPARAM};
+use windows::Win32::Graphics::Gdi::{CreateSolidBrush, DeleteObject, FillRect, InvalidateRect, HBRUSH, HDC};
 use windows::Win32::UI::Input::KeyboardAndMouse::ReleaseCapture;
+use windows::Win32::UI::Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass};
 use windows::Win32::UI::WindowsAndMessaging::{
-  AppendMenuW, CreatePopupMenu, DestroyMenu, EnableMenuItem, GetForegroundWindow, GetSystemMenu, SendMessageW, SetForegroundWindow, SetMenuDefaultItem, TrackPopupMenu, HMENU, MENU_ITEM_FLAGS, MF_ENABLED,
+  AppendMenuW, CreatePopupMenu, DestroyMenu, EnableMenuItem, GetClientRect, GetForegroundWindow, GetSystemMenu, SendMessageW, SetForegroundWindow, SetMenuDefaultItem, TrackPopupMenu, HMENU, MENU_ITEM_FLAGS, MF_ENABLED,
   MF_GRAYED, MF_SEPARATOR, MF_STRING, SC_CLOSE, SC_MAXIMIZE, SC_MINIMIZE, SC_MOVE, SC_RESTORE, SC_SIZE, TPM_RETURNCMD,
-  TPM_RIGHTBUTTON, WM_CLOSE, WM_NCLBUTTONDOWN, WM_SYSCOMMAND, WS_CLIPCHILDREN,
+  TPM_RIGHTBUTTON, WM_CLOSE, WM_DPICHANGED, WM_ERASEBKGND, WM_NCDESTROY, WM_NCLBUTTONDOWN, WM_SYSCOMMAND, WS_CLIPCHILDREN,
 };
 
 use crate::platform::{after_popup_menu, post_message};
-use crate::{is_zoomed, NativeWindow, Point};
+use crate::{dpi_scale, is_on_this_thread, is_zoomed, set_outer_bounds, ForeignWindow, NativeWindow, Point, Rect};
 
 /// The style bit a frame keeps on, so painting its background never draws
 /// over the webviews that are its children.
@@ -182,6 +190,234 @@ pub fn system_is_dark() -> bool {
     // The weighting Microsoft gives for telling a light colour from a dark one.
     Ok(c) => 5 * u32::from(c.G) + 2 * u32::from(c.R) + u32::from(c.B) > 8 * 128,
     Err(_) => false,
+  }
+}
+
+// ---- the messages the frame answers itself -------------------------------------------
+
+/// The fixed colours the frame paints where no webview covers it: the strip's
+/// across the top `strip_height` device-independent pixels, the page's below.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Backdrop {
+  pub strip_height: u32,
+  /// Red, green, blue.
+  pub strip: (u8, u8, u8),
+  pub page: (u8, u8, u8),
+}
+
+/// A solid GDI brush, deleted on drop.
+struct OwnedBrush {
+  brush: HBRUSH,
+  _not_send: PhantomData<*const c_void>,
+}
+
+impl OwnedBrush {
+  fn new((red, green, blue): (u8, u8, u8)) -> Result<Self, String> {
+    let colour = COLORREF(u32::from(red) | (u32::from(green) << 8) | (u32::from(blue) << 16));
+    // SAFETY: `CreateSolidBrush` takes a colour by value and has no preconditions;
+    // the brush is owned by the value returned and deleted only in its `Drop`.
+    let brush = unsafe { CreateSolidBrush(colour) };
+    if brush.is_invalid() {
+      return Err("sweetview: CreateSolidBrush failed".into());
+    }
+    Ok(Self { brush, _not_send: PhantomData })
+  }
+}
+
+impl Drop for OwnedBrush {
+  fn drop(&mut self) {
+    // SAFETY: `self.brush` was made by `CreateSolidBrush` for this value alone; a
+    // brush is selected into no device context here (`FillRect` does not select
+    // it), so it may be deleted, and it is deleted only here.
+    let _deleted = unsafe { DeleteObject(self.brush.into()) };
+  }
+}
+
+/// The brushes of one backdrop.
+struct Brushes {
+  strip_height: u32,
+  strip: OwnedBrush,
+  page: OwnedBrush,
+}
+
+impl Brushes {
+  fn new(backdrop: Backdrop) -> Result<Self, String> {
+    Ok(Self { strip_height: backdrop.strip_height, strip: OwnedBrush::new(backdrop.strip)?, page: OwnedBrush::new(backdrop.page)? })
+  }
+}
+
+/// What the frame procedure keeps for one frame.
+struct FrameState {
+  brushes: RefCell<Brushes>,
+  /// Set once the window is destroyed and the procedure removed.
+  gone: Cell<bool>,
+}
+
+/// The id this crate's frame procedure is installed under ("ST"); the window
+/// subclass of `windows.rs` has its own procedure and id.
+const FRAME_SUBCLASS_ID: usize = 0x5354;
+
+thread_local! {
+  /// The state of each frame of this thread, by handle value, as the window subclass keeps its own.
+  static FRAMES: RefCell<HashMap<isize, Rc<FrameState>>> = RefCell::new(HashMap::new());
+}
+
+fn frame_state(hwnd: HWND) -> Option<Rc<FrameState>> {
+  FRAMES.try_with(|table| table.borrow().get(&(hwnd.0 as isize)).cloned()).ok().flatten()
+}
+
+/// Takes `hwnd`'s entry out of the table when it is `state` (not a later
+/// frame that was given the same handle value), and removes the procedure.
+fn forget_frame(hwnd: HWND, state: &Rc<FrameState>) {
+  if state.gone.replace(true) {
+    return;
+  }
+  let _ = FRAMES.try_with(|table| {
+    let mut table = table.borrow_mut();
+    if table.get(&(hwnd.0 as isize)).is_some_and(|known| Rc::ptr_eq(known, state)) {
+      table.remove(&(hwnd.0 as isize));
+    }
+  });
+  // SAFETY: removes this crate's own frame procedure under its own id; on a
+  // window that no longer has it the call fails and changes nothing.
+  let _removed = unsafe { RemoveWindowSubclass(hwnd, Some(frame_proc), FRAME_SUBCLASS_ID) };
+}
+
+/// The messages a tab frame answers itself, beyond every window's subclass:
+///
+/// - `WM_ERASEBKGND`: the [`Backdrop`]'s two colours, so the strip area never
+///   shows the page's colour while the window is resized or before the
+///   strip's webview has painted. `tao` paints one colour only.
+/// - `WM_DPICHANGED`: the suggested rectangle is applied, as the system asks.
+///   `tao` keeps its own size when the scale is unchanged and works one out
+///   from the old inner size otherwise.
+///
+/// Installed as a second subclass procedure of the frame, so the window
+/// subclass of every window stays as it is. Dropping it removes the
+/// procedure and deletes the brushes; the window's destruction removes it too.
+///
+/// Not `Send`: it belongs to the window's thread.
+pub struct FrameMessages {
+  hwnd: HWND,
+  state: Rc<FrameState>,
+  _not_send: PhantomData<*const ()>,
+}
+
+impl FrameMessages {
+  /// Starts answering the frame's backdrop and DPI changes.
+  pub fn install(window: &impl NativeWindow, backdrop: Backdrop) -> Result<Self, String> {
+    let hwnd = window.hwnd();
+    if !is_on_this_thread(window) {
+      return Err("sweetview: a window of another thread cannot be a tab frame".into());
+    }
+    if frame_state(hwnd).is_some() {
+      return Err("sweetview: this window is a tab frame already".into());
+    }
+    let state = Rc::new(FrameState { brushes: RefCell::new(Brushes::new(backdrop)?), gone: Cell::new(false) });
+    FRAMES.with(|table| table.borrow_mut().insert(hwnd.0 as isize, state.clone()));
+    // SAFETY: installs this crate's procedure on a window of this thread (checked
+    // above). The procedure finds its state by handle value in a thread-local
+    // table, and is removed by `Drop` or on `WM_NCDESTROY`.
+    let installed = unsafe { SetWindowSubclass(hwnd, Some(frame_proc), FRAME_SUBCLASS_ID, 0) }.as_bool();
+    if !installed {
+      forget_frame(hwnd, &state);
+      return Err("sweetview: SetWindowSubclass failed".into());
+    }
+    Ok(Self { hwnd, state, _not_send: PhantomData })
+  }
+
+  /// Paints the backdrop in other colours from now on, and repaints it now.
+  pub fn set_backdrop(&self, backdrop: Backdrop) -> Result<(), String> {
+    if self.state.gone.get() {
+      return Ok(());
+    }
+    let next = Brushes::new(backdrop)?;
+    let previous = self.state.brushes.replace(next);
+    drop(previous);
+    // SAFETY: a window function on the frame this value was installed on (alive:
+    // `gone` is set when it is destroyed); no rectangle is passed, so the whole
+    // client area is invalidated and erased with the new brushes.
+    let _invalidated = unsafe { InvalidateRect(Some(self.hwnd), None, true) };
+    Ok(())
+  }
+}
+
+impl Drop for FrameMessages {
+  fn drop(&mut self) {
+    forget_frame(self.hwnd, &self.state);
+  }
+}
+
+/// Fills the strip and the page area of `hwnd`'s client area with the backdrop.
+fn paint_backdrop(hwnd: HWND, hdc: HDC, state: &FrameState) -> bool {
+  let mut client = RECT::default();
+  // SAFETY: `client` is a RECT owned by this frame for the call to fill; the
+  // handle is the one the OS passed to the procedure.
+  if unsafe { GetClientRect(hwnd, &mut client) }.is_err() {
+    return false;
+  }
+  let scale = ForeignWindow::from_handle_value(hwnd.0 as isize).map_or(1.0, |window| dpi_scale(&window));
+  let brushes = state.brushes.borrow();
+  let strip = ((f64::from(brushes.strip_height) * scale).round() as i32).clamp(0, client.bottom.max(0));
+  let strip_rect = RECT { bottom: strip, ..client };
+  let page_rect = RECT { top: strip, ..client };
+  // SAFETY: `hdc` is the device context the OS passed with this WM_ERASEBKGND,
+  // valid for the message; the rectangle is owned by this frame and the brush
+  // by `state`, which the borrow keeps alive for the call.
+  let _filled = unsafe { FillRect(hdc, &strip_rect, brushes.strip.brush) };
+  // SAFETY: as above, for the page's rectangle and brush.
+  let _filled = unsafe { FillRect(hdc, &page_rect, brushes.page.brush) };
+  true
+}
+
+fn forward_frame(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+  // SAFETY: passes the message the OS gave the frame procedure on to the next procedure in the chain.
+  unsafe { DefSubclassProc(hwnd, message, wparam, lparam) }
+}
+
+/// What the frame procedure does with one message: `Some` when it is done
+/// with it (having forwarded it itself where needed), `None` to forward it.
+fn handle_frame(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> Option<LRESULT> {
+  let state = frame_state(hwnd)?;
+  match message {
+    WM_ERASEBKGND => {
+      let hdc = HDC(wparam.0 as *mut c_void);
+      // Non-zero: the background is erased.
+      paint_backdrop(hwnd, hdc, &state).then_some(LRESULT(1))
+    }
+    WM_DPICHANGED => {
+      let suggested = lparam.0 as *const RECT;
+      if suggested.is_null() {
+        return None;
+      }
+      // SAFETY: for WM_DPICHANGED the OS passes a RECT it owns for the duration
+      // of the message; it is read once, here, before anything else runs.
+      let rect = unsafe { *suggested };
+      // `tao` records the new scale (its logical sizes, the default minimum
+      // among them, follow it); the suggested rectangle is applied after it.
+      let result = forward_frame(hwnd, message, wparam, lparam);
+      if let Some(window) = ForeignWindow::from_handle_value(hwnd.0 as isize) {
+        set_outer_bounds(&window, Rect::from_edges(rect.left, rect.top, rect.right, rect.bottom), false);
+      }
+      Some(result)
+    }
+    WM_NCDESTROY => {
+      forget_frame(hwnd, &state);
+      None
+    }
+    _ => None,
+  }
+}
+
+// SAFETY: this is the subclass procedure the OS calls with the arguments of a
+// window message; it is `unsafe extern "system"` only because `SUBCLASSPROC`
+// requires that signature. It never unwinds: its body runs inside
+// `catch_unwind`, and a panic forwards the message unchanged.
+unsafe extern "system" fn frame_proc(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM, _id: usize, _data: usize) -> LRESULT {
+  let handled = catch_unwind(AssertUnwindSafe(|| handle_frame(hwnd, message, wparam, lparam))).unwrap_or(None);
+  match handled {
+    Some(result) => result,
+    None => forward_frame(hwnd, message, wparam, lparam),
   }
 }
 

@@ -4,13 +4,16 @@
 // process's GDI and USER object counts, the monitors) and drives this
 // process's own windows the way the shell, the keyboard and an application
 // would (messages posted or sent to them, a WM_DROPFILES drop, a window of the
-// application's own with its own window procedure). Nothing here moves the
-// cursor, presses a key system-wide or touches the clipboard: every input is a
-// message to one of this process's own windows. Listed in
+// application's own with its own window procedure). Nothing here presses a key
+// system-wide or touches the clipboard, and every input is a message to one of
+// this process's own windows, except the move-loop control
+// (`moveLoopControl`): it moves the cursor and presses the left button with
+// SendInput, only over a window of its own, and always lets go. Listed in
 // rust-rewrite/ffi-allowlist.txt as a probe.
 
 import { FFIType, JSCallback, dlopen, ptr, toArrayBuffer } from "bun:ffi";
 import { binding } from "../src/binding";
+import { pumpEvents } from "../src/event-loop";
 
 const { u64, u32, i32, i64, u16, i16 } = FFIType;
 export const user32 = dlopen("user32.dll", {
@@ -55,6 +58,14 @@ export const user32 = dlopen("user32.dll", {
   CreateWindowExW: { args: [u32, FFIType.ptr, FFIType.ptr, u32, i32, i32, i32, i32, u64, u64, u64, FFIType.ptr], returns: u64 },
   DestroyWindow: { args: [u64], returns: i32 },
   DefWindowProcW: { args: [u64, u32, u64, i64], returns: i64 },
+  // The move-loop control: real input over a window of its own.
+  SetCursorPos: { args: [i32, i32], returns: i32 },
+  SendInput: { args: [u32, FFIType.ptr, i32], returns: u32 },
+  GetKeyState: { args: [i32], returns: i16 },
+  WindowFromPoint: { args: [u64], returns: u64 },
+  GetAncestor: { args: [u64, u32], returns: u64 },
+  GetGUIThreadInfo: { args: [u32, FFIType.ptr], returns: i32 },
+  GetForegroundWindow: { args: [], returns: u64 },
 }).symbols;
 export const kernel32 = dlopen("kernel32.dll", {
   GetCurrentProcess: { args: [], returns: u64 },
@@ -65,6 +76,7 @@ export const kernel32 = dlopen("kernel32.dll", {
   GlobalLock: { args: [u64], returns: FFIType.ptr },
   GlobalUnlock: { args: [u64], returns: i32 },
   GlobalFree: { args: [u64], returns: u64 },
+  GetCurrentThreadId: { args: [], returns: u32 },
 }).symbols;
 
 export const dwmapi = dlopen("dwmapi.dll", {
@@ -234,6 +246,147 @@ export function ownWindow(onMessage: (message: number, wParam: bigint, lParam: b
       user32.DestroyWindow(hwnd);
     },
   };
+}
+
+// ---- the move-loop control -----------------------------------------------------------------
+
+/** True while this thread is in the OS's move or size loop (GUITHREADINFO's GUI_INMOVESIZE). */
+export function inMoveSize(): boolean {
+  const info = new Uint8Array(72); // GUITHREADINFO, x64
+  const view = new DataView(info.buffer);
+  view.setUint32(0, 72, true);
+  // This thread by its id: 0 would name the foreground thread, which may be another process's.
+  user32.GetGUIThreadInfo(kernel32.GetCurrentThreadId(), ptr(info));
+  return (view.getUint32(4, true) & 0x2) !== 0;
+}
+
+/** The top-level window under a screen point. */
+export function windowAt(x: number, y: number): bigint {
+  const hit = user32.WindowFromPoint(BigInt.asUintN(32, BigInt(x)) | (BigInt.asUintN(32, BigInt(y)) << 32n));
+  return hit === 0n ? 0n : user32.GetAncestor(hit, 2); // GA_ROOT
+}
+
+/** True while any mouse button is down, system-wide. */
+export const buttonsDown = (): boolean => [0x01, 0x02, 0x04].some((vk) => user32.GetAsyncKeyState(vk) < 0);
+
+/** Presses or releases the left button with SendInput. */
+export function injectLeftButton(down: boolean): void {
+  const input = new Uint8Array(40); // INPUT, x64: type, MOUSEINPUT at 8 (dx, dy, mouseData, dwFlags at 20, time, dwExtraInfo)
+  const view = new DataView(input.buffer);
+  view.setUint32(0, 0, true); // INPUT_MOUSE
+  view.setUint32(20, down ? 0x2 : 0x4, true); // MOUSEEVENTF_LEFTDOWN / LEFTUP
+  user32.SendInput(1, ptr(input), 40);
+}
+
+export type Desk = { x: number; y: number; width: number; height: number };
+
+/**
+ * Moves the cursor to a screen point as a mouse would: an injected absolute move (what a move loop
+ * follows), then SetCursorPos so the point is exact. `desk` is the virtual desktop's rectangle.
+ */
+export function injectCursorMove(x: number, y: number, desk: Desk): void {
+  const input = new Uint8Array(40);
+  const view = new DataView(input.buffer);
+  view.setUint32(0, 0, true);
+  view.setInt32(8, Math.round(((x - desk.x) * 65535) / Math.max(1, desk.width - 1)), true);
+  view.setInt32(12, Math.round(((y - desk.y) * 65535) / Math.max(1, desk.height - 1)), true);
+  view.setUint32(20, 0x1 | 0x8000 | 0x4000, true); // MOUSEEVENTF_MOVE | ABSOLUTE | VIRTUALDESK
+  user32.SendInput(1, ptr(input), 40);
+  user32.SetCursorPos(x, y);
+}
+
+export type MoveLoopControl = {
+  /** True when the OS ran its move loop for the control window and the window followed the cursor. */
+  ok: boolean;
+  /** Why it could not be run, or did not work, in words. */
+  why?: string;
+  readings: Record<string, unknown>;
+};
+
+let control: Promise<MoveLoopControl> | undefined;
+
+/**
+ * Tells "this session's OS runs no move loop for injected input" apart from "Sweetview did not
+ * hand the window over". A plain window of the test's own (no Sweetview code in it) is pressed
+ * with SendInput (only when no button is down and the window is under the cursor) and sent
+ * `WM_NCLBUTTONDOWN` with `HTCAPTION` itself, as a title bar's press is; the OS then runs its move
+ * loop, which is read (GUI_INMOVESIZE) and fed an injected cursor move from native timeouts (they
+ * fire inside it). Run once per process; later calls answer the first run. The button is always
+ * released, a watchdog ends the loop, and the cursor is put back.
+ */
+export function moveLoopControl(desk: Desk): Promise<MoveLoopControl> {
+  return (control ??= runMoveLoopControl(desk));
+}
+
+async function runMoveLoopControl(desk: Desk): Promise<MoveLoopControl> {
+  const native = binding();
+  const WS_POPUP = 0x80000000;
+  const WS_VISIBLE = 0x10000000;
+  const WS_EX_TOPMOST = 0x8;
+  const bounds = { x: desk.x + 40, y: desk.y + 40, width: 240, height: 160 };
+  ownWindow().destroy(); // registers the class
+  const hwnd = user32.CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE, wide(OWN_CLASS), wide(`move-loop control ${process.pid}`), WS_POPUP | WS_VISIBLE, bounds.x, bounds.y, bounds.width, bounds.height, 0n, 0n, hInstance(), null);
+  if (hwnd === 0n) return { ok: false, why: `the control window could not be made (${kernel32.GetLastError()})`, readings: {} };
+  const original = cursor();
+  const grip = { x: bounds.x + 60, y: bounds.y + 40 };
+  const readings: Record<string, unknown> = {};
+  let pressed = false;
+  const release = () => {
+    if (pressed) injectLeftButton(false);
+    pressed = false;
+  };
+  const settle = async (ms: number, until: () => boolean) => {
+    for (const end = performance.now() + ms; performance.now() < end; await Bun.sleep(5)) {
+      pumpEvents();
+      if (until()) return true;
+    }
+    return until();
+  };
+  try {
+    let why = "";
+    for (let attempt = 0; attempt < 4; attempt++) {
+      if (attempt > 0) await Bun.sleep(500);
+      user32.SetCursorPos(grip.x, grip.y);
+      await settle(40, () => false);
+      if (buttonsDown()) why = "a mouse button was already down on the shared desktop";
+      else if (windowAt(grip.x, grip.y) !== hwnd) why = "another window was under the cursor on the shared desktop";
+      else {
+        why = "";
+        break;
+      }
+    }
+    if (why) return { ok: false, why, readings };
+    const watchdog = native.scheduleTimeout(4000, () => {
+      readings.watchdog = { inMoveSize: inMoveSize(), leftDown: user32.GetAsyncKeyState(0x01) < 0 };
+      release();
+      post(hwnd, 0x001f); // WM_CANCELMODE
+    });
+    injectLeftButton(true);
+    pressed = true;
+    readings.threadSawThePress = await settle(2000, () => user32.GetKeyState(0x01) < 0);
+    native.scheduleTimeout(60, () => void (readings.inLoopBeforeTheMove = inMoveSize()));
+    native.scheduleTimeout(120, () => injectCursorMove(grip.x + 50, grip.y + 35, desk));
+    native.scheduleTimeout(320, () => {
+      readings.inLoopAfterTheMove = inMoveSize();
+      const r = windowRect(hwnd);
+      readings.windowInTheLoop = { x: r.left, y: r.top };
+      release();
+    });
+    // A title bar's press, as DefWindowProc gets it: blocks in the OS move loop until the release.
+    const at = BigInt.asUintN(16, BigInt(grip.x)) | (BigInt.asUintN(16, BigInt(grip.y)) << 16n);
+    user32.SendMessageW(hwnd, 0x00a1, 2n, at); // WM_NCLBUTTONDOWN, HTCAPTION
+    await settle(1000, () => !pressed);
+    native.cancelTimeout(watchdog);
+    const r = windowRect(hwnd);
+    readings.windowAfter = { x: r.left, y: r.top };
+    readings.expected = { x: bounds.x + 50, y: bounds.y + 35 };
+    const ok = readings.inLoopAfterTheMove === true && r.left === bounds.x + 50 && r.top === bounds.y + 35;
+    return ok ? { ok, readings } : { ok, why: "the OS started no move loop for the control window, or the window did not follow the cursor", readings };
+  } finally {
+    release();
+    user32.SetCursorPos(original.x, original.y);
+    user32.DestroyWindow(hwnd);
+  }
 }
 
 // ---- the tray ------------------------------------------------------------------------
