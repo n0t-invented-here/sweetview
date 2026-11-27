@@ -13,7 +13,9 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::{Rc, Weak};
 
-use sweetview_platform_window::{self as platform, ExStylePolicy, ForeignWindow, WindowEvent, WindowIcons, WindowSubclass};
+use sweetview_platform_window::{
+  self as platform, BorrowedWindow, ExStylePolicy, FramePart, Placement, ShowAs, WindowEvent, WindowIcons, WindowSubclass, ZOrder,
+};
 use sweetview_window_logic::{self as logic, HitState, HitStep, MinSize};
 use tao::dpi::{PhysicalPosition, PhysicalSize};
 use tao::window::{Theme, WindowBuilder};
@@ -129,9 +131,10 @@ struct Gesture {
 
 /// One native window and everything Sweetview keeps for it.
 struct Core {
+  /// The window's handle value. A window Sweetview did not make is kept as
+  /// this number only, and lent to each platform call for its length
+  /// ([`Core::with_native`]); an owned one through its `tao` window.
   handle: isize,
-  /// The window by handle, for the platform crate's calls.
-  native: ForeignWindow,
   /// The `tao` window of an owned window, until it is destroyed. Shared so a
   /// call into `tao` holds no borrow while the OS calls back into Sweetview.
   tao: RefCell<Option<Rc<tao::window::Window>>>,
@@ -177,11 +180,10 @@ fn next_wrapper() -> u64 {
 }
 
 impl Core {
-  fn new(native: ForeignWindow, tao: Option<tao::window::Window>, chrome: Chrome, no_activate: bool, min: MinSize, topmost: bool, tab: Option<TabState>) -> Rc<Self> {
+  fn new(handle: isize, tao: Option<tao::window::Window>, chrome: Chrome, no_activate: bool, min: MinSize, topmost: bool, tab: Option<TabState>) -> Rc<Self> {
     Rc::new(Self {
-      handle: platform::handle_value(&native),
+      handle,
       owned: tao.is_some(),
-      native,
       tao: RefCell::new(tao.map(Rc::new)),
       alive: Cell::new(true),
       chrome,
@@ -207,7 +209,8 @@ impl Core {
   /// Subclasses the window, with the core reached weakly from the procedure.
   fn subclass(self: &Rc<Self>) -> Result<()> {
     let weak = Rc::downgrade(self);
-    let subclass = WindowSubclass::install(&self.native, move |event| on_event(&weak, event)).map_err(Error::state)?;
+    let installed = self.with_native(|window| WindowSubclass::install(window, move |event| on_event(&weak, event)));
+    let subclass = installed.ok_or_else(|| Error::state("sweetview: the window is gone"))?.map_err(Error::state)?;
     *self.subclass.borrow_mut() = Some(subclass);
     Ok(())
   }
@@ -219,11 +222,46 @@ impl Core {
     tao.map(|tao| f(&tao))
   }
 
+  /// Lends the window to `f` for the length of the call, for the platform
+  /// crate: an owned window through its `tao` window, any other by its handle
+  /// value, checked to name a window now. `None` (and `f` is not called) once
+  /// the window is gone.
+  fn with_native<R>(&self, f: impl FnOnce(&BorrowedWindow<'_>) -> R) -> Option<R> {
+    if self.owned {
+      return self.with_tao(|tao| f(&BorrowedWindow::of(tao)));
+    }
+    BorrowedWindow::with_handle_value(self.handle, f)
+  }
+
   fn set_policy(&self, policy: ExStylePolicy) {
     self.policy.set(policy);
     match self.subclass.borrow().as_ref() {
       Some(subclass) => subclass.set_policy(policy),
-      None => platform::apply_ex_style(&self.native, &policy),
+      None => {
+        self.with_native(|window| platform::apply_ex_style(window, &policy));
+      }
+    }
+  }
+
+  /// True while the window is visible. `tao`'s `is_visible` for an owned window
+  /// (it makes the same call); the platform crate's for any other.
+  fn is_visible(&self) -> bool {
+    match self.with_tao(|tao| tao.is_visible()) {
+      Some(visible) => visible,
+      None => self.with_native(|window| platform::is_visible(window)).unwrap_or(false),
+    }
+  }
+
+  fn place(&self, placement: Placement) {
+    self.with_native(|window| platform::set_placement(window, placement));
+  }
+
+  /// The z-order of a move or resize: a topmost window is re-asserted topmost.
+  fn keep_band(&self) -> ZOrder {
+    if self.topmost.get() {
+      ZOrder::Topmost
+    } else {
+      ZOrder::Keep
     }
   }
 
@@ -244,12 +282,14 @@ impl Core {
     self.update_policy(|p| p.click_through = Some(on));
   }
 
+  /// The outer frame, read with one `GetWindowRect`: `tao`'s `outer_position`
+  /// and `outer_size` read it twice and panic on a window destroyed by other code.
   fn bounds(&self) -> Rect {
-    platform::outer_bounds(&self.native).unwrap_or_default()
+    self.with_native(|window| platform::outer_bounds(window)).flatten().unwrap_or_default()
   }
 
   fn set_bounds(&self, rect: Rect) {
-    platform::set_outer_bounds(&self.native, rect, self.topmost.get());
+    self.place(Placement::bounds(rect, self.topmost.get()));
   }
 
   fn clear_timer(slot: &Cell<Option<TimeoutId>>) {
@@ -351,10 +391,23 @@ impl Core {
     if let Some(tao) = tao {
       // Destroyed now, not when `tao` gets to its own deferred destroy, so
       // `dispose()` and a default close leave no window behind.
-      platform::destroy_now(&tao);
-      drop(tao);
+      match Rc::try_unwrap(tao) {
+        Ok(tao) => platform::destroy_now(tao),
+        // A call into `tao` further up the stack still holds the window (a
+        // listener disposed of it from inside that call): it is destroyed on
+        // the next turn, once that call has returned.
+        Err(shared) => match Runtime::existing() {
+          Some(runtime) => runtime.defer(move || {
+            if let Ok(tao) = Rc::try_unwrap(shared) {
+              platform::destroy_now(tao);
+            }
+          }),
+          None => drop(shared),
+        },
+      }
     }
-    // The icons outlive the window that drew them.
+    // Dropped after the window: `WindowIcons` destroys icons no window shows
+    // any more, and keeps those an adopted window that lives on still shows.
     self.icons.borrow_mut().take();
     let _ = WINDOWS.try_with(|w| w.borrow_mut().remove(&self.handle));
     // Listeners are dropped last, outside every borrow: one may own the last
@@ -486,10 +539,10 @@ impl Window {
       tab.as_ref(),
     );
     let tao = runtime.with_target(|target| builder.build(target))?.map_err(|e| Error::os("the window could not be made", e))?;
-    let native = ForeignWindow::of(&tao);
+    let handle = platform::handle_value(&tao);
     let min = MinSize::from_options(init.min_width, init.min_height);
     let min_options = (init.min_width, init.min_height);
-    let core = Core::new(native, Some(tao), Chrome { frame, resizable }, init.no_activate, min, init.topmost, tab);
+    let core = Core::new(handle, Some(tao), Chrome { frame, resizable }, init.no_activate, min, init.topmost, tab);
     WINDOWS.with(|w| w.borrow_mut().insert(core.handle, core.clone()));
     // From here on a failure must not leave a half-made window behind.
     let made = Self::finish(&core, &init, color_key, bounds, min_options);
@@ -520,10 +573,13 @@ impl Window {
       accept_files: Some(false),
     });
     if layered {
-      platform::set_layered_attributes(&core.native, color_key, init.opacity).map_err(Error::state)?;
+      let set = core.with_native(|window| platform::set_layered_attributes(window, color_key, init.opacity));
+      set.unwrap_or(Ok(())).map_err(Error::state)?;
     }
     core.set_bounds(bounds);
-    platform::refresh_frame(&core.native, init.topmost);
+    // The frame is measured again after the style changes, in the band the window asked for.
+    let band = if init.topmost { ZOrder::Topmost } else { ZOrder::NotTopmost };
+    core.place(Placement { z: band, frame_changed: true, ..Placement::default() });
     if let Some(tab) = &core.tab {
       tab_frame::finish(core, tab, init.bounds.is_none(), min);
     } else if min.0.is_some() || min.1.is_some() {
@@ -538,8 +594,9 @@ impl Window {
       });
     }
     if let Some(ico) = &init.icon {
-      let icons = WindowIcons::set(&core.native, Some(ico)).map_err(Error::state)?;
-      *core.icons.borrow_mut() = Some(icons);
+      if let Some(icons) = core.with_native(|window| WindowIcons::set(window, Some(ico))) {
+        *core.icons.borrow_mut() = Some(icons.map_err(Error::state)?);
+      }
     }
     Ok(())
   }
@@ -557,10 +614,9 @@ impl Window {
       let detected = Some(core.chrome);
       return Ok(Self::wrap(core, false, detected));
     }
-    let native = ForeignWindow::from_handle_value(handle).ok_or_else(|| Error::state(format!("sweetview: not a window: {handle:#x}")))?;
-    let chrome = platform::chrome(&native);
-    let on_this_thread = platform::is_on_this_thread(&native);
-    let core = Core::new(native, None, chrome, false, logic::DEFAULT_MIN_SIZE, false, None);
+    let (chrome, on_this_thread) = BorrowedWindow::with_handle_value(handle, |window| (platform::chrome(window), platform::is_on_this_thread(window)))
+      .ok_or_else(|| Error::state(format!("sweetview: not a window: {handle:#x}")))?;
+    let core = Core::new(handle, None, chrome, false, logic::DEFAULT_MIN_SIZE, false, None);
     if on_this_thread {
       core.subclass()?;
     }
@@ -588,7 +644,7 @@ impl Window {
   }
 
   pub fn is_visible(&self) -> bool {
-    self.live() && platform::is_visible(&self.core.native)
+    self.live() && self.core.is_visible()
   }
 
   /// Shows the window: a minimised one is restored; one that may activate is
@@ -598,17 +654,18 @@ impl Window {
       return Ok(());
     }
     let core = &self.core;
-    // Shown the way `show()` always has: `tao`'s own show activates the window.
-    platform::show(&core.native, core.no_activate, core.topmost.get());
+    // Shown the way `show()` always has: `tao`'s own show activates the window (D9).
+    core.with_native(|window| platform::show(window, core.no_activate, core.topmost.get()));
     core.with_tao(|tao| {
       // `tao` learns the window is visible and not minimised, so its later
       // style rewrites agree; the subclass keeps those from touching `WS_VISIBLE`.
       tao.set_visible(true);
       tao.set_minimized(false);
+      if core.tab.is_none() {
+        // The widget of a webview mounted in it fills the client area; `tao` has no call for a child.
+        platform::fill_first_child(tao);
+      }
     });
-    if core.owned && core.tab.is_none() {
-      platform::fill_first_child(&core.native);
-    }
     core.start_hit_poll()
   }
 
@@ -618,7 +675,7 @@ impl Window {
     }
     self.core.stop_hit_poll();
     if self.core.with_tao(|tao| tao.set_visible(false)).is_none() {
-      platform::hide(&self.core.native);
+      self.core.with_native(|window| platform::show_as(window, ShowAs::Hidden));
     }
   }
 
@@ -635,19 +692,22 @@ impl Window {
 
   pub fn move_to(&self, x: i32, y: i32) {
     if self.live() {
-      platform::move_outer(&self.core.native, x, y, self.core.topmost.get());
+      self.core.place(Placement { position: Some(Point { x, y }), z: self.core.keep_band(), ..Placement::default() });
     }
   }
 
   pub fn resize(&self, width: i32, height: i32) {
     if self.live() {
-      platform::resize_outer(&self.core.native, width, height);
+      self.core.place(Placement { size: Some((width, height)), ..Placement::default() });
     }
   }
 
   /// The window's DPI over 96.
   pub fn scale(&self) -> f64 {
-    self.core.with_tao(|tao| tao.scale_factor()).unwrap_or_else(|| platform::dpi_scale(&self.core.native))
+    match self.core.with_tao(|tao| tao.scale_factor()) {
+      Some(scale) => scale,
+      None => self.core.with_native(|window| platform::dpi_scale(window)).unwrap_or(1.0),
+    }
   }
 
   pub fn set_title(&self, title: &str) {
@@ -655,7 +715,7 @@ impl Window {
       return;
     }
     if self.core.with_tao(|tao| tao.set_title(title)).is_none() {
-      platform::set_title(&self.core.native, title);
+      self.core.with_native(|window| platform::set_title(window, title));
     }
   }
 
@@ -664,8 +724,9 @@ impl Window {
     if !self.live() {
       return Ok(());
     }
-    let icons = WindowIcons::set(&self.core.native, ico).map_err(Error::state)?;
-    // The old icons go only after the window has switched to the new ones.
+    let Some(icons) = self.core.with_native(|window| WindowIcons::set(window, ico)) else { return Ok(()) };
+    let icons = icons.map_err(Error::state)?;
+    // The old icons are no longer shown, so dropping them destroys them.
     let old = self.core.icons.borrow_mut().replace(icons);
     drop(old);
     Ok(())
@@ -676,7 +737,7 @@ impl Window {
       return;
     }
     if self.core.with_tao(|tao| tao.set_minimized(true)).is_none() {
-      platform::minimize(&self.core.native);
+      self.core.with_native(|window| platform::show_as(window, ShowAs::Minimized));
     }
   }
 
@@ -689,7 +750,10 @@ impl Window {
     let core = &self.core;
     if core.chrome.frame {
       if core.with_tao(|tao| tao.set_maximized(!tao.is_maximized())).is_none() {
-        platform::toggle_zoom(&core.native);
+        core.with_native(|window| {
+          let state = if platform::is_zoomed(window) { ShowAs::Restored } else { ShowAs::Maximized };
+          platform::show_as(window, state);
+        });
       }
       return Ok(());
     }
@@ -706,7 +770,10 @@ impl Window {
     }
     let core = &self.core;
     if core.chrome.frame {
-      core.with_tao(|tao| tao.is_maximized()).unwrap_or_else(|| platform::is_zoomed(&core.native))
+      match core.with_tao(|tao| tao.is_maximized()) {
+        Some(maximized) => maximized,
+        None => core.with_native(|window| platform::is_zoomed(window)).unwrap_or(false),
+      }
     } else {
       core.restore.get().is_some()
     }
@@ -718,7 +785,8 @@ impl Window {
     }
     self.core.topmost.set(on);
     if self.core.with_tao(|tao| tao.set_always_on_top(on)).is_none() {
-      platform::set_topmost(&self.core.native, on);
+      let band = if on { ZOrder::Topmost } else { ZOrder::NotTopmost };
+      self.core.place(Placement { z: band, ..Placement::default() });
     }
   }
 
@@ -729,7 +797,7 @@ impl Window {
     }
     let dragged = self.core.with_tao(|tao| tao.drag_window().is_ok());
     if dragged != Some(true) {
-      platform::start_os_drag(&self.core.native);
+      self.core.with_native(|window| platform::press_frame(window, FramePart::Caption));
     }
   }
 
@@ -785,7 +853,7 @@ impl Window {
       };
       *hit = Some(HitSlot { state, refine, owner: self.id });
     }
-    if platform::is_visible(&core.native) {
+    if core.is_visible() {
       core.start_hit_poll()?;
     }
     core.poll_hit();
@@ -877,14 +945,15 @@ impl Window {
   }
 
   /// The window's styles and outer bounds now, to put back after a webview is mounted in it.
+  /// Of a window that is gone, a snapshot that restores nothing.
   pub fn preserve_geometry(&self) -> GeometrySnapshot {
-    GeometrySnapshot::take(&self.core.native)
+    self.core.with_native(|window| GeometrySnapshot::take(window)).unwrap_or_default()
   }
 
   /// Puts back what [`Window::preserve_geometry`] saw, and lays the mounted widget out.
   pub fn restore_geometry(&self, snapshot: &GeometrySnapshot) {
     if self.live() {
-      snapshot.restore(&self.core.native);
+      self.core.with_native(|window| snapshot.restore(window));
     }
   }
 
@@ -956,14 +1025,16 @@ pub fn tracked_count(handle: isize) -> usize {
   count
 }
 
-/// The window `handle` names, for mounting a webview in it: one of
-/// Sweetview's own windows, or an application's own window of this thread.
-/// The result implements `raw_window_handle::HasWindowHandle`.
-pub fn mount_target(handle: isize) -> Option<ForeignWindow> {
+/// Lends the window `handle` names to `f` for the length of the call, for
+/// mounting a webview in it or a call on a window a webview was given: one of
+/// Sweetview's own windows while it lives, or an application's own window of
+/// this thread. The window implements `raw_window_handle::HasWindowHandle`.
+/// `None` (and `f` is not called) when the handle names neither.
+pub fn with_mount_target<R>(handle: isize, f: impl FnOnce(&BorrowedWindow<'_>) -> R) -> Option<R> {
   if let Some(core) = core_of(handle) {
-    return core.alive.get().then(|| core.native.clone());
+    return if core.alive.get() { core.with_native(f) } else { None };
   }
-  ForeignWindow::from_handle_value(handle).filter(platform::is_on_this_thread)
+  BorrowedWindow::with_handle_value(handle, |window| platform::is_on_this_thread(window).then(|| f(window))).flatten()
 }
 
 /// Destroys every window this thread made. Tests only: the runtime is dropped next.

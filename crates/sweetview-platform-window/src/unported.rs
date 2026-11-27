@@ -8,7 +8,7 @@ use std::marker::PhantomData;
 
 use raw_window_handle::{DisplayHandle, HandleError, HasDisplayHandle, HasWindowHandle, WindowHandle};
 
-use crate::{Chrome, ExStylePolicy, HandleCounts, Rect, WindowEvent};
+use crate::{Chrome, ExStylePolicy, FramePart, HandleCounts, Placement, Rect, ShowAs, WindowEvent};
 
 const NOT_PORTED: &str = "sweetview: window calls are not ported to this platform yet";
 
@@ -23,31 +23,34 @@ impl sealed::Sealed for tao::window::Window {}
 impl NativeWindow for tao::window::Window {}
 
 /// See the Windows implementation for the contract.
-#[derive(Debug, Clone)]
-pub struct ForeignWindow {
+#[derive(Debug)]
+pub struct BorrowedWindow<'a> {
+  _window: PhantomData<&'a ()>,
   _not_send: PhantomData<*const ()>,
 }
 
-impl sealed::Sealed for ForeignWindow {}
-impl NativeWindow for ForeignWindow {}
+impl sealed::Sealed for BorrowedWindow<'_> {}
+impl NativeWindow for BorrowedWindow<'_> {}
 
-impl ForeignWindow {
-  pub fn from_handle_value(_value: isize) -> Option<Self> {
+impl BorrowedWindow<'_> {
+  pub fn with_handle_value<R>(_value: isize, _f: impl FnOnce(&BorrowedWindow<'_>) -> R) -> Option<R> {
     None
-  }
-
-  pub fn of(_window: &impl NativeWindow) -> Self {
-    Self { _not_send: PhantomData }
   }
 }
 
-impl HasWindowHandle for ForeignWindow {
+impl<'a> BorrowedWindow<'a> {
+  pub fn of(_window: &'a tao::window::Window) -> Self {
+    Self { _window: PhantomData, _not_send: PhantomData }
+  }
+}
+
+impl HasWindowHandle for BorrowedWindow<'_> {
   fn window_handle(&self) -> Result<WindowHandle<'_>, HandleError> {
     Err(HandleError::NotSupported)
   }
 }
 
-impl HasDisplayHandle for ForeignWindow {
+impl HasDisplayHandle for BorrowedWindow<'_> {
   fn display_handle(&self) -> Result<DisplayHandle<'_>, HandleError> {
     Err(HandleError::NotSupported)
   }
@@ -89,38 +92,24 @@ pub fn style(_window: &impl NativeWindow) -> u32 {
 pub fn chrome(_window: &impl NativeWindow) -> Chrome {
   Chrome { frame: true, resizable: true }
 }
-pub fn set_outer_bounds(_window: &impl NativeWindow, _rect: Rect, _topmost: bool) -> bool {
-  false
-}
-pub fn move_outer(_window: &impl NativeWindow, _x: i32, _y: i32, _topmost: bool) -> bool {
-  false
-}
-pub fn resize_outer(_window: &impl NativeWindow, _width: i32, _height: i32) -> bool {
-  false
-}
-pub fn set_topmost(_window: &impl NativeWindow, _on: bool) -> bool {
-  false
-}
-pub fn refresh_frame(_window: &impl NativeWindow, _topmost: bool) -> bool {
+pub fn set_placement(_window: &impl NativeWindow, _placement: Placement) -> bool {
   false
 }
 pub fn bring_to_front(_window: &impl NativeWindow) {}
 pub fn show(_window: &impl NativeWindow, _no_activate: bool, _topmost: bool) {}
-pub fn hide(_window: &impl NativeWindow) {}
-pub fn minimize(_window: &impl NativeWindow) {}
-pub fn toggle_zoom(_window: &impl NativeWindow) {}
+pub fn show_as(_window: &impl NativeWindow, _state: ShowAs) {}
 pub fn set_title(_window: &impl NativeWindow, _title: &str) -> bool {
   false
 }
-pub fn start_os_drag(_window: &impl NativeWindow) {}
-#[doc(hidden)]
-pub fn send_close_for_tests(_window: &impl NativeWindow) {}
+pub fn press_frame(_window: &impl NativeWindow, _part: FramePart) {}
 pub fn fill_first_child(_window: &impl NativeWindow) {}
 pub fn apply_ex_style(_window: &impl NativeWindow, _policy: &ExStylePolicy) {}
 pub fn set_layered_attributes(_window: &impl NativeWindow, _color_key: Option<u32>, _opacity: Option<f64>) -> Result<(), String> {
   Err(NOT_PORTED.into())
 }
-pub fn destroy_now(_window: &tao::window::Window) {}
+pub fn destroy_now(window: tao::window::Window) {
+  drop(window);
+}
 pub fn mouse_buttons_down() -> bool {
   false
 }
@@ -135,7 +124,7 @@ pub fn handle_counts() -> HandleCounts {
 }
 
 /// See the Windows implementation for the contract.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct GeometrySnapshot;
 
 impl GeometrySnapshot {

@@ -68,10 +68,9 @@ pub fn at(point: Point) -> Result<ScreenInfo> {
 /// the nearest. A handle that names no window gets the primary monitor, as
 /// `MonitorFromWindow` answers with no monitor for it.
 pub fn of_window(handle: isize) -> Result<ScreenInfo> {
-  let Some(window) = platform::ForeignWindow::from_handle_value(handle) else {
+  let Some(rect) = platform::BorrowedWindow::with_handle_value(handle, |window| platform::outer_bounds(window).unwrap_or_default()) else {
     return primary();
   };
-  let rect = platform::outer_bounds(&window).unwrap_or_default();
   let screens = all()?;
   let bounds: Vec<Rect> = screens.iter().map(|s| s.bounds).collect();
   Ok(screens[pick::screen_of_rect(&bounds, rect).unwrap_or(0)])

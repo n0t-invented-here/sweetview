@@ -5,9 +5,9 @@
 //! caller with the window handle), and its position is relative to the window
 //! where Sweetview's callers give a point on the screen. Both are done here.
 //!
-//! The window is a [`ForeignWindow`](crate::ForeignWindow): a window a caller
+//! The window is a [`BorrowedWindow`](crate::BorrowedWindow): a window a caller
 //! named by its handle value (a Sweetview window, one of the application's
-//! own, the tray icon's window), checked to be a window when it was named.
+//! own, the tray icon's window), checked to be a window when it was lent.
 
 /// Where a popup menu opens.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -30,9 +30,9 @@ mod imp {
 
   use super::PopupAt;
   use crate::platform::{after_popup_menu, sealed::Sealed};
-  use crate::ForeignWindow;
+  use crate::BorrowedWindow;
 
-  pub fn show_popup(menu: &muda::Menu, owner: &ForeignWindow, at: PopupAt) -> bool {
+  pub fn show_popup(menu: &muda::Menu, owner: &BorrowedWindow<'_>, at: PopupAt) -> bool {
     let hwnd = owner.hwnd();
     let position = match at {
       PopupAt::Cursor => None,
@@ -89,10 +89,10 @@ mod imp {
 #[cfg(not(windows))]
 mod imp {
   use super::PopupAt;
-  use crate::ForeignWindow;
+  use crate::BorrowedWindow;
 
   /// Not ported: no menu is shown and nothing is chosen.
-  pub fn show_popup(_menu: &muda::Menu, _owner: &ForeignWindow, _at: PopupAt) -> bool {
+  pub fn show_popup(_menu: &muda::Menu, _owner: &BorrowedWindow<'_>, _at: PopupAt) -> bool {
     false
   }
 
@@ -108,7 +108,7 @@ mod imp {
 ///
 /// The owner is brought to the foreground first so the menu closes when the user
 /// clicks elsewhere, and is posted `WM_NULL` afterwards, as the shell asks.
-pub fn show_popup(menu: &muda::Menu, owner: &crate::ForeignWindow, at: PopupAt) -> bool {
+pub fn show_popup(menu: &muda::Menu, owner: &crate::BorrowedWindow<'_>, at: PopupAt) -> bool {
   imp::show_popup(menu, owner, at)
 }
 
@@ -125,12 +125,12 @@ pub fn check_item(menu: &muda::Menu, path: &[u32], enabled: bool) -> bool {
 
 #[cfg(all(test, windows))]
 mod tests {
-  use crate::ForeignWindow;
+  use crate::BorrowedWindow;
 
   #[test]
   fn a_value_that_names_no_window_is_refused() {
-    assert!(ForeignWindow::from_handle_value(0).is_none());
-    assert!(ForeignWindow::from_handle_value(0x7fff_fff0).is_none());
+    assert!(BorrowedWindow::with_handle_value(0, |_| ()).is_none());
+    assert!(BorrowedWindow::with_handle_value(0x7fff_fff0, |_| ()).is_none());
   }
 }
 

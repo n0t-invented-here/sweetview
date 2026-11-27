@@ -1,8 +1,6 @@
 //! Platforms whose goal has not built the tab frame yet: the same signatures,
 //! each a neutral answer. See `tab_frame.rs` for the contract.
 
-use sweetview_window_logic::ResizeEdge;
-
 use crate::{NativeWindow, Point};
 
 pub const FRAME_STYLE: u32 = 0;
@@ -10,8 +8,6 @@ pub const FRAME_STYLE: u32 = 0;
 pub fn is_foreground(_window: &impl NativeWindow) -> bool {
   false
 }
-pub fn move_with_mouse(_window: &impl NativeWindow) {}
-pub fn size_with_mouse(_window: &impl NativeWindow, _edge: ResizeEdge) {}
 pub fn show_system_menu(_window: &impl NativeWindow, _at: Point) {}
 pub fn request_close(_window: &impl NativeWindow) {}
 
