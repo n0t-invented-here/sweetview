@@ -143,6 +143,35 @@ All kept.
 | Sweetview `hit`, `http`, `menu`, `click`, `resize` | hit-region poll and refine state machine; header validation; menu data; click timing; the resize gesture | no |
 | Sweetview `napi_surface`, `callbacks`, `registry`, `threads` | the N-API layer | no |
 
+## The games: required functions and the gate
+
+The owner's transparent desktop games are not in this repository or its siblings on the machine this was written on. So every function of Sweetview, the bindings and the C++ fork is treated as required by them. The functions below are the ones a full-screen transparent game with click handling exercises directly.
+
+| Function | Provided by | Check that exists today | Proven at |
+|---|---|---|---|
+| A transparent, frameless, topmost window that never takes focus, above the taskbar or Dock | `tao`, `platform::misc` for the macOS window level | `demos/desktop-pet`; `scripts/shot.ps1`, `scripts/flicker.ps1` | step 5 |
+| A transparent page background, alpha 0 | `wry` `with_transparent`, `with_background_color` | the fork's background colour tests; `demos/desktop-pet` | step 2 |
+| Whole-window click-through on and off | `tao` `set_ignore_cursor_events` | `scripts/settings-probe.ps1` | step 5 |
+| Hit regions: polygons from the page, 10 ms poll, exact answer from the page, no flip while a button is down | Sweetview `hit`, `platform::misc` | `hit-regions.test.ts`; `scripts/probe.ps1`, which sends real input and reports which window the OS hands each click to | step 5 |
+| System-wide mouse hook: move, left, right, middle, wheel, modifiers, swallow per event | Sweetview `platform::input` | `examples/input-hooks.ts`; the fork's unit tests | step 4 |
+| System-wide keyboard hook: down, up, repeat, DOM key codes, modifiers, swallow per event | Sweetview `platform::input` | `examples/input-hooks.ts`; the fork's key-code unit tests | step 4 |
+| macOS permission model for the hooks: needed, status, request, auto-request | Sweetview `platform::input` | `examples/input-hooks.ts` | step 4 |
+| Window move and resize driven by the page, every frame | `tao` | `demos/desktop-pet` | step 5 |
+| Every monitor: screen, screen at a point, virtual screen, scale | `tao` | `demos/desktop-pet` on a second monitor | step 5 |
+| Assets, models and textures served at the page's origin | `wry` custom protocol | `test/request-handler.test.ts` | step 2 |
+| Page calls answered on the UI thread and in the worker; events to the page | `wry` IPC, the ring | `demos/desktop-pet`, `demos/web-app` | step 2 |
+| Both loop modes | `tao` | `demos/web-app`, `demos/menubar-only` | step 1 |
+| One executable from `bun build --compile` | the `.node` binding | each demo's `compile` recipe | step 1 |
+
+Nothing in this table works until its step is built and its check passes. This document is a design; it proves nothing by itself.
+
+The gate:
+
+- The current stack stays intact, published and usable throughout: the TypeScript FFI, `@n1h/sweetview-webview-bun` and the C++ fork. A game keeps running on it at every point.
+- The Rust library ships beside it under its own package version. A game moves to it by changing a dependency and moves back the same way.
+- Nothing of the current stack is deleted until every check in this document passes on Windows and macOS, and the owner's games run on the Rust library.
+- A function that cannot be made to work in Rust stops the migration at that step. The current stack remains the shipping one.
+
 ## Architecture
 
 | Layer | Content | Language |
@@ -343,7 +372,7 @@ Each is designed at its own step by the same method: what provides each behaviou
 5. Windows, overlays, hit regions. Accepted by `demos/web-app` and `demos/desktop-pet`.
 6. Tray, menus, notifications, folder dialog, app menu, app icon. Accepted by `demos/menubar-notify`.
 7. Native tabs. Accepted by `demos/native-tabs`.
-8. Delete the TypeScript FFI, the bindings package and the dependency on the C++ fork.
+8. The gate: every check in this document passes on Windows and macOS, and the owner's games run on the Rust library. Only then are the TypeScript FFI, the bindings package and the dependency on the C++ fork deleted.
 9. The `v1-drafting` features, one at a time.
 10. Tauri 2 and Electron IPC transports: page code identical across webview, WebSocket, Tauri 2 and Electron.
 11. Linux.
@@ -354,7 +383,7 @@ Each is designed at its own step by the same method: what provides each behaviou
 |---|---|
 | A JavaScript function called from native code while the UI thread is inside the loop does not behave under Bun's N-API as it does under `bun:ffi` | Step 1 proves it before anything else is built. |
 | `tao`'s `run_return` under a Bun timer does not deliver tray events with no window | Step 1 proves it with `demos/menubar-only`. The fix belongs in the pump function, which then dequeues OS events itself with `windows` and `objc2`, the calls today's `pumpEvents` makes. |
-| A rebuilt module behaves differently from today | Each is accepted against its existing tests and demo before the TypeScript version is deleted. |
+| A rebuilt module behaves differently from today. Every game-critical path is re-implemented under this proposal, so each one can differ | Each is accepted against its existing tests and demo. The current stack stays the shipping one until the gate in step 8 is passed. |
 | The forks of `wry` and `tray-icon` drift from upstream | Each addition is one commit on top of a pinned upstream version, and is offered upstream. |
 | `unsafe` spreads | `#![forbid(unsafe_code)]` on every Sweetview module outside `platform`. CI counts `unsafe` blocks and fails when the count rises without an entry in a tracked list. |
 
