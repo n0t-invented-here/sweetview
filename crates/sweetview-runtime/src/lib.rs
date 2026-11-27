@@ -4,7 +4,9 @@
 //! and gets plain values back.
 #![forbid(unsafe_code)]
 
+pub mod bridge;
 mod error;
+pub mod input;
 pub mod runtime;
 pub mod threads;
 
