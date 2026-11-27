@@ -11,7 +11,7 @@ OK: the packed native package carries the binding and the loader finds it after 
 exit: 0
 
 $ just pack   (the lines that name a tarball or the prebuilt binding)
-[30m[43m WARNING [49m[39m Filesystem transaction committed but recovery-state cleanup failed at D:\Repos\GitHub\n0t-invented-here\sweetview\packages\sweetview-native\prebuilt\.napi-rs-filesystem-transaction.swp: EPERM: operation not permitted, unlink 'D:\Repos\GitHub\n0t-invented-here\sweetview\packages\sweetview-native\prebuilt\..sweetview.win32-x64-msvc.node.e2c83885-d49f-49c1-8564-e5664fe792d0.1.retired.tmp.10904.67d5b205-02fc-4fea-8000-277dcd7b024d.tmp'
+[30m[43m WARNING [49m[39m Filesystem transaction committed but recovery-state cleanup failed at <REPO>\packages\sweetview-native\prebuilt\.napi-rs-filesystem-transaction.swp: EPERM: operation not permitted, unlink '<REPO>\packages\sweetview-native\prebuilt\..sweetview.win32-x64-msvc.node.e2c83885-d49f-49c1-8564-e5664fe792d0.1.retired.tmp.10904.67d5b205-02fc-4fea-8000-277dcd7b024d.tmp'
 bun pack v1.4.4 (38afee6c8)
 packed 2.11KB package.json
 packed 0.61KB file-imports.d.ts
