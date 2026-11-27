@@ -98,13 +98,24 @@ if (scenario === "debug" || scenario === "no-debug") {
       engine.moveFocus();
       report.tapped = probe.tapKey(hwnd, 0x7b); // F12
       const started = Date.now();
+      let taps = 1;
+      let tappedAt = started;
       const look = () => {
         const devtools = probe.topLevelWindowContaining(page);
-        if (devtools !== null || Date.now() - started > 6000) {
+        if (devtools !== null || Date.now() - started > 12_000) {
           report.devToolsOpened = devtools !== null;
+          report.taps = taps;
           if (devtools !== null) probe.postMessage(devtools, probe.WM_CLOSE);
           after(300, () => native.quitLoop());
           return;
+        }
+        // The move of the keyboard focus into the page is not instant: a key pressed before it
+        // lands goes to the window and opens nothing. Pressed again while this window is still in
+        // front (tapKey presses nothing otherwise), with debug on and off alike.
+        if (Date.now() - tappedAt > 2000) {
+          tappedAt = Date.now();
+          engine.moveFocus();
+          if (probe.tapKey(hwnd, 0x7b)) taps++;
         }
         after(100, look);
       };

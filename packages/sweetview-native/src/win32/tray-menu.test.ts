@@ -5,7 +5,7 @@
 // free and putting back what it moved: the right-button test injects a right
 // click over this process's own popup menu; the tray-alignment test places the
 // cursor; and the shell reader (`trayFromShell`) opens the notification area's
-// overflow flyout with a click. When the desktop is not free they log a skip.
+// overflow flyout with a click. When the desktop is not free they ask again, and then fail saying so.
 // Nothing presses a key system-wide.
 
 import { describe, expect, test } from "bun:test";
@@ -47,6 +47,7 @@ import {
   windowRect,
   type MenuEntry,
 } from "../../test/win32-os";
+import { DesktopNotOurs } from "../../test/desktop";
 import { buildMenu, destroyMenu, popupMenuAtCursor } from "./menu";
 import { windowMenu } from "./tab-window";
 import { createTray, currentTray } from "./tray";
@@ -92,19 +93,35 @@ function whenMenuOpens(step: (menuWindow: bigint) => void): void {
 
 const RED = { color: "#ff0000" };
 
+/** What the shell answered about an icon: found with its name and pixel, or not found. */
+type ShellRead = Exclude<ShellIcon, { skip: string }>;
+
 /**
  * `trayFromShell`, asked again (with a pause, pumping) while the answer is not yet the expected
  * one: Explorer applies a change to an icon on its own thread, after `Shell_NotifyIconW` returns,
  * and its flyout takes a moment to close before it can be opened again.
  */
-async function shellIcon(tooltip: string, found = true): Promise<ShellIcon> {
-  let answer: ShellIcon = { skip: "not read" };
-  for (let attempt = 0; attempt < 4; attempt++) {
-    if (attempt > 0) await pumpFor(800);
-    answer = await trayFromShell(tooltip);
-    if ("skip" in answer || answer.found === found) return answer;
+async function shellIcon(tooltip: string, found = true): Promise<ShellRead> {
+  let last: ShellRead | undefined;
+  let reason = "";
+  let reads = 0;
+  let refusals = 0;
+  // A reading the shared desktop refused (its mouse in use, another window over the icon) is asked
+  // again, and a test whose reading never happened fails saying so: it is never a pass.
+  while (reads < 4 && refusals < 6) {
+    if (reads + refusals > 0) await pumpFor(800);
+    const answer = await trayFromShell(tooltip);
+    if ("skip" in answer) {
+      refusals++;
+      reason = answer.skip;
+      continue;
+    }
+    reads++;
+    last = answer;
+    if (answer.found === found) return answer;
   }
-  return answer;
+  if (last) return last;
+  throw new DesktopNotOurs(`not run: the shell's reading of the notification icon: ${reason}, after ${refusals} attempts (the desktop is shared with other sessions)`);
 }
 
 describe.if(onWindows)("icon decoding (binding)", () => {
@@ -274,39 +291,45 @@ describe.if(onWindows)("Menu.popup (binding: muda)", () => {
     };
     let watchdog = 0;
     try {
-      whenMenuOpens((menuWindow) => {
-        // The second item's middle, on this process's own menu window, read from the OS.
-        const item = menuItemRect(menuOfWindow(menuWindow), 1);
-        target = { x: (item.left + item.right) >> 1, y: (item.top + item.bottom) >> 1 };
-        if (buttonsDown()) skipped = "a mouse button was already down on the shared desktop";
-        else {
-          injectCursorMove(target.x, target.y, desk);
-          if (windowAt(target.x, target.y) !== menuWindow) skipped = "another window is over the menu on the shared desktop";
+      for (let attempt = 1; ; attempt++) {
+        skipped = "";
+        clicked = "";
+        whenMenuOpens((menuWindow) => {
+          // The second item's middle, on this process's own menu window, read from the OS.
+          const item = menuItemRect(menuOfWindow(menuWindow), 1);
+          target = { x: (item.left + item.right) >> 1, y: (item.top + item.bottom) >> 1 };
+          if (buttonsDown()) skipped = "a mouse button was already down on the shared desktop";
+          else {
+            injectCursorMove(target.x, target.y, desk);
+            if (windowAt(target.x, target.y) !== menuWindow) skipped = "another window is over the menu on the shared desktop";
+          }
+          if (skipped) {
+            endMenu();
+            return;
+          }
+          watchdog = native.scheduleTimeout(1500, release);
+          // Pressed and let go over the item: with TPM_RIGHTBUTTON the release chooses it.
+          pressed = true;
+          injectRightButton(true);
+          release();
+        });
+        const chosen = Menu.popup(
+          owner.hwnd,
+          [
+            { label: "One", click: () => (clicked = "one") },
+            { label: "Two", click: () => (clicked = "two") },
+            { label: "Three", click: () => (clicked = "three") },
+          ],
+          { x: area.x + 80, y: area.y + 80 },
+        );
+        if (!skipped) {
+          expect({ chosen, clicked }).toEqual({ chosen: true, clicked: "two" });
+          break;
         }
-        if (skipped) {
-          endMenu();
-          return;
-        }
-        watchdog = native.scheduleTimeout(1500, release);
-        // Pressed and let go over the item: with TPM_RIGHTBUTTON the release chooses it.
-        pressed = true;
-        injectRightButton(true);
-        release();
-      });
-      const chosen = Menu.popup(
-        owner.hwnd,
-        [
-          { label: "One", click: () => (clicked = "one") },
-          { label: "Two", click: () => (clicked = "two") },
-          { label: "Three", click: () => (clicked = "three") },
-        ],
-        { x: area.x + 80, y: area.y + 80 },
-      );
-      if (skipped) {
-        console.warn(`tray-menu.test: right-button choice skipped: ${skipped}`);
-        return;
+        // The desktop was not this test's: asked again, and a choice never made is a failure, not a pass.
+        if (attempt === 5) throw new DesktopNotOurs(`not run: the right-button choice: ${skipped}, after ${attempt} attempts (the desktop is shared with other sessions)`);
+        Bun.sleepSync(400);
       }
-      expect({ chosen, clicked }).toEqual({ chosen: true, clicked: "two" });
     } finally {
       release();
       if (watchdog !== 0) native.cancelTimeout(watchdog);
@@ -322,18 +345,20 @@ describe.if(onWindows)("Menu.popup (binding: muda)", () => {
     // The middle of the primary screen's work area: room above and below, so the OS moves neither menu.
     const point = { x: area.x + (area.width >> 1), y: area.y + (area.height >> 1) };
     try {
-      user32.SetCursorPos(point.x, point.y);
       let above = { left: 0, top: 0, right: 0, bottom: 0 };
       let at = { x: 0, y: 0 };
-      whenMenuOpens((menuWindow) => {
-        above = windowRect(menuWindow);
-        at = cursor();
-        pressKeys(menuWindow, VK.ESCAPE);
-      });
-      expect(popupMenuAtCursor(owner.hwnd, [{ label: "One" }, { label: "Two" }, { label: "Three" }])).toBe(false);
-      if (at.x !== point.x || at.y !== point.y) {
-        console.warn(`tray-menu.test: alignment skipped: the cursor was moved on the shared desktop (${JSON.stringify(at)})`);
-        return;
+      for (let attempt = 1; ; attempt++) {
+        user32.SetCursorPos(point.x, point.y);
+        whenMenuOpens((menuWindow) => {
+          above = windowRect(menuWindow);
+          at = cursor();
+          pressKeys(menuWindow, VK.ESCAPE);
+        });
+        expect(popupMenuAtCursor(owner.hwnd, [{ label: "One" }, { label: "Two" }, { label: "Three" }])).toBe(false);
+        if (at.x === point.x && at.y === point.y) break;
+        // Another session moved the cursor while the menu opened: asked again, and never a pass.
+        if (attempt === 5) throw new DesktopNotOurs(`not run: the menu's place at the cursor: the cursor was moved on the shared desktop (${JSON.stringify(at)}), after ${attempt} attempts (the desktop is shared with other sessions)`);
+        await pumpFor(400);
       }
       expect({ left: above.left, bottom: above.bottom }).toEqual({ left: point.x, bottom: point.y });
       expect(above.top).toBeLessThan(point.y);
@@ -484,7 +509,6 @@ describe.if(onWindows)("Tray (binding: tray-icon)", () => {
       expect(currentTray()?.windowHandle()).not.toBe(0n);
       // What Explorer shows for the icon: its tooltip, and the stock icon's image.
       const stock = await shellIcon(tooltip);
-      if ("skip" in stock) return console.warn(`tray-menu.test: the shell read skipped: ${stock.skip}`);
       expect(stock).toMatchObject({ found: true });
       if (!stock.found) return;
       expect(stock.name.endsWith(tooltip)).toBe(true);
@@ -494,7 +518,6 @@ describe.if(onWindows)("Tray (binding: tray-icon)", () => {
       tray.setIcon({ windows: { ico: dotIco({ color: "#00ff00", sizes: [16, 20, 24, 32, 40, 48] }) } });
       tray.setTooltip(changed);
       let green = await shellIcon(changed);
-      if ("skip" in green) return console.warn(`tray-menu.test: the shell read skipped: ${green.skip}`);
       expect(green).toMatchObject({ found: true });
       if (!green.found) return;
       expect(green.name.endsWith(changed)).toBe(true);
@@ -517,7 +540,6 @@ describe.if(onWindows)("Tray (binding: tray-icon)", () => {
         await pumpFor(800);
         back = await shellIcon(changed);
       }
-      if ("skip" in back) return console.warn(`tray-menu.test: the shell read skipped: ${back.skip}`);
       expect(back).toMatchObject({ found: true });
       if (!back.found) return;
       back.pixel.forEach((channel, i) => expect(Math.abs(channel - stock.pixel[i]!)).toBeLessThanOrEqual(8));
@@ -629,8 +651,7 @@ describe.if(onWindows)("Tray (binding: tray-icon)", () => {
       tray.setTooltip(long); // longer than the shell keeps: truncated, not refused
       // The shell shows the first 127 characters (NOTIFYICONDATAW's szTip holds 128 with its NUL).
       const shown = await shellIcon(long.slice(0, 127));
-      if ("skip" in shown) console.warn(`tray-menu.test: the shell read skipped: ${shown.skip}`);
-      else expect(shown).toMatchObject({ found: true });
+      expect(shown).toMatchObject({ found: true });
 
       // No menu yet: a right click opens nothing.
       postTrayMouse(tray.windowHandle(), TRAY.RBUTTONUP);

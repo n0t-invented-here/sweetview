@@ -4,7 +4,7 @@ What the Windows goal left for the owner, because requirement R7 reserves it or 
 
 ## 1. Merge the branch
 
-`v1-rust-rewrite` is pushed with every commit of the Windows goal. Tag `pre-rust-rewrite` marks the tree before the first of them and was not moved. Merging the branch, into `main` or anywhere else, is the owner's decision; nothing was merged and no pull request was opened.
+`v1-rust-rewrite` is pushed with every commit of the Windows goal. Tag `pre-rust-rewrite` marks the tree before the first of them and was not moved. Merging the branch, into `main` or anywhere else, is the owner's decision; this branch was merged nowhere and no pull request was opened.
 
 macOS still runs today's code on this branch (R8), so the branch is usable on both platforms as it stands. The root `README.md` still tells a reader to clone `v1-drafting` for 1.0.0; which branch it should name is decided by where this one is merged. `HANDOFF-macos.md` is the starting point of the macOS goal.
 
@@ -35,7 +35,7 @@ Requirement R2 asks for each real application to be upgraded in a temp copy and 
 2. For each: copy it to the system temp directory, apply `docs/upgrading.md` to the copy, run its typecheck, tests and build, and write a section ending in a line `RESULT: PASS` or `RESULT: FAIL` to `rust-rewrite/local/dependents-result.md`.
 3. `bun rust-rewrite/verify.ts windows` then counts them in its `dependents` check.
 
-What stands in for it until then: every row of `docs/upgrading.md` is imported and run in its new form by the tests under `rust-rewrite/compat/`.
+What stands in for it until then: `rust-rewrite/compat/upgrade-guide.test.ts` reads every table of `docs/upgrading.md` and imports each row's new form. On Windows its test "every row's new form runs" calls each class, constant, function and method or member row once in its new form, with real arguments, through the runners in `rust-rewrite/compat/fixtures/row-runners.ts` (the ones that need a window, a webview, the tray, the clipboard, a hook, a dialog or the loop in `fixtures/rows-desktop.ts`, a process of its own), and checks what comes back; the rows of an application's own `bun:ffi` table are opened and called by `fixtures/own-ffi.ts`. A row whose target has no runner fails "every row's new form has a runner". Type rows are not run: tsc checks them through `rust-rewrite/compat/upgrade-types.ts`. Rows of a `/darwin/` module are macOS-only and are not run on Windows. `behaviour.test.ts` and `own-modal-loops.test.ts` run the rows whose behaviour changed.
 
 ## 4. Things only a person at the desk can do
 
@@ -55,9 +55,11 @@ No pull request or issue was opened on a repository the owner does not own. What
 | `tauri-apps/wry` 0.58.2 | the environment is always created with `wry`'s own options; a process sharing a user data folder with another WebView2 host that uses different options fails with `ERROR_BUSY` | `crates/sweetview-platform-webview`, `environment.rs` (decision D15) |
 | `tauri-apps/wry` 0.58.2 | on Windows the drag-drop handler revokes WebView2's own drop target, so HTML drops inside the page stop working when it is used | not used; drops come through the page (decision D17) |
 | `tauri-apps/muda` 0.22.0 | no menu item with both an icon and a check mark | `crates/sweetview-platform-window`, `popup.rs`, `check_item` (decision D14) |
-| `tauri-apps/muda` 0.22.0 | `show_context_menu_for_hwnd` is an `unsafe fn` and reports the chosen item later, through the process-wide `MenuEvent` handler, not as its result | called from one place in `popup.rs`; the tab menu, which needs the choice before the call returns, is this project's own popup (decision D22) |
+| `tauri-apps/muda` 0.22.0 | `show_context_menu_for_hwnd` is an `unsafe fn`, passes `TPM_LEFTALIGN \| TPM_RETURNCMD` only (letting go of the right button over an item does not choose it, and a menu cannot open upward from the cursor), and reports the chosen item later, through the process-wide `MenuEvent` handler, not as its result; no API sets an item's command id | not used: `muda` builds the menu and `crates/sweetview-platform-window/src/popup.rs` tracks it with its own `TrackPopupMenu` and sets each command id (`show_popup`, `set_command_id`; decision D26); the tab frame's flat menu is this project's own popup (decision D22) |
 | `tauri-apps/tao` 0.38.0 | every event loop leaves one wait thread behind when it is dropped (one USER object, two kernel handles) | harmless with one loop per process; the `LoopHost` handle test allows for it (decision D23) |
 | `tauri-apps/tao` 0.38.0 | on `WM_DPICHANGED` it keeps its own size when the scale is unchanged and computes one from the old inner size otherwise, so the rectangle the system suggests is not applied | `crates/sweetview-platform-window`, `tab_frame.rs`, `FrameMessages` (decision D22) |
+| `tauri-apps/tao` 0.38.0 | its windows are registered for raw keyboard input unless the device-event filter says otherwise, and Windows does not call a process's own low-level keyboard hook while a window of that process registered for raw input holds the foreground; an application with a `WH_KEYBOARD_LL` hook sees no key typed into its own window | `crates/sweetview-runtime/src/runtime.rs`, `build_event_loop`: `set_device_event_filter(DeviceEventFilter::Always)` (decision D29) |
+| `tauri-apps/tao` 0.38.0 | poll mode is kept alive by a repaint request (`RDW_INTERNALPAINT`) on a hidden window; a `PeekMessageW` that removes nothing, which the message wait inside a COM call makes, drops that request, and `run_return` then waits in `GetMessageW` with `ControlFlow::Poll` set | `crates/sweetview-runtime/src/runtime.rs`, `Runtime::pump`: a user event before each pump and a guard timer (decision D30) |
 | WebView2 (`AddScriptToExecuteOnDocumentCreated`) | the completion arrives only once a navigation in flight has its response, so a host that waits for it can hang when the response comes from its own thread | `crates/sweetview-runtime/src/engine.rs`, the ordered queue (decision D21) |
 
 ## 6. The forks

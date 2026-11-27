@@ -344,10 +344,11 @@ try {
   const win = make({ tabs: true, appearance: "dark" });
   const hwnd = BigInt(win.handle!);
   {
-    // Made with no bounds: centred on the primary monitor's work area.
+    // Made with no bounds: centred on the primary monitor's work area. A frame taller than the
+    // work area starts at its top, so the strip is on the screen (a 1024 x 768 screen is one).
     const r = windowRect(hwnd);
     const area = primaryWorkArea();
-    const want = { x: area.x + Math.floor((area.width - r.width) / 2), y: area.y + Math.floor((area.height - r.height) / 2) };
+    const want = { x: area.x + Math.trunc((area.width - r.width) / 2), y: area.y + Math.max(0, Math.trunc((area.height - r.height) / 2)) };
     check("a frame made with no bounds is centred on the primary work area", Math.abs(r.x - want.x) <= 1 && Math.abs(r.y - want.y) <= 1, { outer: r, area, want });
   }
   check("before its first tab the frame shows the window's title", getTitle(hwnd) === unique, getTitle(hwnd));

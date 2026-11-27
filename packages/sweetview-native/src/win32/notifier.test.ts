@@ -212,6 +212,56 @@ describe.if(process.platform === "win32")("Windows notifier", () => {
     }
   });
 
+  test("with a real Tray in the process the fallback is still a balloon on the notifier's own icon: its click is the notification's, and the tray's clicks stay the tray's", async () => {
+    const { createNotifier, debugNativeNotifier } = await import("./notifier");
+    const { createTray, currentTray } = await import("./tray");
+    const { postTrayMouse, TRAY } = await import("../../test/win32-os");
+    const clicks: NotificationClick[] = [];
+    const trayEvents: string[] = [];
+    const tray = createTray({
+      tooltip: `sweetview-test notifier with a tray ${process.pid}`,
+      icon: { windows: { ico: dotIco({ sizes: [16, 32] }) } },
+      onDoubleClick: () => trayEvents.push("double"),
+    });
+    const backend = createNotifier({ onClick: (click) => clicks.push(click) });
+    const native = debugNativeNotifier(backend)!;
+    native.debugSetToastLife(TEST_TOAST_LIFE);
+    try {
+      expect(currentTray()).toBe(tray);
+      expect(tray.windowHandle()).not.toBe(0n);
+      // Both failures, with the tray there: WinRT not in use, and a toast whose Show fails.
+      for (const [path, id] of [["balloonOnly", "no-winrt"], ["toastShowFails", "show-failed"]] as const) {
+        native.debugForcePath(path);
+        const shownBefore = native.debugBalloonsShown();
+        const uid = cookieOf(native.debugShow(id, "With a tray", "", true, JSON.stringify({ path })), "balloon");
+        // The shell accepted a balloon on the notifier's own icon (the tray's icon has none: its
+        // window gets no balloon message, and a click on the balloon is not a click on the tray).
+        expect(native.debugBalloonsShown()).toBe(shownBefore + 1);
+        expect(native.debugSimulateBalloonEvent(uid, "clicked")).toBe(true);
+        pumpUntil(() => clicks.some((c) => c.id === id));
+        expect(clicks.at(-1)).toEqual({ id, data: { path } });
+        expect(trayEvents).toEqual([]);
+      }
+      // The tray goes on working beside it: a double click the shell posts to the tray's own
+      // window is the tray's, and no notification click.
+      const before = clicks.length;
+      postTrayMouse(tray.windowHandle(), TRAY.LBUTTONDBLCLK);
+      pumpUntil(() => trayEvents.length > 0);
+      expect(trayEvents).toEqual(["double"]);
+      expect(clicks).toHaveLength(before);
+      // And without it: the tray goes, the notifier's icon stays and still shows a balloon.
+      tray.dispose();
+      expect(currentTray()).toBeUndefined();
+      native.debugForcePath("balloonOnly");
+      const shownBefore = native.debugBalloonsShown();
+      expect(backend.notify({ title: "After the tray", silent: true })).toBe(true);
+      expect(native.debugBalloonsShown()).toBe(shownBefore + 1);
+    } finally {
+      tray.dispose();
+      backend.dispose();
+    }
+  });
+
   test("a click handler that throws is logged with today's message and the loop goes on", async () => {
     const { createNotifier, debugNativeNotifier } = await import("./notifier");
     const errors: unknown[][] = [];

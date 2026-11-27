@@ -7,7 +7,7 @@
 //! an item would not choose it and a menu could not open above the cursor, and
 //! it reports the chosen item through its process-wide `MenuEvent` handler.
 //! Here the menu's items carry the caller's own command ids
-//! ([`set_command_id`]) and the chosen one is the call's result (D24).
+//! ([`set_command_id`]) and the chosen one is the call's result (D26).
 //!
 //! The window is a [`BorrowedWindow`](crate::BorrowedWindow), lent for the
 //! length of the call: a Sweetview window, one of the application's own, or

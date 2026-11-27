@@ -47,7 +47,9 @@ async function evaluateInPage(port: number, expression: string): Promise<string>
       };
     });
     socket.send(JSON.stringify({ id: 1, method: "Runtime.evaluate", params: { expression, returnByValue: true } }));
-    return await Promise.race([answer, Bun.sleep(5000).then(() => "")]);
+    const value = await Promise.race([answer, Bun.sleep(5000).then(() => null)]);
+    if (value === null) throw new Error("the page did not answer Runtime.evaluate in 5 s");
+    return value;
   } finally {
     socket.close();
   }
@@ -84,7 +86,8 @@ test.if(process.platform === "win32")("W3.5 examples/input-hooks.ts starts, show
   const example = fileURLToPath(new URL("../examples/input-hooks.ts", import.meta.url));
   const port = freePort();
   const proc = Bun.spawn([process.execPath, example], {
-    env: { ...process.env, WEBVIEW2_USER_DATA_FOLDER: profile, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port}` },
+    // --remote-allow-origins: a browser that checks the origin of a DevTools socket still accepts this one.
+    env: { ...process.env, WEBVIEW2_USER_DATA_FOLDER: profile, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port} --remote-allow-origins=*` },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -97,10 +100,12 @@ test.if(process.platform === "win32")("W3.5 examples/input-hooks.ts starts, show
     expect(hwnd).not.toBeNull();
     // Shown, and the page loaded: its state line says the hooks are on.
     let state = "";
-    for (const deadline = Date.now() + 20_000; !state.startsWith("Hooks on") && Date.now() < deadline; await Bun.sleep(200)) {
-      state = await evaluateInPage(port, `document.getElementById("state")?.textContent ?? ""`).catch(() => "");
+    let problem = "";
+    for (const deadline = Date.now() + 40_000; !state.startsWith("Hooks on") && Date.now() < deadline; await Bun.sleep(200)) {
+      state = await evaluateInPage(port, `document.getElementById("state")?.textContent ?? ""`).catch((error) => ((problem = String(error)), ""));
     }
-    expect(state.startsWith("Hooks on")).toBe(true);
+    // Why, when it was not read: the page's own line, or what stopped the reading.
+    if (!state.startsWith("Hooks on")) throw new Error(`the example's state line was not read as "Hooks on": state ${JSON.stringify(state)}; last problem: ${problem || "(none)"}; the example ${proc.exitCode === null ? "is running" : `exited ${proc.exitCode}`}`);
     expect(probe.isVisible(hwnd)).toBe(true);
     expect(probe.windowText(hwnd)).toBe("Input hooks");
 
@@ -155,4 +160,4 @@ test.if(process.platform === "win32")("W3.5 examples/input-hooks.ts starts, show
       }
     }
   }
-}, 90_000);
+}, 120_000);

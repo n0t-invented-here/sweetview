@@ -51,6 +51,13 @@ describe.if(onWindows)("win32 OS state", () => {
       const icons = await windowIcons(BigInt(win.handle!));
       expect(icons.small).not.toBe(0n); // 0 would mean the OS took no icon from the .ico
       expect(icons.big).not.toBe(0n);
+      // And neither is the stock icon, which is what a .ico the OS refused would have left: the
+      // stock icon is one shared handle, read here by setting it.
+      win.setIcon(undefined);
+      const stock = await windowIcons(BigInt(win.handle!));
+      expect(stock.small).not.toBe(0n);
+      expect(icons.small).not.toBe(stock.small);
+      expect(icons.big).not.toBe(stock.big);
     } finally {
       win.dispose();
     }

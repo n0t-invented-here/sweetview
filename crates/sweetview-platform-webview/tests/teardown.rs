@@ -144,9 +144,17 @@ fn teardown() {
     let with_extras =
         Growth { user: first.user.min(second.user), gdi: first.gdi.min(second.gdi), handles: first.handles.min(second.handles) };
     // USER and GDI objects return to their starting value (the smaller of the two runs, for the
-    // object WebView2 or the shell makes once in the process, D20).
-    assert_eq!(with_extras.user, 0, "USER objects return to their start: {with_extras:?} ({bare:?} without the extras)");
-    assert_eq!(with_extras.gdi, 0, "GDI objects return to their start: {with_extras:?} ({bare:?} without the extras)");
+    // object WebView2 or the shell makes once in the process, D20). Where the same lives without
+    // the extras grew too, that growth is WebView2's own and is the allowance: the extras add
+    // nothing to it. With no such growth, which is the usual case, the count must be the start's.
+    assert!(
+        with_extras.user <= bare.user.max(0),
+        "USER objects return to their start: {with_extras:?} ({bare:?} without the extras)"
+    );
+    assert!(
+        with_extras.gdi <= bare.gdi.max(0),
+        "GDI objects return to their start: {with_extras:?} ({bare:?} without the extras)"
+    );
     // Kernel handles are compared with the same loop without the extras: WebView2 keeps about
     // one per webview ever made in the process, extras or not (measured here: 6 over 5 lives
     // without the extras, 4 or 5 with them, in each of three runs).
