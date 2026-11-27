@@ -1,0 +1,14 @@
+{
+  "name": "sweetview-web-app-tauri",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "The web-app demo's page in a Tauri 2 shell over @n1h/sweetview/ipc-tauri, answered by a Rust backend in src-tauri.",
+  "dependencies": {
+    "@n1h/sweetview": "workspace:*",
+    "web-app-frontend": "workspace:*"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.0.0"
+  }
+}

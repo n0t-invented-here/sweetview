@@ -16,7 +16,12 @@ export const TAURI_EVENT = "sweetview-ipc:event";
 
 /** `invoke` from `@tauri-apps/api/core`, or anything with its signature. */
 export type TauriInvoke = (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
-/** `listen` from `@tauri-apps/api/event`, or anything with its signature. */
+/**
+ * Listens to an event for this webview only, like `getCurrentWebview().listen`
+ * from `@tauri-apps/api/webview`. Not the global `listen` from
+ * `@tauri-apps/api/event`: its target `Any` also receives the events the
+ * backend sends to other webviews.
+ */
 export type TauriListen = (event: string, handler: (event: { payload: unknown }) => void) => Promise<() => void>;
 export type TauriApi = { invoke: TauriInvoke; listen: TauriListen };
 
@@ -30,11 +35,10 @@ export type TauriTransport = Transport & {
 type TauriInternals = {
   invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
   transformCallback: (fn: (value: unknown) => void, once?: boolean) => number;
+  metadata?: { currentWebview?: { label?: string } };
 };
-type TauriGlobal = { core?: { invoke?: TauriInvoke }; event?: { listen?: TauriListen } };
 
 const g = globalThis as {
-  __TAURI__?: TauriGlobal;
   __TAURI_INTERNALS__?: TauriInternals;
   __TAURI_EVENT_PLUGIN_INTERNALS__?: { unregisterListener(event: string, id: number): void };
 };
@@ -43,20 +47,20 @@ const g = globalThis as {
 export const isTauri = (): boolean => typeof g.__TAURI_INTERNALS__?.invoke === "function";
 
 /**
- * The Tauri API from the page's globals: `window.__TAURI__` when the app sets
- * `app.withGlobalTauri`, otherwise `window.__TAURI_INTERNALS__`, which every
- * Tauri 2 webview has and which `@tauri-apps/api` itself calls.
+ * The Tauri API from `window.__TAURI_INTERNALS__`, which every Tauri 2 webview
+ * has (with or without `app.withGlobalTauri`) and which `@tauri-apps/api`
+ * itself calls. `listen` is scoped to the current webview.
  */
 export function tauriGlobalApi(): TauriApi {
-  const global = g.__TAURI__;
-  if (typeof global?.core?.invoke === "function" && typeof global.event?.listen === "function") return { invoke: global.core.invoke, listen: global.event.listen };
   const internals = g.__TAURI_INTERNALS__;
   if (!internals || typeof internals.invoke !== "function") throw new Error("not running inside Tauri");
+  const label = internals.metadata?.currentWebview?.label;
+  if (typeof label !== "string") throw new Error("Tauri did not report the current webview's label");
   return {
     invoke: (cmd, args) => internals.invoke(cmd, args),
-    // what @tauri-apps/api/event `listen` does
+    // what getCurrentWebview().listen from @tauri-apps/api/webview does
     async listen(event, handler) {
-      const eventId = (await internals.invoke("plugin:event|listen", { event, target: { kind: "Any" }, handler: internals.transformCallback(handler as (value: unknown) => void) })) as number;
+      const eventId = (await internals.invoke("plugin:event|listen", { event, target: { kind: "Webview", label }, handler: internals.transformCallback(handler as (value: unknown) => void) })) as number;
       return () => {
         g.__TAURI_EVENT_PLUGIN_INTERNALS__?.unregisterListener(event, eventId);
         void internals.invoke("plugin:event|unlisten", { event, eventId }).catch(() => {});

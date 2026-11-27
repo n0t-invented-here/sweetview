@@ -23,7 +23,7 @@ check: typecheck test
 
 compile: demos::web-app::compile demos::desktop-pet::compile demos::menubar-only::compile demos::menubar-notify::compile
 
-clean: demos::web-app::clean demos::desktop-pet::clean demos::menubar-only::clean demos::menubar-notify::clean demos::native-tabs::clean
+clean: demos::web-app::clean demos::web-app-electron::clean demos::web-app-tauri::clean demos::desktop-pet::clean demos::menubar-only::clean demos::menubar-notify::clean demos::native-tabs::clean
 
 [script("pwsh", "-NoProfile", "-File")]
 pack:

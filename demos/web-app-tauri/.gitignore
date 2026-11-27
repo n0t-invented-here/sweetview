@@ -1,0 +1,4 @@
+# Cargo's output, the schemas tauri-build generates, and the icon scripts/write-icon.ts writes
+src-tauri/target/
+src-tauri/gen/
+src-tauri/icons/

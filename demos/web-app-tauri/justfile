@@ -1,0 +1,36 @@
+# The web-app demo's page in a Tauri 2 shell, answered by a Rust backend.
+
+set shell := ["pwsh", "-NoProfile", "-Command", "$ErrorActionPreference = 'Stop'; $PSNativeCommandUseErrorActionPreference = $true; trap { if ($_.Exception -is [System.Management.Automation.NativeCommandExitException]) { exit $_.Exception.ExitCode }; break };"]
+
+exe := if os() == "windows" { "src-tauri/target/debug/web-app-tauri.exe" } else { "src-tauri/target/debug/web-app-tauri" }
+
+@_default:
+    just --justfile "{{module_file()}}" --list
+
+
+install:
+    bun install --cwd ../..
+
+# The web-app page, built from demos/web-app's frontend source through index.html
+frontend: install
+    bun build ./index.html --outdir build --minify
+
+icons: install
+    bun scripts/write-icon.ts
+
+# A debug build of the Rust shell with the page embedded (Cargo, through the Tauri CLI)
+shell: frontend icons
+    bun run tauri build --debug --no-bundle
+
+# Opens the window
+app: shell
+    ./{{exe}}
+
+# Opens the window, records what the page shows (PROBE line on stdout), and quits
+probe: shell
+    $env:WEB_APP_PROBE = '1'; ./{{exe}}
+
+# A missing path makes ri fail the recipe; Cargo's own output goes with cargo clean
+clean:
+    if (Test-Path build) { ri build -r -fo }
+    if (Test-Path src-tauri/target) { cargo clean --manifest-path src-tauri/Cargo.toml }

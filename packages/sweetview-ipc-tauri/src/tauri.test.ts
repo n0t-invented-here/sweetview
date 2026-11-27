@@ -95,7 +95,6 @@ const nextEvent = <N extends keyof Events>(bridge: Bridge<Methods, Events>, name
 describe("sweetview-ipc-tauri", () => {
   afterEach(() => {
     delete (globalThis as Record<string, unknown>).__TAURI_INTERNALS__;
-    delete (globalThis as Record<string, unknown>).__TAURI__;
   });
 
   test("a call is one invoke of sweetview_ipc carrying the frame, and resolves with the reply's result", async () => {
@@ -185,7 +184,7 @@ describe("sweetview-ipc-tauri", () => {
     await expect(t.call("ping", null)).rejects.toThrow("event.listen not allowed");
   });
 
-  test("without an api, the globals are used: __TAURI__ first, then __TAURI_INTERNALS__", async () => {
+  test("without an api, __TAURI_INTERNALS__ is used, listening for this webview only", async () => {
     expect(isTauri()).toBe(false);
     expect(() => tauriTransport()).toThrow("not running inside Tauri");
 
@@ -193,6 +192,7 @@ describe("sweetview-ipc-tauri", () => {
     const calls: { cmd: string; args: Record<string, unknown> | undefined }[] = [];
     let callback: ((value: unknown) => void) | undefined;
     g.__TAURI_INTERNALS__ = {
+      metadata: { currentWindow: { label: "main" }, currentWebview: { windowLabel: "main", label: "main" } },
       invoke: async (cmd: string, args?: Record<string, unknown>) => {
         calls.push({ cmd, args });
         if (cmd === "plugin:event|listen") return 7;
@@ -208,18 +208,14 @@ describe("sweetview-ipc-tauri", () => {
     const t = tauriTransport();
     const bridge = createBridge<Methods, Events>(t);
     expect(await bridge.rpc("ping")).toBe("pong");
-    expect(calls[0]).toEqual({ cmd: "plugin:event|listen", args: { event: TAURI_EVENT, target: { kind: "Any" }, handler: 42 } });
+    expect(calls[0]).toEqual({ cmd: "plugin:event|listen", args: { event: TAURI_EVENT, target: { kind: "Webview", label: "main" }, handler: 42 } });
     const got = nextEvent(bridge, "shouted");
     callback!({ event: TAURI_EVENT, id: 7, payload: { kind: "event", name: "shouted", payload: { text: "via internals" } } });
     expect(await got).toEqual({ text: "via internals" });
     t.dispose();
     expect(calls.at(-1)).toEqual({ cmd: "plugin:event|unlisten", args: { event: TAURI_EVENT, eventId: 7 } });
 
-    const globalInvoke = async () => ({ kind: "reply", seq: "x", ok: true, result: "from __TAURI__" });
-    const globalListen = async () => () => {};
-    g.__TAURI__ = { core: { invoke: globalInvoke }, event: { listen: globalListen } };
-    const api = tauriGlobalApi();
-    expect(api.invoke).toBe(globalInvoke);
-    expect(api.listen).toBe(globalListen);
+    g.__TAURI_INTERNALS__ = { invoke: async () => null, transformCallback: () => 0 };
+    expect(() => tauriGlobalApi()).toThrow("current webview's label");
   });
 });
