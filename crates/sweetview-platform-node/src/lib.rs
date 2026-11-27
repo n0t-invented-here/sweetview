@@ -11,6 +11,9 @@
 
 pub mod diagnostics;
 pub mod event_loop;
+pub mod screen;
+pub mod types;
+pub mod window;
 
 use napi_derive::napi;
 

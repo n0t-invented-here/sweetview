@@ -10,6 +10,12 @@ mod callback;
 pub mod diagnostics;
 mod errors;
 pub mod event_loop;
+pub mod screen;
+pub mod window;
+
+pub use sweetview_runtime::screen::ScreenInfo;
+pub use sweetview_runtime::window::{Appearance, Chrome, WindowInit};
+pub use sweetview_runtime::{Point, Rect};
 
 /// Runs when the binding is loaded, once per JavaScript thread that loads it.
 /// The first thread to load it is the UI thread.

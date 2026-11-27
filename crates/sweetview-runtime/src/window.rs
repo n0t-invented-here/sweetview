@@ -13,7 +13,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::{Rc, Weak};
 
-use sweetview_platform_window::{self as platform, ExStylePolicy, ForeignWindow, GeometrySnapshot, WindowEvent, WindowIcons, WindowSubclass};
+use sweetview_platform_window::{self as platform, ExStylePolicy, ForeignWindow, WindowEvent, WindowIcons, WindowSubclass};
 use sweetview_window_logic::{self as logic, HitState, HitStep, MinSize};
 use tao::dpi::{PhysicalPosition, PhysicalSize};
 use tao::window::{Theme, WindowBuilder};
@@ -23,7 +23,7 @@ use crate::runtime::{Runtime, TimeoutId};
 use crate::screen;
 use crate::{Point, Rect, ResizeEdge};
 
-pub use platform::Chrome;
+pub use platform::{Chrome, GeometrySnapshot};
 
 /// How often the hit-region poll and the resize gesture read the cursor.
 const POLL_MS: u32 = 10;
