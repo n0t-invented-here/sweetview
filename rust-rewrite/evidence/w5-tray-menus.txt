@@ -1,0 +1,43 @@
+$ bun test packages/sweetview-native/src/win32/tray-menu.test.ts packages/sweetview-native/src/win32/win32.test.ts
+bun test v1.4.4 (38afee6c8)
+
+packages\sweetview-native\src\win32\tray-menu.test.ts:
+(pass) icon decoding (binding) > each size comes from its own image of the .ico, or the next larger one resampled [2.73ms]
+(pass) icon decoding (binding) > a multi-size .ico picks the exact size at each of 16, 20, 24 and 32 px [0.41ms]
+(pass) icon decoding (binding) > a PNG decodes at the asked size, an icon with nothing for Windows gives null, garbage throws with the reason [1.30ms]
+(pass) Menu.popup (binding: muda) > at a point: check marks, icons, submenus, separators and disabled items are on the real menu, and the chosen item runs [15.55ms]
+(pass) Menu.popup (binding: muda) > an item in a submenu is chosen; a dismissed menu chooses nothing; the function form is called on each open [30.72ms]
+(pass) Menu.popup (binding: muda) > at the cursor when no point is given [18.72ms]
+(pass) Menu.popup (binding: muda) > an empty menu shows nothing, and a null owner throws as before [0.08ms]
+(pass) Tray (binding: tray-icon) > a tray is made with its own window and disposed, twice safely [6.97ms]
+(pass) Tray (binding: tray-icon) > making and disposing trays and their menus returns every GDI and USER object [3875.99ms]
+(pass) Tray (binding: tray-icon) > a tray with no icon shows the stock icon, and the public Tray works the same [32.01ms]
+(pass) Tray (binding: tray-icon) > a left click is a click once the double-click time has passed; a double click is a double click and no click [1314.64ms]
+(pass) Tray (binding: tray-icon) > a handler that throws is logged with today's message, and a handler may dispose the tray [14.90ms]
+(pass) Tray (binding: tray-icon) > a right click opens the menu built from the function form; dismissed it chooses nothing, chosen it runs the item [41.35ms]
+(pass) Tray (binding: tray-icon) > setIcon, setTooltip and setMenu take effect; a removed menu opens nothing [431.27ms]
+(pass) Tray (binding: tray-icon) > the icon is re-added when the taskbar is recreated (the registered TaskbarCreated message, as Explorer broadcasts it) [116.51ms]
+(pass) pickFolder (binding: rfd) > cancelled with no loop running (the timer-pumped mode) returns null [178.55ms]
+(pass) pickFolder (binding: rfd) > cancelled from inside the blocking loop returns null, and the loop goes on [123.59ms]
+(pass) pickFolder (binding: rfd) > returns the chosen folder, with the dialog owned by the given window [180.52ms]
+(pass) app-wide settings (binding) > setAppMenu, setAppIcon and setActivationPolicy are accepted and change nothing on Windows [3.14ms]
+
+packages\sweetview-native\src\win32\win32.test.ts:
+(pass) win32 FFI > CreateIconFromResourceEx accepts a generated .ico image [0.81ms]
+(pass) win32 FFI > the message window's JSCallback window procedure runs (WM_CREATE arrives synchronously) [0.84ms]
+(pass) win32 FFI > Window.fromHandle onClose swallows WM_CLOSE and the window survives [3.67ms]
+(pass) win32 FFI > the 32px balloon icon loads from the generated .ico [0.31ms]
+(pass) win32 FFI > MonitorFromRect + GetMonitorInfoW: a point on the primary monitor maps to its rect, a point off every monitor to the nearest [0.13ms]
+(pass) win32 FFI > discardQuit takes a PostQuitMessage back, after dispatching what was waiting ahead of it [1.11ms]
+(pass) win32 FFI > a literal ampersand in a menu label is doubled, so the OS shows it instead of an access key [13.98ms]
+(pass) win32 icons > a menu icon decodes at the asked size from a larger .ico image (the resample path) [0.21ms]
+(pass) win32 icons > a menu with an icon builds and the bitmap is set on the item [14.49ms]
+(pass) win32 icons > setWindowIcon on a message window does not fail and replaces its handles [1.43ms]
+(pass) win32 icons > menus handle submenus, separators, checkmarks, and icons, and each showing frees what it made [172.63ms]
+(pass) win32 icons > Screen.of(hwnd) resolves the monitor hosting a message window [1.24ms]
+
+ 31 pass
+ 0 fail
+ 134 expect() calls
+Ran 31 tests across 2 files. [6.65s]
+exit: 0

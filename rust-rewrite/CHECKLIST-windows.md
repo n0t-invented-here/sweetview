@@ -138,8 +138,14 @@ Source of truth for behaviour: the bindings repository's `docs/` and `test/`, an
 
 ## W5. Tray, menus, notifications, dialogs, clipboard
 
-- [ ] W5.1 `Tray`: icon, tooltip, click, double click, menu on right click, `setIcon`, `setMenu`, re-added when Explorer restarts.
-- [ ] W5.2 Menus: check marks, icons, submenus, separators, disabled items, the function form rebuilt on each open, `Menu.popup` at a point and at the cursor.
+- [x] W5.1 `Tray`: icon, tooltip, click, double click, menu on right click, `setIcon`, `setMenu`, re-added when Explorer restarts.
+
+    `rust-rewrite/evidence/w5-tray-menus.txt`, "Tray (binding: tray-icon)", 8 tests on a real notification icon driven with the messages the shell posts: made and disposed; the stock icon when none is given; a left click is a click only once the double-click time has passed, and a double click is a double click and no click; the right-click menu built from the function form on each open; `setIcon`, `setTooltip`, `setMenu`; a throwing handler logged with today's message. Re-adding after an Explorer restart is `tray-icon`'s own (`tray-icon` 0.27.0, `src/platform_impl/windows/mod.rs`, the `S_U_TASKBAR_RESTART` arm); the test posts the registered `TaskbarCreated` message and a click still arrives.
+
+- [x] W5.2 Menus: check marks, icons, submenus, separators, disabled items, the function form rebuilt on each open, `Menu.popup` at a point and at the cursor.
+
+    `rust-rewrite/evidence/w5-tray-menus.txt`, "Menu.popup (binding: muda)" and "win32 icons": check marks, icons, submenus, separators and disabled items read back from the real OS menu; an item chosen inside a submenu; a dismissed menu chooses nothing; the function form called on each open; at a point (the menu's corner reads back at the point given) and at the cursor; `&` doubled; every showing frees what it made (GDI and USER counts).
+
 - [x] W5.3 `Notifier`: WinRT toasts with click, `appId` and identity registration, per `docs/native/notifications.md`. The fallback when WinRT is unavailable or a toast fails is a balloon on a hidden notification icon of the notifier's own, with or without a `Tray`, as `win32/notifier.ts` does today. The C shim that `winrt-toast.ts` compiles at run time with Bun's `cc` is gone.
 
     `rust-rewrite/evidence/w5-notifier.txt`: 9 pass, 0 fail. Real WinRT toasts with an AUMID registered and clicks routed per toast; an explicit `appId`; the fallback to a balloon on the notifier's own hidden icon when `Show` fails and when WinRT is off, with and without a `Tray`; a throwing `onClick` logged with today's message. `win32/winrt-toast.ts` and its C shim are deleted:
@@ -149,7 +155,10 @@ Source of truth for behaviour: the bindings repository's `docs/` and `test/`, an
     0
     ```
 
-- [ ] W5.4 `pickFolder`, `Clipboard`, `setAppMenu`, `setAppIcon`, `setActivationPolicy`.
+- [x] W5.4 `pickFolder`, `Clipboard`, `setAppMenu`, `setAppIcon`, `setActivationPolicy`.
+
+    `rust-rewrite/evidence/w5-tray-menus.txt`: "pickFolder (binding: rfd)" (cancelled under the pumped mode and inside the blocking loop; a folder chosen, with the dialog owned by the given window) and "app-wide settings (binding)" (`setAppMenu`, `setAppIcon`, `setActivationPolicy`, which change nothing on Windows, as before). `Clipboard`: `rust-rewrite/evidence/w5-clipboard.txt`, "clipboard round-trips Unicode and empty text, and clears".
+
 - [ ] W5.5 `notifier.test.ts` passes. `demos/menubar-only` and `demos/menubar-notify` run and compile; the tray icon is clicked by hand and the result written down.
 
 ## W6. Activation

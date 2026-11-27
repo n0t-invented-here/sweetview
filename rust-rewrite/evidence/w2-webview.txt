@@ -1,0 +1,70 @@
+$ bun test packages/sweetview-native/src/request-handler.test.ts packages/sweetview-native/src/webview.test.ts   (CLAUDECODE, CLAUDE_CODE_ENTRYPOINT and AGENT unset)
+bun test v1.4.4 (38afee6c8)
+
+packages\sweetview-native\src\request-handler.test.ts:
+(pass) W2.7 binding exports > W2.7 the request, streaming and drop functions exist, and a handle that names no webview is refused with -3 [4.73ms]
+(pass) W2.7 argument checks in the bindings > W2.7 a status that is not an integer from 100 to 599 is refused with -2 before the native call [0.25ms]
+(pass) W2.7 argument checks in the bindings > W2.7 setBackgroundColor refuses a channel that is not an integer from 0 to 255 with -2 before the native call [0.42ms]
+(pass) W2.7 argument checks in the bindings > W2.7 an empty chunk against a destroyed handle is refused with -3, like any chunk [0.20ms]
+(pass) W2.7 live webview > W2.7 dynamic HTML, POST echo, binary image, cross-origin iframe, static assets, streaming, service worker, teardown [4080.96ms]
+(pass) W2.7 live webview: changes from inside a handler's own call > W2.7 the request handler replaces itself, then the replacement clears itself [388.32ms]
+(pass) W2.7 live webview: changes from inside a handler's own call > W2.7 the request handler destroys the webview from inside WebResourceRequested without hanging [422.42ms]
+(pass) W2.7 live webview: changes from inside a handler's own call > W2.7 the file drop handler replaces itself, clears itself, and destroys the webview from inside its call [899.49ms]
+(pass) W2.7 binding error serialization > W2.7 an Error becomes its message, undefined becomes empty, the rest JSON or String() [1.40ms]
+(pass) W2.7 live webview: bindings > W2.7 bind: a thrown Error rejects with its message, undefined resolves, a duplicate bindRaw is refused with 1 and the original stays [373.96ms]
+(pass) W2.7 live webview: bindings > W2.7 destroy() of a webview that never ran does not end the next webview's run() [1032.93ms]
+
+packages\sweetview-native\src\webview.test.ts:
+(pass) W2.1 the Webview class > W2.1 new Webview(debug, size): its own window, the real HWND, title, size with each SizeHint, closed by the user [808.20ms]
+(pass) W2.1 the Webview class > W2.1 the default size is 1024x768 with no hint, also for an explicit undefined, and destroy() closes the window at once [409.80ms]
+(pass) W2.1 the Webview class > W2.1 new Webview(debug, size, hwnd): mounted in a given window, which size restyles and resizes but never shows, and the page follows [493.85ms]
+(pass) W2.1 the Webview class > W2.1 new Webview(handle), navigate, setHTML, init, eval, bind, bindRaw, return, unbind, destroy from inside a binding [910.39ms]
+(pass) W2.1 the Webview class > W2.1 unload() destroys every webview this process made, and closes the windows they made [440.24ms]
+(pass) W2.2 assets > W2.2 setAsset and assetOrigin: raw path, trailing slash, query and fragment, leading slashes, replacement, validation [5485.96ms]
+(pass) W2.3 background colour > W2.3 setBackgroundColor: alpha 0 and 255 accepted, any other alpha -1, a bad channel -2, a destroyed webview -3 [439.75ms]
+(pass) W2.3 background colour > W2.3 alpha 0 shows the window behind a transparent window on the screen; alpha 255 hides it [1820.60ms]
+(pass) W2.4 requests > W2.4 the 404 and 500 rules: no handler 404 on both origins, a throwing handler and a refused response 500, a second answer ignored [425.53ms]
+(pass) W2.5 streaming > W2.5 beginResponse, writeResponseChunk, endResponse on the UI thread: chunks in order, duplicate begin 1, the chunk rules, -3 after destroy [442.43ms]
+(pass) W2.6 drops > W2.6 a file dropped from the OS reaches setFileDropHandler with its real path; an in-page drag and drop still reaches the page [900.84ms]
+(pass) W2.9 teardown > W2.9 destroying a webview with requests open (one pending, one streaming) releases them; run() returns; late answers are -3 [585.83ms]
+(pass) W2.9 teardown > W2.9 destroying a webview from inside its request handler [419.37ms]
+(pass) W2.9 teardown > W2.9 a worker answering and streaming while the UI thread destroys the webview: accepted before, -3 after, no crash [751.26ms]
+(pass) W1.3 / W1.4 the webview's callback kinds > W1.3 an exception from a binding, a request handler, a file drop handler, a new-window and a navigation-failed handler is caught, logged, and the loop goes on [2174.67ms]
+(pass) W1.3 / W1.4 the webview's callback kinds > W1.4 a new-window handler replaces itself and the replacement clears itself; a navigation-failed handler clears itself [2756.10ms]
+(pass) W1.3 / W1.4 the webview's callback kinds > W1.4 a new-window handler destroys its webview from inside its own call [5493.43ms]
+(pass) W1.3 / W1.4 the webview's callback kinds > W1.4 a navigation-failed handler destroys its webview from inside its own call [453.64ms]
+344 | // foreground; a desktop that refuses the foreground to a background process
+345 | // leaves this test skipped, with nothing pressed.
+346 | const accelerator = onWindows ? await callbacks("accelerator") : undefined;
+347 | test.skipIf(!accelerator?.r.foreground)("W1.3 / W1.4 an accelerator-key handler that throws is logged and the loop goes on; it then clears itself (needs the foreground)", () => {
+348 |   const { r, stderr } = accelerator!;
+349 |   expect(r.keys).toEqual([0x87, 0x87]);
+                       ^
+error: expect(received).toEqual(expected)
+
+- [
+-   135,
+-   135,
+- ]
++ []
+
+- Expected  - 4
++ Received  + 1
+
+      at <anonymous> (D:\Repos\GitHub\n0t-invented-here\sweetview\packages\sweetview-native\src\webview.test.ts:349:18)
+(fail) W1.3 / W1.4 an accelerator-key handler that throws is logged and the loop goes on; it then clears itself (needs the foreground) [0.53ms]
+
+1 tests failed:
+(fail) W1.3 / W1.4 an accelerator-key handler that throws is logged and the loop goes on; it then clears itself (needs the foreground) [0.53ms]
+
+ 29 pass
+ 1 fail
+ 345 expect() calls
+Ran 30 tests across 2 files. [34.16s]
+
+$ cargo test -p sweetview-platform-window size_hint
+running 3 tests
+test size_hint::tests::fixed_takes_the_resize_frame_and_the_maximize_box_off_and_every_other_hint_puts_them_on ... ok
+test size_hint::tests::sizes_scale_with_the_dpi_and_round_as_muldiv_does ... ok
+test size_hint::live_tests::a_given_window_is_restyled_and_resized_as_the_library_did_and_never_shown ... ok
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 9 filtered out; finished in 0.01s
