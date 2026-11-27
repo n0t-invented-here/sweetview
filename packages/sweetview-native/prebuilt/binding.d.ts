@@ -161,6 +161,8 @@ export declare class TabFrame {
   startDrag(heldX?: number | undefined | null, heldY?: number | undefined | null): void
   /** Hands the left button's press to the OS size loop from `edge`; returns when it is released. */
   startResize(edge: string, heldX?: number | undefined | null, heldY?: number | undefined | null): void
+  /** Asks the window to close, as its close button does; returns once its close listeners ran or it is destroyed. */
+  requestClose(): void
   /** The window's system menu at the cursor; the chosen command is carried out. */
   showSystemMenu(): void
   /** A popup menu at the cursor; returns the chosen entry's index once it closes, or -1. */

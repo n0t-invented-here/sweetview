@@ -108,6 +108,10 @@ impl TabFrame {
     self.inner.start_resize_at(edge_from(&edge)?, held_from(held_x, held_y)).or_throw()
   }
 
+  pub fn request_close(&self) {
+    self.inner.request_close();
+  }
+
   pub fn show_system_menu(&self) -> napi::Result<()> {
     self.inner.show_system_menu().or_throw()
   }

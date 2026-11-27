@@ -87,6 +87,12 @@ impl TabFrame {
     self.0.start_resize(edge, held_x, held_y)
   }
 
+  /// Asks the window to close, as its close button does; returns once its close listeners ran or it is destroyed.
+  #[napi]
+  pub fn request_close(&self) {
+    self.0.request_close()
+  }
+
   /// The window's system menu at the cursor; the chosen command is carried out.
   #[napi]
   pub fn show_system_menu(&self) -> napi::Result<()> {

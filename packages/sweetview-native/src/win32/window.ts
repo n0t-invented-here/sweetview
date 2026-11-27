@@ -1,7 +1,8 @@
 // The Windows backend of `Window`, over the Rust binding: `tao` makes the
 // window, `sweetview-platform-window` subclasses it for its events and the
 // styles `tao` does not model, and the runtime runs the hit-region poll and
-// the resize gesture. A tabbed window still comes from tabbed-window.ts.
+// the resize gesture. A tabbed window's frame is such a window too, made
+// with a tab strip height; tab-window.ts is its tab side.
 //
 // Each application handler is wrapped here, so an exception is logged with
 // the message Sweetview has always used for that handler.
@@ -10,9 +11,13 @@ import { binding } from "../binding";
 import type { Window as NativeWindow } from "../../prebuilt/binding";
 import { packRegions } from "../hit-regions";
 import type { Rect, WindowBackend, WindowHandle, WindowOptions } from "../window";
-import { createTabbedWindow, systemIsDark, tabbedTrackedCount } from "./tabbed-window";
+import { STRIP_HEIGHT } from "./strip-shared";
+import { getTabFrame } from "./tab-window";
 
-export { systemIsDark };
+/** True when Windows apps are set to the dark theme. */
+export function systemIsDark(): boolean {
+  return binding().systemIsDark();
+}
 
 /** A window handle as the `bigint` the binding takes. Throws for `null`, `0` and `0n`. */
 export const asHwnd = (handle: WindowHandle): bigint => {
@@ -20,9 +25,9 @@ export const asHwnd = (handle: WindowHandle): bigint => {
   return BigInt(handle);
 };
 
-/** Diagnostic for tests: what Sweetview still keeps for `hwnd`, natively and for tabbed windows. */
+/** Diagnostic for tests: what Sweetview still keeps for `hwnd`. */
 export function _debugTrackedCount(hwnd: bigint): number {
-  return binding().windowTrackedCount(hwnd) + tabbedTrackedCount(hwnd);
+  return binding().windowTrackedCount(hwnd);
 }
 
 type RectHandler = (bounds: Rect) => void;
@@ -61,7 +66,7 @@ function subscription<T>(register: (listener: ((value: T) => void) | null) => vo
   };
 }
 
-function wrap(native: NativeWindow, owned: boolean): WindowBackend {
+function wrap(native: NativeWindow, owned: boolean, tabbed = false): WindowBackend {
   let disposed = false;
   let ownerDispose: (() => void) | undefined;
   const live = () => !disposed;
@@ -116,18 +121,24 @@ function wrap(native: NativeWindow, owned: boolean): WindowBackend {
     setTopmost: (on) => {
       if (live()) native.setTopmost(on);
     },
+    // A tab frame hands the press to the OS move and size loops, as its strip does.
     startDrag: () => {
-      if (live()) native.startDrag();
+      if (!live()) return;
+      if (tabbed) getTabFrame(native.handle)?.startDrag();
+      else native.startDrag();
     },
     startResize: (edge) => {
-      if (live()) native.startResize(edge);
+      if (!live()) return;
+      if (tabbed) getTabFrame(native.handle)?.startResize(edge);
+      else native.startResize(edge);
     },
 
+    // Click-through and hit regions do not apply to tabbed windows.
     setClickThrough: (on) => {
-      if (live()) native.setClickThrough(on);
+      if (live() && !tabbed) native.setClickThrough(on);
     },
     setHitRegions: (polygons, refine) => {
-      if (!live()) return;
+      if (!live() || tabbed) return;
       if (polygons === null) {
         native.setHitRegions(null, null);
         return;
@@ -182,7 +193,26 @@ function icoOf(options: WindowOptions): { ico?: Uint8Array } | undefined {
 }
 
 export function createWindow(options: WindowOptions): WindowBackend {
-  if (options.tabs) return createTabbedWindow(options);
+  if (options.tabs) {
+    // The frame of a tabbed window: framed, never transparent or colour-keyed; the strip replaces the caption.
+    const native = binding().Window.create({
+      title: options.title ?? "",
+      bounds: options.bounds,
+      minWidth: options.minWidth,
+      minHeight: options.minHeight,
+      frame: true,
+      resizable: options.resizable ?? true,
+      appearance: options.appearance ?? "system",
+      icon: icoOf(options),
+      transparent: false,
+      opacity: options.opacity,
+      topmost: options.topmost ?? false,
+      hideFromTaskbar: options.hideFromTaskbar ?? false,
+      noActivate: options.noActivate ?? false,
+      tabStripHeight: STRIP_HEIGHT,
+    });
+    return wrap(native, true, true);
+  }
   const frame = options.frame ?? true;
   const native = binding().Window.create({
     title: options.title ?? "",

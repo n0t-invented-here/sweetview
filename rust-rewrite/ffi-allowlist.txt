@@ -1,2 +1,4 @@
 # Files under packages/ and demos/ that still import bun:ffi, one per line as path<TAB>reason (rust-rewrite/REQUIREMENTS.md, R3).
 packages/sweetview-native/src/win32/activation.test.ts	probe: hides and shows the single-instance primary's message window (FindWindowExW, SetWindowTextW) so a secondary process must retry its lookup; no Sweetview API reaches that OS state
+packages/sweetview/test/fixtures/win-tabs.ts	probe: reads back from the OS what tabbed windows do (frame styles and metrics, hit-test edges, MINMAXINFO, the webview children's rectangles, DWM dark mode, layered alpha, a WM_DROPFILES drop); no Sweetview API reports these OS facts
+packages/sweetview/test/fixtures/win-menu-probe.ts	probe: from a second process, reads the items of the popup menu the tabs library opened and chooses or cancels one (MN_GETHMENU, MN_SELECTITEM), since nothing on the menu's own thread runs while its modal loop does

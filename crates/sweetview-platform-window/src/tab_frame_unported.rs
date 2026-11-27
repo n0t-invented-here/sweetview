@@ -19,6 +19,7 @@ pub fn is_foreground(_window: &impl NativeWindow) -> bool {
 pub fn move_with_mouse(_window: &impl NativeWindow) {}
 pub fn size_with_mouse(_window: &impl NativeWindow, _edge: ResizeEdge) {}
 pub fn show_system_menu(_window: &impl NativeWindow, _at: Point) {}
+pub fn request_close(_window: &impl NativeWindow) {}
 
 /// See the Windows implementation for the contract.
 #[derive(Debug, Clone, PartialEq, Eq)]

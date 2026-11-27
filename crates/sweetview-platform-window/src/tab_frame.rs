@@ -19,7 +19,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
   AppendMenuW, CreatePopupMenu, DestroyMenu, EnableMenuItem, GetClientRect, GetForegroundWindow, GetSystemMenu,
   PostMessageW, SendMessageW, SetForegroundWindow, SetMenuDefaultItem, TrackPopupMenu, HMENU, MENU_ITEM_FLAGS, MF_ENABLED,
   MF_GRAYED, MF_SEPARATOR, MF_STRING, SC_CLOSE, SC_MAXIMIZE, SC_MINIMIZE, SC_MOVE, SC_RESTORE, SC_SIZE, TPM_RETURNCMD,
-  TPM_RIGHTBUTTON, WM_NCLBUTTONDOWN, WM_NULL, WM_SYSCOMMAND, WS_CLIPCHILDREN,
+  TPM_RIGHTBUTTON, WM_CLOSE, WM_NCLBUTTONDOWN, WM_NULL, WM_SYSCOMMAND, WS_CLIPCHILDREN,
 };
 
 use crate::{is_zoomed, NativeWindow, Point, Rect};
@@ -81,6 +81,14 @@ pub fn size_with_mouse(window: &impl NativeWindow, edge: ResizeEdge) {
     ResizeEdge::BottomRight => 17,
   };
   send_frame_press(window.hwnd(), hit);
+}
+
+/// Asks the window to close, as its close button does (`WM_CLOSE`), and
+/// returns once the window has handled the request: its close listeners ran,
+/// or it was destroyed.
+pub fn request_close(window: &impl NativeWindow) {
+  // SAFETY: a plain message with no parameters to a handle named by `NativeWindow`.
+  let _result = unsafe { SendMessageW(window.hwnd(), WM_CLOSE, None, None) };
 }
 
 fn post(hwnd: HWND, message: u32, wparam: usize) {

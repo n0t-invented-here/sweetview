@@ -87,17 +87,20 @@ pub(super) fn finish(core: &Rc<Core>, tab: &TabState, default_bounds: bool, min:
     let y = area.y + ((area.height - height) / 2).max(0);
     core.set_bounds(Rect::new(x, y, width, height));
   }
-  // An undecorated `tao` window adds nothing to its minimum inner size for a
-  // frame, so the minimum given is the outer size the OS enforces.
+  // `tao` enforces an undecorated window's minimum inner size plus the frame's
+  // edges (outer less client) as the outer minimum the OS tracks.
   core.with_tao(|tao| match min {
     (None, None) => {
-      // The default follows the frame's DPI: a logical size.
-      let width = DEFAULT_MIN_PAGE.0 + f64::from(edge_w) / scale;
-      let height = DEFAULT_MIN_PAGE.1 + strip + f64::from(edge_h) / scale;
-      tao.set_min_inner_size(Some(LogicalSize::new(width, height)));
+      // The default is a page and the strip, and follows the frame's DPI: a logical size.
+      tao.set_min_inner_size(Some(LogicalSize::new(DEFAULT_MIN_PAGE.0, DEFAULT_MIN_PAGE.1 + strip)));
     }
     (width, height) => {
-      let size = PhysicalSize::new(width.unwrap_or(0).max(0) as u32, height.unwrap_or(0).max(0) as u32);
+      // A side given no minimum keeps the default's, at the frame's DPI now.
+      let inner = |outer: Option<i32>, edge: i32, default: f64| match outer {
+        Some(outer) => (outer - edge).max(0) as u32,
+        None => (default * scale).round() as u32,
+      };
+      let size = PhysicalSize::new(inner(width, edge_w, DEFAULT_MIN_PAGE.0), inner(height, edge_h, DEFAULT_MIN_PAGE.1 + strip));
       tao.set_min_inner_size(Some(size));
     }
   });
@@ -252,6 +255,14 @@ impl TabFrame {
     }
     platform::size_with_mouse(&core.native, edge);
     Ok(())
+  }
+
+  /// Asks the window to close, as its close button does, and returns once the
+  /// request was handled: the window's close listeners ran, or it is destroyed.
+  pub fn request_close(&self) {
+    if self.is_live() {
+      platform::request_close(&self.core.native);
+    }
   }
 
   /// Shows the window's system menu at the cursor, as a right-click on a title bar does.
