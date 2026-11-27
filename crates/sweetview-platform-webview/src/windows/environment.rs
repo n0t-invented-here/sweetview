@@ -23,7 +23,7 @@ use windows::Win32::Foundation::{ERROR_INVALID_STATE, E_POINTER};
 use windows::Win32::System::Com::{CoInitializeEx, COINIT_APARTMENTTHREADED};
 use windows::Win32::UI::Shell::{FOLDERID_RoamingAppData, SHGetKnownFolderPath, KF_FLAG_DEFAULT};
 
-use super::pump::{pump_while, OnQuit, PumpEnd};
+use super::pump::{pump_while, PumpEnd};
 
 /// The C++ fork's attempts and the wait between them (`m_max_attempts`, `m_sleep_ms`).
 const MAX_ATTEMPTS: u32 = 60;
@@ -108,7 +108,7 @@ pub fn create_environment(user_data_folder: Option<&Path>) -> Result<ICoreWebVie
             }
             Ok(()) => {}
         }
-        match pump_while(|| slot.borrow().is_none(), OnQuit::Consume) {
+        match pump_while(|| slot.borrow().is_none()) {
             PumpEnd::Done => {}
             PumpEnd::Quit => return Err(ErrorCode::Canceled),
             PumpEnd::Failed => return Err(ErrorCode::InvalidState),

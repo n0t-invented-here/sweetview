@@ -34,7 +34,6 @@ use self::handlers::{
     ResourceRequested, ScriptAdded,
 };
 use self::istream::StreamingIStream;
-use self::pump::{pump_while, OnQuit};
 use crate::shared::{next_request_id, Job, Responder, Shared};
 use crate::stream::StreamState;
 use crate::{
@@ -77,6 +76,10 @@ struct Inner {
     navigations: RefCell<Navigations>,
     host_epoch: Cell<u64>,
     registrations: RefCell<Vec<Registration>>,
+    /// Scripts handed to `AddScriptToExecuteOnDocumentCreated` whose completion
+    /// has not arrived.
+    scripts_outstanding: Cell<usize>,
+    scripts_registered: RefCell<Option<Rc<dyn Fn()>>>,
 }
 
 /// A script added with [`WebviewExtras::add_user_script`]. Dropping it does
@@ -98,7 +101,6 @@ impl std::fmt::Debug for UserScript {
 struct ScriptState {
     id: RefCell<Option<String>>,
     removed: Cell<bool>,
-    done: Cell<bool>,
 }
 
 /// Everything added to one webview. Not `Send`, not `Sync`.
@@ -144,6 +146,8 @@ impl WebviewExtras {
             navigations: RefCell::new(Navigations::default()),
             host_epoch: Cell::new(0),
             registrations: RefCell::new(Vec::new()),
+            scripts_outstanding: Cell::new(0),
+            scripts_registered: RefCell::new(None),
         });
         // On failure `inner` drops here, and with it every registration made so far.
         inner.register().map_err(|_| ErrorCode::Unspecified)?;
@@ -162,26 +166,33 @@ impl WebviewExtras {
     /// Adds a script that runs at document creation in every later document
     /// (and in every frame: a top-frame guard is the caller's text).
     ///
-    /// Returns once WebView2 has registered the script, pumping this thread's
-    /// messages meanwhile as the C++ fork's `add_user_script_impl` does, so a
-    /// navigation right after it gets the script. Every callback the thread
-    /// serves can run inside that pump. As in the C++, a script WebView2
-    /// refuses still comes back (with no id; removing it does nothing), and a
-    /// `WM_QUIT` seen while waiting is posted again and ends the wait early; an
-    /// id that arrives after that is still recorded.
+    /// Returns at once. WebView2 registers the script asynchronously, and a
+    /// navigation started before it reports completion can be created without
+    /// the script; so until [`scripts_pending`](Self::scripts_pending) is false
+    /// the caller holds its navigations back, and the handler given to
+    /// [`set_scripts_registered_handler`](Self::set_scripts_registered_handler)
+    /// says when to release them. WebView2 reports the completion only once a
+    /// navigation already in flight has its response (or is stopped), which is
+    /// why this does not wait: the response may have to come from this very
+    /// thread. A script WebView2 refuses still comes back (with no id;
+    /// removing it does nothing).
     pub fn add_user_script(&self, source: &str) -> Result<UserScript, ErrorCode> {
         let state = Rc::new(ScriptState::default());
         let weak = Rc::downgrade(&self.inner);
         let pending = state.clone();
         let handler = ScriptAdded::create(move |id| {
-            pending.done.set(true);
-            let Some(id) = id else { return };
-            if pending.removed.get() {
-                if let Some(inner) = weak.upgrade() {
-                    inner.remove_script_id(&id);
+            let inner = weak.upgrade();
+            match id {
+                Some(id) if pending.removed.get() => {
+                    if let Some(inner) = &inner {
+                        inner.remove_script_id(&id);
+                    }
                 }
-            } else {
-                *pending.id.borrow_mut() = Some(id);
+                Some(id) => *pending.id.borrow_mut() = Some(id),
+                None => {}
+            }
+            if let Some(inner) = inner {
+                inner.script_registered();
             }
         });
         // SAFETY: the script text is an owned HSTRING for the call and `handler` is
@@ -189,9 +200,33 @@ impl WebviewExtras {
         let added = unsafe { self.inner.webview.AddScriptToExecuteOnDocumentCreated(&hstring(source), &handler) };
         drop(handler);
         if added.is_ok() {
-            pump_while(|| !state.done.get(), OnQuit::Repost);
+            self.inner.scripts_outstanding.set(self.inner.scripts_outstanding.get() + 1);
         }
         Ok(UserScript { state })
+    }
+
+    /// Whether a script added with [`add_user_script`](Self::add_user_script)
+    /// (or a removal asked for before its id arrived) is still waiting for
+    /// WebView2. A navigation started now could miss it.
+    pub fn scripts_pending(&self) -> bool {
+        self.inner.scripts_outstanding.get() > 0
+    }
+
+    /// Sets or clears the handler called when the last outstanding script
+    /// registration completes, so [`scripts_pending`](Self::scripts_pending)
+    /// has become false. It runs inside WebView2's completion callback: it
+    /// should only schedule work.
+    pub fn set_scripts_registered_handler(&self, handler: Option<Rc<dyn Fn()>>) {
+        drop(self.inner.scripts_registered.replace(handler));
+    }
+
+    /// `ICoreWebView2::Stop`: cancels the navigation in flight, if any. A
+    /// navigation started afterwards would cancel it in any case; stopping it
+    /// first lets WebView2 report outstanding script registrations without
+    /// waiting for that navigation's response.
+    pub fn stop_navigation(&self) {
+        // SAFETY: `webview` is this webview's live ICoreWebView2; no arguments.
+        let _ = unsafe { self.inner.webview.Stop() };
     }
 
     /// Removes a script added with [`add_user_script`](Self::add_user_script)
@@ -351,6 +386,7 @@ impl Drop for WebviewExtras {
         drop(inner.file_drop_handler.take());
         drop(inner.accelerator_handler.take());
         drop(inner.navigation_failed_handler.take());
+        drop(inner.scripts_registered.take());
     }
 }
 
@@ -452,6 +488,19 @@ impl Inner {
         let handler: Option<&ICoreWebView2ExecuteScriptCompletedHandler> = None;
         // SAFETY: the script is an owned HSTRING for the call; no completion handler.
         unsafe { self.webview.ExecuteScript(&hstring(script), handler) }
+    }
+
+    /// One outstanding script registration completed; tells the handler when
+    /// it was the last.
+    fn script_registered(&self) {
+        let left = self.scripts_outstanding.get().saturating_sub(1);
+        self.scripts_outstanding.set(left);
+        if left == 0 {
+            let handler = self.scripts_registered.borrow().clone();
+            if let Some(handler) = handler {
+                handler();
+            }
+        }
     }
 
     fn remove_script_id(&self, id: &str) {

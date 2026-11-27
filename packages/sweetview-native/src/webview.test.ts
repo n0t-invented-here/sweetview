@@ -108,6 +108,26 @@ describe.if(onWindows)("W2.1 the Webview class", () => {
     expect(r.twinAfterDestroy).toBe(-3);
   }, 60_000);
 
+  // A page loading from a Bun.serve in the same process: bind, init and unbind
+  // return while the load waits for its response, and the next document has
+  // all three applied. The hard limit ends the fixture if a call never returns.
+  for (const mode of ["pump", "run"] as const) {
+    test(`W2.1 bind, init and unbind while the page loads from this process's own server (${mode === "pump" ? "loop pumped from a Bun timer" : "blocking run()"})`, async () => {
+      const { r, exitCode } = await runFixture("webview-load-in-flight.ts", [mode], {}, 45_000);
+      expect(r.limitReached).toBeUndefined();
+      expect(r.steps).toEqual(["bind", "bind returned", "init", "init returned", "unbind", "unbind returned"]);
+      expect(exitCode).toBe(0);
+      expect(r.timedOut).toBeUndefined();
+      // Under the Bun-timer loop the server answers and the page loads; inside
+      // run() this process's JavaScript, the server's included, does not run.
+      if (mode === "pump") expect(r.firstLoaded).toBe(true);
+      else expect(r.runReturned).toBe(true);
+      // The next document has the binding made during the load (and it
+      // answers), the init script, and not the binding removed during it.
+      expect(r.next).toEqual({ page: "second", during: "function", early: "undefined", init: true, duringResult: "during:x" });
+    }, 60_000);
+  }
+
   test("W2.1 unload() destroys every webview this process made, and closes the windows they made", async () => {
     const { r, exitCode } = await api("unload");
     expect(exitCode).toBe(0);
