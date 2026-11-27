@@ -1,99 +1,44 @@
-// WinRT toasts and hidden Shell_NotifyIconW fallback share a message window.
-// Each toast or balloon carries its own click payload, with or without a Tray.
+// Windows notifications through the native binding: WinRT toasts, with a
+// balloon on a hidden notification icon of the notifier's own as the fallback,
+// with or without a Tray. Each toast or balloon carries its own click payload.
 
+import { binding } from "../binding";
+import type { Notifier as NativeNotifier } from "../../prebuilt/binding";
 import { type NotificationClick, type NotificationOptions, type NotifierBackend, type NotifierOptions, notificationId } from "../notifications";
-import { SM_CXICON, WM_APP, lastError, shell32, wstr } from "./api";
-import { loadIcon, releaseIcon, type LoadedIcon } from "./icon";
-import { ensureWin32Init } from "./init";
-import { createMessageWindow } from "./message-window";
-import { NID_BALLOON_ICON, NID_CALLBACK, NID_FLAGS, NID_HICON, NID_HWND, NID_INFO, NID_INFO_FLAGS, NID_INFO_TITLE, NID_SIZE, NID_TIP, NID_UID, currentTrayIconBytes } from "./tray";
-import { WM_TOAST_EVENT, WinRtToastNotifier } from "./winrt-toast";
+import { notifierTrayIcon, onNotifierTrayIcon } from "./notify-icon";
 
-const WM_NOTIFIER = WM_APP + 2;
+/**
+ * Marks a `dataJson` that is not JSON: a value `JSON.stringify` cannot carry,
+ * which today's notifier hands back unchanged. A NUL cannot start JSON text.
+ */
+const RAW_DATA = "\u0000sweetview-raw:";
 
-const NIM_ADD = 0;
-const NIM_DELETE = 2;
-const NIF_MESSAGE = 0x1;
-const NIF_ICON = 0x2;
-const NIF_TIP = 0x4;
-const NIF_STATE = 0x8;
-const NIF_INFO = 0x10;
-
-const NIS_HIDDEN = 0x1;
-const NID_STATE = 296;
-const NID_STATE_MASK = 300;
-
-const NIIF_INFO = 0x1;
-const NIIF_USER = 0x4;
-const NIIF_NOSOUND = 0x10;
-const NIIF_LARGE_ICON = 0x20;
-const NIIF_RESPECT_QUIET_TIME = 0x80;
-
-const NIN_BALLOONHIDE = 0x0403;
-const NIN_BALLOONTIMEOUT = 0x0404;
-const NIN_BALLOONUSERCLICK = 0x0405;
-
-let nextNotificationUid = 10000;
-
-const setWide = (nid: Uint8Array, offset: number, value: string, wchars: number) => {
-  const bytes = wstr(value);
-  nid.set(bytes.subarray(0, Math.min(bytes.length, (wchars - 1) * 2)), offset);
-};
-
-export function hiddenBalloonData(
-  hwnd: bigint,
-  uid: number,
-  smallIcon: bigint,
-  balloonIcon: bigint,
-  title: string,
-  body: string,
-  silent: boolean,
-): Uint8Array {
-  const nid = new Uint8Array(NID_SIZE);
-  const dv = new DataView(nid.buffer);
-  dv.setUint32(0, NID_SIZE, true);
-  dv.setBigUint64(NID_HWND, hwnd, true);
-  dv.setUint32(NID_UID, uid, true);
-  dv.setUint32(NID_FLAGS, NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_STATE | NIF_INFO, true);
-  dv.setUint32(NID_CALLBACK, WM_NOTIFIER, true);
-  dv.setBigUint64(NID_HICON, smallIcon, true);
-  setWide(nid, NID_TIP, title, 128);
-  dv.setUint32(NID_STATE, NIS_HIDDEN, true);
-  dv.setUint32(NID_STATE_MASK, NIS_HIDDEN, true);
-  setWide(nid, NID_INFO, body, 256);
-  setWide(nid, NID_INFO_TITLE, title, 64);
-  const ownIcon = balloonIcon !== 0n;
-  let flags = (ownIcon ? NIIF_USER | NIIF_LARGE_ICON : NIIF_INFO) | NIIF_RESPECT_QUIET_TIME;
-  if (silent) flags |= NIIF_NOSOUND;
-  dv.setUint32(NID_INFO_FLAGS, flags, true);
-  dv.setBigUint64(NID_BALLOON_ICON, balloonIcon, true);
-  return nid;
+/** Hands `ico` to the native notifier; bytes it refuses fall back to the stock icon. */
+function applyIcon(native: NativeNotifier, ico: Uint8Array | undefined): void {
+  try {
+    native.setIcon(ico ?? null);
+  } catch (err) {
+    console.error("sweetview: notifier icon:", err);
+    native.setIcon(null);
+  }
 }
-
-function deleteBalloonData(hwnd: bigint, uid: number): Uint8Array {
-  const nid = new Uint8Array(NID_SIZE);
-  const dv = new DataView(nid.buffer);
-  dv.setUint32(0, NID_SIZE, true);
-  dv.setBigUint64(NID_HWND, hwnd, true);
-  dv.setUint32(NID_UID, uid, true);
-  return nid;
-}
-
-type PendingEntry = {
-  click: NotificationClick;
-  smallIcon: LoadedIcon;
-  largeIcon: LoadedIcon;
-};
 
 export function createNotifier(options: NotifierOptions = {}): NotifierBackend {
-  ensureWin32Init();
   let disposed = false;
-  let toasts: WinRtToastNotifier | undefined;
-  let triedWinRt = false;
-  const pending = new Map<number, PendingEntry>();
+  const rawData = new Map<number, unknown>();
+  let nextRaw = 1;
 
-  const onClick = (click: NotificationClick): void => {
+  const onClick = (id: string, dataJson: string | null | undefined): void => {
     if (disposed) return;
+    let data: unknown;
+    if (dataJson != null && dataJson.startsWith(RAW_DATA)) {
+      const key = Number(dataJson.slice(RAW_DATA.length));
+      data = rawData.get(key);
+      rawData.delete(key);
+    } else if (dataJson != null) {
+      data = JSON.parse(dataJson);
+    }
+    const click: NotificationClick = { id, data };
     try {
       options.onClick?.(click);
     } catch (err) {
@@ -101,90 +46,58 @@ export function createNotifier(options: NotifierOptions = {}): NotifierBackend {
     }
   };
 
-  const removeUid = (uid: number): PendingEntry | undefined => {
-    const entry = pending.get(uid);
-    if (!entry) return undefined;
-    pending.delete(uid);
-    shell32.Shell_NotifyIconW(NIM_DELETE, deleteBalloonData(window.hwnd, uid));
-    releaseIcon(entry.smallIcon);
-    releaseIcon(entry.largeIcon);
-    return entry;
-  };
-
-  const window = createMessageWindow((message, wParam, lParam) => {
-    if (message === WM_TOAST_EVENT) {
-      toasts?.handleEvent(wParam, lParam);
-      return;
-    }
-    if (message !== WM_NOTIFIER) return;
-    const uid = Number(wParam);
-    const event = Number(lParam) & 0xffff;
-    if (event === NIN_BALLOONUSERCLICK) {
-      const entry = removeUid(uid);
-      if (entry) onClick(entry.click);
-    } else if (event === NIN_BALLOONTIMEOUT || event === NIN_BALLOONHIDE) {
-      removeUid(uid);
-    }
+  const NativeNotifierClass = binding().Notifier;
+  const appId = options.appId ?? options.identity?.appId ?? null;
+  const appName = options.identity?.appName ?? null;
+  let native: NativeNotifier;
+  try {
+    native = new NativeNotifierClass(appId, appName, notifierTrayIcon() ?? null, onClick);
+  } catch {
+    // Icon bytes the binding refuses: start with the stock icon instead.
+    native = new NativeNotifierClass(appId, appName, null, onClick);
+  }
+  const stopIcon = onNotifierTrayIcon((ico) => {
+    if (!disposed) applyIcon(native, ico);
   });
 
-  const showBalloon = (n: NotificationOptions, click: NotificationClick): boolean => {
-    if (disposed) return false;
-    const uid = nextNotificationUid++;
-    const ico = currentTrayIconBytes();
-    const smallIcon = loadIcon(ico);
-    const largeIcon = loadIcon(ico, SM_CXICON);
-    const hBalloon = largeIcon.owned ? largeIcon.handle : 0n;
-    const nid = hiddenBalloonData(window.hwnd, uid, smallIcon.handle, hBalloon, n.title, n.body ?? "", n.silent === true);
-    const ok = shell32.Shell_NotifyIconW(NIM_ADD, nid) !== 0;
-    if (!ok) {
-      console.error(`sweetview: Shell_NotifyIcon notification failed (${lastError()})`);
-      releaseIcon(smallIcon);
-      releaseIcon(largeIcon);
-      return false;
-    }
-    pending.set(uid, { click, smallIcon, largeIcon });
-    return true;
-  };
-
-  return {
+  const backend: NotifierBackend = {
     notify(n: NotificationOptions): boolean {
       if (disposed) return false;
-      // Clone data through JSON when possible to match macOS behavior cleanly; fallback to raw value if needed.
-      let data: unknown = n.data;
-      if (data !== undefined) {
+      // Clone data through JSON when possible to match macOS; a value JSON cannot carry comes back unchanged.
+      let dataJson: string | null = null;
+      if (n.data !== undefined) {
+        let json: string | undefined;
         try {
-          data = JSON.parse(JSON.stringify(data));
-        } catch {}
-      }
-      const click = { id: notificationId(n), data };
-      if (!triedWinRt) {
-        triedWinRt = true;
-        try {
-          toasts = new WinRtToastNotifier(window.hwnd, { ...options, onClick });
+          json = JSON.stringify(n.data);
+          if (json !== undefined) JSON.parse(json);
         } catch {
-          // WinRT or per-user identity registration can be unavailable.
+          json = undefined;
+        }
+        if (json === undefined) {
+          const key = nextRaw++;
+          rawData.set(key, n.data);
+          dataJson = `${RAW_DATA}${key}`;
+        } else {
+          dataJson = json;
         }
       }
-      if (toasts) {
-        const notification = { title: n.title, body: n.body, silent: n.silent };
-        try {
-          toasts.show(notification, click, () => showBalloon(notification, click));
-          return true;
-        } catch {
-          // A synchronous WinRT failure leaves the balloon responsible for delivery.
-        }
-      }
-      return showBalloon(n, click);
+      return native.notify(notificationId(n), n.title, n.body ?? "", n.silent === true, dataJson);
     },
     dispose() {
       if (disposed) return;
       disposed = true;
-      try {
-        toasts?.dispose();
-      } finally {
-        for (const uid of pending.keys()) removeUid(uid);
-        window.destroy();
-      }
+      stopIcon();
+      rawData.clear();
+      native.dispose();
     },
   };
+  nativeOf.set(backend, native);
+  return backend;
+}
+
+const nativeOf = new WeakMap<NotifierBackend, NativeNotifier>();
+
+/** Test hook: the binding's notifier behind a backend `createNotifier` made, for its `debug*` methods. */
+export function debugNativeNotifier(backend: NotifierBackend): NativeNotifier | undefined {
+  return nativeOf.get(backend);
 }

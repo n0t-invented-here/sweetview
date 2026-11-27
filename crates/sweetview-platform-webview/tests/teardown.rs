@@ -86,7 +86,8 @@ fn teardown() {
     view.eval(&fetch_js("held", "/held", "{}"));
     view.eval(&fetch_js("frames-held", "http://frames.webview.localhost/held", "{ mode: 'no-cors' }"));
     view.eval(&fetch_js("open-stream", "/open-stream", "{}"));
-    assert!(ctx.pump(Some(&view), Duration::from_secs(20), || seen.borrow().len() == 3), "all three reached the handler");
+    let all = ctx.pump(Some(&view), Duration::from_secs(20), || seen.borrow().len() == 3);
+    assert!(all, "all three reached the handler: {:?} {:?}", seen.borrow(), view.messages.borrow());
     let stream_id = begun_rx.recv_timeout(Duration::from_secs(5)).unwrap();
     // Let the stream head reach WebView2, so a reader is waiting on it.
     ctx.settle(Some(&view), Duration::from_millis(500));
@@ -130,22 +131,69 @@ fn teardown() {
     ctx.settle(None, Duration::from_millis(500));
 
     eprintln!("-- create/drop loop: GUI and handle counts return to their start");
-    one_life(&mut ctx); // warm-up: loads WebView2's DLLs and starts its threads
-    one_life(&mut ctx);
+    // WebView2 (or `wry`) keeps about one kernel handle per webview ever made in
+    // the process, with or without the extras; the same loop with no extras is
+    // the baseline, so the extras must add nothing to it.
+    for _ in 0..2 {
+        one_life(&mut ctx); // warm-up: loads WebView2's DLLs and starts its threads
+        bare_life(&mut ctx);
+    }
+    let lives = 5;
+    let bare = growth(&mut ctx, lives, bare_life);
+    let with_extras = growth(&mut ctx, lives, one_life);
+    eprintln!("   over {lives} lives: without the extras {bare:?}, with them {with_extras:?}");
+    assert_eq!(with_extras.user, 0, "USER objects return to their start");
+    assert_eq!(with_extras.gdi, 0, "GDI objects return to their start");
+    assert!(
+        with_extras.handles <= bare.handles,
+        "the extras add no kernel handle to what a webview without them keeps: {with_extras:?} vs {bare:?}"
+    );
+}
+
+#[derive(Debug)]
+struct Growth {
+    user: i64,
+    gdi: i64,
+    handles: i64,
+}
+
+/// What `lives` runs of `life` leave behind, after letting WebView2 settle.
+fn growth(ctx: &mut Ctx, lives: usize, life: fn(&mut Ctx)) -> Growth {
     ctx.settle(None, Duration::from_secs(1));
     let start = counts();
-    for _ in 0..5 {
-        one_life(&mut ctx);
+    for _ in 0..lives {
+        life(ctx);
     }
     // WebView2 lets go of some handles a little after the controller closes.
     let mut end = counts();
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while end != start && Instant::now() < deadline {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while end.handles > start.handles && Instant::now() < deadline {
         ctx.settle(None, Duration::from_millis(250));
         end = counts();
     }
-    eprintln!("   start {start:?}, after five lives {end:?}");
-    assert_eq!(end.user, start.user, "USER objects");
-    assert_eq!(end.gdi, start.gdi, "GDI objects");
-    assert!(end.handles <= start.handles, "kernel handles: {start:?} -> {end:?}");
+    Growth {
+        user: i64::from(end.user) - i64::from(start.user),
+        gdi: i64::from(end.gdi) - i64::from(start.gdi),
+        handles: i64::from(end.handles) - i64::from(start.handles),
+    }
+}
+
+/// The same life as `one_life` with no extras: a window and a `wry` webview
+/// showing a page that reports through IPC, then dropped.
+fn bare_life(ctx: &mut Ctx) {
+    let window = tao::window::WindowBuilder::new().build(&ctx.el).expect("window");
+    let mut context = wry::WebContext::new(Some(
+        std::env::temp_dir().join(format!("sweetview-platform-webview-test-{}", std::process::id())),
+    ));
+    let loaded = Rc::new(std::cell::Cell::new(false));
+    let sink = loaded.clone();
+    let webview = wry::WebViewBuilder::new_with_web_context(&mut context)
+        .with_ipc_handler(move |_| sink.set(true))
+        .with_html("<script>window.ipc.postMessage('ready')</script>")
+        .build(&window)
+        .expect("webview");
+    assert!(ctx.pump(None, Duration::from_secs(20), || loaded.get()));
+    drop(webview);
+    drop(window);
+    ctx.settle(None, Duration::from_millis(300));
 }

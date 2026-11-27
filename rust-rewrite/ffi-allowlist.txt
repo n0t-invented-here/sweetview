@@ -1,0 +1,2 @@
+# Files under packages/ and demos/ that still import bun:ffi, one per line as path<TAB>reason (rust-rewrite/REQUIREMENTS.md, R3).
+packages/sweetview-native/src/win32/activation.test.ts	probe: hides and shows the single-instance primary's message window (FindWindowExW, SetWindowTextW) so a secondary process must retry its lookup; no Sweetview API reaches that OS state

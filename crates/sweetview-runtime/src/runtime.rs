@@ -336,7 +336,7 @@ fn build_event_loop() -> EventLoop<()> {
 }
 
 #[cfg(all(test, windows))]
-mod tests {
+pub(crate) mod tests {
   use super::*;
   use std::time::{Duration, Instant};
 

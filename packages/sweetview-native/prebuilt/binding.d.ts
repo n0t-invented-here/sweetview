@@ -90,14 +90,73 @@ export declare class Engine {
   destroy(): void
 }
 
+/**
+ * Shows desktop notifications and reports clicks on them, on the UI thread.
+ * Windows: WinRT toasts, with a balloon on a hidden notification icon of its own as the fallback.
+ */
+export declare class Notifier {
+  /**
+   * `appId`/`appName`: the toast identity (`null` uses `Sweetview.DesktopApp`); `iconIco`: the
+   * `.ico` the balloon shows (`null`: the stock icon); `onClick(id, dataJson)` runs on the UI thread.
+   */
+  constructor(appId: string | null, appName: string | null, iconIco: Uint8Array | null, onClick: ((id: string, dataJson: string | null) => void) | null)
+  /** Shows a notification. True when it was handed to the OS; false once disposed. */
+  notify(id: string, title: string, body: string, silent: boolean, dataJson?: string | undefined | null): boolean
+  /** Replaces the `.ico` the balloon fallback shows. Throws on bytes that are not an icon. */
+  setIcon(iconIco?: Uint8Array | undefined | null): void
+  /** Releases the notifier. Safe to call twice. */
+  dispose(): void
+  /** Test hook: `"auto"`, `"balloonOnly"` or `"toastShowFails"`. */
+  debugForcePath(path: string): void
+  /** Test hook: `notify`, reporting `"toast:<cookie>"`, `"balloon:<uid>"` or `null`. */
+  debugShow(id: string, title: string, body: string, silent: boolean, dataJson?: string | undefined | null): string | null
+  /** Test hook: a toast's `"dismissed"`, `"activated"` or `"failed"` event, through the handler WinRT holds. */
+  debugSimulateToastEvent(cookie: number, event: string): boolean
+  /** Test hook: a balloon's `"clicked"`, `"timedOut"` or `"hidden"` event, posted as the shell would. */
+  debugSimulateBalloonEvent(uid: number, event: string): boolean
+  /** Test hook: toasts shown that have not reported an event. */
+  debugPendingToasts(): number
+  /** Test hook: balloons shown that have not been clicked, timed out or hidden. */
+  debugPendingBalloons(): number
+  /** Test hook: whether WinRT toasts are in use. */
+  debugToastsAvailable(): boolean
+}
+
+/** The single-instance lock of this process, or a secondary's result. */
+export declare class SingleInstance {
+  /**
+   * Takes the lock for `appId`, or hands `payloadJson` to the instance that holds it.
+   * On the primary, `onSecond(payloadJson)` runs on the UI thread for each later launch. UI thread.
+   */
+  static acquire(appId: string, payloadJson: string, onSecond: (arg: string) => void): SingleInstance
+  /** Whether this process holds the lock. */
+  get isPrimary(): boolean
+  /** Secondary only: the payload was delivered over the native transport. */
+  get handedOff(): boolean
+  /** Primary: releases the lock. Does nothing on a secondary or a second time. */
+  dispose(): void
+}
+
 /** Starts a streamed answer to a request of webview `handle`. Callable from any thread. */
 export declare function beginResponse(handle: number, id: bigint, status: number, headersJson?: string | undefined | null): number
 
 /** Cancels a timeout or an interval. Cancelling one that is gone does nothing. */
 export declare function cancelTimeout(id: number): void
 
+/** Empties the clipboard. UI thread. */
+export declare function clipboardClear(): void
+
+/** The clipboard's text, or `null` when it holds no text. UI thread. */
+export declare function clipboardReadText(): string | null
+
+/** Replaces the whole clipboard with `text`. UI thread. */
+export declare function clipboardWriteText(text: string): void
+
 /** Answers a request of webview `handle`. Callable from any thread. */
 export declare function completeRequest(handle: number, id: bigint, status: number, headersJson?: string | undefined | null, body?: Uint8Array | undefined | null): number
+
+/** Test hook: toast event handlers alive in the process; zero once every notifier is disposed. */
+export declare function debugLiveToastHandlers(): number
 
 /** Calls `job` on a later turn of whichever loop the UI thread is in, a modal one included. */
 export declare function defer(job: () => void): void
@@ -150,6 +209,12 @@ export declare function pumpEvents(): boolean
  */
 export declare function quitLoop(): void
 
+/** Tells the shell that program icons changed. Any thread. */
+export declare function refreshShellIcons(): void
+
+/** Registers `scheme` for the current user with the given registry values. Any thread. */
+export declare function registerUrlScheme(scheme: string, appName: string, iconPath: string, command: string): void
+
 /** Removes the keyboard hook. Returns a `webview_error_t`; 2 when none is installed. */
 export declare function removeKeyboardHook(): number
 
@@ -167,6 +232,9 @@ export declare function scheduleTimeout(delayMs: number, job: () => void): numbe
 
 /** Sets the function that `wake(token)` runs on the UI thread. `null` removes it. */
 export declare function setDrain(token: number, drain?: (() => void) | undefined | null): void
+
+/** Removes the current user's registration of `scheme`. Any thread. */
+export declare function unregisterUrlScheme(scheme: string): void
 
 /**
  * Runs the drain function registered under `token` on the UI thread.

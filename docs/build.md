@@ -1,6 +1,6 @@
 # @n1h/sweetview/build
 
-Build-time helpers for shipping an app: the icon files a build uses, and the macOS `.app` bundle around the compiled binary. They run on any OS in any build script and load neither `bun:ffi` nor the webview library. This page also covers the `make-app.ts` command line and the `@n1h/sweetview/file-imports` types. The module is `@n1h/sweetview/build` in the facade and the standalone package `@n1h/sweetview-build`; it also re-exports [`defineAppIdentity`](settings-store.md#defineappidentity), so one identity can drive the build and the app.
+Build-time helpers for shipping an app: the icon files a build uses, and the macOS `.app` bundle around the compiled binary. They run on any OS in any build script and load neither `bun:ffi` nor the webview library; only `refreshWindowsIcons`, on Windows, loads the native binding when it is called. This page also covers the `make-app.ts` command line and the `@n1h/sweetview/file-imports` types. The module is `@n1h/sweetview/build` in the facade and the standalone package `@n1h/sweetview-build`; it also re-exports [`defineAppIdentity`](settings-store.md#defineappidentity), so one identity can drive the build and the app.
 
 - [Workflow](#workflow)
 - [Reference](#reference)
@@ -173,8 +173,10 @@ Windows build script.
 On macOS and Linux it returns without doing anything, because nothing needs
 it: macOS reads an app's icon from its bundle's
 `Contents/Resources/AppIcon.icns` ([`makeMacApp`](#makemacapp)), so
-rebuilding the bundle is the whole update. Failures (no `shell32.dll`, no
-`bun:ffi`) are swallowed: the icon is in the file either way.
+rebuilding the bundle is the whole update. On Windows the call is made by
+the native binding of `@n1h/sweetview-native`, which the build package
+loads only when `refreshWindowsIcons` runs; a failure (the binding missing
+or not loadable) is swallowed: the icon is in the file either way.
 
 ## make-app command line
 

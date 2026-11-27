@@ -38,6 +38,11 @@ pub const INDEX_HTML: &str = r#"<!doctype html>
 
 pub const INDEX_URL: &str = "http://webview.localhost/index.html";
 
+thread_local! {
+    /// True while the harness runs `WebviewExtras::drain`.
+    pub static IN_DRAIN: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 pub struct Ctx {
     pub el: EventLoop<()>,
 }
@@ -139,7 +144,9 @@ impl Ctx {
         let mut reached = false;
         self.el.run_return(|_event, _target, control_flow| {
             if let Some(extras) = view.and_then(|v| v.extras.as_ref()) {
+                IN_DRAIN.with(|d| d.set(true));
                 extras.drain();
+                IN_DRAIN.with(|d| d.set(false));
             }
             // `tao` still calls the handler after Exit (LoopDestroyed): stay exited.
             if reached || done() {

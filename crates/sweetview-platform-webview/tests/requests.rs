@@ -273,16 +273,6 @@ fn request_path_on_a_real_webview() {
     assert_eq!(extras.set_allow_external_drop(false), ErrorCode::Ok);
     assert_eq!(extras.set_allow_external_drop(true), ErrorCode::Ok);
 
-    scenario("the drop message is an object, which wry's string IPC never sees");
-    view.drain_raw();
-    view.eval(
-        r#"window.chrome.webview.postMessageWithAdditionalObjects({ __sweetview_file_drop__: true }, []);
-window.chrome.webview.postMessage({ __sweetview_file_drop__: true });
-post({ tag: 'after-object-messages' });"#,
-    );
-    ctx.wait(&view, "after-object-messages");
-    assert!(view.drain_raw().is_empty(), "wry's IPC handler received no object message");
-
     scenario("navigation failures are reported; HTTP error responses are not");
     let failures: Rc<RefCell<Vec<NavigationFailure>>> = Rc::default();
     {

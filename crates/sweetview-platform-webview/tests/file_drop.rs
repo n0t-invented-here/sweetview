@@ -28,12 +28,11 @@ fn a_dropped_file_reaches_the_handler_with_its_path() {
     let path = path.to_str().unwrap().to_string();
 
     let delivered: Rc<RefCell<Vec<Vec<String>>>> = Rc::default();
-    let in_drop_event = Rc::new(std::cell::Cell::new(false));
     {
         let delivered = delivered.clone();
-        let in_drop_event = in_drop_event.clone();
         let handler = Rc::new(move |paths: Vec<String>| {
-            assert!(!in_drop_event.get());
+            // Delivered from `drain`, after WebView2's message event returned.
+            assert!(common::IN_DRAIN.with(|d| d.get()), "the handler runs from drain");
             delivered.borrow_mut().push(paths);
         });
         assert_eq!(extras.set_file_drop_handler(Some(handler)), ErrorCode::Ok);
@@ -41,19 +40,18 @@ fn a_dropped_file_reaches_the_handler_with_its_path() {
     view.eval("post({ tag: 'flag', flag: window.__webview_file_drop_enabled__ })");
     assert_eq!(ctx.wait(&view, "flag")["flag"], true);
 
-    view.eval("window.addEventListener('drop', (e) => post({ tag: 'pagedrop', prevented: e.defaultPrevented, types: Array.from(e.dataTransfer.types), files: e.dataTransfer.files.length })); window.addEventListener('dragover', (e) => post({ tag: 'pageover', prevented: e.defaultPrevented }), { once: true });");
     let data = serde_json::json!({ "items": [], "files": [path], "dragOperationsMask": 1 });
     for kind in ["dragEnter", "dragOver", "drop"] {
         let params = serde_json::json!({ "type": kind, "x": 20, "y": 20, "data": data });
         assert_eq!(extras.call_devtools_protocol_method("Input.dispatchDragEvent", &params.to_string()), ErrorCode::Ok);
     }
-    ctx.settle(Some(&view), Duration::from_secs(2));
-    eprintln!("DBG page {:?}", view.messages.borrow());
     let arrived = ctx.pump(Some(&view), Duration::from_secs(8), || !delivered.borrow().is_empty());
     assert!(arrived, "the drop reached the file drop handler");
     assert_eq!(*delivered.borrow(), vec![vec![path.clone()]], "exactly the dropped file's path, once");
     ctx.settle(Some(&view), Duration::from_millis(200));
     assert_eq!(delivered.borrow().len(), 1);
+    // wry's IPC handler saw the drop script's message, which its owner ignores.
+    assert!(view.drain_raw().iter().any(|m| sweetview_platform_webview::is_file_drop_message(m)));
     drop(view);
     ctx.settle(None, Duration::from_millis(200));
 }

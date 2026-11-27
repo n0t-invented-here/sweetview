@@ -40,10 +40,19 @@ pub use platform::{UserScript, WebviewExtras};
 pub use shared::Responder;
 pub use sweetview_http::ErrorCode;
 
-/// The web message the file drop script posts, as WebView2 reports it with
-/// `WebMessageAsJson`. It is a JSON object, not a string, so `wry`'s IPC
-/// handler (which reads messages with `TryGetWebMessageAsString`) never sees it.
-pub const FILE_DROP_MESSAGE_JSON: &str = r#"{"__sweetview_file_drop__":true}"#;
+/// The web message the file drop script posts, with the dropped files attached.
+///
+/// `wry`'s IPC handler receives it too, as a body of exactly this text: the
+/// IPC handler the caller gives `wry` ignores it ([`is_file_drop_message`]).
+/// It is a string because WebView2 raises no `WebMessageReceived` at all for
+/// `postMessageWithAdditionalObjects` with any other message (an object posts
+/// without an error in the page and never arrives).
+pub const FILE_DROP_MESSAGE: &str = "__sweetview_file_drop__";
+
+/// True for the drop script's message, which `wry`'s IPC handler must ignore.
+pub fn is_file_drop_message(body: &str) -> bool {
+    body == FILE_DROP_MESSAGE
+}
 
 /// A request handed to the request handler.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -158,7 +167,7 @@ pub(crate) fn failure_reason(error_status: i32, http_status: Option<i32>, url: &
 /// The script that captures file drops on the top-level document, ported from
 /// the C++ fork's `create_file_drop_script`. It starts disabled in every
 /// document; [`file_drop_flag_script`] switches it. The message it posts is
-/// [`FILE_DROP_MESSAGE_JSON`].
+/// [`FILE_DROP_MESSAGE`].
 pub(crate) const FILE_DROP_SCRIPT: &str = r#"(function() {
   'use strict';
   if (window !== window.top) {
@@ -189,7 +198,7 @@ pub(crate) const FILE_DROP_SCRIPT: &str = r#"(function() {
     e.preventDefault();
     if (e.dataTransfer.files && e.dataTransfer.files.length) {
       window.chrome.webview.postMessageWithAdditionalObjects(
-        { __sweetview_file_drop__: true }, Array.from(e.dataTransfer.files));
+        '__sweetview_file_drop__', Array.from(e.dataTransfer.files));
     }
   }, true);
 })()"#;
@@ -226,12 +235,13 @@ mod tests {
         );
         assert!(file_drop_flag_script(false).ends_with("= false; }"));
         assert!(FILE_DROP_SCRIPT.contains("if (window !== window.top)"));
-        assert!(FILE_DROP_SCRIPT.contains("__sweetview_file_drop__: true"));
+        assert!(FILE_DROP_SCRIPT.contains(&format!("'{FILE_DROP_MESSAGE}'")));
     }
 
     #[test]
-    fn drop_message_is_not_a_string() {
-        let v: serde_json::Value = serde_json::from_str(FILE_DROP_MESSAGE_JSON).unwrap();
-        assert!(v.is_object());
+    fn drop_message_filter() {
+        assert!(is_file_drop_message("__sweetview_file_drop__"));
+        assert!(!is_file_drop_message("\"__sweetview_file_drop__\""));
+        assert!(!is_file_drop_message("{\"id\":1}"));
     }
 }

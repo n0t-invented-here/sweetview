@@ -1,7 +1,8 @@
 // Build-time helpers for shipping a sweetview app: the icon files the
 // executables embed, and the macOS .app bundle around the compiled binary.
-// Plain file writing; runs on any OS, imports nothing native, so a build
-// script can use it on a machine without the webview library.
+// Plain file writing; runs on any OS and loads nothing native at import, so a
+// build script can use it on a machine without the native binding. Only
+// `refreshWindowsIcons` reaches the binding, on Windows, when it is called.
 //
 //   import { makeMacApp, writeIconFiles } from "@n1h/sweetview/build";
 //
@@ -217,12 +218,9 @@ export function writeIconFiles(dir: string, files: { ico?: Uint8Array; icns?: Ui
 export function refreshWindowsIcons(): void {
   if (process.platform !== "win32") return;
   try {
-    const { dlopen, FFIType } = require("bun:ffi") as typeof import("bun:ffi");
-    const shell32 = dlopen("shell32.dll", { SHChangeNotify: { args: [FFIType.i32, FFIType.u32, FFIType.ptr, FFIType.ptr], returns: FFIType.void } });
-    const SHCNE_ASSOCCHANGED = 0x08000000;
-    const SHCNF_FLUSH = 0x1000;
-    shell32.symbols.SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_FLUSH, null, null);
-    shell32.close();
+    // Loaded here, not at import: the rest of this module never needs the binding.
+    const { refreshShellIcons } = require("@n1h/sweetview-native/shell-icons") as typeof import("@n1h/sweetview-native/shell-icons");
+    refreshShellIcons();
   } catch {
     // The icon is in the file either way.
   }

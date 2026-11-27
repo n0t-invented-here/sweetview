@@ -38,7 +38,7 @@ use self::pump::{pump_while, OnQuit};
 use crate::shared::{next_request_id, Job, Responder, Shared};
 use crate::stream::StreamState;
 use crate::{
-    failure_reason, file_drop_flag_script, ExtrasOptions, KeyData, NavigationFailure, RawRequest, FILE_DROP_MESSAGE_JSON,
+    failure_reason, file_drop_flag_script, is_file_drop_message, ExtrasOptions, KeyData, NavigationFailure, RawRequest,
     FILE_DROP_SCRIPT,
 };
 
@@ -656,20 +656,18 @@ impl Inner {
     // ---- file drops -----------------------------------------------------------
 
     fn on_web_message_received(self: &Rc<Self>, args: &ICoreWebView2WebMessageReceivedEventArgs) {
-        let mut json = PWSTR::null();
-        // SAFETY: `json` is a local PWSTR for the call to fill; freed by `take_pwstr`.
-        if unsafe { args.WebMessageAsJson(&mut json) }.is_err() {
+        let mut message = PWSTR::null();
+        // SAFETY: `message` is a local PWSTR for the call to fill; freed by `take_pwstr`.
+        // A message that is not a string fails here and is not the drop script's.
+        if unsafe { args.TryGetWebMessageAsString(&mut message) }.is_err() {
             return;
         }
-        let json = take_pwstr(json);
-        eprintln!("DBG web message {json:?}");
-        if json != FILE_DROP_MESSAGE_JSON || self.file_drop_handler.borrow().is_none() {
+        if !is_file_drop_message(&take_pwstr(message)) || self.file_drop_handler.borrow().is_none() {
             return;
         }
         // The paths are read here, while the event args are valid; the handler
         // runs later from `drain`, after this event has returned.
         let paths = read_dropped_paths(args);
-        eprintln!("DBG paths {paths:?}");
         if !paths.is_empty() {
             let _ = self.shared.dispatch(Job::FileDrop(paths));
         }

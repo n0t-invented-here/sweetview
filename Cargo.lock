@@ -2015,6 +2015,8 @@ dependencies = [
  "serde_json",
  "sweetview-platform-input",
  "sweetview-platform-loop",
+ "sweetview-platform-notify",
+ "sweetview-platform-shell",
  "sweetview-platform-webview",
  "sweetview-platform-window",
  "tao",

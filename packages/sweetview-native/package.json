@@ -21,6 +21,7 @@
     ".": "./src/index.ts",
     "./hit-regions": "./src/hit-regions.ts",
     "./internal": "./src/internal.ts",
+    "./shell-icons": "./src/shell-icons.ts",
     "./win32/api": "./src/win32/api.ts",
     "./win32/shortcuts": "./src/win32/shortcuts.ts",
     "./win32/strip-shared": "./src/win32/strip-shared.ts",
