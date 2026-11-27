@@ -9,10 +9,118 @@ targets:
 dependencies:
   apm:
     - git: ssh://git@git.mrowr.dev:2222/AI/mrowr-purr-core-prompts
-      path: packages/bundles/purr-neon
+      path: packages/mcp/chrome-devtools
       ref: main
     - git: ssh://git@git.mrowr.dev:2222/AI/mrowr-purr-core-prompts
-      path: packages/mcp/chrome-devtools
+      path: packages/instructions/a-defect-is-a-defect
+      ref: main
+    - git: ssh://git@git.mrowr.dev:2222/AI/mrowr-purr-core-prompts
+      path: packages/instructions/a-reviewer-needs-written-criteria-and-an-exact-change-set
+      ref: main
+    - git: ssh://git@git.mrowr.dev:2222/AI/mrowr-purr-core-prompts
+      path: packages/instructions/agent-orchestrator
+      ref: main
+    - git: ssh://git@git.mrowr.dev:2222/AI/mrowr-purr-core-prompts
+      path: packages/instructions/antigravity-mcp-cold-turn
+      ref: main
+    - git: ssh://git@git.mrowr.dev:2222/AI/mrowr-purr-core-prompts
+      path: packages/instructions/apm-managed-repo
+      ref: main
+    - git: ssh://git@git.mrowr.dev:2222/AI/mrowr-purr-core-prompts
+      path: packages/instructions/appearance-and-feel-are-part-of-done
+      ref: main
+    - git: ssh://git@git.mrowr.dev:2222/AI/mrowr-purr-core-prompts
+      path: packages/instructions/check-the-path-before-a-recursive-delete
+      ref: main
+    - git: ssh://git@git.mrowr.dev:2222/AI/mrowr-purr-core-prompts
+      path: packages/instructions/collaboration
+      ref: main
+    - git: ssh://git@git.mrowr.dev:2222/AI/mrowr-purr-core-prompts
+      path: packages/instructions/commit-and-push-wip-often
+      ref: main
+    - git: ssh://git@git.mrowr.dev:2222/AI/mrowr-purr-core-prompts
+      path: packages/instructions/definition-of-done-git-pushed
+      ref: main
+    - git: ssh://git@git.mrowr.dev:2222/AI/mrowr-purr-core-prompts
+      path: packages/instructions/delete-merged-branches-from-remote
+      ref: main
+    - git: ssh://git@git.mrowr.dev:2222/AI/mrowr-purr-core-prompts
+      path: packages/instructions/dictation
+      ref: main
+    - git: ssh://git@git.mrowr.dev:2222/AI/mrowr-purr-core-prompts
+      path: packages/instructions/dont-read-deleted-files-from-git-history
+      ref: main
+    - git: ssh://git@git.mrowr.dev:2222/AI/mrowr-purr-core-prompts
+      path: packages/instructions/feature-work-goes-on-a-branch
+      ref: main
+    - git: ssh://git@git.mrowr.dev:2222/AI/mrowr-purr-core-prompts
+      path: packages/instructions/finish-the-work-dont-offer-to-start-it
+      ref: main
+    - git: ssh://git@git.mrowr.dev:2222/AI/mrowr-purr-core-prompts
+      path: packages/instructions/format-chat-for-scanning
+      ref: main
+    - git: ssh://git@git.mrowr.dev:2222/AI/mrowr-purr-core-prompts
+      path: packages/instructions/git-never-force-push-or-rewrite-pushed-history
+      ref: main
+    - git: ssh://git@git.mrowr.dev:2222/AI/mrowr-purr-core-prompts
+      path: packages/instructions/heredocs-on-windows
+      ref: main
+    - git: ssh://git@git.mrowr.dev:2222/AI/mrowr-purr-core-prompts
+      path: packages/instructions/how-to-report-done-work
+      ref: main
+    - git: ssh://git@git.mrowr.dev:2222/AI/mrowr-purr-core-prompts
+      path: packages/instructions/many-sessions-share-this-machine-touch-only-your-own
+      ref: main
+    - git: ssh://git@git.mrowr.dev:2222/AI/mrowr-purr-core-prompts
+      path: packages/instructions/read-the-readme-in-full
+      ref: main
+    - git: ssh://git@git.mrowr.dev:2222/AI/mrowr-purr-core-prompts
+      path: packages/instructions/repo-folder-layout
+      ref: main
+    - git: ssh://git@git.mrowr.dev:2222/AI/mrowr-purr-core-prompts
+      path: packages/instructions/subagent-delegation
+      ref: main
+    - git: ssh://git@git.mrowr.dev:2222/AI/mrowr-purr-core-prompts
+      path: packages/instructions/subagents-run-in-the-background
+      ref: main
+    - git: ssh://git@git.mrowr.dev:2222/AI/mrowr-purr-core-prompts
+      path: packages/instructions/the-user-is-not-on-this-machine-say-it-in-chat
+      ref: main
+    - git: ssh://git@git.mrowr.dev:2222/AI/mrowr-purr-core-prompts
+      path: packages/instructions/the-user-owns-the-product-and-every-decision-about-it
+      ref: main
+    - git: ssh://git@git.mrowr.dev:2222/AI/mrowr-purr-core-prompts
+      path: packages/instructions/the-user-runs-many-sessions-on-many-machines-across-many-projects
+      ref: main
+    - git: ssh://git@git.mrowr.dev:2222/AI/mrowr-purr-core-prompts
+      path: packages/instructions/tldr
+      ref: main
+    - git: ssh://git@git.mrowr.dev:2222/AI/mrowr-purr-core-prompts
+      path: packages/instructions/when-to-ask-the-user
+      ref: main
+    - git: ssh://git@git.mrowr.dev:2222/AI/mrowr-purr-core-prompts
+      path: packages/skills/coding-ethos
+      ref: main
+    - git: ssh://git@git.mrowr.dev:2222/AI/mrowr-purr-core-prompts
+      path: packages/skills/apm-contributing
+      ref: main
+    - git: ssh://git@git.mrowr.dev:2222/AI/mrowr-purr-core-prompts
+      path: packages/skills/product-work-checklist-review-and-done-report
+      ref: main
+    - git: ssh://git@git.mrowr.dev:2222/AI/mrowr-purr-core-prompts
+      path: packages/skills/prompt-author
+      ref: main
+    - git: ssh://git@git.mrowr.dev:2222/AI/mrowr-purr-core-prompts
+      path: packages/skills/project-instruction-maintainer
+      ref: main
+    - git: ssh://git@git.mrowr.dev:2222/AI/mrowr-purr-core-prompts
+      path: packages/skills/working-with-purr
+      ref: main
+    - git: ssh://git@git.mrowr.dev:2222/AI/mrowr-purr-core-prompts
+      path: packages/skills/skill-author
+      ref: main
+    - git: ssh://git@git.mrowr.dev:2222/AI/mrowr-purr-core-prompts
+      path: packages/skills/prompt-reviewer
       ref: main
 
 includes: auto
