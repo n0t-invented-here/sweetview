@@ -33,7 +33,7 @@ pub fn clear() -> Result<()> {
 #[cfg(all(test, windows))]
 mod tests {
   use super::*;
-  use crate::runtime::tests::on_ui_thread;
+  use crate::runtime::testing::on_ui_thread;
 
   #[test]
   fn another_thread_is_refused() {

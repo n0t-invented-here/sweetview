@@ -72,7 +72,7 @@ mod tests {
   use std::rc::Rc;
 
   use super::*;
-  use crate::runtime::tests::on_ui_thread;
+  use crate::runtime::testing::on_ui_thread;
 
   fn unique_app_id() -> String {
     let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
