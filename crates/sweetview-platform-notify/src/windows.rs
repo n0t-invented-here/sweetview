@@ -22,7 +22,7 @@ use windows::Foundation::{DateTime, IReference, PropertyValue, TypedEventHandler
 use windows::UI::Notifications::{
   ToastDismissedEventArgs, ToastFailedEventArgs, ToastNotification, ToastNotificationManager, ToastNotifier,
 };
-use windows::Win32::Foundation::{ERROR_FILE_NOT_FOUND, HWND, LPARAM, RPC_E_CHANGED_MODE, WPARAM};
+use windows::Win32::Foundation::{ERROR_FILE_NOT_FOUND, E_UNEXPECTED, HWND, LPARAM, RPC_E_CHANGED_MODE, WPARAM};
 use windows::Win32::System::Com::CoIncrementMTAUsage;
 use windows::Win32::System::Registry::KEY_QUERY_VALUE;
 use windows::Win32::System::WinRT::{RoInitialize, RoUninitialize, RO_INIT_SINGLETHREADED};
@@ -47,19 +47,34 @@ const WM_NOTIFIER: u32 = WM_APP + 2;
 /// 1 activated, 2 failed), as today.
 const WM_TOAST_EVENT: u32 = WM_APP + 3;
 
+// The process-wide counters are `OnceLock`s holding an atomic, a form of global state
+// `UNSAFE-POLICY.md` lists. They are process-wide because any thread may make a notifier,
+// and the count of live handlers changes on WinRT's threads.
+
 /// Toast cookies are process-wide and start at 1, as today.
-static NEXT_COOKIE: AtomicU64 = AtomicU64::new(1);
+fn next_cookie() -> &'static AtomicU64 {
+  static NEXT_COOKIE: OnceLock<AtomicU64> = OnceLock::new();
+  NEXT_COOKIE.get_or_init(|| AtomicU64::new(1))
+}
+
 /// Balloon icon uIDs are process-wide and start at 10000, as today.
-static NEXT_BALLOON_UID: AtomicU32 = AtomicU32::new(10_000);
+fn next_balloon_uid() -> &'static AtomicU32 {
+  static NEXT_BALLOON_UID: OnceLock<AtomicU32> = OnceLock::new();
+  NEXT_BALLOON_UID.get_or_init(|| AtomicU32::new(10_000))
+}
+
 /// Toast event handlers alive in the process; see [`live_toast_handlers`].
-static LIVE_HANDLERS: AtomicUsize = AtomicUsize::new(0);
+fn live_handlers() -> &'static AtomicUsize {
+  static LIVE_HANDLERS: OnceLock<AtomicUsize> = OnceLock::new();
+  LIVE_HANDLERS.get_or_init(|| AtomicUsize::new(0))
+}
 
 /// How many toast event handlers exist in the process. A handler lives while
 /// WinRT holds its subscription or a pending toast keeps it for
 /// [`Notifier::simulate_toast_event`]; a test asserts it returns to zero once
 /// every notifier is gone.
 pub fn live_toast_handlers() -> usize {
-  LIVE_HANDLERS.load(Ordering::SeqCst)
+  live_handlers().load(Ordering::SeqCst)
 }
 
 fn event_code(event: ToastEvent) -> isize {
@@ -92,49 +107,94 @@ fn copy_wide(field: &mut [u16], value: &str) {
 
 // ---- the toast handlers ------------------------------------------------------
 
-/// Counts itself in [`LIVE_HANDLERS`] while a toast handler holds it.
+/// Counts itself in [`live_handlers`] while a toast handler holds it.
 struct HandlerLife;
 
 impl HandlerLife {
   fn new() -> Self {
-    LIVE_HANDLERS.fetch_add(1, Ordering::SeqCst);
+    live_handlers().fetch_add(1, Ordering::SeqCst);
     HandlerLife
   }
 }
 
 impl Drop for HandlerLife {
   fn drop(&mut self) {
-    LIVE_HANDLERS.fetch_sub(1, Ordering::SeqCst);
+    live_handlers().fetch_sub(1, Ordering::SeqCst);
   }
 }
 
 /// A toast event handler's body: post the cookie and the event to the owner.
-/// It runs on a WinRT thread and must never unwind into WinRT. The post fails
-/// harmlessly once the notifier's window is gone.
+/// The post fails harmlessly once the notifier's window is gone.
 fn poster<S: RuntimeType + 'static, R: RuntimeType + 'static>(
   target: Poster,
   cookie: u64,
   event: ToastEvent,
 ) -> impl Fn(Ref<S>, Ref<R>) -> windows::core::Result<()> + Send + 'static {
+  guarded_handler(move || {
+    target.post(WM_TOAST_EVENT, cookie as usize, event_code(event));
+  })
+}
+
+/// A toast event handler around `body`, counted in [`live_handlers`] while it
+/// lives. It runs on a WinRT thread and must never unwind into WinRT: `body`
+/// runs inside `catch_unwind`, and a panic is reported to WinRT as
+/// `E_UNEXPECTED` instead of success.
+fn guarded_handler<S: RuntimeType + 'static, R: RuntimeType + 'static>(
+  body: impl Fn() + Send + 'static,
+) -> impl Fn(Ref<S>, Ref<R>) -> windows::core::Result<()> + Send + 'static {
   let life = HandlerLife::new();
   move |_sender, _args| {
     let _alive = &life;
-    let _ = catch_unwind(AssertUnwindSafe(|| target.post(WM_TOAST_EVENT, cookie as usize, event_code(event))));
-    Ok(())
+    catch_unwind(AssertUnwindSafe(&body)).map_err(|_| E_UNEXPECTED.into())
   }
 }
 
 // ---- icons -------------------------------------------------------------------
 
-/// An icon for the balloon: one this notifier made from `.ico` bytes and
-/// destroys, or the stock application icon, which the system shares for the
-/// life of the process and which is never destroyed.
-struct BalloonIcon {
-  handle: HICON,
-  owned: bool,
+/// An icon this notifier made from `.ico` bytes: it owns the handle and
+/// destroys it in `Drop`.
+struct OwnedIcon(HICON);
+
+impl Drop for OwnedIcon {
+  fn drop(&mut self) {
+    // SAFETY: `self.0` was made by CreateIconFromResourceEx for this value alone (only
+    // `BalloonIcon::load` makes one), and the shell no longer uses it: a `Balloon` keeps
+    // its icons until its notification-area icon is deleted.
+    let destroyed = unsafe { DestroyIcon(self.0) };
+    let _ = destroyed;
+  }
+}
+
+/// The stock application icon, which the system shares for the life of the
+/// process. It is never destroyed, so no handle of it is stored: it is asked
+/// for each time a notification-area icon is built.
+fn stock_icon() -> HICON {
+  // SAFETY: IDI_APPLICATION is a predefined resource id and no module is passed, so the
+  // shared system icon is returned; nothing of ours is read.
+  let stock = unsafe { LoadIconW(None, IDI_APPLICATION) };
+  stock.unwrap_or_default()
+}
+
+/// An icon for the balloon: one this notifier made from `.ico` bytes, or the
+/// stock application icon. The variant says which is owned.
+enum BalloonIcon {
+  Own(OwnedIcon),
+  Stock,
 }
 
 impl BalloonIcon {
+  /// The handle a `NOTIFYICONDATAW` names, valid for as long as `self` is.
+  fn handle(&self) -> HICON {
+    match self {
+      BalloonIcon::Own(icon) => icon.0,
+      BalloonIcon::Stock => stock_icon(),
+    }
+  }
+
+  fn is_own(&self) -> bool {
+    matches!(self, BalloonIcon::Own(_))
+  }
+
   fn load(ico_bytes: Option<&[u8]>, metric: SYSTEM_METRICS_INDEX) -> Self {
     if let Some(bytes) = ico_bytes {
       // SAFETY: GetSystemMetrics takes an index by value and reads no memory of ours.
@@ -148,7 +208,7 @@ impl BalloonIcon {
           // the whole image; the call reads it and keeps no reference to it.
           let created = unsafe { CreateIconFromResourceEx(bits, true, 0x0003_0000, want, want, LR_DEFAULTCOLOR) };
           match created {
-            Ok(handle) => return BalloonIcon { handle, owned: true },
+            Ok(handle) => return BalloonIcon::Own(OwnedIcon(handle)),
             Err(error) => {
               eprintln!("sweetview: CreateIconFromResourceEx failed ({}); using the default icon", error.code().0 & 0xffff)
             }
@@ -157,21 +217,7 @@ impl BalloonIcon {
         Err(error) => eprintln!("sweetview: {error}; using the default icon"),
       }
     }
-    // SAFETY: IDI_APPLICATION is a predefined resource id and no module is passed, so the
-    // shared system icon is returned; nothing of ours is read.
-    let stock = unsafe { LoadIconW(None, IDI_APPLICATION) };
-    BalloonIcon { handle: stock.unwrap_or_default(), owned: false }
-  }
-}
-
-impl Drop for BalloonIcon {
-  fn drop(&mut self) {
-    if self.owned {
-      // SAFETY: `self.handle` was made by CreateIconFromResourceEx for this value alone
-      // (`owned`), and the shell no longer uses it: its icon is deleted first.
-      let destroyed = unsafe { DestroyIcon(self.handle) };
-      let _ = destroyed;
-    }
+    BalloonIcon::Stock
   }
 }
 
@@ -180,6 +226,39 @@ struct Balloon {
   notification: Notification,
   _small: BalloonIcon,
   _large: BalloonIcon,
+}
+
+/// The `NOTIFYICONDATAW` a balloon is added with: a notification-area icon of
+/// the notifier's window that is hidden (`NIS_HIDDEN`), carrying the balloon
+/// (`NIF_INFO`: the body, and the title as its title and the icon's tip). With
+/// the notifier's own icon the balloon shows it large (`NIIF_USER |
+/// NIIF_LARGE_ICON`), else the stock information icon (`NIIF_INFO`); a silent
+/// notification adds `NIIF_NOSOUND`, and every balloon respects quiet time.
+/// The icons are borrowed: the struct is valid while `small` and `large` are.
+fn balloon_data(window: HWND, uid: u32, notification: &Notification, small: &BalloonIcon, large: &BalloonIcon) -> NOTIFYICONDATAW {
+  let own_icon = large.is_own();
+  let mut info_flags = if own_icon { NIIF_USER | NIIF_LARGE_ICON } else { NIIF_INFO };
+  info_flags |= NIIF_RESPECT_QUIET_TIME;
+  if notification.silent {
+    info_flags |= NIIF_NOSOUND;
+  }
+  let mut data = NOTIFYICONDATAW {
+    cbSize: size_of::<NOTIFYICONDATAW>() as u32,
+    hWnd: window,
+    uID: uid,
+    uFlags: NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_STATE | NIF_INFO,
+    uCallbackMessage: WM_NOTIFIER,
+    hIcon: small.handle(),
+    dwState: NIS_HIDDEN,
+    dwStateMask: NIS_HIDDEN,
+    dwInfoFlags: NOTIFY_ICON_INFOTIP_FLAGS(info_flags.0),
+    hBalloonIcon: if own_icon { large.handle() } else { HICON::default() },
+    ..Default::default()
+  };
+  copy_wide(&mut data.szTip, &notification.title);
+  copy_wide(&mut data.szInfo, &notification.body);
+  copy_wide(&mut data.szInfoTitle, &notification.title);
+  data
 }
 
 // ---- the window --------------------------------------------------------------
@@ -227,31 +306,10 @@ impl NotifyWindow {
   }
 
   fn show_balloon(&self, notification: &Notification, icon: Option<&[u8]>) -> Option<u32> {
-    let uid = NEXT_BALLOON_UID.fetch_add(1, Ordering::SeqCst);
+    let uid = next_balloon_uid().fetch_add(1, Ordering::SeqCst);
     let small = BalloonIcon::load(icon, SM_CXSMICON);
     let large = BalloonIcon::load(icon, SM_CXICON);
-    let own_icon = large.owned;
-    let mut info_flags = if own_icon { NIIF_USER | NIIF_LARGE_ICON } else { NIIF_INFO };
-    info_flags |= NIIF_RESPECT_QUIET_TIME;
-    if notification.silent {
-      info_flags |= NIIF_NOSOUND;
-    }
-    let mut data = NOTIFYICONDATAW {
-      cbSize: size_of::<NOTIFYICONDATAW>() as u32,
-      hWnd: icon_owner(&self.window),
-      uID: uid,
-      uFlags: NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_STATE | NIF_INFO,
-      uCallbackMessage: WM_NOTIFIER,
-      hIcon: small.handle,
-      dwState: NIS_HIDDEN,
-      dwStateMask: NIS_HIDDEN,
-      dwInfoFlags: NOTIFY_ICON_INFOTIP_FLAGS(info_flags.0),
-      hBalloonIcon: if own_icon { large.handle } else { HICON::default() },
-      ..Default::default()
-    };
-    copy_wide(&mut data.szTip, &notification.title);
-    copy_wide(&mut data.szInfo, &notification.body);
-    copy_wide(&mut data.szInfoTitle, &notification.title);
+    let data = balloon_data(icon_owner(&self.window), uid, notification, &small, &large);
     // SAFETY: `data` is a fully initialised NOTIFYICONDATAW that outlives the call; its
     // window is `self.window`'s, owned by this value and dropped after every icon, and its
     // icons are owned by `small` and `large`, which the balloon keeps until its icon is deleted.
@@ -410,7 +468,7 @@ impl Toasts {
       let expires = expiry_after(seconds).map_err(hresult_error("PropertyValue.CreateDateTime"))?;
       toast.SetExpirationTime(&expires).map_err(hresult_error("IToastNotification.put_ExpirationTime"))?;
     }
-    let cookie = NEXT_COOKIE.fetch_add(1, Ordering::SeqCst);
+    let cookie = next_cookie().fetch_add(1, Ordering::SeqCst);
     let entry = PendingToast { toast: toast.clone(), subscriptions: Vec::new(), notification: notification.clone() };
     self.pending.borrow_mut().insert(cookie, entry);
     let shown = self.subscribe_and_show(cookie, &toast, target, forced);
@@ -507,6 +565,14 @@ impl Toasts {
       Invocable::Failed(h) => h.Invoke(None::<&ToastNotification>, None::<&ToastFailedEventArgs>),
     };
     invoked.is_ok()
+  }
+}
+
+impl Drop for Toasts {
+  /// Ends every subscription this value made and hides its toasts, whoever
+  /// drops it; after `dispose` this does nothing.
+  fn drop(&mut self) {
+    self.dispose();
   }
 }
 
@@ -855,6 +921,161 @@ mod tests {
     (clicks, move |id: &str, data: Option<&str>| sink.borrow_mut().push((id.to_owned(), data.map(str::to_owned))))
   }
 
+  /// The text of a fixed wide-character field, up to its NUL.
+  fn wide(field: &[u16]) -> String {
+    let end = field.iter().position(|&unit| unit == 0).unwrap_or(field.len());
+    String::from_utf16_lossy(&field[..end])
+  }
+
+  /// A window value for the structs built below; nothing is sent to it.
+  const SOME_WINDOW: HWND = HWND(0x1234 as *mut core::ffi::c_void);
+
+  // Counterpart of the baseline's "notifyIconData lays out the balloon fields where Windows
+  // expects them": the struct handed to `Shell_NotifyIconW(NIM_ADD, ..)` is the `windows` crate's,
+  // sized as Windows expects, and carries the window, the id, the callback message and the text.
+  #[test]
+  fn balloon_data_lays_out_the_balloon_fields_where_windows_expects_them() {
+    let (small, large) = (BalloonIcon::Stock, BalloonIcon::Stock);
+    let long_body = "b".repeat(300);
+    let notification = Notification { body: long_body.clone(), ..note("layout") };
+    let data = balloon_data(SOME_WINDOW, 10_042, &notification, &small, &large);
+    assert_eq!(data.cbSize as usize, size_of::<NOTIFYICONDATAW>());
+    assert_eq!(data.hWnd, SOME_WINDOW);
+    assert_eq!(data.uID, 10_042);
+    assert_eq!(data.uCallbackMessage, WM_NOTIFIER);
+    assert_eq!(wide(&data.szInfoTitle), "Sweetview test");
+    assert_eq!(wide(&data.szTip), "Sweetview test");
+    // The body is cut so its NUL still fits in the 256-unit field.
+    assert_eq!(wide(&data.szInfo), long_body[..data.szInfo.len() - 1]);
+  }
+
+  // Counterpart of the baseline's "hiddenBalloonData sets NIS_HIDDEN and NIF_INFO for standalone
+  // notifications": the fallback's icon is hidden, carries the balloon, and the info flags are the
+  // ones the code documents for its own icon, the stock icon, and silence.
+  #[test]
+  fn balloon_data_is_hidden_and_carries_the_balloon_with_the_documented_flags() {
+    let sample = crate::ico::tests::sample_ico();
+    let (small, large) = (BalloonIcon::load(Some(&sample), SM_CXSMICON), BalloonIcon::load(Some(&sample), SM_CXICON));
+    assert!(small.is_own() && large.is_own());
+    let silent = balloon_data(SOME_WINDOW, 1, &note("own icon"), &small, &large);
+    assert_eq!(silent.uFlags, NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_STATE | NIF_INFO);
+    assert_eq!(silent.dwState, NIS_HIDDEN);
+    assert_eq!(silent.dwStateMask, NIS_HIDDEN);
+    assert_eq!(silent.dwInfoFlags, NIIF_USER | NIIF_LARGE_ICON | NIIF_RESPECT_QUIET_TIME | NIIF_NOSOUND);
+    assert_eq!(silent.hIcon, small.handle());
+    assert_eq!(silent.hBalloonIcon, large.handle());
+
+    let (stock_small, stock_large) = (BalloonIcon::load(None, SM_CXSMICON), BalloonIcon::load(None, SM_CXICON));
+    let audible = Notification { silent: false, ..note("stock icon") };
+    let data = balloon_data(SOME_WINDOW, 2, &audible, &stock_small, &stock_large);
+    assert_eq!(data.uFlags, NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_STATE | NIF_INFO);
+    assert_eq!((data.dwState, data.dwStateMask), (NIS_HIDDEN, NIS_HIDDEN));
+    assert_eq!(data.dwInfoFlags, NIIF_INFO | NIIF_RESPECT_QUIET_TIME);
+    assert_eq!(data.hIcon, stock_icon());
+    assert!(data.hBalloonIcon.is_invalid(), "no balloon icon of its own: the shell shows its information icon");
+  }
+
+  // Counterpart of the baseline's "the 32px balloon icon loads from the generated .ico": an `.ico`
+  // given as the balloon icon is made into an icon of the notifier's own, not the stock icon; bytes
+  // that are not an icon, or none, give the stock icon.
+  #[test]
+  fn an_ico_given_as_the_balloon_icon_loads_and_is_not_the_stock_icon() {
+    let sample = crate::ico::tests::sample_ico();
+    let stock = stock_icon();
+    assert!(!stock.is_invalid());
+    for metric in [SM_CXICON, SM_CXSMICON] {
+      let icon = BalloonIcon::load(Some(&sample), metric);
+      assert!(icon.is_own(), "the .ico was loaded");
+      assert!(!icon.handle().is_invalid());
+      assert_ne!(icon.handle(), stock, "the balloon's icon is not the stock icon");
+    }
+    let refused = BalloonIcon::load(Some(b"not an icon"), SM_CXICON);
+    assert!(!refused.is_own());
+    assert_eq!(refused.handle(), stock);
+    assert!(!BalloonIcon::load(None, SM_CXICON).is_own());
+  }
+
+  // F24, read from the shell: the fallback's notification-area icon is registered with the shell
+  // (a modify of it succeeds) and has no place on the screen (`Shell_NotifyIconGetRect` gives an
+  // empty rectangle, or fails). The control: the same icon made visible for one reading has a
+  // rectangle, so the reading tells hidden from shown. Once the notifier is gone the shell has no
+  // such icon.
+  #[test]
+  fn the_shell_holds_the_fallback_icon_hidden_until_the_notifier_goes() {
+    use windows::Win32::UI::Shell::{Shell_NotifyIconGetRect, NIM_MODIFY, NOTIFYICONIDENTIFIER, NOTIFY_ICON_STATE};
+    let _serial = serial();
+    let (_clicks, on_click) = recorder();
+    let notifier = Notifier::new(NotifierOptions { icon_ico: Some(crate::ico::tests::sample_ico()), ..Default::default() }, on_click)
+      .expect("notifier");
+    notifier.force_path(ForcedPath::BalloonOnly);
+    let Some(Shown::Balloon(uid)) = notifier.show(&note("hidden")) else { panic!("balloon") };
+    let window = notifier.inner.window.borrow().as_ref().map(|window| icon_owner(&window.window)).expect("window");
+    assert!(!window.is_invalid());
+    // A modify of the icon's state only: `NIS_HIDDEN` set or cleared. It fails when the shell
+    // has no icon with this window and id.
+    let set_hidden = |hidden: bool| {
+      let data = NOTIFYICONDATAW {
+        cbSize: size_of::<NOTIFYICONDATAW>() as u32,
+        hWnd: window,
+        uID: uid,
+        uFlags: NIF_STATE,
+        dwState: if hidden { NIS_HIDDEN } else { NOTIFY_ICON_STATE(0) },
+        dwStateMask: NIS_HIDDEN,
+        ..Default::default()
+      };
+      // SAFETY: `data` is a fully initialised NOTIFYICONDATAW on this frame for the call; it
+      // changes only the hidden state of an icon this test's notifier added.
+      unsafe { Shell_NotifyIconW(NIM_MODIFY, &data) }.as_bool()
+    };
+    // The icon's rectangle on the screen, if it has a non-empty one.
+    let place = || {
+      let identifier = NOTIFYICONIDENTIFIER { cbSize: size_of::<NOTIFYICONIDENTIFIER>() as u32, hWnd: window, uID: uid, ..Default::default() };
+      // SAFETY: `identifier` is a fully initialised NOTIFYICONIDENTIFIER on this frame for the call.
+      let rect = unsafe { Shell_NotifyIconGetRect(&identifier) };
+      rect.ok().filter(|r| r.right > r.left && r.bottom > r.top)
+    };
+    assert_eq!(place(), None, "the fallback's icon is hidden: no place on the screen");
+    assert!(set_hidden(false), "the shell holds the fallback's icon");
+    let shown = place();
+    assert!(set_hidden(true));
+    assert!(shown.is_some(), "the control: the same icon, shown, has a place on the screen");
+    // (Read straight after hiding it again, the shell still reports where the icon was.)
+    drop(notifier);
+    assert!(!set_hidden(true), "the icon was deleted with the notifier");
+  }
+
+  // F8: a toast handler whose body panics reports failure to WinRT, through the handler object
+  // WinRT would hold, and the process goes on.
+  #[test]
+  fn a_toast_handler_that_panics_reports_failure_and_does_not_unwind() {
+    let _serial = serial();
+    let before = live_toast_handlers();
+    let panicking = TypedEventHandler::<ToastNotification, ToastDismissedEventArgs>::new(guarded_handler(|| panic!("provoked by the test")));
+    assert_eq!(live_toast_handlers(), before + 1);
+    let result = panicking.Invoke(None::<&ToastNotification>, None::<&ToastDismissedEventArgs>);
+    assert_eq!(result.map_err(|e| e.code()), Err(E_UNEXPECTED));
+    let calm = TypedEventHandler::<ToastNotification, ToastFailedEventArgs>::new(guarded_handler(|| {}));
+    assert!(calm.Invoke(None::<&ToastNotification>, None::<&ToastFailedEventArgs>).is_ok());
+    drop((panicking, calm));
+    assert_eq!(live_toast_handlers(), before);
+  }
+
+  // F32: `Toasts` ends its own subscriptions when it is dropped, without the notifier's dispose.
+  #[test]
+  fn toasts_end_their_subscriptions_when_dropped() {
+    let _serial = serial();
+    let app_id = unique_app_id("NotifierToastsDrop");
+    let _cleanup = AppIdKey(app_id.clone());
+    let window = NotifyWindow::new(Weak::new()).expect("window");
+    let toasts = Toasts::new(&NotifierOptions { app_id: Some(app_id), ..Default::default() }).expect("WinRT toasts");
+    let before = live_toast_handlers();
+    let cookie = toasts.show(&note("held"), &window.poster(), ForcedPath::ToastHeld, Some(4)).expect("subscribed");
+    assert_eq!(live_toast_handlers(), before + 3, "three subscriptions");
+    assert!(toasts.pending.borrow().contains_key(&cookie));
+    drop(toasts);
+    assert_eq!(live_toast_handlers(), before, "every subscription was ended and its handler released");
+  }
+
   #[test]
   fn copy_wide_truncates_so_the_nul_fits() {
     let mut field = [0xffffu16; 4];
@@ -1066,11 +1287,16 @@ mod tests {
     };
     let (a, b) = (grew(idle, first), grew(first, second));
     let shown = (a.0.min(b.0), a.1.min(b.1), a.2.min(b.2));
-    // `<=`: an earlier test's thread may still be exiting, freeing its own USER objects.
-    assert!(idle.0 <= before.0 && shown.0 <= 0, "USER objects returned to the starting count: {before:?} -> {idle:?} -> {first:?} -> {second:?}");
-    assert!(idle.1 <= before.1 && shown.1 <= 0, "GDI objects returned to the starting count: {before:?} -> {idle:?} -> {first:?} -> {second:?}");
-    assert!(idle.2 <= before.2 + 4, "kernel handles returned to the starting count with nothing shown: {before:?} -> {idle:?}");
-    assert!(shown.2 <= 4, "kernel handles returned to the starting count: {idle:?} -> {first:?} -> {second:?}");
+    assert!(idle.0 == before.0 && shown.0 == 0, "USER objects returned to the starting count: {before:?} -> {idle:?} -> {first:?} -> {second:?}");
+    assert!(idle.1 == before.1 && shown.1 == 0, "GDI objects returned to the starting count: {before:?} -> {idle:?} -> {first:?} -> {second:?}");
+    assert_eq!(idle.2, before.2, "kernel handles returned to the starting count with nothing shown: {before:?} -> {idle:?}");
+    // The one allowance: the notification platform's client side opens kernel handles of its own
+    // on its threads at moments of its choosing after toasts are shown, and keeps them. Measured on
+    // this machine over eleven runs (five of them on the code before this change), the growth of a
+    // 32-round showing run was between 0 and 15 handles, and the smaller of the two runs up to 9.
+    // A handle the notifier leaked would leak in every round: at least 32 in each run. So the
+    // smaller growth must stay below half the rounds.
+    assert!(shown.2 < 16, "no kernel handle is leaked per notifier: {idle:?} -> {first:?} -> {second:?}");
     assert_eq!(live_toast_handlers(), 0);
   }
 }

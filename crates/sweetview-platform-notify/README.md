@@ -14,7 +14,7 @@ The notifier's window is `sweetview-platform-loop`'s `MessageWindow`, and the to
 
 Names and behaviour are today's TypeScript notifier's: the toast XML, the AUMID key and `DisplayName` rule, cookies from 1, balloon uIDs from 10000, `WM_APP + 2` for balloon events and `WM_APP + 3` for toast events.
 
-Test hooks on `Notifier` (`force_path`, `show`, `simulate_toast_event`, `simulate_balloon_event`, `pending_toasts`, `pending_balloons`, `toasts_available`) and `live_toast_handlers()` let a test prove the paths without a person clicking.
+Test hooks on `Notifier` (`force_path`, `show`, `simulate_toast_event`, `simulate_balloon_event`, `pending_toasts`, `pending_balloons`, `balloons_shown`, `set_toast_life`, `toasts_available`) and `live_toast_handlers()` let a test prove the paths without a person clicking. They ship in the binding (as the `debug*` methods of `Notifier`, each documented "Test hook" in `binding.d.ts`), because the tests run against the binding that ships.
 
 Other platforms get a stand-in whose `Notifier::new` reports that the platform is not ported yet.
 

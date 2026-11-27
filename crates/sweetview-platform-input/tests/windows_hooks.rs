@@ -196,14 +196,6 @@ impl Drop for ButtonsUp {
   }
 }
 
-fn user_objects() -> u32 {
-  sweetview_platform_loop::resource_counts().user_objects
-}
-
-fn kernel_handles() -> u32 {
-  sweetview_platform_loop::resource_counts().kernel_handles
-}
-
 type Seen<T> = Rc<RefCell<Vec<T>>>;
 
 // ---- mouse ----------------------------------------------------------------------
@@ -564,13 +556,14 @@ fn mouse_and_keyboard_hooks_either_order_either_removed_first() {
 }
 
 /// Installing and dropping both hooks, by drop and by `remove`, gives back
-/// every USER object and kernel handle.
+/// every USER object, GDI object and kernel handle: each count returns to its
+/// starting value, read once it has stopped moving.
 #[test]
 fn installing_and_dropping_returns_every_handle() {
   let _serial = serial();
   // One round first, so one-time costs (lazily loaded modules) are paid.
   drop((MouseHook::install(|_| false), KeyboardHook::install(|_| false)));
-  let (user_before, kernel_before) = (user_objects(), kernel_handles());
+  let before = sweetview_platform_loop::testing::settled_counts();
   for round in 0..200 {
     let mouse = MouseHook::install(|_| false).expect("mouse hook");
     let keys = KeyboardHook::install(|_| false).expect("keyboard hook");
@@ -581,8 +574,7 @@ fn installing_and_dropping_returns_every_handle() {
       assert_eq!(keys.remove(), Ok(()));
     }
   }
-  // At most the starting count: other tests in this process can leave objects
-  // the OS frees later, which may lower the count, never raise it.
-  assert!(user_objects() <= user_before, "USER objects returned to the starting count: {} > {user_before}", user_objects());
-  assert!(kernel_handles() <= kernel_before + 2, "kernel handles returned to the starting count");
+  let after = sweetview_platform_loop::testing::settled_counts();
+  eprintln!("(USER, GDI, kernel) before {before:?}, after 200 rounds {after:?}");
+  assert_eq!(after, before, "every count returned to its starting value");
 }

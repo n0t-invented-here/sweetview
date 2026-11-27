@@ -70,32 +70,32 @@ fn menu_data(items: Vec<MenuItemData>) -> MenuData {
 
 /// Shows `menu` as a popup menu owned by the window `owner`, at the screen point `at` (physical
 /// pixels) or at the cursor, and returns the chosen item's `id` after it closes; `null` when dismissed.
-#[napi]
+#[napi(catch_unwind)]
 pub fn popup_menu(owner: BigInt, menu: Vec<MenuItemData>, at: Option<Point>) -> napi::Result<Option<u32>> {
   imp::popup_menu(owner, menu_data(menu), at.map(|p| (p.x, p.y)))
 }
 
 /// The OS folder dialog, owned by the window `owner` when given. Blocks until it closes and
 /// returns the chosen folder's path, or `null` when cancelled.
-#[napi]
+#[napi(catch_unwind)]
 pub fn pick_folder(owner: Option<BigInt>, title: String) -> napi::Result<Option<String>> {
   imp::pick_folder(owner, title)
 }
 
 /// macOS: the application menu (About, Quit) and the Edit menu. Windows: nothing.
-#[napi]
+#[napi(catch_unwind)]
 pub fn install_app_menu(app_name: String, about_text: String) -> napi::Result<()> {
   imp::install_app_menu(app_name, about_text)
 }
 
 /// macOS: the running application's Dock icon. Windows: nothing.
-#[napi]
+#[napi(catch_unwind)]
 pub fn set_app_icon(icon: IconBytes) -> napi::Result<()> {
   imp::set_app_icon(icon_bytes(icon))
 }
 
 /// macOS: the process's activation policy. Windows: nothing.
-#[napi]
+#[napi(catch_unwind)]
 pub fn set_activation_policy(#[napi(ts_arg_type = "'regular' | 'accessory' | 'prohibited'")] policy: String) -> napi::Result<()> {
   imp::set_activation_policy(policy)
 }
@@ -109,7 +109,7 @@ pub struct Tray(imp::Tray);
 impl Tray {
   /// `openMenu` is called each time the menu is about to open and returns it; `menuChosen` is
   /// called after it closes with the chosen item's `id`.
-  #[napi(constructor)]
+  #[napi(constructor, catch_unwind)]
   #[allow(clippy::too_many_arguments)]
   pub fn new(
     env: Env,
@@ -125,31 +125,31 @@ impl Tray {
     imp::Tray::new(env, tooltip, icon.map(icon_bytes), has_menu, functions, menu_data).map(Self)
   }
 
-  #[napi]
+  #[napi(catch_unwind)]
   pub fn set_tooltip(&self, text: String) -> napi::Result<()> {
     self.0.set_tooltip(text)
   }
 
   /// `null` shows the stock application icon.
-  #[napi]
+  #[napi(catch_unwind)]
   pub fn set_icon(&self, icon: Option<IconBytes>) -> napi::Result<()> {
     self.0.set_icon(icon.map(icon_bytes))
   }
 
   /// Whether a right click opens the menu.
-  #[napi]
+  #[napi(catch_unwind)]
   pub fn set_has_menu(&self, has: bool) {
     self.0.set_has_menu(has)
   }
 
   /// The icon's own window, which the shell posts its mouse messages to. `0n` once disposed.
-  #[napi(getter)]
+  #[napi(getter, catch_unwind)]
   pub fn window_handle(&self) -> BigInt {
     self.0.window_handle()
   }
 
   /// Removes the icon. Safe to call twice.
-  #[napi]
+  #[napi(catch_unwind)]
   pub fn dispose(&self) {
     self.0.dispose()
   }

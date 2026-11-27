@@ -13,6 +13,7 @@ mod errors;
 pub mod event_loop;
 pub mod input;
 pub mod notify;
+pub mod objects;
 pub mod shell;
 pub mod tab_frame;
 pub mod screen;

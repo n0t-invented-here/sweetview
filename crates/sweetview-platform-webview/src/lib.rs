@@ -38,7 +38,7 @@ mod platform;
 
 #[cfg(windows)]
 pub use platform::{create_environment, default_user_data_folder};
-pub use platform::{UserScript, WebviewExtras};
+pub use platform::{set_background_color, UserScript, WebviewExtras};
 pub use shared::Responder;
 pub use sweetview_http::ErrorCode;
 
@@ -160,7 +160,9 @@ pub(crate) fn failure_reason(error_status: i32, http_status: Option<i32>, url: &
         return None;
     }
     let starts = |prefix: &str| url.get(..prefix.len()).is_some_and(|p| p.eq_ignore_ascii_case(prefix));
-    if starts("about:") || starts("data:") {
+    // WebView2 reports an `about:<name>` address it refuses as `edge://<name>/` (the browser's own
+    // scheme for those pages; `chrome:` is the same family).
+    if starts("about:") || starts("data:") || starts("edge:") || starts("chrome:") {
         return None;
     }
     Some(reason)
@@ -226,6 +228,7 @@ mod tests {
         assert_eq!(failure_reason(13, None, "about:blank"), None);
         assert_eq!(failure_reason(13, None, "ABOUT:blank"), None);
         assert_eq!(failure_reason(13, None, "data:text/html,x"), None);
+        assert_eq!(failure_reason(13, None, "edge://sweetview-nowhere/"), None, "how WebView2 reports a refused about: address");
         assert_eq!(failure_reason(13, None, "Data:text/html,x"), None);
     }
 

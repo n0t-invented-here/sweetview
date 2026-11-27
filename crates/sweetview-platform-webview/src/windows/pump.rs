@@ -14,7 +14,8 @@ use sweetview_platform_loop::{wait_message, Waited};
 pub(super) enum PumpEnd {
     /// The condition was met.
     Done,
-    /// A `WM_QUIT` arrived first; it is kept, and the wait ends cancelled.
+    /// A `WM_QUIT` arrived first; `GetMessageW` took it off the queue (it is
+    /// consumed, as in the C++), and the wait ends cancelled.
     Quit,
     /// `GetMessageW` failed.
     Failed,
