@@ -1,0 +1,28 @@
+[package]
+name = "sweetview-platform-notify"
+description = "Desktop notifications with a click that comes back."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true, features = [
+  "Foundation",
+  "Data_Xml_Dom",
+  "UI_Notifications",
+  "Win32_Foundation",
+  "Win32_Graphics_Gdi",
+  "Win32_Security",
+  "Win32_System_Com",
+  "Win32_System_LibraryLoader",
+  "Win32_System_Registry",
+  "Win32_System_Threading",
+  "Win32_System_WinRT",
+  "Win32_UI_Shell",
+  "Win32_UI_WindowsAndMessaging",
+] }
