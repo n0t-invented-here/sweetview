@@ -96,7 +96,7 @@ Source of truth for behaviour: the bindings repository's `docs/` and `test/`, an
     ```
     $ bun rust-rewrite/verify.ts windows --quick
     PASS  api-surface
-          194 exports of 14 package entry points at pre-rust-rewrite: 194 kept, 0 changed with an upgrade row
+          194 exports of 12 package entry points at pre-rust-rewrite: 194 kept, 0 changed with an upgrade row
           32 exports of the bindings package: 32 exported by Sweetview, 0 with an upgrade row
           0 unaccounted for
     ```
