@@ -178,10 +178,11 @@ fn growth(ctx: &mut Ctx, lives: usize, life: fn(&mut Ctx)) -> Growth {
     for _ in 0..lives {
         life(ctx);
     }
-    // WebView2 lets go of some handles a little after the controller closes.
+    // WebView2 lets go of some handles and windows a little after the controller closes: each
+    // count is read once it is back at its start, or when the wait is over.
     let mut end = counts();
     let deadline = Instant::now() + Duration::from_secs(5);
-    while end.handles > start.handles && Instant::now() < deadline {
+    while (end.handles > start.handles || end.user > start.user || end.gdi > start.gdi) && Instant::now() < deadline {
         ctx.settle(None, Duration::from_millis(250));
         end = counts();
     }
