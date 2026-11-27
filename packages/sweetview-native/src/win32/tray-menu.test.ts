@@ -238,6 +238,32 @@ describe.if(onWindows)("Tray (binding: tray-icon)", () => {
     expect(currentTray()).toBeUndefined();
   });
 
+  test("making and disposing trays and their menus returns every GDI and USER object", async () => {
+    const { guiObjects } = await import("./os-probe.test-support");
+    const icon = { windows: { ico: dotIco({ sizes: [16, 32] }) } };
+    const round = async () => {
+      let opened = 0;
+      const menu = () => {
+        opened++;
+        return [{ label: "One", icon }, { label: "Two", checked: true, icon }];
+      };
+      const tray = createTray({ tooltip: unique("tray"), icon, menu });
+      whenMenuOpens((menuWindow) => pressKeys(menuWindow, VK.ESCAPE));
+      postTrayMouse(tray.windowHandle(), TRAY.RBUTTONUP);
+      await pumpUntil(() => opened === 1 && openPopupMenu() === 0n, 5000);
+      expect(opened).toBe(1);
+      tray.dispose();
+    };
+    await round(); // one-time costs (window classes, the stock cursor) are paid first
+    const before = guiObjects();
+    for (let i = 0; i < 20; i++) await round();
+    // Each showing armed a 3 s safety timer (whenMenuOpens), and a timer is a USER object until it fires.
+    await pumpFor(3300);
+    const after = guiObjects();
+    expect(after.gdi).toBeLessThanOrEqual(before.gdi);
+    expect(after.user).toBeLessThanOrEqual(before.user);
+  }, 60_000);
+
   test("a tray with no icon shows the stock icon, and the public Tray works the same", () => {
     const tray = new Tray({ tooltip: unique("tray") });
     expect(currentTray()?.windowHandle()).not.toBe(0n);
