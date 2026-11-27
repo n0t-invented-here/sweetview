@@ -4,7 +4,12 @@ Status: proposal, awaiting decisions C and D at the end.
 
 Basis: the npm registry, the `webviewjs/webview` repository and its documentation, as of 2026-11-27.
 
-The current tree (`main` and `v1-drafting`) is reference material only. Its native layer is about 6,900 lines of TypeScript calling Win32 and Objective-C through `bun:ffi`, plus two C++ forks. None of that ships.
+The current tree (`main` and `v1-drafting`) is reference material only. Its native code is TypeScript calling Win32 and Objective-C through `bun:ffi`, plus two C++ forks. None of that ships.
+
+| Branch | Platform code (non-test `.ts` under the `win32/` and `darwin/` folders) | Other FFI |
+|---|---|---|
+| `main` | 2,779 lines in 24 files, under `src/native/` | 2,004 lines in 7 files in the `demos/native-tabs` demo |
+| `v1-drafting` | 6,916 lines in 35 files, under `packages/sweetview-native/src/` | 2,669 lines in 8 files in the other packages |
 
 ## What this delivers
 
@@ -33,10 +38,10 @@ A fork of `webviewjs/webview` (MIT), owned by this project.
 | Published | on npm as `@webviewjs/webview` since October 2024; 27 versions; `0.6.0` on 2026-10-29, `1.0.0-rc.4` on 2026-10-30 |
 | Use | 1,846 npm downloads in the week ending 2026-11-26; repository last pushed 2026-11-19 |
 | Prebuilt binaries | 12 platform packages installed automatically by `bun add`, including Windows x64 and arm64, macOS x64 and arm64, Linux x64 and arm64 |
-| Size | about 6,100 lines of Rust in 13 files; the word `unsafe` appears 5 times |
+| Size | 6,082 lines of Rust across its 11 main source files; the word `unsafe` appears 5 times |
 | Built on | `tao` 0.37 (windows, event loop), `wry` 0.55 (webview), `muda` 0.19 (menus), `tray-icon` 0.24 (tray), `notify-rust` 4.18 (notifications), `rfd` (file dialogs) |
 | Tests | runtime tests for application, window, webview, IPC, custom protocol, tray and notification |
-| Maintainer | one person, `twlite`, with 202 of the roughly 215 commits |
+| Maintainer | one person, `twlite`, with 202 of the 215 commits |
 
 `tao`, `wry`, `muda` and `tray-icon` are the Tauri team's libraries, the ones Tauri 2 itself runs on, usable without Tauri.
 
@@ -101,12 +106,21 @@ Bailing out to Tauri 2: the page does not change. The service either runs as a B
 
 ## Carried over from the current tree
 
-All pure TypeScript, no FFI:
+All pure TypeScript, no FFI.
 
-- IPC contract, WebSocket transport, ready checks
-- settings store and app identity
-- hit-region geometry, icon encoders, `.app` bundle builder
-- the docs as the API reference, the demos as acceptance tests
+| Item | On `main` | On `v1-drafting` |
+|---|---|---|
+| IPC contract and bridge (`defineService`, `createBridge`) | yes | yes |
+| WebSocket transport (`wsHost`, `wsTransport`) | yes | yes |
+| Settings store | yes | yes |
+| Hit-region geometry | yes | yes |
+| Icon encoders | yes | yes |
+| `.app` bundle builder (`makeMacApp`) | yes | yes |
+| Ready handshake (`signalReady`) | no | yes |
+| App identity (`defineAppIdentity`) | no | yes |
+| Chunked IPC framing (`ChunkFrame`) | no | yes |
+
+The docs serve as the API reference and the demos as acceptance tests.
 
 ## Dropped
 
@@ -122,7 +136,7 @@ All pure TypeScript, no FFI:
 
 ## Order of work
 
-1. Fork `webviewjs/webview`; CI produces the three prebuilt binaries in one package.
+1. Fork `webviewjs/webview` and `webviewjs/tao`; CI produces the three prebuilt binaries in one package.
 2. `/tray` and `/notify`, with checkmarks and icons added to menus.
 3. `/webview` with the IPC port.
 4. Multiple windows and tabs.
@@ -130,12 +144,17 @@ All pure TypeScript, no FFI:
 6. Tauri 2 and Electron transports.
 7. Linux minimal pass.
 
-## Fixed constraints
+## Risks and actions
 
-- macOS shows no notifications from an unsigned bundle. That is an OS rule.
-- The Linux tray gives a right-click menu and no click events. That is a limit of the Linux tray backend.
-- Hit-testing code is the one place unsafe Rust is required.
-- Upstream has one maintainer, which is why this is a fork that this project owns and not a dependency.
+| Risk | Action |
+|---|---|
+| Upstream has one maintainer | Step 1 forks the repository into this project's organization. This project's CI builds and publishes its own binaries. Upstream commits are merged by choice, never required. |
+| Upstream builds against its own patched `tao` (`webviewjs/tao`, pinned by commit) | Step 1 forks that repository too and pins the same commit from this project's copy. |
+| macOS shows no notifications from an unsigned bundle | The `/build` helper signs every `.app` it produces. `/notify` throws an error naming the missing signature when called outside a signed bundle. |
+| The Linux tray backend delivers no click events | `/tray` exposes `supportsIconClick`, false on Linux. On Linux the icon opens the menu, and the app puts its click action as the first menu item. |
+| Hit-testing requires unsafe Rust | It lives in one module. Every other file carries `#![forbid(unsafe_code)]`, so the compiler rejects unsafe code anywhere else. |
+| `wry` cannot stream response bodies | Large payloads use the chunked IPC framing carried over from `v1-drafting`. Decision D confirms this. |
+| Upstream ships one package per platform, which blocks cross-compiling | Step 1 changes packaging to one package holding all three binaries. |
 
 ## Alternatives ruled out
 
@@ -150,7 +169,7 @@ All pure TypeScript, no FFI:
 
 ## Open decisions
 
-C. Native engine: fork `webviewjs/webview` and own the fork (recommended), or write a Rust crate on `tao` and `wry` from zero? The fork starts with about 6,100 lines of working Rust covering windows, tray, menus, notifications and the event loop. From zero, all of that is written again.
+C. Native engine: fork `webviewjs/webview` and own the fork (recommended), or write a Rust crate on `tao` and `wry` from zero? The fork starts with 6,082 lines of Rust covering windows, tray, menus, notifications and the event loop. From zero, all of that is written again.
 
 D. Is losing streamed responses acceptable, with large payloads sent as chunked IPC messages instead?
 
