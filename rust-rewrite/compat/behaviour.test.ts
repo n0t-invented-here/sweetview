@@ -126,11 +126,45 @@ describe.skipIf(!onWindows)("Windows behaviour an application notices", () => {
       completeOnUnknownHandle: "WebviewError webview_complete_request -3",
       wrapUnknownHandle: "WebviewError webview_create -1",
       wrapSameHandle: true,
+      wrapKeepsSize: true,
       windowHandleType: "number",
       windowBoundsPositive: true,
       bindRaw: { same: true, req: '[1,"two"]' },
       handleAfterDestroy: null,
       completeAfterDestroy: "WebviewError webview_complete_request -3",
+      windowHandleAfterDestroy: null,
+      setRequestHandlerAfterDestroy: "WebviewError webview_set_request_handler -3",
+      destroyTwice: "no error",
+    });
+  }, 120_000);
+
+  test("what the deleted win32 init, message-window and icon modules did: DPI awareness and an STA from the binding, a hidden Window as owner, setIcon on a wrapper", async () => {
+    expect(await runChild(fixture("own-window.ts"))).toEqual({
+      perMonitorAware: true,
+      uiThreadIsSta: true,
+      ownerHidden: true,
+      ownerOnAScreen: true,
+      iconSet: true,
+      iconBackToStock: true,
+    });
+  }, 60_000);
+
+  test("tabs: the frame is a Window with tabs, getTabFrame gives its strip and page, close requests reach onClose, the tab menus act on tab frames only, tab.webview.window wraps the frame", async () => {
+    expect(await runChild(fixture("tabs.ts"))).toEqual({
+      frameOfTabbedWindow: true,
+      frameOfPlainWindow: true,
+      stripBoundsPositive: true,
+      pageBelowStrip: true,
+      stripRectOnScreen: true,
+      pageSizePositive: true,
+      childInFrame: true,
+      popupOnPlainWindow: false,
+      popupWithNoItems: false,
+      windowMenuOnPlainWindow: "no error",
+      requestCloseReachesOnClose: true,
+      windowKeptByListener: true,
+      tabWindowIsLogical: true,
+      tabWebviewWindowWrapsFrame: true,
     });
   }, 120_000);
 

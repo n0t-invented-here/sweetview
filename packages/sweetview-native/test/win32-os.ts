@@ -1,0 +1,349 @@
+// Test support for the Windows tests of this package and of `@n1h/sweetview`:
+// reads back from the OS what Sweetview did (a window's styles, rectangles,
+// icons and existence, the menus and dialogs this process has open, the
+// process's GDI and USER object counts, the monitors) and drives this
+// process's own windows the way the shell, the keyboard and an application
+// would (messages posted or sent to them, a WM_DROPFILES drop, a window of the
+// application's own with its own window procedure). Nothing here moves the
+// cursor, presses a key system-wide or touches the clipboard: every input is a
+// message to one of this process's own windows. Listed in
+// rust-rewrite/ffi-allowlist.txt as a probe.
+
+import { FFIType, JSCallback, dlopen, ptr, toArrayBuffer } from "bun:ffi";
+import { binding } from "../src/binding";
+
+const { u64, u32, i32, i64, u16, i16 } = FFIType;
+export const user32 = dlopen("user32.dll", {
+  FindWindowExW: { args: [u64, u64, FFIType.ptr, FFIType.ptr], returns: u64 },
+  GetWindowThreadProcessId: { args: [u64, FFIType.ptr], returns: u32 },
+  IsWindow: { args: [u64], returns: i32 },
+  IsWindowVisible: { args: [u64], returns: i32 },
+  IsIconic: { args: [u64], returns: i32 },
+  IsZoomed: { args: [u64], returns: i32 },
+  GetWindow: { args: [u64, u32], returns: u64 },
+  GetParent: { args: [u64], returns: u64 },
+  GetDlgCtrlID: { args: [u64], returns: i32 },
+  GetWindowRect: { args: [u64, FFIType.ptr], returns: i32 },
+  GetClientRect: { args: [u64, FFIType.ptr], returns: i32 },
+  GetWindowLongPtrW: { args: [u64, i32], returns: i64 },
+  GetCursorPos: { args: [FFIType.ptr], returns: i32 },
+  GetAsyncKeyState: { args: [i32], returns: i16 },
+  GetDoubleClickTime: { args: [], returns: u32 },
+  GetSystemMetrics: { args: [i32], returns: i32 },
+  // (const RECT*, DWORD flags) -> HMONITOR
+  MonitorFromRect: { args: [FFIType.ptr, u32], returns: u64 },
+  // (HMONITOR, MONITORINFO*) -> BOOL; cbSize set by the caller
+  GetMonitorInfoW: { args: [u64, FFIType.ptr], returns: i32 },
+  EndMenu: { args: [], returns: i32 },
+  PostMessageW: { args: [u64, u32, u64, i64], returns: i32 },
+  SendMessageW: { args: [u64, u32, u64, i64], returns: i64 },
+  PostQuitMessage: { args: [i32], returns: FFIType.void },
+  RegisterWindowMessageW: { args: [FFIType.ptr], returns: u32 },
+  GetMenuItemCount: { args: [u64], returns: i32 },
+  GetMenuState: { args: [u64, u32, u32], returns: u32 },
+  GetMenuStringW: { args: [u64, u32, FFIType.ptr, i32, u32], returns: i32 },
+  GetSubMenu: { args: [u64, i32], returns: u64 },
+  GetMenuItemInfoW: { args: [u64, u32, i32, FFIType.ptr], returns: i32 },
+  GetClassNameW: { args: [u64, FFIType.ptr, i32], returns: i32 },
+  GetWindowTextW: { args: [u64, FFIType.ptr, i32], returns: i32 },
+  EnumChildWindows: { args: [u64, FFIType.ptr, i64], returns: i32 },
+  GetGuiResources: { args: [u64, u32], returns: u32 },
+  // (HWND, COLORREF* key, BYTE* alpha, DWORD* flags) -> BOOL
+  GetLayeredWindowAttributes: { args: [u64, FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: i32 },
+  // An application's own window: its class, the window and its procedure's default.
+  RegisterClassExW: { args: [FFIType.ptr], returns: u16 },
+  CreateWindowExW: { args: [u32, FFIType.ptr, FFIType.ptr, u32, i32, i32, i32, i32, u64, u64, u64, FFIType.ptr], returns: u64 },
+  DestroyWindow: { args: [u64], returns: i32 },
+  DefWindowProcW: { args: [u64, u32, u64, i64], returns: i64 },
+}).symbols;
+export const kernel32 = dlopen("kernel32.dll", {
+  GetCurrentProcess: { args: [], returns: u64 },
+  GetModuleHandleW: { args: [FFIType.ptr], returns: u64 },
+  GetLastError: { args: [], returns: u32 },
+  GlobalAlloc: { args: [u32, u64], returns: u64 },
+  GlobalSize: { args: [u64], returns: u64 },
+  GlobalLock: { args: [u64], returns: FFIType.ptr },
+  GlobalUnlock: { args: [u64], returns: i32 },
+  GlobalFree: { args: [u64], returns: u64 },
+}).symbols;
+
+export const dwmapi = dlopen("dwmapi.dll", {
+  // (HWND, DWORD attribute, PVOID value, DWORD size) -> HRESULT; 20 is DWMWA_USE_IMMERSIVE_DARK_MODE
+  DwmGetWindowAttribute: { args: [u64, u32, FFIType.ptr, u32], returns: i32 },
+}).symbols;
+
+export const WM_APP = 0x8000;
+export const WM_CLOSE = 0x0010;
+export const WM_DROPFILES = 0x0233;
+export const WM_GETICON = 0x007f;
+export const WM_GETMINMAXINFO = 0x0024;
+export const ICON_SMALL = 0n;
+export const ICON_BIG = 1n;
+export const GWL_STYLE = -16;
+export const GWL_EXSTYLE = -20;
+export const WS_THICKFRAME = 0x00040000;
+export const WS_MAXIMIZEBOX = 0x00010000;
+export const WS_OVERLAPPEDWINDOW = 0x00cf0000;
+export const WS_EX_TOOLWINDOW = 0x00000080;
+export const WS_EX_LAYERED = 0x00080000;
+export const WS_EX_NOACTIVATE = 0x08000000;
+export const SM_CXSCREEN = 0;
+export const SM_CYSCREEN = 1;
+export const MONITOR_DEFAULTTONEAREST = 2;
+/** MONITORINFO: cbSize, rcMonitor, rcWork, dwFlags; 40 bytes. */
+export const MONITORINFO_SIZE = 40;
+const GMEM_MOVEABLE = 0x0002;
+
+/** NUL-terminated UTF-16LE for an LPCWSTR argument; pass the array itself. */
+export const wide = (s: string) => new Uint8Array(Buffer.from(s + "\0", "utf16le"));
+
+export const hInstance = (): bigint => kernel32.GetModuleHandleW(null);
+
+/** The process's GDI and USER object counts. */
+export function guiObjects(): { gdi: number; user: number } {
+  const process = kernel32.GetCurrentProcess();
+  return { gdi: user32.GetGuiResources(process, 0), user: user32.GetGuiResources(process, 1) };
+}
+
+/** The windows of class `className` (and title `title`, when given) that belong to this process. */
+export function ownWindows(className: string, title?: string): bigint[] {
+  const cls = wide(className);
+  const name = title === undefined ? null : wide(title);
+  const pid = new Uint32Array(1);
+  const found: bigint[] = [];
+  let after = 0n;
+  for (let i = 0; i < 10_000; i++) {
+    after = user32.FindWindowExW(0n, after, cls, name);
+    if (after === 0n) break;
+    user32.GetWindowThreadProcessId(after, pid);
+    if (pid[0] === process.pid) found.push(after);
+  }
+  return found;
+}
+
+export const isWindow = (hwnd: bigint): boolean => user32.IsWindow(hwnd) !== 0;
+
+export function windowRect(hwnd: bigint): { left: number; top: number; right: number; bottom: number } {
+  const rect = new Int32Array(4);
+  user32.GetWindowRect(hwnd, ptr(rect));
+  return { left: rect[0]!, top: rect[1]!, right: rect[2]!, bottom: rect[3]! };
+}
+
+export function cursor(): { x: number; y: number } {
+  const point = new Int32Array(2);
+  user32.GetCursorPos(ptr(point));
+  return { x: point[0]!, y: point[1]! };
+}
+
+export const doubleClickTime = (): number => user32.GetDoubleClickTime();
+
+/** Closes whatever menu this thread has open, as a click elsewhere would. */
+export const endMenu = (): boolean => user32.EndMenu() !== 0;
+
+/** The owner of a top-level window (GW_OWNER). */
+export const ownerOf = (hwnd: bigint): bigint => user32.GetWindow(hwnd, 4);
+
+export const post = (hwnd: bigint, message: number, wParam = 0n, lParam = 0n): boolean => user32.PostMessageW(hwnd, message, wParam, lParam) !== 0;
+
+export const registeredMessage = (name: string): number => user32.RegisterWindowMessageW(wide(name));
+
+/** GetLayeredWindowAttributes: the colour key, alpha and flags of a layered window, or null when it is not layered. */
+export function layeredAttributes(hwnd: bigint): { key: number; alpha: number; flags: number } | null {
+  const key = new Uint32Array(1);
+  const alpha = new Uint8Array(1);
+  const flags = new Uint32Array(1);
+  if (user32.GetLayeredWindowAttributes(hwnd, key, alpha, flags) === 0) return null;
+  return { key: key[0]!, alpha: alpha[0]!, flags: flags[0]! };
+}
+
+/** MINMAXINFO.ptMinTrackSize as the window's own WM_GETMINMAXINFO answers: the outer minimum, physical pixels. */
+export function minTrackSize(hwnd: bigint): [number, number] {
+  const info = new Int32Array(10);
+  user32.SendMessageW(hwnd, WM_GETMINMAXINFO, 0n, BigInt(ptr(info)));
+  return [info[6]!, info[7]!];
+}
+
+/** Sends `paths` to `hwnd` as a WM_DROPFILES, as the shell does for a drop. Returns the HDROP, which the receiver frees. */
+export function sendDrop(hwnd: bigint, paths: string[]): bigint {
+  const body = Buffer.from(paths.join("\0") + "\0\0", "utf16le");
+  const dropFiles = Buffer.alloc(20 + body.length);
+  dropFiles.writeUInt32LE(20, 0); // DROPFILES.pFiles
+  dropFiles.writeInt32LE(1, 16); // fWide
+  body.copy(dropFiles, 20);
+  const drop = kernel32.GlobalAlloc(GMEM_MOVEABLE, BigInt(dropFiles.length));
+  const memory = kernel32.GlobalLock(drop);
+  if (!memory) {
+    if (drop) kernel32.GlobalFree(drop);
+    throw new Error("could not allocate DROPFILES");
+  }
+  new Uint8Array(toArrayBuffer(memory, 0, dropFiles.length)).set(dropFiles);
+  kernel32.GlobalUnlock(drop);
+  user32.SendMessageW(hwnd, WM_DROPFILES, drop, 0n);
+  return drop;
+}
+
+// ---- a window of the application's own ---------------------------------------------------
+
+export type OwnWindow = { readonly hwnd: bigint; destroy(): void };
+
+const ownHandlers = new Map<bigint, (message: number, wParam: bigint, lParam: bigint) => void>();
+// Retained for the process: the registered class calls it until exit.
+let ownProc: JSCallback | undefined;
+const OWN_CLASS = "SweetviewTestOwnWindow";
+
+/**
+ * A never-shown top-level window an application made itself through bun:ffi, with its own window
+ * procedure, which hands every message to `onMessage` and ignores WM_CLOSE (only `destroy()` ends
+ * it). Tests use it as the owner of popups and dialogs, and to prove Sweetview serves a window it
+ * did not make.
+ */
+export function ownWindow(onMessage: (message: number, wParam: bigint, lParam: bigint) => void = () => {}): OwnWindow {
+  binding(); // the binding sets per-monitor DPI awareness and COM before any window of this process exists
+  if (ownProc === undefined) {
+    ownProc = new JSCallback(
+      (hwnd: bigint, message: number, wParam: bigint, lParam: bigint): bigint => {
+        try {
+          ownHandlers.get(hwnd)?.(message, wParam, lParam);
+        } catch (err) {
+          console.error("win32-os: own window handler threw:", err);
+        }
+        return message === WM_CLOSE ? 0n : user32.DefWindowProcW(hwnd, message, wParam, lParam);
+      },
+      { args: [u64, u32, u64, i64], returns: i64 },
+    );
+    const SIZE = 80; // WNDCLASSEXW on x64
+    const wc = new Uint8Array(SIZE);
+    const view = new DataView(wc.buffer);
+    const className = wide(OWN_CLASS);
+    view.setUint32(0, SIZE, true); // cbSize
+    view.setBigUint64(8, BigInt(ownProc.ptr!), true); // lpfnWndProc
+    view.setBigUint64(24, hInstance(), true); // hInstance
+    view.setBigUint64(64, BigInt(ptr(className)), true); // lpszClassName
+    if (user32.RegisterClassExW(wc) === 0) throw new Error(`RegisterClassExW failed (${kernel32.GetLastError()})`);
+  }
+  const hwnd = user32.CreateWindowExW(WS_EX_TOOLWINDOW, wide(OWN_CLASS), null, 0, 0, 0, 0, 0, 0n, 0n, hInstance(), null);
+  if (hwnd === 0n) throw new Error(`CreateWindowExW failed (${kernel32.GetLastError()})`);
+  ownHandlers.set(hwnd, onMessage);
+  let destroyed = false;
+  return {
+    hwnd,
+    destroy() {
+      if (destroyed) return;
+      destroyed = true;
+      ownHandlers.delete(hwnd);
+      user32.DestroyWindow(hwnd);
+    },
+  };
+}
+
+// ---- the tray ------------------------------------------------------------------------
+
+/** The callback message tray-icon 0.27 registers its icons with; the mouse message rides in lParam. */
+const WM_USER_TRAYICON = 6002;
+export const TRAY = { LBUTTONDOWN: 0x0201, LBUTTONUP: 0x0202, LBUTTONDBLCLK: 0x0203, RBUTTONDOWN: 0x0204, RBUTTONUP: 0x0205 } as const;
+
+/** Posts to the tray icon's window what the shell posts for these mouse messages over the icon. */
+export function postTrayMouse(trayWindow: bigint, ...messages: number[]): void {
+  for (const message of messages) {
+    if (!post(trayWindow, WM_USER_TRAYICON, 0n, BigInt(message))) throw new Error(`PostMessageW to the tray window failed`);
+  }
+}
+
+// ---- popup menus ------------------------------------------------------------------------
+
+const MN_GETHMENU = 0x01e1;
+const MF_BYPOSITION = 0x400;
+const WM_KEYDOWN = 0x0100;
+export const VK = { RETURN: 0x0d, ESCAPE: 0x1b, RIGHT: 0x27, DOWN: 0x28 } as const;
+
+/** The popup menu window this process has open (class `#32768`), or 0n. */
+export function openPopupMenu(): bigint {
+  return ownWindows("#32768").find((hwnd) => user32.IsWindowVisible(hwnd) !== 0) ?? 0n;
+}
+
+export type MenuEntry = {
+  label: string;
+  separator: boolean;
+  checked: boolean;
+  disabled: boolean;
+  hasBitmap: boolean;
+  submenu?: MenuEntry[];
+};
+
+/** Reads a menu back from the OS: what each entry shows and its state, submenus included. */
+export function readMenu(hmenu: bigint): MenuEntry[] {
+  const count = user32.GetMenuItemCount(hmenu);
+  const entries: MenuEntry[] = [];
+  for (let position = 0; position < count; position++) {
+    const state = user32.GetMenuState(hmenu, position, MF_BYPOSITION);
+    const text = new Uint16Array(256);
+    const length = user32.GetMenuStringW(hmenu, position, ptr(text), text.length, MF_BYPOSITION);
+    // MENUITEMINFOW (x64, 80 bytes): cbSize, fMask = MIIM_BITMAP; hbmpItem at 72.
+    const info = new Uint8Array(80);
+    const view = new DataView(info.buffer);
+    view.setUint32(0, 80, true);
+    view.setUint32(4, 0x80, true);
+    user32.GetMenuItemInfoW(hmenu, position, 1, ptr(info));
+    const sub = user32.GetSubMenu(hmenu, position);
+    entries.push({
+      label: String.fromCharCode(...text.subarray(0, Math.max(0, length))),
+      separator: (state & 0x800) !== 0,
+      checked: (state & 0x8) !== 0,
+      disabled: (state & 0x3) !== 0,
+      hasBitmap: view.getBigUint64(72, true) !== 0n,
+      ...(sub !== 0n ? { submenu: readMenu(sub) } : {}),
+    });
+  }
+  return entries;
+}
+
+/** The menu shown in a popup menu window. */
+export const menuOfWindow = (menuWindow: bigint): bigint => BigInt.asUintN(64, user32.SendMessageW(menuWindow, MN_GETHMENU, 0n, 0n));
+
+/** Posts key presses to a popup menu window, which its menu loop takes as the keyboard. */
+export function pressKeys(menuWindow: bigint, ...keys: number[]): void {
+  for (const key of keys) post(menuWindow, WM_KEYDOWN, BigInt(key), 1n);
+}
+
+// ---- dialogs ------------------------------------------------------------------------------
+
+const WM_SETTEXT = 0x000c;
+const BM_CLICK = 0x00f5;
+
+function children(parent: bigint): bigint[] {
+  const found: bigint[] = [];
+  const callback = new JSCallback(
+    (hwnd: bigint) => {
+      found.push(hwnd);
+      return 1;
+    },
+    { args: [u64, i64], returns: i32 },
+  );
+  try {
+    user32.EnumChildWindows(parent, callback.ptr, 0n);
+  } finally {
+    callback.close();
+  }
+  return found;
+}
+
+const classOf = (hwnd: bigint): string => {
+  const buffer = new Uint16Array(256);
+  const length = user32.GetClassNameW(hwnd, ptr(buffer), buffer.length);
+  return String.fromCharCode(...buffer.subarray(0, length));
+};
+
+/**
+ * Types `path` into the folder dialog's folder field and presses its OK button, as a user would.
+ * False while the dialog has not made that field yet.
+ */
+export function chooseInFolderDialog(dialog: bigint, path: string): boolean {
+  // The common item dialog's folder field: the Edit with control id 1152 (edt1), a direct child of the dialog.
+  const edit = children(dialog).find((hwnd) => classOf(hwnd) === "Edit" && user32.GetParent(hwnd) === dialog && user32.GetDlgCtrlID(hwnd) === 1152 && user32.IsWindowVisible(hwnd) !== 0);
+  if (edit === undefined) return false;
+  const ok = children(dialog).find((hwnd) => classOf(hwnd) === "Button" && user32.GetDlgCtrlID(hwnd) === 1); // IDOK
+  if (ok === undefined) return false;
+  const text = wide(path);
+  user32.SendMessageW(edit, WM_SETTEXT, 0n, BigInt(ptr(text)));
+  return post(ok, BM_CLICK);
+}

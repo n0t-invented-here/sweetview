@@ -187,7 +187,7 @@ describe.if(liveDesktop)("desktop startup & deferred RPC", () => {
 
 describe.if(onWindows)("WebView & createApp (win32)", () => {
   test("close-to-tray can intercept the default close on a createApp window", async () => {
-    const { WM_CLOSE, user32 } = await import("@n1h/sweetview-native/win32/api");
+    const { WM_CLOSE, user32 } = await import("../../sweetview-native/test/win32-os");
     const app = await createApp({ url: "about:blank", noActivate: true });
     const hwnd = BigInt(app.window.handle!);
     let hides = 0;
@@ -235,7 +235,7 @@ describe.if(onWindows)("WebView & createApp (win32)", () => {
   });
 
   test("WebView.attach preserves exact outer bounds and GWL_STYLE for framed, frameless-resizable, and Window.fromHandle windows", async () => {
-    const { GWL_STYLE, user32 } = await import("@n1h/sweetview-native/win32/api");
+    const { GWL_STYLE, user32 } = await import("../../sweetview-native/test/win32-os");
     const { asHwnd } = await import("@n1h/sweetview-native/win32/window");
 
     // 1. Owned framed window
@@ -300,7 +300,7 @@ describe.if(onWindows)("WebView & createApp (win32)", () => {
   });
 
   test("closing a tabbed Window via WM_CLOSE with no onClose disposes all child tab webviews", async () => {
-    const { user32, WM_CLOSE } = await import("@n1h/sweetview-native/win32/api");
+    const { user32, WM_CLOSE } = await import("../../sweetview-native/test/win32-os");
     const { asHwnd } = await import("@n1h/sweetview-native/win32/window");
     const win = new Window({ title: "Close Tabs via WM_CLOSE", tabs: true, bounds: { x: 160, y: 160, width: 720, height: 500 } });
     const hwnd = asHwnd(win.handle);

@@ -4,18 +4,18 @@
 //
 //   bun scripts/menu-icon-probe.ts [x y]      (default 200 400)
 
-import { Menu } from "@n1h/sweetview-native";
-import { createMessageWindow } from "@n1h/sweetview-native/win32/message-window";
+import { Menu, Window } from "@n1h/sweetview-native";
 import { petIcon } from "../icon";
 import { PETS, petLabel } from "../pets";
 
 const x = Number(process.argv[2] ?? 200);
 const y = Number(process.argv[3] ?? 400);
 
-const win = createMessageWindow(() => undefined);
+// A hidden window of this process owns the menu, as the tray's own window does.
+const win = new Window({ title: "menu-icon-probe", hideFromTaskbar: true });
 console.log(`menu at ${x},${y}`);
 const chosen = Menu.popup(
-  win.hwnd,
+  win,
   [
     { label: "Settings…", click: () => console.log("settings") },
     { label: "Pet", icon: petIcon("cat"), submenu: PETS.map((p) => ({ label: petLabel(p), icon: petIcon(p), checked: p === "cat" })) },
@@ -26,4 +26,4 @@ const chosen = Menu.popup(
   { x, y },
 );
 console.log(`chosen=${chosen}`);
-win.destroy();
+win.dispose();

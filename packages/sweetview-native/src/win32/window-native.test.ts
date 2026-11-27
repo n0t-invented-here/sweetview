@@ -5,7 +5,7 @@
 // (released in a finally). Titles are unique so other sessions are not touched.
 
 import { describe, expect, test } from "bun:test";
-import { FFIType, dlopen, ptr, toArrayBuffer } from "bun:ffi";
+import { FFIType, dlopen, ptr } from "bun:ffi";
 import { binding } from "../binding";
 import { pumpEvents, quitEventLoop, runEventLoop } from "../event-loop";
 import { Screen } from "../screen";
@@ -39,7 +39,7 @@ let serial = 0;
 const unique = (what: string) => `window-native.test ${what} ${process.pid}.${++serial}`;
 
 async function api() {
-  return await import("./api");
+  return await import("../../test/win32-os");
 }
 
 async function styles(handle: bigint) {
@@ -395,8 +395,8 @@ describe.if(onWindows)("Window on the binding: click-through, hit regions, the r
 
 describe.if(onWindows)("Window.fromHandle on an application's own window (made here through bun:ffi)", () => {
   test("onResize, onMove, onClose and onFileDrop arrive; dispose leaves the window alive", async () => {
-    const { GMEM_MOVEABLE, WM_CLOSE, WM_DROPFILES, WS_OVERLAPPEDWINDOW, hInstance, kernel32, user32, wstr } = await api();
-    const hwnd = user32.CreateWindowExW(0, wstr("STATIC"), wstr(unique("own")), WS_OVERLAPPEDWINDOW, 50, 50, 300, 200, 0n, 0n, hInstance(), null);
+    const { WM_CLOSE, WS_OVERLAPPEDWINDOW, hInstance, sendDrop, user32, wide } = await api();
+    const hwnd = user32.CreateWindowExW(0, wide("STATIC"), wide(unique("own")), WS_OVERLAPPEDWINDOW, 50, 50, 300, 200, 0n, 0n, hInstance(), null);
     expect(hwnd).not.toBe(0n);
     const wrapped = Window.fromHandle(hwnd);
     try {
@@ -416,16 +416,7 @@ describe.if(onWindows)("Window.fromHandle on an application's own window (made h
       expect(user32.IsWindow(hwnd)).not.toBe(0); // the listener took the request
 
       const paths = ["C:\\example\\one.txt", "C:\\example\\two.txt"];
-      const body = Buffer.from(paths.join("\0") + "\0\0", "utf16le");
-      const dropFiles = Buffer.alloc(20 + body.length);
-      dropFiles.writeUInt32LE(20, 0);
-      dropFiles.writeInt32LE(1, 16);
-      body.copy(dropFiles, 20);
-      const drop = kernel32.GlobalAlloc(GMEM_MOVEABLE, BigInt(dropFiles.length));
-      const memory = kernel32.GlobalLock(drop)!;
-      new Uint8Array(toArrayBuffer(memory, 0, dropFiles.length)).set(dropFiles);
-      kernel32.GlobalUnlock(drop);
-      user32.SendMessageW(hwnd, WM_DROPFILES, drop, 0n);
+      sendDrop(hwnd, paths);
       expect(drops).toEqual([paths]);
 
       wrapped.dispose();

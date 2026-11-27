@@ -10,13 +10,13 @@
 
 import { FFIType, dlopen, toArrayBuffer, type Pointer } from "bun:ffi";
 import { deflateSync } from "node:zlib";
-import { gdi32, user32 } from "@n1h/sweetview-native/win32/api";
 
 const { u64, u32, i32 } = FFIType;
 const windows = dlopen("user32.dll", {
   GetDC: { args: [u64], returns: u64 },
   ReleaseDC: { args: [u64, u64], returns: i32 },
   PrintWindow: { args: [u64, u64, u32], returns: i32 }, // (HWND, HDC, flags)
+  GetClientRect: { args: [u64, FFIType.ptr], returns: i32 },
 }).symbols;
 const graphics = dlopen("gdi32.dll", {
   CreateCompatibleDC: { args: [u64], returns: u64 },
@@ -24,6 +24,9 @@ const graphics = dlopen("gdi32.dll", {
   DeleteDC: { args: [u64], returns: i32 },
   // (HDC to, x, y, width, height, HDC from, fromX, fromY, DWORD operation)
   BitBlt: { args: [u64, i32, i32, i32, i32, u64, i32, i32, u32], returns: i32 },
+  // (HDC, const BITMAPINFO*, UINT usage, void** bits, HANDLE section, DWORD offset) -> HBITMAP
+  CreateDIBSection: { args: [u64, FFIType.ptr, u32, FFIType.ptr, u64, u32], returns: u64 },
+  DeleteObject: { args: [u64], returns: i32 },
 }).symbols;
 
 const PW_CLIENTONLY = 0x1; // the window's inside: no resize border, which this window keeps outside what is visible
@@ -64,7 +67,7 @@ const SRCCOPY = 0x00cc0020;
 /** Writes a PNG of the inside of a window (an HWND) and returns its size in pixels. */
 export async function captureWindow(hwnd: bigint, path: string): Promise<{ width: number; height: number }> {
   const size = new Int32Array(4);
-  user32.GetClientRect(hwnd, size);
+  windows.GetClientRect(hwnd, size);
   if (size[2]! <= 0 || size[3]! <= 0) throw new Error("capture: the window has no inside (minimised?)");
   return draw(size[2]!, size[3]!, path, (memory) => windows.PrintWindow(hwnd, memory, PW_CLIENTONLY | PW_RENDERFULLCONTENT) !== 0);
 }
@@ -87,7 +90,7 @@ async function draw(width: number, height: number, path: string, paint: (memory:
   const bits = new BigUint64Array(1);
   const screen = windows.GetDC(0n);
   const memory = graphics.CreateCompatibleDC(screen);
-  const bitmap = gdi32.CreateDIBSection(memory, info, 0, bits, 0n, 0);
+  const bitmap = graphics.CreateDIBSection(memory, info, 0, bits, 0n, 0);
   try {
     if (bitmap === 0n || bits[0] === 0n) throw new Error("capture: CreateDIBSection failed");
     const before = graphics.SelectObject(memory, bitmap);
@@ -98,7 +101,7 @@ async function draw(width: number, height: number, path: string, paint: (memory:
     await Bun.write(path, png(width, height, pixels));
     return { width, height };
   } finally {
-    if (bitmap !== 0n) gdi32.DeleteObject(bitmap);
+    if (bitmap !== 0n) graphics.DeleteObject(bitmap);
     graphics.DeleteDC(memory);
     windows.ReleaseDC(0n, screen);
   }
