@@ -13,11 +13,11 @@ import { dirname, join } from "node:path";
 
 const root = join(dirname(Bun.fileURLToPath(import.meta.url)), "..");
 const args = process.argv.slice(2);
-const platform = args.find((a) => a === "windows" || a === "macos");
+const platform = args.find((a) => a === "windows" || a === "macos" || a === "linux");
 const quick = args.includes("--quick");
 const writeLedger = args.includes("--ledger");
 if (!platform) {
-  console.error("usage: bun rust-rewrite/verify.ts <windows|macos> [--quick] [--ledger]");
+  console.error("usage: bun rust-rewrite/verify.ts <windows|macos|linux> [--quick] [--ledger]");
   process.exit(2);
 }
 const TAG = "pre-rust-rewrite";
@@ -84,7 +84,10 @@ check("checklist", false, () => {
 
 // ---- ffi ---------------------------------------------------------------------
 check("ffi", false, () => {
-  const importing = sh(["git", "grep", "-l", "bun:ffi", "--", "packages", "demos"]).out.split(/\r?\n/).filter(Boolean);
+  // An import, a type import, a dynamic import or a require of bun:ffi. A comment that mentions it is not one.
+  const IMPORT = "(from|import\\()[[:space:]]*[\"']bun:ffi[\"']|require\\([\"']bun:ffi[\"']\\)";
+  const importing = sh(["git", "grep", "-l", "-E", IMPORT, "--", "packages", "demos"]).out.split(/\r?\n/).filter(Boolean);
+  const setup: string[] = [];
   const allow = new Map<string, string>();
   if (has("rust-rewrite/ffi-allowlist.txt")) {
     for (const line of read("rust-rewrite/ffi-allowlist.txt").split(/\r?\n/)) {
@@ -102,16 +105,23 @@ check("ffi", false, () => {
     else if (reason === "") bad.push(`${file}: allowlisted with no reason`);
     else if (reason.startsWith("probe:")) {
       if (file.startsWith("packages/") && !/\.test\.ts$|\/test\//.test(file)) bad.push(`${file}: a probe must be a test or a script, not package source`);
-    } else if (platform === "macos") bad.push(`${file}: only probes may remain after the macOS goal`);
+    } else if (reason.startsWith("setup:")) {
+      // The small amount of FFI that is needed to set things up. Shown every run so it stays small and explained.
+      setup.push(`${file}\t${reason}`);
+    } else if (platform !== "windows") bad.push(`${file}: only probes and setup files may remain after the ${platform} goal`);
     else if (isWindowsFile(file) || !isMacFile(file)) bad.push(`${file}: runs on Windows and still imports bun:ffi`);
   }
-  return { ok: bad.length === 0, lines: [`${importing.length} files import bun:ffi, ${allow.size} allowlisted`, ...bad] };
+  if (setup.length > 3) bad.push(`${setup.length} setup files import bun:ffi; more than 3 is a layer, not setup`);
+  return {
+    ok: bad.length === 0,
+    lines: [`${importing.length} files import bun:ffi, ${allow.size} allowlisted, ${setup.length} of them as setup`, ...setup.map((s) => `  setup: ${s}`), ...bad],
+  };
 });
 
 // ---- engine (the C++ library and its bindings package) -------------------------
 check("engine", false, () => {
   const hits = sh(["git", "grep", "-l", "sweetview-webview-bun", "--", "*package.json"]).out.split(/\r?\n/).filter(Boolean);
-  if (platform === "windows") return { ok: true, lines: [`${hits.length} package.json files still name the bindings package (allowed until the macOS goal)`] };
+  if (platform === "windows") return { ok: true, lines: [`${hits.length} package.json files still name the bindings package (macOS runs on it until the macOS goal)`] };
   return { ok: hits.length === 0, lines: hits.length ? hits.map((h) => `${h}: still depends on @n1h/sweetview-webview-bun`) : ["no package depends on the bindings package"] };
 });
 
@@ -119,6 +129,8 @@ check("engine", false, () => {
 check("unsafe", false, () => {
   const files = tracked("crates").filter((f) => f.endsWith(".rs"));
   if (files.length === 0) return { ok: false, lines: ["no Rust sources under crates/"] };
+  // Platform crates are the only ones that may hold `unsafe`: crates/sweetview-platform and any crates/sweetview-platform-<name>.
+  const isPlatformCrate = (f: string) => /^crates\/sweetview-platform(-[a-z0-9-]+)?\//.test(f);
   const bad: string[] = [];
   const ledger: [string, number][] = [];
   for (const file of files) {
@@ -133,11 +145,11 @@ check("unsafe", false, () => {
     }
     if (blocks > 0) {
       ledger.push([file, blocks]);
-      if (!file.startsWith("crates/sweetview-platform/")) bad.push(`${file}: ${blocks} unsafe outside crates/sweetview-platform`);
+      if (!isPlatformCrate(file)) bad.push(`${file}: ${blocks} unsafe outside a platform crate (crates/sweetview-platform*)`);
     }
   }
   for (const lib of tracked("crates").filter((f) => /^crates\/[^/]+\/src\/lib\.rs$/.test(f))) {
-    if (lib.startsWith("crates/sweetview-platform/")) {
+    if (isPlatformCrate(lib)) {
       for (const lint of ["unsafe_op_in_unsafe_fn", "clippy::undocumented_unsafe_blocks", "clippy::multiple_unsafe_ops_per_block"]) {
         if (!read(lib).includes(lint)) bad.push(`${lib}: missing #![deny(${lint})]`);
       }
@@ -194,7 +206,10 @@ check("api-surface", false, () => {
     for (const m of source.matchAll(/export\s+(?:declare\s+)?(?:async\s+)?(?:const|let|function\*?|class|type|interface|enum)\s+([A-Za-z_$][\w$]*)/g)) names.add(m[1]!);
     return names;
   };
-  const before = sh(["git", "ls-tree", "-r", "--name-only", TAG, "--", "packages"]).out.split(/\r?\n/).filter((f) => /^packages\/[^/]+\/src\/index\.ts$/.test(f));
+  // The modules package.json files publish as entry points: each package's index, and the facade's page, worker and window-chrome,
+  // the WebSocket client and server, and the hit-region helpers.
+  const ENTRY = /^packages\/[^/]+\/src\/(index|page|worker|window-chrome|client|server|hit-regions)\.ts$/;
+  const before = sh(["git", "ls-tree", "-r", "--name-only", TAG, "--", "packages"]).out.split(/\r?\n/).filter((f) => ENTRY.test(f));
   // The API may change. An export that is gone or renamed is accounted for by a table row
   // of docs/upgrading.md that names it in backticks and says what replaces it.
   const guideRows = has("docs/upgrading.md") ? read("docs/upgrading.md").split(/\r?\n/).filter((l) => l.trimStart().startsWith("|")) : [];
@@ -213,9 +228,27 @@ check("api-surface", false, () => {
       else unaccounted.push(`${file}: export ${name} is gone and docs/upgrading.md has no row for it`);
     }
   }
+  // The bindings package's exports. Applications import most of them from that package directly
+  // (the input hooks and permissions among them), so they are checked against every Sweetview entry point.
+  const everyExport = new Set<string>();
+  for (const file of tracked("packages").filter((f) => ENTRY.test(f))) for (const name of exportsOf(read(file))) everyExport.add(name);
+  const bindings = read("rust-rewrite/reference/bindings-exports.txt").split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !l.startsWith("#"));
+  let bindingsKept = 0;
+  let bindingsChanged = 0;
+  for (const name of bindings) {
+    count++;
+    if (everyExport.has(name)) bindingsKept++;
+    else if (inGuide(name)) bindingsChanged++;
+    else unaccounted.push(`bindings export ${name}: no Sweetview package exports it and docs/upgrading.md has no row for it`);
+  }
   return {
     ok: unaccounted.length === 0 && count > 0,
-    lines: [`${count} exports of ${before.length} package entry points at ${TAG}: ${kept} kept, ${changed} changed with an upgrade row, ${unaccounted.length} unaccounted for`, ...unaccounted],
+    lines: [
+      `${count - bindings.length} exports of ${before.length} package entry points at ${TAG}: ${kept} kept, ${changed} changed with an upgrade row`,
+      `${bindings.length} exports of the bindings package: ${bindingsKept} exported by Sweetview, ${bindingsChanged} with an upgrade row`,
+      `${unaccounted.length} unaccounted for`,
+      ...unaccounted,
+    ],
   };
 });
 

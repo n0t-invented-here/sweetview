@@ -1,6 +1,14 @@
 # Requirements
 
-These hold for the Windows goal and the macOS goal alike. When two documents disagree, the order of authority is: this file, then the checklist for the goal being run, then `GOAL-<platform>.md`, then `SWEETVIEW-RESTART-PROPOSAL.md`.
+These hold for every goal alike. When two documents disagree, the order of authority is: this file, then the checklist for the goal being run, then `GOAL-<platform>.md`, then `SWEETVIEW-RESTART-PROPOSAL.md`.
+
+The work is three goals, run one after another, each on its own machine:
+
+1. Windows: `CHECKLIST-windows.md`. Also holds the work that is the same on every OS: the binding's boundary, the logic crates, the IPC transports for Tauri 2 and Electron.
+2. macOS: `CHECKLIST-macos.md`.
+3. Linux: `CHECKLIST-linux.md`. Sweetview has no Linux support today, so this goal adds a minimum and ports nothing.
+
+Nothing in the proposal's order of work is outside these three checklists.
 
 Each requirement has a check. A requirement counts as met only when its check has been run and its output is in the session.
 
@@ -20,7 +28,7 @@ Rust that repeats the old code as `unsafe` blocks misses the purpose as much as 
 Every capability that works on branch `v1-rust-rewrite` at tag `pre-rust-rewrite` works afterwards. That covers three bodies of code:
 
 - Sweetview itself: every export of the six packages under `packages/`, with the behaviour `docs/` describes, on the platform the goal covers.
-- The Bun bindings, `n0t-invented-here/sweetview-webview-bun` branch `v1-drafting`: every export of `src/index.ts`, including `installMouseHook`, `installKeyboardHook`, `permissions`, the worker functions, and every `Webview` method.
+- The Bun bindings, `n0t-invented-here/sweetview-webview-bun` branch `v1-drafting`: every export of `src/index.ts`, including `installMouseHook`, `installKeyboardHook`, `permissions`, the worker functions, and every `Webview` method. `rust-rewrite/reference/bindings-exports.txt` lists them. Sweetview re-exports three of them today; applications import the rest, the input hooks among them, from the bindings package itself, so each needs a home in a Sweetview package.
 - The C++ library, `n0t-invented-here/sweetview-webview` branch `v1-drafting`: every addition listed in its `sweetview/README.md`, with the per-platform behaviour its pages state.
 
 Rules that follow from it:
@@ -52,8 +60,11 @@ Check: the `upgrade-guide` and `dependents` checks of `verify.ts`.
 
 Sweetview's packages make no `bun:ffi` call on the platform the goal covers. `rust-rewrite/reference/ffi-files.md` is the list of files that do today.
 
-- `rust-rewrite/ffi-allowlist.txt` holds any file that still imports `bun:ffi`, one per line as `path<TAB>reason`. The Windows goal ends with only macOS-only files in it. The macOS goal ends with it empty.
-- Tests and probe scripts that drive real OS input may import `bun:ffi`; they are listed too, with that reason.
+- An import counts: `import`, `import type`, a dynamic `import()` or a `require` of `bun:ffi`. A comment that mentions it does not.
+- `rust-rewrite/ffi-allowlist.txt` holds any file that still imports `bun:ffi`, one per line as `path<TAB>reason`. The Windows goal ends with only macOS-only files, probes and setup entries in it. The macOS goal ends with probes and setup entries only.
+- Tests and probe scripts that drive real OS input may import `bun:ffi`; they are listed with a reason that starts `probe:`.
+- A small amount of FFI that is needed to set things up is acceptable. Such a file is listed with a reason that starts `setup:` and says what it sets up and why N-API cannot. At most three files; more than that is a layer.
+- An application's own `bun:ffi` use is its own and is not counted.
 
 Check: the `ffi` check of `verify.ts`.
 
@@ -61,7 +72,9 @@ Check: the `ffi` check of `verify.ts`.
 
 Native code lives in a set of Rust crates with clear boundaries, each with one job, that a maintainer can read, test and change. It is safe Rust wherever a safe API exists, and disciplined Rust where none does. Moving the same unchecked calls from TypeScript into `unsafe` blocks does not meet this requirement.
 
-`UNSAFE-POLICY.md` is the rule. In short: a safe crate API is used when one exists; `unsafe` lives only in the platform crate; every `unsafe` block does one thing, sits inside a safe function whose types carry the invariant, and has a `SAFETY:` comment; every OS resource has an owning type that frees it on drop.
+How many crates there are and where their boundaries fall is decided by the work and recorded in `rust-rewrite/DECISIONS.md`. A crate has one job that a maintainer can state in a sentence.
+
+`UNSAFE-POLICY.md` is the rule. In short: a safe crate API is used when one exists; `unsafe` lives only in the platform crates; every `unsafe` block does one thing, sits inside a safe function whose types carry the invariant, and has a `SAFETY:` comment; every OS resource has an owning type that frees it on drop.
 
 Check: the `cargo`, `unsafe` and `clippy` checks of `verify.ts`, plus the review item at the end of the checklist.
 
@@ -69,7 +82,8 @@ Check: the `cargo`, `unsafe` and `clippy` checks of `verify.ts`, plus the review
 
 - `tao` for windows and the event loop, `wry` for the webview, `muda` for menus, `tray-icon` for the tray, `rfd` for dialogs, `napi` with `napi-derive` for the Bun boundary.
 - `windows`, `webview2-com`, `objc2`, `objc2-foundation`, `objc2-app-kit`, `objc2-user-notifications`, `objc2-core-graphics`, `block2` for what this project writes itself.
-- Forks of `wry` and `tray-icon`, as `FORKS.md` records them. A change that fits upstream's design is written so it can be offered upstream.
+- A fork of `wry`, as `FORKS.md` records it. A change that fits upstream's design is written so it can be offered upstream.
+- These crates are the design the proposal settled on, not a requirement in themselves: where building shows that one of them cannot carry a behaviour R1 requires, the design is adjusted.
 - A different crate is allowed where it serves R1 and R4 better. The reason is recorded in `rust-rewrite/DECISIONS.md` in one paragraph.
 - The C++ library and the `@n1h/sweetview-webview-bun` dependency are gone from a platform when that platform's goal completes.
 
@@ -97,8 +111,8 @@ Check: `git status -sb` and `git log --oneline pre-rust-rewrite..HEAD` in the se
 
 ## R8. One platform does not break the other
 
-- During the Windows goal, macOS keeps working on the existing code: its files are untouched except where a shared file must change, and a shared file changes only in a way that leaves the macOS path as it was.
-- Shared Rust is written for both platforms from the start, with platform code behind `cfg(target_os)`. `cargo check --target aarch64-apple-darwin` is run during the Windows goal and its result recorded in `HANDOFF-macos.md`.
+- The Windows goal does its best to leave things ready for the other platforms: shared Rust is written for all three from the start, with platform code behind `cfg(target_os)`, and `cargo check --target aarch64-apple-darwin` is run and its result recorded in `HANDOFF-macos.md`.
+- During the Windows goal, macOS keeps running on the existing code. The native package already picks an implementation per OS in `packages/sweetview-native/src/platform.ts`, so its `darwin/` folder stays as it is. The three shared files in `packages/sweetview/src/` that hold FFI for both platforms get one seam between the Windows path and the macOS path, and the macOS path keeps today's code behind it.
 - The macOS goal leaves every Windows check passing.
 
 Check: `bun test` on the other platform's non-live tests where a machine for it is available; otherwise the `cargo check` result above and a diff summary of shared files.

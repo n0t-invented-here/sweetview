@@ -75,3 +75,4 @@ Read `rust-rewrite/HANDOFF-macos.md` first. It was written by the Windows goal a
 - [ ] M9.1 `rust-rewrite/UNSAFE-LEDGER.md` is current for macOS.
 - [ ] M9.2 A reviewer that did not write the code read every macOS `unsafe` block against `UNSAFE-POLICY.md` and every item here against its evidence. Findings are in `rust-rewrite/evidence/review-macos.md`, each fixed or answered.
 - [ ] M9.3 `rust-rewrite/OWNER-ACTIONS.md` is current.
+- [ ] M9.4 `rust-rewrite/HANDOFF-linux.md` exists for the Linux goal: what the shared Rust already does behind `cfg(target_os = "linux")` and what `CHECKLIST-linux.md` should change given what the first two goals learned.

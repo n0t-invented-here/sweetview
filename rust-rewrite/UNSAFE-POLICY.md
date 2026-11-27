@@ -8,8 +8,8 @@ For each behaviour, take the first that provides it:
 
 1. A safe API of `tao`, `wry`, `muda`, `tray-icon` or `rfd`.
 2. A safe method of an `objc2` framework crate, or a safe wrapper type of the `windows` crate. Most AppKit methods in `objc2-app-kit` are safe; `SWEETVIEW-RESTART-PROPOSAL.md` lists the ones this project needs with their safety.
-3. An addition to this project's `wry` or `tray-icon` fork, written in the style of the code around it.
-4. An `unsafe` block in this project's platform crate, under the rules below.
+3. An addition to this project's `wry` fork, written in the style of the code around it.
+4. An `unsafe` block in one of this project's platform crates, under the rules below.
 
 Record the choice for anything that lands on 3 or 4 in `rust-rewrite/UNSAFE-LEDGER.md`: the behaviour, the crate API that was looked for and its docs.rs page, and why it does not serve.
 
@@ -17,13 +17,15 @@ Record the choice for anything that lands on 3 or 4 in `rust-rewrite/UNSAFE-LEDG
 
 | Crate | `unsafe` |
 |---|---|
-| `crates/sweetview-platform` | allowed, under the rules below |
+| a platform crate: `crates/sweetview-platform`, or `crates/sweetview-platform-<name>` when the work is split (per OS, or input hooks apart from windows) | allowed, under the rules below |
 | every other crate in the workspace | forbidden: `#![forbid(unsafe_code)]` at the crate root |
-| the forks | as their upstream code does it |
+| the fork | as its upstream code does it |
 
-The N-API surface, the registries, the callback plumbing, the hit-region logic, the menu data, header validation and every other piece of logic live outside the platform crate and compile with `unsafe` forbidden.
+How many crates there are and where their boundaries fall is a design choice of the work: a crate has one job a maintainer can name in a sentence. What is fixed is that `unsafe` stays inside crates whose name starts with `sweetview-platform`, because `verify.ts` and a reviewer find it by that name.
 
-## Rules inside the platform crate
+The N-API surface, the registries, the callback plumbing, the hit-region logic, the menu data, header validation and every other piece of logic live outside the platform crates and compile with `unsafe` forbidden.
+
+## Rules inside a platform crate
 
 - The crate root sets `#![deny(unsafe_op_in_unsafe_fn)]`, `#![deny(clippy::undocumented_unsafe_blocks)]`, `#![deny(clippy::multiple_unsafe_ops_per_block)]` and `#![deny(clippy::missing_safety_doc)]`.
 - The crate's public API has no `unsafe fn` and no raw pointer or raw handle in a signature. Other crates call safe functions and hold owning types.

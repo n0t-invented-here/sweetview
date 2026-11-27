@@ -1,0 +1,36 @@
+# Every export of `src/index.ts` in `n0t-invented-here/sweetview-webview-bun`, branch `v1-drafting` (package version 2.8.0).
+# Sweetview re-exports only three of them today (`SizeHint`, `WEBVIEW_VERSION`, `Webview` as `RawWebview`);
+# applications import the rest from the bindings package directly. When that package goes, each name
+# below is exported by a Sweetview package or has a row in `docs/upgrading.md`. `verify.ts` checks it.
+unload
+WebviewError
+WebviewRequest
+WebviewResponse
+RequestHandler
+completeWebviewRequest
+WebviewResponseHead
+beginWebviewResponse
+writeWebviewResponseChunk
+endWebviewResponse
+FileDropHandler
+Size
+SizeHint
+Webview
+Modifier
+modifiersFrom
+Modifiers
+Feature
+Permission
+permissions
+PermissionStatus
+installMouseHook
+MouseEvent
+MouseHandler
+MouseHook
+MouseMessage
+installKeyboardHook
+KeyEvent
+KeyHandler
+KeyboardHook
+KeyMessage
+WEBVIEW_VERSION

@@ -2,7 +2,29 @@
 
 Status: proposal and design. Ready for implementation on Windows. On macOS two mechanisms that were proven on Windows are not yet proven; the Readiness section lists them.
 
-Rule: no functionality is removed. Everything Sweetview, the bindings and the C++ webview fork do today exists afterwards. Where a crate lacks something, this project writes it in Rust.
+Rule: no functionality is removed. Everything Sweetview, the bindings and the C++ webview fork do today exists afterwards. Where a crate lacks something, this project writes it in Rust. The API is free to change where the design is better for it; each change has a row in `docs/upgrading.md`.
+
+How this document is used: it is the design. `rust-rewrite/REQUIREMENTS.md` states what the result must be and outranks this document where the two differ; `rust-rewrite/CHECKLIST-<platform>.md` is the order of work with its acceptance.
+
+## The tree this starts from
+
+Branch `v1-rust-rewrite` is `main` with `v1-drafting` merged. Parts of this document were written against `main` before the merge. Read them with this map:
+
+| This document says | In the tree |
+|---|---|
+| `src/native/win32/...`, `src/native/darwin/...`, or a bare `win32/tray.ts` | `packages/sweetview-native/src/win32/...` and `.../darwin/...` |
+| `src/app.ts`, `src/worker.ts`, `src/webview-lib.ts`, `src/ring.ts` | `packages/sweetview/src/...` |
+| `NativeWindow` and `Overlay`, two classes | one `Window` class over one `WindowBackend` interface, in `packages/sweetview-native/src/window.ts`; an overlay is a `Window` with `transparent`, `topmost`, `noActivate`, `hideFromTaskbar` |
+| `win32/overlay.ts`, `darwin/overlay.ts` | merged into `win32/window.ts` (1,034 lines) and `darwin/window.ts` (1,073 lines) |
+| the tabs demo's own native files | the tabs library: `packages/sweetview/src/tabs/` and `packages/sweetview-native/src/win32/tab-window.ts`, `darwin/tabs.ts` |
+| a notification on Windows is a balloon on the tray's icon | WinRT toasts, with a balloon on a hidden icon of the notifier's own as the fallback: `win32/notifier.ts`, `win32/winrt-toast.ts` |
+| line counts in "Module map" | `main`'s. The current list is `rust-rewrite/reference/ffi-files.md`: 34 files import `bun:ffi` |
+
+Three facts about the tree that the design rests on:
+
+- A webview is mounted inside a window that already exists. `WebView.attach(window, options)` in `packages/sweetview/src/app.ts` passes the `Window`'s handle to the engine, and the tabs library mounts one into each child pane it gets from `Window.fromHandle`. The binding therefore mounts a `wry` webview into a window it is given, by handle, as well as into windows it created.
+- The native package picks an implementation per OS in one place: `backend(win32, darwin)` in `packages/sweetview-native/src/platform.ts`, used by eleven modules (`activation`, `app-icon`, `app-menu`, `clipboard`, `event-loop`, `folder-picker`, `menu`, `notifications`, `screen`, `tray`, `window`). On Windows each of those returns the Rust binding's implementation.
+- The input hooks and the permission model are exported only by the bindings package, `@n1h/sweetview-webview-bun`. Sweetview re-exports `SizeHint`, `WEBVIEW_VERSION` and `Webview` (as `RawWebview`) and nothing else from it. When the bindings package goes, a Sweetview package exports the hooks; `rust-rewrite/reference/bindings-exports.txt` lists every name.
 
 ## Readiness
 
@@ -12,7 +34,8 @@ Rule: no functionality is removed. Everything Sweetview, the bindings and the C+
 | `tao`'s loop pumped from a Bun timer delivering tray events with no window, with Bun's timers and promises still running | **proven on Windows** | on macOS: run the same proof on a Mac |
 | `bun build --compile` embedding the `.node` binding into one executable | **proven on Windows** | on macOS: run the same proof on a Mac |
 | The five additions inside the `wry` fork: streaming on Windows and macOS, macOS drag routing, macOS top-level-only IPC, macOS navigation-failed event | located, file and function each; see "Fork additions, located" | nothing |
-| The balloon addition inside the `tray-icon` fork | located, file and function | nothing |
+| The Windows notification fallback (a balloon on a hidden icon) | this project's code in the platform crate, as `win32/notifier.ts` does it today; no `tray-icon` fork is needed | nothing |
+| The binding loaded a second time inside a Bun `Worker`, waking the UI thread | **not proven**; today the worker opens the C library itself and calls `webview_dispatch` | checklist item W1.7, before any webview work |
 | Every crate API the design names | read on docs.rs or in source, with version; see "API references" | nothing |
 | Native tabs and every `v1-drafting` feature | designed from a full reading of their files; see "Tabs" and "The `v1-drafting` features" | nothing |
 | Linux | scoped, not designed | its own step, last |
@@ -81,7 +104,7 @@ Crates for the N-API layer and for the Rust this project writes itself.
 | `objc2-user-notifications`, `objc2-core-graphics` | 0.3.2 | macOS notifications; the event tap for the input hooks |
 | `block2` | 0.6.2 | Objective-C blocks |
 
-Two of the crates are used as forks this project owns, each carrying a short list of additions: `wry` and `tray-icon`. The additions are listed under "What this project writes in Rust".
+One of the crates is used as a fork this project owns, carrying a short list of additions: `wry`. The additions are listed under "What this project writes in Rust". `tray-icon` is used as published; `rust-rewrite/FORKS.md` says why.
 
 ## Memory safety
 
@@ -90,7 +113,7 @@ Two of the crates are used as forks this project owns, each carrying a short lis
 | `tao`, `wry`, `muda`, `tray-icon`, `rfd` | inside the crates; their public APIs are safe |
 | Sweetview's own crate, except the modules below | none: `#![forbid(unsafe_code)]` |
 | Sweetview's `platform` modules: input hooks, notifications, and the single OS calls listed below | yes, one `unsafe` block per OS call |
-| This project's additions inside its `wry` and `tray-icon` forks | yes, in the same style as the code around them |
+| This project's additions inside its `wry` fork | yes, in the same style as the code around them |
 | JavaScript | no native calls at all |
 
 ## What the Rust types enforce
@@ -135,7 +158,7 @@ Each row is something the TypeScript `bun:ffi` code does by hand today.
 | Tray icon, tooltip, click and double click, menu | `tray-icon`, with the single and double click timing in safe Rust |
 | Menus with check marks, icons, submenus, rebuilt on every open | `muda` |
 | SF Symbol icons on macOS | Sweetview `platform`: `NSImage::imageWithSystemSymbolName` |
-| Windows notifications as the tray's balloon, with click | the `tray-icon` fork: one function and one event |
+| Windows notifications: WinRT toasts with click, and a balloon on a hidden icon of the notifier's own as the fallback | Sweetview `platform` on the `windows` crate: the WinRT toast types, and `Shell_NotifyIconW` for the fallback |
 | macOS notifications with click, data round trip, banners while frontmost | Sweetview `platform` on `objc2-user-notifications` |
 | Folder dialog | `rfd` |
 | macOS app menu with About, Quit and Edit | `muda` predefined items; the About alert through `rfd` |
@@ -172,9 +195,9 @@ All kept.
 | Where | What | Unsafe |
 |---|---|---|
 | `wry` fork | streamed response bodies on Windows and macOS; on macOS the C++ fork's drag routing, top-level-only IPC and a navigation-failed event | yes |
-| `tray-icon` fork | the balloon notification and its click event on Windows | yes |
 | Sweetview `platform::input` | mouse hook, keyboard hook, permissions | yes |
-| Sweetview `platform::notify` | macOS notifications | yes |
+| Sweetview `platform::notify` | Windows: WinRT toasts and the hidden-icon balloon fallback. macOS: notifications | yes |
+| Sweetview `platform::adopt` | wrapping a window this process did not create through Sweetview (`Window.fromHandle`): its events by subclassing on Windows, and mounting a webview into it | yes |
 | Sweetview `platform::misc` | mouse-button state, work area, `colorKey` and `opacity`, window level and collection behaviour, SF Symbols, Dock icon | yes, one call each |
 | Sweetview `hit`, `http`, `menu`, `click`, `resize` | hit-region poll and refine state machine; header validation; menu data; click timing; the resize gesture | no |
 | Sweetview `napi_surface`, `callbacks`, `registry`, `threads` | the N-API layer | no |
@@ -203,14 +226,17 @@ Nothing in this table works until its step is built and its check passes. This d
 
 The gate:
 
-- The current stack stays intact, published and usable throughout: the TypeScript FFI, `@n1h/sweetview-webview-bun` and the C++ fork. A game keeps running on it at every point.
-- The Rust library ships beside it under its own package version. A game moves to it by changing a dependency and moves back the same way.
-- Nothing of the current stack is deleted until every check in this document passes on Windows and macOS, and the owner's games run on the Rust library.
-- A function that cannot be made to work in Rust stops the migration at that step. The current stack remains the shipping one.
+- The current stack stays available throughout as what it is today: the published packages, tag `pre-rust-rewrite` on this branch, and the `main` and `v1-drafting` branches. A game keeps running on it at every point, and nothing published is changed by this work.
+- The work happens on branch `v1-rust-rewrite`, one platform at a time. The Windows goal replaces the Windows half and leaves macOS running on today's code; the macOS goal replaces the macOS half and removes the bindings package and the C++ library.
+- A platform's old code is deleted only when that platform's checklist is complete: every item ticked with its evidence, every test that passed at the tag still passing, and the upgrade guide exercised.
+- A game moves to the result by following `docs/upgrading.md`. The dependents run of requirement R2 does that to a copy of each real application and runs its own checks before the goal can complete.
+- A function that cannot be made to work in Rust is first a reason to adjust the design. It stops the work only when no adjustment keeps the requirements, as R9 states.
 
 ## Fork additions, located
 
-### `tray-icon`: the Windows balloon
+### `tray-icon`: no fork needed
+
+The table below located a balloon addition inside `tray-icon`. It is kept as a record of what the crate has and lacks, and it is not built: on this branch the notifier shows its fallback balloon on a hidden icon of its own and does not use the tray's icon, so the code belongs in this project's platform crate. `tray-icon` already re-adds the icon when Explorer restarts, which is the one tray behaviour that needed checking.
 
 Read in `src/platform_impl/windows/mod.rs` on the crate's `dev` branch.
 
@@ -308,14 +334,20 @@ One addition they found: `tao` has `set_tabbing_identifier`, which is the macOS 
 | Layer | Content | Language |
 |---|---|---|
 | App | the developer's single `.ts` file | TypeScript |
-| Sweetview API | the public API of today, unchanged | TypeScript |
+| Sweetview API | the public API; it changes only where the design is better for it, each change with a row in `docs/upgrading.md` | TypeScript |
 | Binding | `sweetview.<target>.node`, loaded with `require` | Rust |
 
-Sweetview's native layer already has the seam this design uses. Each module declares a `Backend` type and picks an implementation with `backend(win32, darwin)` in `src/native/platform.ts`: `event-loop`, `window`, `overlay`, `tray`, `notifications`, `folder-picker`, `app-menu`, `app-icon`. The Rust library implements those eight `Backend` types and `platform.ts` returns it. The bindings' `Webview` class keeps its public shape and calls the Rust library in place of `lib.symbols.*`.
+Sweetview's native layer already has the seam this design uses. Each module declares a `Backend` type and picks an implementation with `backend(win32, darwin)` in `packages/sweetview-native/src/platform.ts`: `activation`, `app-icon`, `app-menu`, `clipboard`, `event-loop`, `folder-picker`, `menu`, `notifications`, `screen`, `tray`, `window`. The Rust library implements those eleven `Backend` types and `platform.ts` returns it. The webview has no such seam yet: `packages/sweetview/src/app.ts` calls the bindings' `Webview` class and the C library's symbols directly, so the work gives it one, with the Rust library behind it on Windows.
 
 ## The N-API surface
 
 Internal to the package. Signatures are the generated TypeScript.
+
+This surface was drawn against `main`. It shows the shape and the conventions: classes for things with a lifetime, functions callable from any thread named apart, callbacks passed as functions, menus as data. Against the merged tree it changes in these ways, and the work draws the final surface from the eleven `Backend` types and `WindowBackend`:
+
+- `NativeWindow` and `Overlay` below are one window class implementing `WindowBackend`: add `toggle`, `setTitle`, `isMaximized`, `onResize`, `onMove`, `onClose`, `onFileDrop`, the minimum size, and adoption of a window by handle.
+- `Tray.showBalloon` and `Tray.onBalloonClick` go: the notifier owns its fallback.
+- Missing below and needed: screens (`Screen`), the clipboard, activation (`registerUrlScheme`, `singleInstance`, the URL event), `Menu.popup`, `scheduleNativeTimeout`, and the tab primitives of `win32/tab-window.ts` and `tabs/win-webview2.ts`.
 
 ```ts
 class Engine {
@@ -484,7 +516,7 @@ Today a `JSCallback` lets the OS call JavaScript on the UI thread while that thr
 - `Overlay.handle`, `WebviewApp.windowHandle` and `Webview.unsafeWindowHandle` stay the real OS handles, as `docs/native.md` and the bindings' docs define them: the `HWND` on Windows, the `NSWindow` pointer on macOS. `tao` returns them from `WindowExtWindows::hwnd()` and `WindowExtMacOS::ns_window()`.
 - `Webview.unsafeHandle` and the `handle` argument of the worker functions stay in the API as an opaque number that names the webview. The library checks it against its table of live webviews.
 - `assetOrigin` keeps its values: `http://webview.localhost` on Windows, `webview://localhost` on macOS.
-- `framesOrigin` on Windows becomes `http://webview-frames.localhost`; today it is `http://frames.webview.localhost`. Apps read it from the getter.
+- `framesOrigin` on Windows is `http://frames.webview.localhost` today. A `wry` custom protocol named `webview` was observed to get the origin `http://webview.localhost`, so a protocol named `frames.webview` is expected to get today's frames origin. Checklist item W2.4 checks it. If it does not hold, the origin changes, apps read it from the getter, and the change gets its row in `docs/upgrading.md`.
 - `WEBVIEW_PATH` pointed at a custom engine build. `SWEETVIEW_NATIVE_PATH` points at a custom build of the binding.
 
 ## Packaging
@@ -492,7 +524,7 @@ Today a `JSCallback` lets the OS call JavaScript on the UI thread while that thr
 - One npm package holds the TypeScript and one `.node` binding per target: Windows x64, macOS arm64 and x64, Linux x64.
 - The binding is loaded with a literal `require` per platform, the form `bun build --compile` embeds.
 - CI builds with `cargo` on one runner per OS. Consumers install no Rust.
-- `@n1h/sweetview-webview-bun` is folded into the one package; its API is re-exported unchanged.
+- `@n1h/sweetview-webview-bun` is folded into Sweetview's packages. Every name it exports, the input hooks and permissions among them, is exported by a Sweetview package or has a row in `docs/upgrading.md`.
 
 ## Module map
 
@@ -504,7 +536,7 @@ Today a `JSCallback` lets the OS call JavaScript on the UI thread while that thr
 | `win32/overlay.ts`, `darwin/overlay.ts` | 869 | `tao`, Sweetview `hit` and `resize`, `platform::misc` |
 | `win32/tray.ts`, `darwin/tray.ts` | 359 | `tray-icon` fork, Sweetview `click` |
 | `win32/menu.ts`, `darwin/menu.ts`, `darwin/app-menu.ts` | 283 | `muda`, Sweetview `menu` |
-| `win32/notifier.ts`, `darwin/notifier.ts` | 169 | `tray-icon` fork balloon; `platform::notify` |
+| `win32/notifier.ts`, `win32/winrt-toast.ts`, `darwin/notifier.ts` | 169 on `main` | `platform::notify` |
 | `win32/icon.ts`, `darwin/image.ts`, `darwin/app-icon.ts` | 142 | the crates' `Icon` types; `platform::misc` for SF Symbols and the Dock icon |
 | `win32/folder-picker.ts`, `darwin/folder-picker.ts` | 150 | `rfd` |
 | the bindings' `src/` | 2,014 | Sweetview `engine` on `wry` |
@@ -586,26 +618,34 @@ No Linux code exists in Sweetview today, and the C++ fork's additions do nothing
 
 ## Order of work
 
-1. Binding skeleton on `napi`, `tao` and `wry`; CI producing the binaries. Repeats on macOS the proofs already run on Windows: a JavaScript function called from the page while `run()` blocks, and a tray-only app with no window receiving clicks under the timer-pumped loop. Accepted by the bindings' `examples/basic.ts`, `examples/bind.ts` and `demos/menubar-only` clicked by hand on both platforms.
-2. The `Webview` API on `wry`: assets, background colour, bind, the request handler. Accepted by the parts of `test/request-handler.test.ts` that cover them.
-3. The `wry` fork additions (streaming; on macOS drag routing, top-level-only IPC and the navigation-failed event) and the Windows drop and external-drop code in `platform`. Accepted by the rest of `test/request-handler.test.ts`, unchanged.
-4. Input hooks and permissions. Accepted by the ported key-code tests and `examples/input-hooks.ts`.
-5. Windows, overlays, hit regions. Accepted by `demos/web-app` and `demos/desktop-pet`.
-6. Tray, menus, notifications, folder dialog, app menu, app icon. Accepted by `demos/menubar-notify`.
-7. Native tabs. Accepted by `demos/native-tabs`.
-8. The gate: every check in this document passes on Windows and macOS, and the owner's games run on the Rust library. Only then are the TypeScript FFI, the bindings package and the dependency on the C++ fork deleted.
-9. The `v1-drafting` features, one at a time.
-10. Tauri 2 and Electron IPC transports: page code identical across webview, WebSocket, Tauri 2 and Electron.
-11. Linux.
+The work is three goals, run one after another, each with its checklist under `rust-rewrite/`. The checklists are the order; this table says where each piece of this document lands. The `v1-drafting` features are part of the tree from the start, so they are built inside the group they belong to and not as a later step.
+
+| Piece | Windows goal, `CHECKLIST-windows.md` | macOS goal, `CHECKLIST-macos.md` |
+|---|---|---|
+| Binding skeleton, the boundary, CI, the proofs | W0, W1 | M0 |
+| The webview on `wry`: assets, background colour, bind, request handler, streaming, drops | W2 | M1 |
+| Input hooks and permissions | W3 | M2 |
+| Event loop, windows, overlays, hit regions, screens, file drops | W4 | M3 |
+| Tray, menus, notifications, folder dialog, clipboard, app menu, app icon | W5 | M4 |
+| URL schemes and single instance | W6 | M5 |
+| Native tabs | W7 | M6 |
+| Packaging and `bun build --compile` | W8 | M7 |
+| Tauri 2 and Electron IPC transports: page code identical across webview, WebSocket, Tauri 2 and Electron | WT, done once | |
+| Removal of the old code, documents, the upgrade guide | W9 | M8 |
+| Safety review and handoff | W10 | M9 |
+
+Linux is the third goal, `CHECKLIST-linux.md`, scoped as the Linux section above states.
 
 ## Risks and actions
 
 | Risk | Action |
 |---|---|
-| The two loop mechanisms are proven on Windows and not on macOS | Step 1 runs the same proof on a Mac before any macOS module is built. If the timer pump fails there, the pump function dequeues events itself with `NSApplication::nextEventMatchingMask_untilDate_inMode_dequeue` and `sendEvent`, the calls today's `pumpEvents` makes; both are safe methods in `objc2-app-kit`. |
-| The tray proof used posted messages, not a person's click | Step 1's acceptance is `demos/menubar-only` clicked by hand on Windows and macOS. |
-| A rebuilt module behaves differently from today. Every game-critical path is re-implemented under this proposal, so each one can differ | Each is accepted against its existing tests and demo. The current stack stays the shipping one until the gate in step 8 is passed. |
-| The forks of `wry` and `tray-icon` drift from upstream | Each addition is one commit on top of a pinned upstream version, and is offered upstream. |
+| The two loop mechanisms are proven on Windows and not on macOS | Group M0 of the macOS checklist runs the same proof on a Mac before any macOS module is built. If the timer pump fails there, the pump function dequeues events itself with `NSApplication::nextEventMatchingMask_untilDate_inMode_dequeue` and `sendEvent`, the calls today's `pumpEvents` makes; both are safe methods in `objc2-app-kit`. |
+| The tray proof used posted messages, not a person's click | Items W5.5 and M4.5 are `demos/menubar-only` and `demos/menubar-notify` clicked by hand. |
+| A rebuilt module behaves differently from today. Every game-critical path is re-implemented under this proposal, so each one can differ | Each is accepted against its existing tests and demo, and the dependents run of R2 upgrades a copy of each real application and runs its own checks. The published packages and tag `pre-rust-rewrite` stay as they are. |
+| The worker cannot load the binding a second time, or cannot wake the UI thread through it | Item W1.7 proves it before any webview work. If it fails, the wake goes through a `SharedArrayBuffer` flag the pump reads plus a thread message posted by a tiny `setup:` FFI call, recorded in `rust-rewrite/DECISIONS.md`. |
+| `tao` queues window events while its handler is already running, so a handler that opens a modal loop sees no resize, move or close until it returns | Item W1.8 tests it. Page calls and worker replies arrive through WebView2's own callbacks and the wake message, not through `tao`'s event handler, so they are served inside the modal loop; window events that arrive late are delivered when the handler returns, as the OS queue would deliver them. |
+| The `wry` fork drifts from upstream | Each addition is one commit on top of a pinned upstream version, and is offered upstream. |
 | `unsafe` spreads | `#![forbid(unsafe_code)]` on every Sweetview module outside `platform`. CI counts `unsafe` blocks and fails when the count rises without an entry in a tracked list. |
 
 ## Alternatives ruled out
