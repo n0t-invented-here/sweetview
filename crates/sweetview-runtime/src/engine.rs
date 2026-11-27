@@ -165,15 +165,19 @@ struct Inner {
   /// Scripts added with `init`; kept so they stay registered.
   init_scripts: RefCell<Vec<UserScript>>,
   new_window: NewWindowSlot,
-  /// Navigations asked for while a script added by `init` or `bind` was not
-  /// yet registered, in the order asked; started once every script is.
-  held_loads: RefCell<VecDeque<Load>>,
+  /// Navigations and evaluations asked for while a script added by `init` or
+  /// `bind` was not yet registered, in the order asked; carried out once
+  /// every script is.
+  held: RefCell<VecDeque<PageOp>>,
 }
 
-/// A navigation the host asked for.
-enum Load {
+/// Something the host asked of the page that must happen after the scripts
+/// added before it are registered: a navigation, or a script evaluated in
+/// the current document (`eval`, a binding's reply, the bridge's notices).
+enum PageOp {
   Url(String),
   Html(String),
+  Script(String),
 }
 
 /// One webview. Cheap to clone; every clone names the same webview.
@@ -273,11 +277,11 @@ impl Engine {
       bind_script: RefCell::new(None),
       init_scripts: RefCell::new(Vec::new()),
       new_window,
-      held_loads: RefCell::new(VecDeque::new()),
+      held: RefCell::new(VecDeque::new()),
     });
     *slot.borrow_mut() = Rc::downgrade(&inner);
 
-    // Held navigations start on a later turn, once every script is registered:
+    // Held navigations and evaluations run on a later turn, once every script is registered:
     // the handler runs inside WebView2's completion callback.
     let release_target = Rc::downgrade(&inner);
     let release_runtime = Rc::downgrade(&runtime);
@@ -287,7 +291,7 @@ impl Engine {
         if let Some(runtime) = release_runtime.upgrade() {
           runtime.defer(move || {
             if let Some(inner) = target.upgrade() {
-              inner.release_loads();
+              inner.release_held();
             }
           });
         }
@@ -424,15 +428,15 @@ impl Engine {
 
   // ---- content --------------------------------------------------------------------
 
-  /// Navigates to `url`. Held back (see [`Inner::load`]) while a script added
+  /// Navigates to `url`. Held back (see [`Inner::page_op`]) while a script added
   /// by `init` or `bind` is not yet registered, so the document has it.
   pub fn navigate(&self, url: &str) {
-    self.inner.load(Load::Url(url.to_owned()));
+    self.inner.page_op(PageOp::Url(url.to_owned()));
   }
 
   /// Shows `html` as the document. Held back like [`navigate`](Self::navigate).
   pub fn set_html(&self, html: &str) {
-    self.inner.load(Load::Html(html.to_owned()));
+    self.inner.page_op(PageOp::Html(html.to_owned()));
   }
 
   /// Runs `source` at the start of every document the webview opens from now
@@ -444,7 +448,9 @@ impl Engine {
     }
   }
 
-  /// Runs `source` in the current document. The result is discarded.
+  /// Runs `source` in the current document. The result is discarded. Held,
+  /// in order, behind navigations and script registrations asked for before
+  /// it (see [`Inner::page_op`]), so it reaches the document they lead to.
   pub fn eval(&self, source: &str) {
     self.inner.eval(source);
   }
@@ -583,48 +589,61 @@ impl Inner {
   }
 
   fn eval(&self, source: &str) {
-    self.with_live(|live| {
-      let _ = live.webview.evaluate_script(source);
-    });
+    self.page_op(PageOp::Script(source.to_owned()));
   }
 
-  /// Starts `load`, or holds it while a script registration is outstanding
-  /// (WebView2 can create a document from a navigation started before then
-  /// without the script) or while earlier loads are held, which keeps them in
-  /// order. A held load stops the navigation in flight: the held one would
-  /// cancel it anyway, and WebView2 reports a registration only once that
-  /// navigation has its response or is stopped.
-  fn load(&self, load: Load) {
-    let hold = self.with_live(|live| live.extras.scripts_pending() || !self.held_loads.borrow().is_empty());
+  /// Carries out `op`, or holds it while a script registration is
+  /// outstanding or earlier operations are held, so everything the host asks
+  /// of the page happens in the order asked and after the scripts added
+  /// before it, as when adding a script waited for WebView2. A navigation
+  /// started before a registration completes can create its document without
+  /// the script, and an evaluation made before a held navigation starts would
+  /// run in the document that navigation replaces.
+  ///
+  /// A held navigation stops the one in flight: the held one would cancel it
+  /// anyway, and WebView2 reports a registration only once that navigation
+  /// has its response or is stopped. A held evaluation stops nothing.
+  fn page_op(&self, op: PageOp) {
+    let hold = self.with_live(|live| live.extras.scripts_pending() || !self.held.borrow().is_empty());
     match hold {
       Some(true) => {
-        self.held_loads.borrow_mut().push_back(load);
-        self.with_live(|live| {
-          // The host has asked for another navigation: the stopped one's end
-          // is no longer current, as it would not be had the load started now.
-          live.extras.note_host_navigation();
-          live.extras.stop_navigation();
-        });
+        let navigates = !matches!(op, PageOp::Script(_));
+        self.held.borrow_mut().push_back(op);
+        if navigates {
+          self.with_live(|live| {
+            // The host has asked for another navigation: the stopped one's end
+            // is no longer current, as it would not be had the load started now.
+            live.extras.note_host_navigation();
+            live.extras.stop_navigation();
+          });
+        }
       }
-      Some(false) => self.start_load(&load),
+      Some(false) => self.run_page_op(&op),
       None => {}
     }
   }
 
-  /// Starts the held loads, in order, while no script registration is outstanding.
-  fn release_loads(&self) {
+  /// Carries out the held operations, in order, while no script registration
+  /// is outstanding.
+  fn release_held(&self) {
     while self.with_live(|live| !live.extras.scripts_pending()) == Some(true) {
-      let Some(load) = self.held_loads.borrow_mut().pop_front() else { return };
-      self.start_load(&load);
+      let Some(op) = self.held.borrow_mut().pop_front() else { return };
+      self.run_page_op(&op);
     }
   }
 
-  fn start_load(&self, load: &Load) {
+  fn run_page_op(&self, op: &PageOp) {
     self.with_live(|live| {
-      live.extras.note_host_navigation();
-      let _ = match load {
-        Load::Url(url) => live.webview.load_url(url),
-        Load::Html(html) => live.webview.load_html(html),
+      let _ = match op {
+        PageOp::Url(url) => {
+          live.extras.note_host_navigation();
+          live.webview.load_url(url)
+        }
+        PageOp::Html(html) => {
+          live.extras.note_host_navigation();
+          live.webview.load_html(html)
+        }
+        PageOp::Script(source) => live.webview.evaluate_script(source),
       };
     });
   }

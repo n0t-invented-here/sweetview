@@ -128,6 +128,20 @@ describe.if(onWindows)("W2.1 the Webview class", () => {
     }, 60_000);
   }
 
+  // eval made right after navigate and bind, on a new webview whose
+  // navigation is still waiting, runs in the new document: the order the
+  // calls were made in, as when bind waited for WebView2.
+  for (const mode of ["eval-pump", "eval-run"] as const) {
+    test(`W2.1 eval right after navigate and bind on a new webview runs in the new document (${mode === "eval-pump" ? "loop pumped from a Bun timer, page from this process's own server" : "blocking run(), setHTML"})`, async () => {
+      const { r, exitCode } = await runFixture("webview-load-in-flight.ts", [mode], {}, 45_000);
+      expect(r.limitReached).toBeUndefined();
+      expect(exitCode).toBe(0);
+      expect(r.timedOut).toBeUndefined();
+      expect(r.answeredFrom).toBe("first");
+      if (mode === "eval-run") expect(r.runReturned).toBe(true);
+    }, 60_000);
+  }
+
   test("W2.1 unload() destroys every webview this process made, and closes the windows they made", async () => {
     const { r, exitCode } = await api("unload");
     expect(exitCode).toBe(0);

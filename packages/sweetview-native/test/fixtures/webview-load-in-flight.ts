@@ -104,3 +104,50 @@ if (mode === "run") {
   report.firstLoaded = pages.some((p) => p.page === "first");
   finish();
 }
+
+// eval right after navigate and bind, on a webview that has just been
+// made: the navigation is still waiting (for the webview's own scripts to be
+// registered, then for its response), and the evaluation must run in the new
+// document, where the binding answers from. "eval-pump" navigates to this
+// process's server (answered after a delay); "eval-run" uses setHTML before
+// run(), where the server cannot answer.
+const answerOnce = (record: (where: string) => void) => {
+  let answered = false;
+  webview.bind("answer", (where: string) => {
+    if (answered) return;
+    answered = true;
+    record(where);
+  });
+};
+
+if (mode === "eval-pump") {
+  const pump = setInterval(() => native.pumpEvents(), 8);
+  report.answeredFrom = await new Promise<string>((resolve) => {
+    const timer = setTimeout(() => resolve("no answer"), 10_000);
+    webview.navigate(`${origin}/first`);
+    answerOnce((where) => {
+      clearTimeout(timer);
+      resolve(where);
+    });
+    webview.eval("answer(document.title)");
+  });
+  clearInterval(pump);
+  webview.destroy();
+  finish();
+}
+
+if (mode === "eval-run") {
+  native.scheduleTimeout(10_000, () => {
+    report.answeredFrom ??= "no answer";
+    webview.destroy();
+  });
+  webview.setHTML(page("first"));
+  answerOnce((where) => {
+    report.answeredFrom = where;
+    webview.destroy();
+  });
+  webview.eval("answer(document.title)");
+  webview.run();
+  report.runReturned = true;
+  finish();
+}
