@@ -39,9 +39,9 @@ What stands in for it until then: every row of `docs/upgrading.md` is imported a
 
 ## 4. Things only a person at the desk can do
 
-- Click the tray icon of `demos/menubar-only` and `demos/menubar-notify` by hand. What was done instead (checklist item W5.5): real mouse input injected with `SendInput` onto the icon that Explorer shows, found through UI Automation, so the click travels through the shell as a hand's does (`rust-rewrite/checks/tray-real-click.ps1`, and `toast-real-click.ps1` for the toast banner).
+- Click the tray icon of `demos/menubar-only` and `demos/menubar-notify` by hand, and a toast with it. What was done instead (checklist item W5.5, `rust-rewrite/evidence/w5-demos-real-clicks.txt`): real mouse input injected with `SendInput` onto the icon that Explorer shows, found through UI Automation, so the click travels through the shell as a hand's does; the same for the toast banner. The scripts are `rust-rewrite/checks/tray-real-click.ps1` and `toast-real-click.ps1`.
 - Drag a file from Explorer onto a webview window. The drop path is tested with a real file driven through DevTools and through `WM_DROPFILES` (checklist items W2.6 and W4.5); a drag out of Explorer itself needs a hand.
-- Look at `demos/desktop-pet` on a second monitor with a different scale factor. The screen and overlay tests ran on the monitors this machine has.
+- Look at tabbed windows and `demos/desktop-pet` on a second monitor with a different scale factor. This machine has one monitor at one scale: the tab frame's handling of a DPI change is tested by sending it the message, not by a real change of scale (checklist item W7.1).
 
 ## 5. Upstream
 
@@ -55,6 +55,10 @@ No pull request or issue was opened on a repository the owner does not own. What
 | `tauri-apps/wry` 0.58.2 | the environment is always created with `wry`'s own options; a process sharing a user data folder with another WebView2 host that uses different options fails with `ERROR_BUSY` | `crates/sweetview-platform-webview`, `environment.rs` (decision D15) |
 | `tauri-apps/wry` 0.58.2 | on Windows the drag-drop handler revokes WebView2's own drop target, so HTML drops inside the page stop working when it is used | not used; drops come through the page (decision D17) |
 | `tauri-apps/muda` 0.22.0 | no menu item with both an icon and a check mark | `crates/sweetview-platform-window`, `popup.rs`, `check_item` (decision D14) |
+| `tauri-apps/muda` 0.22.0 | `show_context_menu_for_hwnd` is an `unsafe fn` and reports the chosen item later, through the process-wide `MenuEvent` handler, not as its result | called from one place in `popup.rs`; the tab menu, which needs the choice before the call returns, is this project's own popup (decision D22) |
+| `tauri-apps/tao` 0.38.0 | every event loop leaves one wait thread behind when it is dropped (one USER object, two kernel handles) | harmless with one loop per process; the `LoopHost` handle test allows for it (decision D23) |
+| `tauri-apps/tao` 0.38.0 | on `WM_DPICHANGED` it keeps its own size when the scale is unchanged and computes one from the old inner size otherwise, so the rectangle the system suggests is not applied | `crates/sweetview-platform-window`, `tab_frame.rs`, `FrameMessages` (decision D22) |
+| WebView2 (`AddScriptToExecuteOnDocumentCreated`) | the completion arrives only once a navigation in flight has its response, so a host that waits for it can hang when the response comes from its own thread | `crates/sweetview-runtime/src/engine.rs`, the ordered queue (decision D21) |
 
 ## 6. The forks
 
@@ -64,5 +68,6 @@ No pull request or issue was opened on a repository the owner does not own. What
 ## 7. Housekeeping
 
 - `SWEETVIEW-CONSOLIDATION-CHECKLIST.md`, untracked at the repository root, is not part of this work and was left as found.
-- The notifier's tests register a throwaway app id under `HKCU\Software\Classes\AppUserModelId` and delete it; a run that is killed half way can leave a key named `Sweetview.NotifierTest.<uuid>` or `Sweetview.NotifierFallbackTest.<uuid>` behind, which is safe to delete.
-- On a machine with nobody at it, Windows keeps a toast banner on screen until someone moves the pointer. The tests hide the one real toast they show; a banner titled `Sweetview <test> & "toast"` left on screen comes from a test run that was killed before it could.
+- On a machine with nobody at it, Windows keeps a toast banner on screen until someone returns and queues later ones behind it. Test runs made before the tests were changed left a queue of banners titled "Sweetview test" and one entry per throwaway app id under `HKCU\Software\Microsoft\Windows\CurrentVersion\Notifications\Settings`. The tests' toasts now show no banner and expire, and the tests remove their own entries. `rust-rewrite/checks/clear-test-toasts.ps1` was run once on this machine and removed 185 such entries with their toast history; it touches only ids that start with the tests' prefixes, never `Sweetview.DesktopApp`. Run it on any other machine where the earlier tests ran.
+- A run of the notifier's tests that is killed half way can leave a key named `Sweetview.NotifierTest.<uuid>`, `Sweetview.NotifierFallbackTest.<uuid>` or `Sweetview.NotifierHandles.<numbers>` under `HKCU\Software\Classes\AppUserModelId`; it is safe to delete.
+- The hosted CI runner (`.github/workflows/windows.yml`) has a small screen, applies window moves late and dismisses toasts at once. `rust-rewrite/DECISIONS.md` D20 lists every test that was corrected because it measured that machine and not the code.
