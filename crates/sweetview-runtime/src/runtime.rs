@@ -364,7 +364,15 @@ fn build_event_loop() -> EventLoop<()> {
   // The UI thread is the thread that loaded the binding, which `threads`
   // checks; `tao`'s own idea of the main thread is not the one that matters
   // inside a host process.
-  EventLoopBuilder::new().with_any_thread(true).build()
+  let event_loop = EventLoopBuilder::new().with_any_thread(true).build();
+  // `tao` registers each of its windows for raw keyboard and mouse input, for its device
+  // events. Sweetview reports no device events, and the registration has a cost: while a
+  // process that takes raw keyboard input holds the foreground, Windows does not call that
+  // process's own low-level keyboard hook, so `installKeyboardHook` would see nothing typed
+  // while one of the application's own windows is in front. With this filter `tao` registers
+  // nothing.
+  event_loop.set_device_event_filter(tao::event_loop::DeviceEventFilter::Always);
+  event_loop
 }
 
 #[cfg(not(windows))]

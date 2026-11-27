@@ -272,3 +272,32 @@ describe.if(onWindows)("permissions (W3.3)", () => {
     expect(() => permissions.status(64 as Permission)).toThrow("webview permission call failed: error -2");
   });
 });
+
+// A hook must also see what is typed while one of the application's own windows is in front.
+// The fixture runs in a process of its own (it needs the foreground); when the desktop does not
+// give it the foreground, the test is skipped with that reason, never passed.
+type OwnForeground = { inFront?: { foregroundIsOurs: boolean; saw: string[] }; behind?: { foregroundIsOurs: boolean; saw: string[] }; limit?: boolean };
+const ownForeground: Record<string, OwnForeground> = {};
+if (onWindows) {
+  const { runFixture } = await import("../test/run-fixture");
+  for (const mode of ["window", "webview"]) {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const run = await runFixture<OwnForeground>("hook-own-foreground.ts", [mode], {}, 40_000);
+      ownForeground[mode] = run.r;
+      if (run.r.inFront?.foregroundIsOurs) break;
+    }
+    if (!ownForeground[mode]?.inFront?.foregroundIsOurs) console.warn(`input-hooks.test: own-foreground (${mode}) skipped: the desktop did not give the fixture's window the foreground`);
+  }
+}
+
+describe.if(onWindows)("installKeyboardHook while the application's own window is in front", () => {
+  for (const mode of ["window", "webview"]) {
+    test.skipIf(!ownForeground[mode]?.inFront?.foregroundIsOurs)(`a key typed while this process's own ${mode === "window" ? "Window" : "webview window"} holds the foreground reaches the hook (down, up), as it does when another window is in front`, () => {
+      const r = ownForeground[mode]!;
+      expect(r.limit).toBeUndefined();
+      expect(r.inFront).toEqual({ foregroundIsOurs: true, saw: ["down", "up"] });
+      expect(r.behind?.foregroundIsOurs).toBe(false);
+      expect(r.behind?.saw).toEqual(["down", "up"]);
+    });
+  }
+});
