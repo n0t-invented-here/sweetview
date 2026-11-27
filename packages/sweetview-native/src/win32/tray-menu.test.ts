@@ -258,6 +258,7 @@ describe.if(onWindows)("Menu.popup (binding: muda)", () => {
   });
 
   test("letting go of the right button over an item chooses it (real input over the menu's own window)", () => {
+    const native = binding();
     const owner = ownWindow();
     const saved = cursor();
     const desk = Screen.bounds();
@@ -265,6 +266,13 @@ describe.if(onWindows)("Menu.popup (binding: muda)", () => {
     let skipped = "";
     let clicked = "";
     let target = { x: 0, y: 0 };
+    // The right button is let go on every path: straight after the press, by a watchdog that fires
+    // inside the menu's modal loop, and in `finally`. `pressed` stays true until a release was accepted.
+    let pressed = false;
+    const release = () => {
+      for (let attempt = 0; pressed && attempt < 3; attempt++) if (injectRightButton(false)) pressed = false;
+    };
+    let watchdog = 0;
     try {
       whenMenuOpens((menuWindow) => {
         // The second item's middle, on this process's own menu window, read from the OS.
@@ -279,9 +287,11 @@ describe.if(onWindows)("Menu.popup (binding: muda)", () => {
           endMenu();
           return;
         }
+        watchdog = native.scheduleTimeout(1500, release);
         // Pressed and let go over the item: with TPM_RIGHTBUTTON the release chooses it.
+        pressed = true;
         injectRightButton(true);
-        injectRightButton(false);
+        release();
       });
       const chosen = Menu.popup(
         owner.hwnd,
@@ -298,6 +308,8 @@ describe.if(onWindows)("Menu.popup (binding: muda)", () => {
       }
       expect({ chosen, clicked }).toEqual({ chosen: true, clicked: "two" });
     } finally {
+      release();
+      if (watchdog !== 0) native.cancelTimeout(watchdog);
       user32.SetCursorPos(saved.x, saved.y);
       owner.destroy();
     }

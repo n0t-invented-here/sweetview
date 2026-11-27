@@ -289,13 +289,16 @@ export function injectLeftButton(down: boolean): void {
   user32.SendInput(1, ptr(input), 40);
 }
 
-/** Presses or releases the right button with SendInput. */
-export function injectRightButton(down: boolean): void {
+/**
+ * Presses or releases the right button with SendInput. True when the OS took the input; a caller
+ * that pressed keeps releasing until a release is taken.
+ */
+export function injectRightButton(down: boolean): boolean {
   const input = new Uint8Array(40);
   const view = new DataView(input.buffer);
   view.setUint32(0, 0, true); // INPUT_MOUSE
   view.setUint32(20, down ? 0x8 : 0x10, true); // MOUSEEVENTF_RIGHTDOWN / RIGHTUP
-  user32.SendInput(1, ptr(input), 40);
+  return user32.SendInput(1, ptr(input), 40) === 1;
 }
 
 export type Desk = { x: number; y: number; width: number; height: number };
