@@ -45,13 +45,39 @@ A fork of `webviewjs/webview` (MIT), owned by this project.
 
 `tao`, `wry`, `muda` and `tray-icon` are the Tauri team's libraries, the ones Tauri 2 itself runs on, usable without Tauri.
 
+### Issue history
+
+All 60 issues were read, open and closed, on 2026-11-27.
+
+| Fact | Value |
+|---|---|
+| Totals | 60 issues: 52 closed, 8 open. 30 of the 52 closed within 7 days; median 5 days |
+| Activity | 38 of the 60 were opened since June 2026. 22 of the 60 come from one reporter |
+| Bun | 1 issue mentions Bun (#71, a feature request). No bug report involves Bun |
+| Gap in maintenance | no release between 2026-01-11 and 2026-06-20; the maintainer wrote in #37 that he was "occupied by other things" |
+| Event loop | `app.run()` blocked JavaScript until `0.4.0` (2026-06-29). The engine went from `tao` to `winit` and back to a patched `tao` in that month (#37, #41) |
+| Linux | the Linux packages reached npm in June 2026 (#37). A window freeze (#52) and a broken hide-to-tray (#53) were fixed in September 2026 |
+
+Issues that touch the five journeys:
+
+| Issue | State | What it says |
+|---|---|---|
+| #96 | open, 2026-11-25, `0.6.0` | On Windows, with no window created, tray events do not fire, apart from one `enter` event. A tray-only app is broken on Windows today. |
+| #59 | closed 2026-10-04 | Transparent windows on Windows turn opaque intermittently. Setting `windowsNoRedirectionBitmap: true` resolves it. |
+| #54 | closed 2026-10-21 | On Windows, `0.4.4` leaked memory and left handles unreleased after `dispose()` and `exit()`. |
+| #47 | closed 2026-07-24 | `0.4.0` regression: on macOS the page stayed blank until the window was resized. |
+| #18 | closed 2026-06-20, no reply | "Cpu usage is very high", opened April 2025. |
+| #68 | open | `<input type="file">` does not work on macOS. |
+| #89 | open | Custom protocol responses are buffered; no streaming. |
+| #23, #29, #48, #69 | closed | Four separate reports of the per-platform binary packages missing or resolving to the wrong path. |
+
 ### What it already does
 
 Each row has a runnable example in the repository under `apps/examples/`.
 
 | Capability | Example file |
 |---|---|
-| Tray icon with left, right and middle click events, menu, dynamic icon and menu | `tray.ts` |
+| Tray icon with left, right and middle click events, menu, dynamic icon and menu (on Windows this needs a window to exist, see #96) | `tray.ts` |
 | Application and window menus with submenus, separators, shortcuts | `menu-system.ts`, `window-menus.ts` |
 | Notifications with action buttons and click events | `notification.ts` |
 | Multiple windows | `multiple.ts` |
@@ -137,7 +163,7 @@ The docs serve as the API reference and the demos as acceptance tests.
 ## Order of work
 
 1. Fork `webviewjs/webview` and `webviewjs/tao`; CI produces the three prebuilt binaries in one package.
-2. `/tray` and `/notify`, with checkmarks and icons added to menus.
+2. Fix tray events without a window on Windows (#96), then `/tray` and `/notify`, with checkmarks and icons added to menus.
 3. `/webview` with the IPC port.
 4. Multiple windows and tabs.
 5. Hit-region click-through, then port one game.
@@ -148,13 +174,18 @@ The docs serve as the API reference and the demos as acceptance tests.
 
 | Risk | Action |
 |---|---|
+| Tray events do not fire on Windows without a window (#96, open) | Step 2 fixes this in the fork before `/tray` is built. The acceptance test is a tray-only app with no window, run on Windows. |
+| Transparent windows on Windows turn opaque intermittently (#59) | `/overlay` sets `windowsNoRedirectionBitmap` on every transparent window it creates. |
+| Windows handle leak reported against `0.4.4` (#54) | The fork starts from `0.6.0`. Its CI runs a create-and-dispose cycle test that counts process handles on Windows. |
+| The non-blocking event loop dates from 2026-06-29, and upstream has shipped one rendering regression since (#47) | The fork pins one upstream commit. Upstream's runtime tests run in the fork's CI on Windows, macOS and Linux for every change and every upstream merge. |
+| Four reports of per-platform binary packages failing to install (#23, #29, #48, #69) | Step 1 ships all binaries in one package, loaded by a fixed path. |
 | Upstream has one maintainer | Step 1 forks the repository into this project's organization. This project's CI builds and publishes its own binaries. Upstream commits are merged by choice, never required. |
 | Upstream builds against its own patched `tao` (`webviewjs/tao`, pinned by commit) | Step 1 forks that repository too and pins the same commit from this project's copy. |
 | macOS shows no notifications from an unsigned bundle | The `/build` helper signs every `.app` it produces. `/notify` throws an error naming the missing signature when called outside a signed bundle. |
 | The Linux tray backend delivers no click events | `/tray` exposes `supportsIconClick`, false on Linux. On Linux the icon opens the menu, and the app puts its click action as the first menu item. |
 | Hit-testing requires unsafe Rust | It lives in one module. Every other file carries `#![forbid(unsafe_code)]`, so the compiler rejects unsafe code anywhere else. |
 | `wry` cannot stream response bodies | Large payloads use the chunked IPC framing carried over from `v1-drafting`. Decision D confirms this. |
-| Upstream ships one package per platform, which blocks cross-compiling | Step 1 changes packaging to one package holding all three binaries. |
+| One package per platform also blocks compiling a Windows executable on a Mac | The same step 1 packaging change covers it. |
 
 ## Alternatives ruled out
 
@@ -182,6 +213,11 @@ D. Is losing streamed responses acceptable, with large payloads sent as chunked 
 - https://webview.js.org/api/menu/
 - https://webview.js.org/api/notification/
 - https://webview.js.org/getting-started/event-loop/
+- https://github.com/webviewjs/webview/issues?q=is%3Aissue
+- https://github.com/webviewjs/webview/issues/96
+- https://github.com/webviewjs/webview/issues/59
+- https://github.com/webviewjs/webview/issues/54
+- https://github.com/webviewjs/webview/issues/37
 - https://github.com/webviewjs/webview/issues/89
 - https://github.com/tauri-apps/wry
 - https://github.com/tauri-apps/tao
