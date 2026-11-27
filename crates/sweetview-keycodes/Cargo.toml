@@ -1,0 +1,11 @@
+[package]
+name = "sweetview-keycodes"
+description = "The tables that turn an OS key or mouse message into the values applications see."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
