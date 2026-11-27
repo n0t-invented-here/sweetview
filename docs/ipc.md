@@ -1,6 +1,6 @@
 # @n1h/sweetview/ipc
 
-The typed contract between a page and its backend: a `Service` on the backend, a `Bridge` on the page, and the JSON frames a host's transport carries between them. The module imports nothing outside itself and uses no runtime API, so it runs in a browser page, a webview page, a Worker, or Bun. It is `@n1h/sweetview/ipc` in the facade and the standalone package `@n1h/sweetview-ipc`. Hosts supply the transport; [`ipc-ws.md`](ipc-ws.md) covers the WebSocket one, and [`../README.md`](../README.md) covers install and the window host.
+The typed contract between a page and its backend: a `Service` on the backend, a `Bridge` on the page, and the JSON frames a host's transport carries between them. The module imports nothing outside itself and uses no runtime API, so it runs in a browser page, a webview page, a Worker, or Bun. It is `@n1h/sweetview/ipc` in the facade and the standalone package `@n1h/sweetview-ipc`. Hosts supply the transport; [Transports](#transports) lists the four, and [`../README.md`](../README.md) covers install and the window host.
 
 - [Example](#example)
 - [The mental model](#the-mental-model)
@@ -12,13 +12,14 @@ The typed contract between a page and its backend: a `Service` on the backend, a
   - [Bridge](#bridge)
   - [Transport](#transport)
   - [memoryTransport](#memorytransport)
+  - [Transports](#transports)
 - [Wire format](#wire-format)
   - [ChunkFrame](#chunkframe)
   - [createFrameAssembler](#createframeassembler)
 
 ## Example
 
-One contract, one service, one bridge. `memoryTransport` connects them in the same process; in an app the bridge sits on `webviewTransport()` from [`@n1h/sweetview/page`](page.md) or `wsTransport()` from [`@n1h/sweetview/ipc-ws/client`](ipc-ws.md), and the service code does not change.
+One contract, one service, one bridge. `memoryTransport` connects them in the same process; in an app the bridge sits on one of the four [transports](#transports), and the service code does not change.
 
 ```ts
 import { createBridge, defineService, memoryTransport } from "@n1h/sweetview/ipc";
@@ -84,8 +85,8 @@ await service.dispose(); // the application's shutdown hook
   (`{ id, kind }`), and passes a `Ctx` (`{ session }`) to every handler. An
   event goes to every session, or to one session when `emit` names it.
 - The page holds a `Bridge`, the typed surface over a `Transport` the host
-  provides. Swapping the transport (window, WebSocket, memory) changes
-  nothing else.
+  provides. Swapping the transport (Sweetview window, WebSocket, Electron,
+  Tauri, memory) changes nothing else.
 
 ## Services
 
@@ -122,7 +123,7 @@ Every type the backend side exports, in one place. `AnyEvent`, `Handlers`, `Serv
 type MethodMap = Record<string, [params: unknown, result: unknown]>;
 type EventMap = Record<string, unknown>;
 
-type SessionKind = "webview" | "web";
+type SessionKind = "webview" | "web" | "electron" | "tauri";
 type Session = { id: string; kind: SessionKind };
 type Ctx = { session: Session };
 
@@ -150,7 +151,7 @@ What each one means beyond its shape:
 
 | Type | Meaning |
 |---|---|
-| `Session` | One connected client, as the host identifies it. `id` is unique within the host; the host assigns it and the page never sends it. `kind` is `"webview"` for a page in a Sweetview window, `"web"` for a page in a browser or for `memoryTransport` by default. |
+| `Session` | One connected client, as the host identifies it. `id` is unique within the host; the host assigns it and the page never sends it. `kind` is `"webview"` for a page in a Sweetview window, `"web"` for a page in a browser or for `memoryTransport` by default, `"electron"` for a page in an Electron window, and `"tauri"` for a page in a Tauri 2 webview. |
 | `Ctx` | The second argument of every handler: the session that made the call. |
 | `Handlers` | One handler per method. A handler returns the result or a promise of it, and throws to send an error reply. Through a host, the page sees the error's message; through `memoryTransport`, the thrown value itself. |
 | `Emit` | Calls every `onEvent` listener synchronously with `name`, `payload` and `to`. Hosts and `memoryTransport` deliver an event without `to` to every session, and one with `to` only to the session whose `id` equals it. An event targeted at a session that no longer exists is dropped; one emitted while nothing is subscribed is lost. Nothing is buffered. A payload must survive JSON encoding to cross a real transport. |
@@ -183,7 +184,7 @@ this; see [Transport](#transport).
 
 ```ts
 interface Bridge<M extends MethodMap, E extends EventMap> {
-  readonly kind: TransportKind; // "webview" | "web": a window or a browser tab
+  readonly kind: TransportKind; // "webview" | "web" | "electron" | "tauri"
   rpc<K extends keyof M & string>(method: K, ...params: M[K][0] extends void ? [] : [M[K][0]]): Promise<M[K][1]>;
   notify<K extends keyof M & string>(method: K, ...params: M[K][0] extends void ? [] : [M[K][0]]): void;
   on<N extends keyof E & string>(name: N, fn: (payload: E[N]) => void): () => void;
@@ -214,12 +215,14 @@ function. `TransportKind` has the same values as `SessionKind`, seen from the
 page.
 
 `notify` means "the caller does not wait", not always "no reply on the
-wire". The three transports differ:
+wire". The transports differ:
 
 | Transport | `notify(method, params)` |
 |---|---|
 | `webviewTransport()` ([page](page.md#webviewtransport)) | Sends a regular RPC through `__sweetview_rpc`, which gets a reply like any call, and discards the result. A rejection is caught and logged with `console.error` as `"<method> failed:"`. |
 | `wsTransport()` ([ipc-ws](ipc-ws.md#wstransport)) | Wire-level fire and forget: a `CallFrame` with `seq: null`. The server sends no reply, and a failing handler is logged on the server. |
+| `electronTransport()` ([ipc-electron](ipc-electron.md#electrontransport)) | Wire-level fire and forget: a `CallFrame` with `seq: null`. The host sends no reply, and a failing handler is logged in the main process. |
+| `tauriTransport()` ([ipc-tauri](ipc-tauri.md#tauritransport)) | Invokes the command with a `CallFrame` whose `seq` is `null`; the backend returns `null`. A rejected invoke is logged with `console.error` as `"<method> not sent:"`. |
 | `memoryTransport` | Calls the service and discards both the result and any rejection. |
 
 On the UI thread, `webview.notify` and `app.notify` send `seq: null` to the
@@ -242,9 +245,36 @@ A `Transport` straight onto a `Service` in the same process, with no frames and 
 - Events reach this transport when they are broadcast or targeted at `session.id`. They are delivered synchronously inside `emit`, so a listener on this transport that throws makes the backend's `emit` throw.
 - `dispose()` is idempotent: the first call stops event delivery, clears listeners, and calls `service.endSession(session.id)`. Later `dispose()` calls do nothing. After `dispose()`, `call` rejects with `Error("<method>: transport disposed")` without reaching the service, and `notify` does nothing.
 
+### Transports
+
+A page reaches its backend through one of four transports. Each is
+importable in page code with no Bun, Node or shell API in the bundle, and a
+page built on `createBridge` runs unchanged on all four: only the line that
+picks the transport differs.
+
+```ts
+const transport = isWebview() ? webviewTransport() : isElectron() ? electronTransport() : isTauri() ? tauriTransport() : wsTransport();
+const bridge = createBridge<Methods, Events>(transport);
+```
+
+| Transport | Page import | Host | `kind` | Page |
+|---|---|---|---|---|
+| `webviewTransport()` | `@n1h/sweetview/page` | a Sweetview window; the service in a Worker with `hostService` | `"webview"` | [page.md](page.md) |
+| `wsTransport()` | `@n1h/sweetview/ipc-ws/client` | `Bun.serve` with `wsHost` | `"web"` | [ipc-ws.md](ipc-ws.md) |
+| `electronTransport()` | `@n1h/sweetview/ipc-electron/client` | Electron's main process with `electronHost`, and a preload calling `exposeSweetviewIpc` | `"electron"` | [ipc-electron.md](ipc-electron.md) |
+| `tauriTransport()` | `@n1h/sweetview/ipc-tauri/client` | a Tauri 2 app whose Rust code handles the `sweetview_ipc` command | `"tauri"` | [ipc-tauri.md](ipc-tauri.md) |
+
+`memoryTransport` (above) is the fifth, for tests and for rendering a page in
+plain Bun; it has no host and no frames. Every transport but
+`memoryTransport` carries the [frames](#wire-format) as JSON, so a result or
+payload arrives as `JSON.parse(JSON.stringify(value))` would make it.
+[`demos/web-app`](../demos/web-app/README.md) runs one page on all four:
+`demos/web-app-electron` and `demos/web-app-tauri` are its Electron and
+Tauri shells.
+
 ## Wire format
 
-Application code rarely touches frames; they matter when writing a host or a transport, or when debugging one. A service never sees frames: the host turns each call frame into a `Service.call` and answers with a reply frame, and the page's transport matches replies to calls by `seq`, ignoring a reply whose `seq` matches no pending call. Over a WebSocket each frame is one JSON text message; between a window's worker and its UI thread frames are JSON in the shared ring. `memoryTransport` uses no frames at all and passes values by reference.
+Application code rarely touches frames; they matter when writing a host or a transport, or when debugging one. A service never sees frames: the host turns each call frame into a `Service.call` and answers with a reply frame, and the page's transport matches replies to calls by `seq`, ignoring a reply whose `seq` matches no pending call. Over a WebSocket each frame is one JSON text message; between a window's worker and its UI thread frames are JSON in the shared ring; over Electron IPC each frame is one JSON string on the `sweetview-ipc` channel; under Tauri a call frame is the argument of one `invoke` and its reply is the command's return value. `memoryTransport` uses no frames at all and passes values by reference.
 
 ```ts
 import { createFrameAssembler, type CallFrame, type ChunkFrame, type EventFrame, type Frame, type ReplyFrame, type WireFrame } from "@n1h/sweetview/ipc";

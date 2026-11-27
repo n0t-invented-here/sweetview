@@ -1,7 +1,7 @@
 import { Alert, Badge, Button, Card, Code, Group, Indicator, ScrollArea, Table, Text, TextInput, Title } from "@mantine/core";
 import type { FsChange, WatchStatus } from "web-app-backend/protocol";
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { inApp, on, rpc } from "./bridge";
+import { bridge, inApp, on, rpc } from "./bridge";
 
 type Row = FsChange & { id: number };
 
@@ -123,8 +123,8 @@ export function WatchCard() {
         <form onSubmit={submitPath}>
           <Group align="flex-end" mb="md" wrap="nowrap">
             <TextInput
-              label="Folder on the server"
-              placeholder="C:\\Users\\you\\Documents or /home/you"
+              label={bridge.kind === "web" ? "Folder on the server" : "Folder to watch"}
+              placeholder={"C:\\Users\\you\\Documents or /home/you"}
               value={typedPath}
               onChange={(e) => setTypedPath(e.currentTarget.value)}
               style={{ flex: 1 }}
@@ -146,8 +146,8 @@ export function WatchCard() {
             </>
           ) : (
             <>
-              <Code>fs.watch</Code> runs on the server for this tab only and pushes every change down the WebSocket.
-              Other tabs have their own watcher.
+              The backend watches the folder for this page only and pushes every change to it as an event. Other pages
+              have their own watcher.
             </>
           )}
         </Text>

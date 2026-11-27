@@ -1,0 +1,34 @@
+# The web-app demo's page and service in an Electron shell.
+
+set shell := ["pwsh", "-NoProfile", "-Command", "$ErrorActionPreference = 'Stop'; $PSNativeCommandUseErrorActionPreference = $true; trap { if ($_.Exception -is [System.Management.Automation.NativeCommandExitException]) { exit $_.Exception.ExitCode }; break };"]
+
+@_default:
+    just --justfile "{{module_file()}}" --list
+
+
+install:
+    bun install --cwd ../..
+
+# The web-app page, built from demos/web-app's frontend source
+frontend: install
+    bun build ../web-app/packages/web-app-frontend/src/main.tsx --outdir build/frontend --minify
+
+icons: install
+    bun scripts/write-icon.ts
+
+# The main process and the preload, bundled for Node with electron left external
+shell: install icons
+    bun build main.ts --target=node --format=cjs --external electron --outfile build/main.cjs
+    bun build preload.ts --target=node --format=cjs --external electron --outfile build/preload.cjs
+
+# Opens the window. The first run downloads the Electron binary.
+app: frontend shell
+    bun run electron .
+
+# Opens the window, records what the page shows (PROBE line on stdout), and quits
+probe: frontend shell
+    $env:WEB_APP_PROBE = '1'; bun run electron .
+
+# A missing path makes ri fail the recipe
+clean:
+    if (Test-Path build) { ri build -r -fo }

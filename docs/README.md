@@ -12,6 +12,8 @@ install and quickstart are in the [package README](../README.md).
 | [`@n1h/sweetview/page`](page.md) | `isWebview`, `webviewTransport`, `signalReady` |
 | [`@n1h/sweetview/ipc`](ipc.md) | the contract: `defineService`, `createBridge`, `memoryTransport`, the wire frames |
 | [`@n1h/sweetview/ipc-ws`](ipc-ws.md) | the contract over WebSockets: `wsHost` for `Bun.serve`, `wsTransport` and `wsUrl` for the browser; each side alone as `/ipc-ws/server` and `/ipc-ws/client` |
+| [`@n1h/sweetview/ipc-electron`](ipc-electron.md) | the contract over Electron IPC: `electronHost` for the main process, `exposeSweetviewIpc` for the preload, `electronTransport` and `isElectron` for the page; each alone as `/ipc-electron/server`, `/ipc-electron/preload` and `/ipc-electron/client` |
+| [`@n1h/sweetview/ipc-tauri`](ipc-tauri.md) | the contract in a Tauri 2 webview: `tauriTransport`, `tauriGlobalApi` and `isTauri` for the page (also as `/ipc-tauri/client`), and the frame protocol a Rust backend implements |
 | [`@n1h/sweetview/native`](native.md) | overview of the native module; the hit-region helpers alone, without FFI, as `/native/hit-regions` |
 | [Windows and screens](native/windows.md) | `Window`, `createWindow`, `WindowOptions`, framed / frameless / transparent / tabbed windows, `Window.fromHandle`, closing, file drops, `Screen` |
 | [Overlays and hit regions](native/overlays-and-hit-regions.md) | `setClickThrough`, `setHitRegions`, `HitRelay`, geometry helpers, `colorKey` |
@@ -27,7 +29,9 @@ install and quickstart are in the [package README](../README.md).
 
 The [workspace table](../README.md#documentation) maps each facade subpath
 to its publishing package under `packages/`. Direct package imports are
-available for IPC, WebSocket IPC, native APIs, settings and build tools.
+available for IPC, WebSocket IPC, Electron IPC, Tauri IPC, native APIs,
+settings and build tools.
 
-`page`, `window-chrome` and `native/hit-regions` import types only, so a
-page bundle contains no Bun code.
+`page`, `window-chrome`, `native/hit-regions`, `ipc-ws/client`,
+`ipc-electron/client` and `ipc-tauri/client` import types only, so a page
+bundle contains no Bun code.

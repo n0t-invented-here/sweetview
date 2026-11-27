@@ -29,7 +29,7 @@ check: native typecheck test
 
 compile: demos::web-app::compile demos::desktop-pet::compile demos::menubar-only::compile demos::menubar-notify::compile
 
-clean: demos::web-app::clean demos::desktop-pet::clean demos::menubar-only::clean demos::menubar-notify::clean demos::native-tabs::clean
+clean: demos::web-app::clean demos::web-app-electron::clean demos::web-app-tauri::clean demos::desktop-pet::clean demos::menubar-only::clean demos::menubar-notify::clean demos::native-tabs::clean
 
 [script("pwsh", "-NoProfile", "-File")]
 pack:
@@ -45,7 +45,7 @@ pack:
 publish:
     $ErrorActionPreference = 'Stop'
     $PSNativeCommandUseErrorActionPreference = $true
-    foreach ($package in @('sweetview-ipc', 'sweetview-ipc-ws', 'sweetview-settings', 'sweetview-native', 'sweetview-build', 'sweetview')) {
+    foreach ($package in @('sweetview-ipc', 'sweetview-ipc-ws', 'sweetview-ipc-electron', 'sweetview-ipc-tauri', 'sweetview-settings', 'sweetview-native', 'sweetview-build', 'sweetview')) {
         Push-Location (Join-Path packages $package)
         try { bun publish --access public } finally { Pop-Location }
     }

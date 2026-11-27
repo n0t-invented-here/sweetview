@@ -20,9 +20,10 @@ Requires Bun 1.4.2 or later.
 
 > **1.0.0 is not on npm yet.** It lives on the `v1-drafting` branch of this
 > repository. npm's `latest` for `@n1h/sweetview` is `0.2.1`, which has no
-> `createApp` and little of what these pages document, and the five
-> standalone workspace packages (`@n1h/sweetview-ipc`, `-ipc-ws`, `-native`,
-> `-settings`, `-build`) are not published at all. A plain
+> `createApp` and little of what these pages document, and the seven
+> standalone workspace packages (`@n1h/sweetview-ipc`, `-ipc-ws`,
+> `-ipc-electron`, `-ipc-tauri`, `-native`, `-settings`, `-build`) are not
+> published at all. A plain
 > `bun add @n1h/sweetview` installs 0.2.1. Until 1.0.0 is released, use it
 > from source.
 
@@ -103,13 +104,15 @@ platform differences and thread rules.
 | [`@n1h/sweetview/page`](docs/page.md) | `isWebview`, `webviewTransport`, `signalReady` |
 | [`@n1h/sweetview/ipc`](docs/ipc.md) | the contract: `defineService`, `createBridge`, `memoryTransport`, the wire frames |
 | [`@n1h/sweetview/ipc-ws`](docs/ipc-ws.md) | the contract over WebSockets: `wsHost` for `Bun.serve`, `wsTransport` and `wsUrl` for the browser; each side alone as `/ipc-ws/server` and `/ipc-ws/client` |
+| [`@n1h/sweetview/ipc-electron`](docs/ipc-electron.md) | the contract over Electron IPC: `electronHost` for the main process, `exposeSweetviewIpc` for the preload, `electronTransport` for the page; each alone as `/ipc-electron/server`, `/ipc-electron/preload` and `/ipc-electron/client` |
+| [`@n1h/sweetview/ipc-tauri`](docs/ipc-tauri.md) | the contract in a Tauri 2 webview: `tauriTransport` for the page (also as `/ipc-tauri/client`), and the frame protocol a Rust backend implements |
 | [`@n1h/sweetview/native`](docs/native.md) | overview, then guides: [windows and screens](docs/native/windows.md), [overlays and hit regions](docs/native/overlays-and-hit-regions.md), [menus and the tray](docs/native/menus-and-tray.md), [notifications](docs/native/notifications.md), [activation and single instance](docs/native/activation-and-single-instance.md), [dialogs, clipboard and files](docs/native/dialogs-clipboard-files.md), [event loop and icons](docs/native/event-loop-and-icons.md); the hit-region helpers alone, without FFI, as `/native/hit-regions` |
 | [`@n1h/sweetview/settings-store`](docs/settings-store.md) | a JSON settings file in the user's application data folder, and the shared app identity (`defineAppIdentity`) |
 | [`@n1h/sweetview/window-chrome`](docs/window-chrome.md) | a page-drawn title bar and resize handles backed by OS moves and resizes |
 | [`@n1h/sweetview/build`](docs/build.md) | `writeIconFiles`, `makeMacApp` and `refreshWindowsIcons`; the page also covers the `make-app.ts` script and the `/file-imports` types |
 | [the webview library](docs/webview-library.md) | native assets and dynamic requests, transparency, the frames origin, and external drop control |
 
-The workspace publishes six packages. The facade includes the application,
+The workspace publishes eight packages. The facade includes the application,
 page and worker entry points and re-exports the standalone packages.
 
 | Workspace directory | Package | Facade entry points |
@@ -117,14 +120,17 @@ page and worker entry points and re-exports the standalone packages.
 | `packages/sweetview` | `@n1h/sweetview` | root, `/page`, `/worker`, `/window-chrome`, `/file-imports` |
 | `packages/sweetview-ipc` | `@n1h/sweetview-ipc` | `/ipc` |
 | `packages/sweetview-ipc-ws` | `@n1h/sweetview-ipc-ws` | `/ipc-ws`, `/ipc-ws/client`, `/ipc-ws/server` |
+| `packages/sweetview-ipc-electron` | `@n1h/sweetview-ipc-electron` | `/ipc-electron`, `/ipc-electron/client`, `/ipc-electron/preload`, `/ipc-electron/server` |
+| `packages/sweetview-ipc-tauri` | `@n1h/sweetview-ipc-tauri` | `/ipc-tauri`, `/ipc-tauri/client` |
 | `packages/sweetview-native` | `@n1h/sweetview-native` | `/native`, `/native/hit-regions` |
 | `packages/sweetview-settings` | `@n1h/sweetview-settings` | `/settings-store` |
 | `packages/sweetview-build` | `@n1h/sweetview-build` | `/build` |
 
-`@n1h/sweetview-ipc-ws` depends on IPC. Native and build helpers depend on settings.
+`@n1h/sweetview-ipc-ws`, `-ipc-electron` and `-ipc-tauri` depend on IPC. Native and build helpers depend on settings.
 
-`page`, `window-chrome` and `native/hit-regions` import types only, so a
-page bundle contains no Bun code.
+`page`, `window-chrome`, `native/hit-regions`, `ipc-ws/client`,
+`ipc-electron/client` and `ipc-tauri/client` import types only, so a page
+bundle contains no Bun code.
 
 ## Quickstart
 
@@ -339,9 +345,11 @@ codesign --sign - --force --deep "App.app"
 
 | Path | Contents |
 |---|---|
-| `packages/` | the Sweetview facade, IPC, WebSocket transport, native helpers, settings and build packages |
+| `packages/` | the Sweetview facade, IPC, the WebSocket, Electron and Tauri transports, native helpers, settings and build packages |
 | `docs/` | the reference pages, indexed by the [reference index](docs/README.md) |
 | [`demos/web-app/`](demos/web-app/README.md) | one backend and one React page run two ways: a desktop window with tray and notifications, or `Bun.serve` with WebSockets |
+| [`demos/web-app-electron/`](demos/web-app-electron/README.md) | the web-app page unchanged in an Electron shell, its service in the main process |
+| [`demos/web-app-tauri/`](demos/web-app-tauri/README.md) | the web-app page unchanged in a Tauri 2 shell, answered by a Rust backend |
 | [`demos/desktop-pet/`](demos/desktop-pet/README.md) | a transparent always-on-top pet rendered with Babylon.js, with click-through hit regions and a page-drawn settings window |
 | [`demos/menubar-only/`](demos/menubar-only/README.md) | a menu-bar app with no window, no webview and no worker: a status item, its menu and a tooltip clock on a plain `setInterval`, on `runEventLoop` |
 | [`demos/menubar-notify/`](demos/menubar-notify/README.md) | a menu-bar app whose menu sends a system notification now or five seconds later, with a window listing what was sent and clicked; a notification click opens it |
@@ -360,9 +368,10 @@ from the repository root:
 | `just demos web-app serve` | the web build on `http://127.0.0.1:4747` (`PORT`, `HOST`) |
 | `just demos web-app app`, `just demos desktop-pet app`, `just demos menubar-only app`, `just demos menubar-notify app`, `just demos native-tabs app` | the desktop application from source, with `bun run` (`WEBVIEW_DEBUG=1` opens devtools) |
 | `just demos web-app compile`, `just demos desktop-pet compile`, `just demos menubar-only compile`, `just demos menubar-notify compile` | Windows exe, macOS arm64 binary and `.app` into each demo's `dist/` |
-| `just compile`, `just clean` | every demo that has that recipe (`native-tabs` has no `compile`) |
-| `just pack` | what `bun publish` would upload for each of the six packages |
-| `just publish` | publishes all six packages in dependency order, with a registry login |
+| `just demos web-app-electron app`, `just demos web-app-tauri app` | the web-app page in an Electron or a Tauri 2 shell; `probe` instead of `app` records what the page shows and quits |
+| `just compile`, `just clean` | every demo that has that recipe (`native-tabs`, `web-app-electron` and `web-app-tauri` have no `compile`) |
+| `just pack` | what `bun publish` would upload for each of the eight packages |
+| `just publish` | publishes all eight packages in dependency order, with a registry login |
 
 ## License
 

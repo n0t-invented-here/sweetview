@@ -1,0 +1,76 @@
+WT.5 evidence: the web-app page in a real Tauri 2 shell
+=========================================================
+
+Machine: Windows 11 Pro 10.0.26300 x64, WebView2 Runtime 158.0.4370.33.
+Tools: Bun 1.4.4, just 1.58.0, rustc 1.97.1, cargo 1.97.1.
+Paths below: <REPO> is the repository root.
+Tauri 2.12.7 (crate), tauri-cli 2.12.6, webview2-com 0.39.1, from demos/web-app-tauri.
+
+What ran
+--------
+From <REPO>:
+
+    just demos::web-app-tauri::probe
+
+The recipe builds the unchanged web-app page from demos/web-app/packages/web-app-frontend
+through demos/web-app-tauri/index.html (bridge.ts picks tauriTransport() because the page runs
+in a Tauri webview), writes the icon, runs `tauri build --debug --no-bundle` (Cargo, with
+src-tauri's own empty [workspace]), and starts the built executable with WEB_APP_PROBE=1.
+The backend is Rust (src-tauri/src): the sweetview_ipc command decodes each CallFrame and
+returns the ReplyFrame; events go out as the Tauri event sweetview-ipc:event carrying an
+EventFrame. With WEB_APP_PROBE=1 the Rust side logs each call and event ("host: ..."), and
+once the page has loaded evaluates demos/web-app/scripts/shell-probe.js in the page; the
+page sends its report back through the probe_report command, which prints the PROBE line
+and exits. Exit code: 0.
+
+What was seen
+-------------
+- Method: the page called info.get; the Rust backend's reply, rendered in the page's Runtime
+  card, reads Host "Tauri 2, Rust backend, 1 session", Runtime "Rust backend, Tauri 2.12.7",
+  Platform "Windows / x64". The header badge reads "Tauri 2 · IPC". The page was served from
+  http://tauri.localhost/.
+- Event: the probe typed a note into the page's form and clicked Add. The page called
+  notes.add; the Rust backend emitted notes.changed to every webview; the new note appeared
+  in the page's list 56 ms after the click, and the count badge went from 2 to 3. The page
+  renders the list only from the notes.changed event, so the note on screen is the event
+  received.
+- Targeted events: a separate check build (not committed) registered two listeners in the
+  page through __TAURI_INTERNALS__, one scoped to webview "main" (what tauriTransport()
+  registers) and one scoped to a webview "other", then invoked watch.stop (whose watch.status
+  event the backend sends with emit_to to webview "main" only) and notes.add (broadcast).
+  Result: {"mine":["watch.status","notes.changed"],"other":["notes.changed"]}: the targeted
+  event reached only the webview it was sent to.
+
+A screenshot of the same window, taken separately, showed the page fully rendered with the
+same values; the text above is the evidence.
+
+Output of the run (stdout and stderr, paths scrubbed, Cargo's "Compiling" lines dropped)
+---------------------------------------------------------------------------------------
+bun install --cwd ../..
+bun install v1.4.4 (38afee6c8)
+
+Done! Checked 79 packages (no changes) [9.00ms]
+bun build ./index.html --outdir build --minify
+Bundled 859 modules in 58ms
+
+  index-smyrfp04.js   0.67 MB    (entry point)
+  index.html          353 bytes  (entry point)
+  index-spw3ebct.css  0.43 MB    (asset)
+
+bun scripts/write-icon.ts
+wrote src-tauri\icons\icon.ico
+bun run tauri build --debug --no-bundle
+        Info Looking up installed tauri packages to check mismatched versions...
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.90s
+       Built application at: <REPO>\demos\web-app-tauri\src-tauri\target\debug\web-app-tauri.exe
+$env:WEB_APP_PROBE = '1'; ./src-tauri/target/debug/web-app-tauri.exe
+host: call info.get from tauri session main
+host: call info.get from tauri session main
+host: call notes.list from tauri session main
+host: call notes.list from tauri session main
+host: call watch.status from tauri session main
+host: call watch.status from tauri session main
+host: call notes.add from tauri session main
+host: event notes.changed -> every session
+PROBE {"location":"http://tauri.localhost/","transportBadge":"Tauri 2 · IPC","infoGet":{"host":"Tauri 2, Rust backend, 1 session","runtime":"Rust backend, Tauri 2.12.7","platform":"Windows / x64"},"notePlaceholder":"Round-trips through the Tauri command","notesBefore":"2","notesChangedEvent":{"noteShown":"Added by the shell probe at 2026-11-27T14:04:26.643Z","notesAfter":"3","msFromClick":56}}
+[1127/060426.712:ERROR:ui\gfx\win\window_impl.cc:172] Failed to unregister class Chrome_WidgetWin_0. Error = 1412

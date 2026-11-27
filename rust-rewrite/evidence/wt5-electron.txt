@@ -1,0 +1,74 @@
+WT.5 evidence: the web-app page in a real Electron shell
+==========================================================
+
+Machine: Windows 11 Pro 10.0.26300 x64, WebView2 Runtime 158.0.4370.33.
+Tools: Bun 1.4.4, just 1.58.0, rustc 1.97.1, cargo 1.97.1.
+Paths below: <REPO> is the repository root.
+Electron 45.5.0 (Node 24.22.3 in the main process), from demos/web-app-electron's devDependency.
+
+What ran
+--------
+From <REPO>:
+
+    just demos::web-app-electron::probe
+
+The recipe builds the unchanged web-app page from demos/web-app/packages/web-app-frontend
+(bridge.ts picks electronTransport() because the preload exposed window.sweetviewIpc),
+bundles main.ts and preload.ts for Node, and starts `electron .` with WEB_APP_PROBE=1.
+The main process hosts web-app-backend's createService() with electronHost(service, ipcMain);
+the window has contextIsolation: true, nodeIntegration: false, sandbox: true.
+With WEB_APP_PROBE=1, main.ts logs each call and event as the host sees it ("host: ..."), and
+once the page has loaded runs demos/web-app/scripts/shell-probe.js in the page with
+webContents.executeJavaScript. The probe reads what the page rendered and prints it as the
+PROBE line, then the app quits. Exit code: 0.
+
+What was seen
+-------------
+- Method: the page called info.get; its reply, rendered in the page's Runtime card, reads
+  Host "Electron main process, 1 session", Runtime "Electron 45.5.0, Node 24.22.3",
+  Platform "Windows / x64". The header badge reads "Electron · IPC". (React StrictMode runs
+  the page's effects twice in development, so each first call appears twice.)
+- Event: the probe typed a note into the page's form and clicked Add. The page called
+  notes.add; the service emitted notes.changed to every session; the new note appeared in
+  the page's list 74 ms after the click, and the count badge went from 2 to 3. The page
+  renders the list only from the notes.changed event (NotesCard: on("notes.changed", setNotes)),
+  so the note on screen is the event received.
+
+A screenshot of the same window, taken separately, showed the page fully rendered with the
+same values; the text above is the evidence.
+
+Output of the run (stdout and stderr, paths scrubbed)
+-----------------------------------------------------
+bun install --cwd ../..
+bun install v1.4.4 (38afee6c8)
+
+Done! Checked 79 packages (no changes) [11.00ms]
+bun build ../web-app/packages/web-app-frontend/src/main.tsx --outdir build/frontend --minify
+Bundled 858 modules in 58ms
+
+  main.js   0.67 MB  (entry point)
+  main.css  0.43 MB  (asset)
+
+bun scripts/write-icon.ts
+wrote build\icon.ico
+bun build main.ts --target=node --format=cjs --external electron --outfile build/main.cjs
+Bundled 11 modules in 5ms
+
+  main.cjs  12.59 KB  (entry point)
+
+bun build preload.ts --target=node --format=cjs --external electron --outfile build/preload.cjs
+Bundled 4 modules in 4ms
+
+  preload.cjs  1.16 KB  (entry point)
+
+$env:WEB_APP_PROBE = '1'; bun run electron .
+
+host: call info.get from electron session electron-1
+host: call notes.list from electron session electron-1
+host: call watch.status from electron session electron-1
+host: call info.get from electron session electron-1
+host: call notes.list from electron session electron-1
+host: call watch.status from electron session electron-1
+host: call notes.add from electron session electron-1
+host: event notes.changed -> every session
+PROBE {"location":"app://web-app/","transportBadge":"Electron · IPC","infoGet":{"host":"Electron main process, 1 session","runtime":"Electron 45.5.0, Node 24.22.3","platform":"Windows / x64"},"notePlaceholder":"Round-trips through Electron IPC","notesBefore":"2","notesChangedEvent":{"noteShown":"Added by the shell probe at 2026-11-27T14:04:20.326Z","notesAfter":"3","msFromClick":74}}

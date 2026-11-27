@@ -4,6 +4,8 @@ set shell := ["pwsh", "-NoProfile", "-Command", "$ErrorActionPreference = 'Stop'
     just --justfile "{{module_file()}}" --list
 
 mod web-app
+mod web-app-electron
+mod web-app-tauri
 mod desktop-pet
 mod menubar-only
 mod menubar-notify

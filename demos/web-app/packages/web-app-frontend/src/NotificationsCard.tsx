@@ -1,4 +1,4 @@
-import { Alert, Badge, Button, Card, Code, Group, Stack, Switch, Text, Title } from "@mantine/core";
+import { Alert, Badge, Button, Card, Group, Stack, Switch, Text, Title } from "@mantine/core";
 import type { NotifyStatus, SentNotification } from "web-app-backend/protocol";
 import { useEffect, useState } from "react";
 import { inApp, on, rpc } from "./bridge";
@@ -60,8 +60,8 @@ export function NotificationsCard() {
 
       {!inApp && (
         <Text c="dimmed" size="sm">
-          System notifications come from the desktop app: its tray icon on Windows, the notification center on macOS. This
-          page is served by <Code>Bun.serve</Code>, so there is none to send here.
+          System notifications come from the Sweetview desktop app: its tray icon on Windows, the notification center on
+          macOS. This page runs outside it, so there is none to send here.
         </Text>
       )}
 

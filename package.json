@@ -24,6 +24,9 @@
     "typecheck": "tsc --noEmit",
     "test": "bun test"
   },
+  "overrides": {
+    "@types/node": "26.6.6"
+  },
   "devDependencies": {
     "@n1h/sweetview-webview-bun": "^2.7.0",
     "@napi-rs/cli": "^3",

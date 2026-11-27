@@ -1,0 +1,16 @@
+{
+  "name": "sweetview-web-app-electron",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "build/main.cjs",
+  "description": "The web-app demo's page and service in an Electron shell: the service in the main process, the page over @n1h/sweetview/ipc-electron.",
+  "dependencies": {
+    "@n1h/sweetview": "workspace:*",
+    "web-app-backend": "workspace:*",
+    "web-app-frontend": "workspace:*"
+  },
+  "devDependencies": {
+    "electron": "^45.5.0"
+  }
+}
