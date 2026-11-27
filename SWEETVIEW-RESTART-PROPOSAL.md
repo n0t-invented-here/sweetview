@@ -1,6 +1,6 @@
 # Sweetview: native code in type-safe Rust
 
-Status: proposal and design. Ready for implementation on Windows. On macOS two mechanisms that were proven on Windows are not yet proven; the Readiness section lists them.
+Status: design. The Readiness section lists what has been proven by running it and what has not, with the checklist item that proves each.
 
 Rule: no functionality is removed. Everything Sweetview, the bindings and the C++ webview fork do today exists afterwards. Where a crate lacks something, this project writes it in Rust. The API is free to change where the design is better for it; each change has a row in `docs/upgrading.md`.
 
@@ -29,18 +29,17 @@ Branch `v1-rust-rewrite` is `main` with `v1-drafting` merged: six packages under
 | The binding loaded a second time inside a Bun `Worker`, waking the UI thread | **not proven**; today the worker opens the C library itself and calls `webview_dispatch` | checklist item W1.7, before any webview work |
 | Every crate API the design names | read on docs.rs or in source, with version; see "API references" | nothing |
 | Native tabs and every `v1-drafting` feature | designed from a full reading of their files; see "Tabs" and "The `v1-drafting` features" | nothing |
-| Linux | scoped, not designed | its own step, last |
+| Linux | scoped, not designed | the Linux goal, `rust-rewrite/CHECKLIST-linux.md` |
 
 ## Proofs run
 
-A throwaway crate, built and run on 2026-11-27 on Windows 11 with Bun 1.4.4 and Rust 1.97.1. It lives outside every repository and is not part of this proposal's code.
+A small crate, built and run on 2026-11-27 on Windows 11 with Bun 1.4.4 and Rust 1.97.1. Its source is `rust-rewrite/spike/`. It proves mechanisms and is not the start of the implementation.
 
 Built with: `napi` 3.16.3, `napi-derive` 3.7.2, `napi-build` 2.7.0, `tao` 0.38.0, `wry` 0.58.2, `tray-icon` 0.27.0, `muda` 0.22.0, `windows` 0.62.2, `webview2-com` 0.39.1. Build time from clean: 43 seconds. The binding is 1.2 MB.
 
 | Question | What was run | Result |
 |---|---|---|
 | Can native code call a JavaScript function while the UI thread is inside the blocking `tao` loop? | A `#[napi]` function creates a hidden `tao` window and a `wry` webview, serves a page from a custom protocol, and enters `run_return`. The page calls `window.ipc.postMessage`. The loop calls the JavaScript function it was given and exits with its return value | The JavaScript function ran once, inside the loop, and its return value came back: `pong<ping from http://webview.localhost> insideLoop=true`. 368 ms from call to result |
-| What origin does a `wry` custom protocol named `webview` get on Windows? | the page reports `location.origin` | `http://webview.localhost`, the same value `assetOrigin` has today |
 | Does a `tao` loop pumped from a Bun timer deliver tray events with no window? | `init` creates a `tao` event loop and a `tray-icon` icon and no window. A Bun `setInterval` at 16 ms calls `pump`, which runs `run_return` until `MainEventsCleared`. Four tray mouse messages are posted to the tray icon's own window, the messages the shell posts for a left and a right click | 4 messages posted, 4 `TrayIconEvent::Click` events delivered to the JavaScript function |
 | Does Bun's own loop keep running between pumps? | a second 10 ms `setInterval` and a promise per tick, during 70 pump ticks | 109 timer ticks and 109 promise continuations ran |
 | Does `bun build --compile` embed the binding? | the script loads the binding with a literal `require("./spike.node")`; the compiled executable is copied alone into an empty folder and run | the executable passed every check above with no `.node` file beside it |
@@ -49,6 +48,8 @@ Limits of these proofs:
 
 - Windows only. No Mac was available on the machine they ran on.
 - The tray clicks were the shell's messages posted by the test, not a person clicking.
+- The page in the first proof was served through a `wry` custom protocol. The design serves pages through Sweetview's own request handler, which the proof did not exercise.
+- The binding was loaded on the main thread only. Loading it again inside a `Worker` is checklist item W1.7.
 - They prove the mechanisms, not the features built on them.
 
 ## What Sweetview is
@@ -57,7 +58,7 @@ Sweetview lets a Bun app open a webview window, put an icon in the tray or menu 
 
 ## The change
 
-All native code becomes Rust. Bun reaches it through N-API. No C++ and no `bun:ffi` remain.
+All native code becomes Rust. Bun reaches it through N-API. No C++ remains, and Sweetview's packages import `bun:ffi` nowhere except the few setup files requirement R3 allows.
 
 | Piece | Today | After |
 |---|---|---|
@@ -102,9 +103,11 @@ No crate is forked. All of them are used as published on crates.io. What `wry` l
 | Code | Unsafe |
 |---|---|
 | `tao`, `wry`, `muda`, `tray-icon`, `rfd` | inside the crates; their public APIs are safe |
-| Sweetview's own crate, except the modules below | none: `#![forbid(unsafe_code)]` |
-| Sweetview's `platform` modules: input hooks, notifications, and the single OS calls listed below | yes, one `unsafe` block per OS call |
+| Sweetview's binding crate and logic crates | none: `#![forbid(unsafe_code)]` at each crate root |
+| Sweetview's platform crates, named `sweetview-platform` or `sweetview-platform-<name>`: the webview pieces `wry` lacks, input hooks, notifications, adopted windows, and the single OS calls listed below | yes, under `rust-rewrite/UNSAFE-POLICY.md`: one operation per block, inside a safe function, on a type that owns the OS resource and releases it on drop |
 | JavaScript | no native calls at all |
+
+In this document `platform::webview`, `platform::input`, `platform::notify`, `platform::adopt` and `platform::misc` name modules of the platform crates. `hit`, `http`, `menu`, `click` and `resize` name modules of the logic crates. How the modules are grouped into crates is decided when the workspace is built and recorded in `rust-rewrite/DECISIONS.md`.
 
 ## What the Rust types enforce
 
@@ -131,7 +134,10 @@ Each row is something the TypeScript `bun:ffi` code does by hand today.
 | Behaviour | Provided by |
 |---|---|
 | Create a window hidden, frameless or framed, transparent, topmost, not focusable, off the taskbar | `tao`: `WindowBuilder::with_visible`, `with_decorations`, `with_transparent`, `with_always_on_top`, `with_focusable`, `with_skip_taskbar`, `with_no_redirection_bitmap` |
-| Show, hide, move, resize, raise, bounds | `tao`: `set_visible`, `set_outer_position`, `set_inner_size`, `set_always_on_top`, `outer_position`, `outer_size` |
+| Show, hide, move, resize, raise, bounds, all in outer-frame coordinates | `tao`: `set_visible`, `set_outer_position`, `set_inner_size`, `set_always_on_top`, `outer_position`, `outer_size`. `tao` sets the inner size only, so an outer size is converted by the difference between `outer_size` and `inner_size` |
+| `onResize`, `onMove` | `tao`: `WindowEvent::Resized`, `Moved` |
+| Minimum size | `tao`: `with_min_inner_size`, converted from the outer size the same way |
+| A window Sweetview did not create, wrapped by `Window.fromHandle`, with its events and a webview mounted in it | Sweetview `platform::adopt`: `SetWindowSubclass` on Windows, as `win32/window.ts` does |
 | Whole-window click-through | `tao`: `set_ignore_cursor_events` |
 | Hit regions: 10 ms poll, polygons, the refine round trip to the page | Sweetview's `hit` module (safe Rust): `tao` `cursor_position` and `set_ignore_cursor_events` |
 | "Never flip click-through while a mouse button is down" | Sweetview `platform`: `GetAsyncKeyState` on Windows, `NSEvent::pressedMouseButtons` on macOS |
@@ -139,12 +145,12 @@ Each row is something the TypeScript `bun:ffi` code does by hand today.
 | Work area | Sweetview `platform`: `SystemParametersInfoW`, `NSScreen::visibleFrame` |
 | Title-bar drag from the page | `tao`: `drag_window` |
 | Edge resize from the page, minimum 160x120 | Sweetview's own gesture, as today, in safe Rust on `cursor_position` and `set_outer_position` |
-| Minimise; maximise to the work area and back | `tao` `set_minimized`; Sweetview's own toggle, as today |
+| Minimise; maximise and restore | `tao` `set_minimized`. A framed window maximises through the OS: `set_maximized`, `is_maximized`. A frameless window toggles between its bounds and the work area of the screen it is on, in Sweetview's `resize` module |
 | Window icon; light, dark or system frame | `tao`: `set_window_icon`, `set_theme` |
 | `colorKey` and `opacity` | Sweetview `platform`: `SetLayeredWindowAttributes`, `NSWindow::setAlphaValue` |
 | macOS: above the Dock, on every Space, out of window cycling, over full-screen apps | Sweetview `platform`: `NSWindow::setLevel`, `setCollectionBehavior` |
-| Close button hides the window | `tao`: the `CloseRequested` event |
-| Activation policy | `tao`: `EventLoopExtMacOS::set_activation_policy` |
+| A close request goes to the window's `onClose` listeners; with none, the window is disposed. Closing a window never ends the loop | `tao`: the `CloseRequested` event |
+| Activation policy | `tao`: `EventLoopExtMacOS::set_activation_policy` before the loop starts, `EventLoopWindowTargetExtMacOS::set_activation_policy_at_runtime` after |
 | Tray icon, tooltip, click and double click, menu | `tray-icon`, with the single and double click timing in safe Rust |
 | Menus with check marks, icons, submenus, rebuilt on every open | `muda` |
 | SF Symbol icons on macOS | Sweetview `platform`: `NSImage::imageWithSystemSymbolName` |
@@ -153,10 +159,10 @@ Each row is something the TypeScript `bun:ffi` code does by hand today.
 | Folder dialog | `rfd` |
 | macOS app menu with About, Quit and Edit | `muda` predefined items; the About alert through `rfd` |
 | Dock icon at run time | Sweetview `platform`: `NSApplication::setApplicationIconImage` |
-| `run()`: the blocking loop | `tao`: `EventLoop::run` |
-| `runEventLoop`: the loop pumped from a Bun timer | `tao`: `run_return`, called once per tick |
+| `run()`: the blocking loop, which returns when the app quits | `tao`: `run_return`, left when the loop is asked to exit. `EventLoop::run` never returns to its caller and is not used |
+| `runEventLoop`: the loop pumped from a Bun timer | `tao`: `run_return`, called once per tick and left when the queue is empty |
 | Webview in a window, or a child webview with bounds | `wry`: `build`, `build_as_child`, `with_bounds` |
-| Page-to-host calls with no TCP | `wry`: `with_ipc_handler` |
+| Page-to-host calls with no TCP | Windows: `wry`'s `with_ipc_handler`. macOS: Sweetview's own script message handler |
 | Host-to-page replies and events | `wry`: `evaluate_script` |
 | The worker's wake-up of the UI thread | `tao`: `EventLoopProxy::send_event` |
 
@@ -192,22 +198,22 @@ All kept.
 | Sweetview `hit`, `http`, `menu`, `click`, `resize` | hit-region poll and refine state machine; header validation; menu data; click timing; the resize gesture | no |
 | Sweetview `napi_surface`, `callbacks`, `registry`, `threads` | the N-API layer | no |
 
-## The games: required functions and the gate
+## Overlay applications: required functions and the gate
 
-Every function of Sweetview, the bindings and the C++ fork is treated as required by the owner's games. The functions below are the ones a full-screen transparent game with click handling exercises directly.
+Every function of Sweetview, the bindings and the C++ fork is required. The functions below are the ones a full-screen transparent desktop application with click handling exercises directly.
 
 | Function | Provided by | Check that exists today | Proven at |
 |---|---|---|---|
-| A transparent, frameless, topmost window that never takes focus, above the taskbar or Dock | `tao`, `platform::misc` for the macOS window level | `demos/desktop-pet`; `scripts/shot.ps1`, `scripts/flicker.ps1` | W4, M3 |
+| A transparent, frameless, topmost window that never takes focus, above the taskbar or Dock | `tao`, `platform::misc` for the macOS window level | `demos/desktop-pet`, with its `scripts/shot.ps1` and `scripts/flicker.ps1` | W4, M3 |
 | A transparent page background, alpha 0 | `wry` `with_transparent`, `with_background_color` | the fork's background colour tests; `demos/desktop-pet` | W2, M1 |
-| Whole-window click-through on and off | `tao` `set_ignore_cursor_events` | `scripts/settings-probe.ps1` | W4, M3 |
-| Hit regions: polygons from the page, 10 ms poll, exact answer from the page, no flip while a button is down | Sweetview `hit`, `platform::misc` | `hit-regions.test.ts`; `scripts/probe.ps1`, which sends real input and reports which window the OS hands each click to | W4, M3 |
-| System-wide mouse hook: move, left, right, middle, wheel, modifiers, swallow per event | Sweetview `platform::input` | `examples/input-hooks.ts`; the fork's unit tests | W3, M2 |
-| System-wide keyboard hook: down, up, repeat, DOM key codes, modifiers, swallow per event | Sweetview `platform::input` | `examples/input-hooks.ts`; the fork's key-code unit tests | W3, M2 |
-| macOS permission model for the hooks: needed, status, request, auto-request | Sweetview `platform::input` | `examples/input-hooks.ts` | W3, M2 |
+| Whole-window click-through on and off | `tao` `set_ignore_cursor_events` | `demos/desktop-pet/scripts/settings-probe.ps1` | W4, M3 |
+| Hit regions: polygons from the page, 10 ms poll, exact answer from the page, no flip while a button is down | Sweetview `hit`, `platform::misc` | `hit-regions.test.ts`; `demos/desktop-pet/scripts/probe.ps1`, which sends real input and reports which window the OS hands each click to | W4, M3 |
+| System-wide mouse hook: move, left, right, middle, wheel, modifiers, swallow per event | Sweetview `platform::input` | the bindings' `examples/input-hooks.ts`; the C++ fork's unit tests | W3, M2 |
+| System-wide keyboard hook: down, up, repeat, DOM key codes, modifiers, swallow per event | Sweetview `platform::input` | the bindings' `examples/input-hooks.ts`; the C++ fork's key-code unit tests | W3, M2 |
+| macOS permission model for the hooks: needed, status, request, auto-request | Sweetview `platform::input` | the bindings' `examples/input-hooks.ts` | W3, M2 |
 | Window move and resize driven by the page, every frame | `tao` | `demos/desktop-pet` | W4, M3 |
 | Every monitor: screen, screen at a point, virtual screen, scale | `tao` | `demos/desktop-pet` on a second monitor | W4, M3 |
-| Assets, models and textures served at the page's origin | Sweetview `platform::webview` request handler | `test/request-handler.test.ts` | W2, M1 |
+| Assets, models and textures served at the page's origin | Sweetview `platform::webview` request handler | the bindings' `test/request-handler.test.ts` | W2, M1 |
 | Page calls answered on the UI thread and in the worker; events to the page | `wry` IPC, the ring | `demos/desktop-pet`, `demos/web-app` | W2, M1 |
 | Both loop modes | `tao` | `demos/web-app`, `demos/menubar-only` | W1, M0 |
 | One executable from `bun build --compile` | the `.node` binding | each demo's `compile` recipe | W1, M0 |
@@ -216,10 +222,10 @@ Nothing in this table works until its checklist group is built and its check pas
 
 The gate:
 
-- The current stack stays available throughout as what it is today: the published packages, tag `pre-rust-rewrite` on this branch, and the `main` and `v1-drafting` branches. A game keeps running on it at every point, and nothing published is changed by this work.
+- The current stack stays available throughout as what it is today: the published packages, tag `pre-rust-rewrite` on this branch, and the `main` and `v1-drafting` branches. An application keeps running on it at every point, and nothing published is changed by this work.
 - The work happens on branch `v1-rust-rewrite`, one platform at a time. The Windows goal replaces the Windows half and leaves macOS running on today's code; the macOS goal replaces the macOS half and removes the bindings package and the C++ library.
 - A platform's old code is deleted only when that platform's checklist is complete: every item ticked with its evidence, every test that passed at the tag still passing, and the upgrade guide exercised.
-- A game moves to the result by following `docs/upgrading.md`. The dependents run of requirement R2 does that to a copy of each real application and runs its own checks before the goal can complete.
+- An application moves to the result by following `docs/upgrading.md`. The dependents run of requirement R2 does that to a copy of each real application and runs its own checks before the goal can complete.
 - A function that cannot be made to work in Rust is first a reason to adjust the design. It stops the work only when no adjustment keeps the requirements, as R9 states.
 
 ## What `wry` lacks, and where each is built
@@ -274,6 +280,7 @@ On Windows, through `WebViewExtWindows::controller()` and `webview()`:
 | `WebViewBuilder::with_custom_protocol`, `with_asynchronous_custom_protocol`, `with_ipc_handler`, `with_initialization_script`, `with_initialization_script_for_main_only`, `with_transparent`, `with_background_color`, `with_devtools`, `with_drag_drop_handler`, `with_bounds`, `build`, `build_as_child` | `wry` 0.58.2 | yes |
 | `WebView::evaluate_script`, `evaluate_script_with_callback`, `load_url`, `load_html`, `set_background_color`, `bounds`, `set_bounds`, `set_visible`, `focus`, `open_devtools` | `wry` 0.58.2 | yes |
 | `WebViewExtWindows::controller`, `webview`, `environment`, `hwnd`, `reparent` | `wry` 0.58.2 | yes |
+| `WebViewBuilderExtMacos::with_webview_configuration`; `WebViewExtMacOS::webview`, `manager`, `ns_window`, `reparent`; `RequestAsyncResponder::respond`; `DragDropEvent` | `wry` 0.58.2 | yes, in the crate's source |
 | `TrayIconBuilder::with_icon`, `with_tooltip`, `with_title`, `with_menu`, `with_menu_on_left_click`, `with_menu_on_right_click`; `TrayIcon::set_icon`, `set_menu`, `set_tooltip`, `set_visible`, `set_show_menu_on_left_click`, `show_menu`, `rect` | `tray-icon` 0.27.0 | yes |
 | `TrayIconEvent::Click` with `button` and `button_state`; `DoubleClick`, Windows only; `Enter`, `Move`, `Leave`; `set_event_handler`. AppIndicator emits no events; KSNI emits left and middle clicks | `tray-icon` 0.27.0 | yes |
 | `Menu`, `Submenu`, `MenuItem`, `CheckMenuItem` with `set_checked`, `set_text`, `set_enabled`; `PredefinedMenuItem`; `MenuEvent::set_event_handler`. `show_context_menu_for_hwnd` and `show_context_menu_for_nsview` are `unsafe` calls | `muda` 0.22.0 | yes |
@@ -290,15 +297,15 @@ On Windows, through `WebViewExtWindows::controller()` and `webview()`:
 | `UNUserNotificationCenter::currentNotificationCenter`, `setDelegate`, `requestAuthorizationWithOptions_completionHandler`, `addNotificationRequest_withCompletionHandler`: all safe; completion handlers are `block2::DynBlock` | `objc2-user-notifications` 0.3.2 | yes |
 | `CGEvent::tap_create`: `unsafe`. `CGEvent::tap_enable`, `flags`, `location`, `integer_value_field`, `double_value_field`, `type`: safe | `objc2-core-graphics` 0.3.2 | yes |
 | `SetWindowsHookExW`: `unsafe`, returns `Result<HHOOK>`. `Shell_NotifyIconW`: `unsafe` | `windows` 0.62.2 | yes |
-| the other `windows` functions named in this document: `GetAsyncKeyState`, `SystemParametersInfoW`, `SetLayeredWindowAttributes`, `CreateMutexW`, `FindWindowExW`, `SendMessageTimeoutW`, the registry and clipboard calls, the WinRT toast types | `windows` 0.62.2 | no; every Win32 function in this crate is `unsafe` |
-| `objc2-core-foundation` `CFMessagePort` functions | not read | no |
+| the other `windows` functions named in this document: `GetAsyncKeyState`, `SystemParametersInfoW`, `SetLayeredWindowAttributes`, `CreateMutexW`, `FindWindowExW`, `SendMessageTimeoutW`, the registry and clipboard calls, the WinRT toast types | `windows` 0.62.2 | not page by page. Every Win32 function in this crate is `unsafe`, and the compiler checks each signature against Windows' own metadata |
+| `objc2-core-foundation` `CFMessagePort` functions, used by single instance on macOS | not read | no. Checklist item M5.2 builds on them |
 | `napi` `Function` called from inside a native loop; `.node` loading by `require`; embedding by `bun build --compile` | `napi` 3.16.3 on Bun 1.4.4 | built and run; see "Proofs run" |
 
-One consequence of these readings for memory safety on macOS: almost every AppKit call this project makes is a safe method. The `unsafe` there is the one conversion of `tao`'s `ns_window()` pointer into an `NSWindow` reference, plus `setNextResponder`, `setApplicationIconImage`, `CGEvent::tap_create` and the classes defined with `define_class!`.
+What these references mean for the design:
 
-One correction these readings forced: `tao` has no window level or collection behaviour call, so "above the Dock, on every Space" on macOS is written by this project against `NSWindow`, through the pointer from `ns_window()`.
-
-One addition they found: `tao` has `set_tabbing_identifier`, which is the macOS native-tabs mechanism the tabs demo implements by hand.
+- Almost every AppKit call this project makes on macOS is a safe method. The `unsafe` there is the one conversion of `tao`'s `ns_window()` pointer into an `NSWindow` reference, plus `setNextResponder`, `setApplicationIconImage`, `CGEvent::tap_create` and the classes defined with `define_class!`.
+- `tao` has no window level or collection-behaviour call, so "above the Dock, on every Space" on macOS is written by this project against `NSWindow`, through the pointer from `ns_window()`.
+- `tao` has `set_tabbing_identifier`, the AppKit window-tabbing mechanism that `darwin/tabs.ts` drives by hand.
 
 ## Architecture
 
@@ -308,7 +315,7 @@ One addition they found: `tao` has `set_tabbing_identifier`, which is the macOS 
 | Sweetview API | the public API; it changes only where the design is better for it, each change with a row in `docs/upgrading.md` | TypeScript |
 | Binding | `sweetview.<target>.node`, loaded with `require` | Rust |
 
-Sweetview's native layer already has the seam this design uses. Each module declares a `Backend` type and picks an implementation with `backend(win32, darwin)` in `packages/sweetview-native/src/platform.ts`: `activation`, `app-icon`, `app-menu`, `clipboard`, `event-loop`, `folder-picker`, `menu`, `notifications`, `screen`, `tray`, `window`. The Rust library implements those eleven `Backend` types and `platform.ts` returns it. The webview has no such seam yet: `packages/sweetview/src/app.ts` calls the bindings' `Webview` class and the C library's symbols directly, so the work gives it one, with the Rust library behind it on Windows.
+The native package's eleven `Backend` types are the seam. The Rust library implements each one, and `platform.ts` returns it on a platform whose goal is done. The webview gets a seam of the same kind in `packages/sweetview/src/`: the Rust library behind it on Windows, and the bindings' `Webview` class behind it on macOS until the macOS goal replaces that too.
 
 ## The N-API surface
 
@@ -316,7 +323,9 @@ Internal to the package. Signatures are the generated TypeScript.
 
 ```ts
 class Engine {
-  static create(debug: boolean, window: bigint | null): Engine;
+  static create(debug: boolean, window: bigint | null): Engine;          // fills the window; null makes a window of its own
+  static createChild(debug: boolean, window: bigint, bounds: Rect): Engine; // a child of the window, at the given client rectangle
+  setBounds(bounds: Rect): void;                                          // for a child
   readonly handle: bigint;
   readonly windowHandle: bigint;
   setTitle(title: string): void;
@@ -337,6 +346,14 @@ class Engine {
   setFileDropHandler(fn: ((paths: string[]) => void) | null): number;
   setAllowExternalDrop(allow: boolean): number;
   setDrain(fn: (() => void) | null): void;
+  // What the tabs library needs of a tab's webview (packages/sweetview/src/tabs/win-webview2.ts, darwin-webview.ts):
+  setVisible(visible: boolean): void;
+  moveFocus(): void;
+  notifyMoved(): void;
+  reparent(window: bigint): void;
+  onAcceleratorKey(fn: ((key: KeyData) => boolean) | null): void;      // Windows; true marks the key handled
+  onNewWindowRequested(fn: ((url: string) => void) | null): void;
+  onNavigationFailed(fn: ((url: string, reason: string) => void) | null): void;
 }
 
 // Callable from any thread:
@@ -356,7 +373,6 @@ function permissionRequest(permission: number): number;
 function permissionSetAutoRequest(on: boolean): number;
 
 function pumpEvents(): boolean;
-function discardQuit(): void;
 function setActivationPolicy(policy: ActivationPolicy): void;
 
 class Window {                                    // implements WindowBackend of window.ts
@@ -391,7 +407,7 @@ class Tray {
 }
 
 class Notifier {
-  constructor(onClick: ((id: string, dataJson: string | null) => void) | null);
+  constructor(init: NotifierInit);
   notify(n: NotificationInit): boolean; dispose(): void;
 }
 
@@ -416,25 +432,21 @@ class SingleInstance {
   dispose(): void;
 }
 
-// Tabs on Windows: the frame with its strip pane and one child pane per tab (win32/tab-window.ts),
-// and the per-tab WebView2 controller calls (packages/sweetview/src/tabs/win-webview2.ts).
-class TabFrame {
-  static create(options: TabFrameInit): TabFrame;
-  readonly handle: bigint;
-  readonly stripPane: bigint;
-  createPane(): bigint; adoptPane(pane: bigint): void; placePane(pane: bigint): void;
-  showPane(pane: bigint): void; hidePane(pane: bigint): void; destroyPane(pane: bigint): void;
-  layout(): void; stripRect(): Rect; scale(): number; isForeground(): boolean;
-  startDrag(held: Point | null): void; startResize(edge: ResizeEdge): void;
-  showSystemMenu(): void; setSystemDark(dark: boolean): void;
-  destroy(): void;
+// Tabs on Windows. The frame of a tabbed window is a Window created with `tabStripHeight`:
+// its caption is removed and the top `tabStripHeight` DIPs are the strip. It adds:
+interface TabFrame extends Window {
+  stripRect(): Rect;                    // screen rectangle of the strip, for drops from another window
+  pageRect(): Rect;                     // client rectangle below the strip, where the shown tab's webview goes
+  isForeground(): boolean;
+  onActivate(fn: ((active: boolean) => void) | null): void;
+  startDragAt(held: Point): void;       // puts the held point under the cursor first, then hands the drag to the OS
+  showSystemMenu(): void;               // Restore, Move, Size, Minimize, Maximize, Close
+  setSystemDark(dark: boolean): void;
 }
-// On Engine, for a tab's webview:
-//   setVisible(visible: boolean): void; moveFocus(): void; notifyMoved(): void; reparent(pane: bigint): void;
-//   onAcceleratorKey(fn: ((key: KeyData) => boolean) | null): void;
-//   onNewWindowRequested(fn: ((url: string) => void) | null): void;
-//   onNavigationFailed(fn: ((failure: NavigationFailure) => void) | null): void;
+// The strip and each tab are Engines made with `Engine.createChild(debug, frame.handle, rect)`.
 ```
+
+`discardQuit` has no counterpart. It exists because destroying a webview in the C++ library posts `WM_QUIT`, which one tab of several must take back; dropping a `wry` webview posts nothing.
 
 The data types those signatures use:
 
@@ -453,6 +465,7 @@ type WindowInit = {
   title: string; bounds?: Rect; minWidth?: number; minHeight?: number;
   frame: boolean; resizable: boolean; appearance: "system" | "light" | "dark"; icon?: IconBytes;
   transparent: boolean; colorKey?: string; opacity?: number; topmost: boolean; hideFromTaskbar: boolean; noActivate: boolean;
+  tabStripHeight?: number;                   // Windows: makes the window a tabbed window's frame
 };
 type ScreenData = { bounds: Rect; workArea: Rect; scale: number; primary: boolean };
 
@@ -472,7 +485,16 @@ type TrayInit = {
   menuChosen: (id: number) => void;          // called after the menu closes
 };
 
+type NotifierInit = {
+  appId: string | null;                      // Windows toast identity; null uses "Sweetview.DesktopApp" as today
+  appName: string | null;
+  onClick: ((id: string, dataJson: string | null) => void) | null;
+};
 type NotificationInit = { id: string; title: string; body: string; silent: boolean; dataJson: string | null };
+
+type UrlSchemeInit = { appName: string; iconPath: string; command: string };   // Windows registry values
+type KeyData = { virtualKey: number; control: boolean; shift: boolean; alt: boolean };
+
 ```
 
 - Numeric results keep the `webview_error_t` codes of today, so `WebviewError` and every documented code stay as they are.
@@ -502,7 +524,7 @@ Today a `JSCallback` lets the OS call JavaScript on the UI thread while that thr
 
 | Mode | Today | After |
 |---|---|---|
-| `run()` | `webview_run`, blocking | `EventLoop::run`, blocking, entered from `Engine.run()` |
+| `run()` | `webview_run`, blocking | `run_return`, blocking, entered from `Engine.run()` and left when `Engine.terminate()` asks the loop to exit. `EventLoop::run` never returns to its caller and is not used |
 | `runEventLoop` | a Bun `setInterval` calling `pumpEvents`: `PeekMessageW` and `DispatchMessageW`, or `nextEventMatchingMask:` and `sendEvent:` | the same Bun timer calling `pumpEvents`, which calls `run_return` and exits it when the queue is empty |
 
 `tao` documents that `run_return` does not return while a window is being resized. Today's pump has the same property: `DispatchMessageW` does not return during the OS's modal size loop.
@@ -520,16 +542,17 @@ Today a `JSCallback` lets the OS call JavaScript on the UI thread while that thr
 
 ## Handles and constants
 
-- `Overlay.handle`, `WebviewApp.windowHandle` and `Webview.unsafeWindowHandle` stay the real OS handles, as `docs/native.md` and the bindings' docs define them: the `HWND` on Windows, the `NSWindow` pointer on macOS. `tao` returns them from `WindowExtWindows::hwnd()` and `WindowExtMacOS::ns_window()`.
+- `Window.handle` and `Webview.unsafeWindowHandle` stay the real OS handles, as `docs/native/windows.md` and the bindings' docs define them: the `HWND` on Windows, the `NSWindow` pointer on macOS, and `null` for a tabbed `Window` on macOS, which stands for a group of windows. `tao` returns them from `WindowExtWindows::hwnd()` and `WindowExtMacOS::ns_window()`.
+- A webview is mounted into a window by handle. `wry`'s `build` and `build_as_child` take any `HasWindowHandle`, so `platform::adopt` wraps a raw `HWND` or `NSWindow` pointer in a type that implements it, for windows Sweetview did not create.
 - `Webview.unsafeHandle` and the `handle` argument of the worker functions stay in the API as an opaque number that names the webview. The library checks it against its table of live webviews.
 - `assetOrigin` keeps its values: `http://webview.localhost` on Windows, `webview://localhost` on macOS.
 - `framesOrigin` keeps its values: `http://frames.webview.localhost` on Windows, `webview-frames://localhost` on macOS. This project's own request handler serves those origins, so they do not depend on how `wry` names a custom protocol.
-- `WEBVIEW_PATH` pointed at a custom engine build. `SWEETVIEW_NATIVE_PATH` points at a custom build of the binding.
+- `WEBVIEW_PATH` names a custom build of the C library today. `SWEETVIEW_NATIVE_PATH` names a custom build of the binding, and `docs/upgrading.md` has the row.
 
 ## Packaging
 
-- One npm package holds the TypeScript and one `.node` binding per target: Windows x64, macOS arm64 and x64, Linux x64.
-- The binding is loaded with a literal `require` per platform, the form `bun build --compile` embeds.
+- The native package, `@n1h/sweetview-native`, holds one `.node` binding per target: Windows x64 after the Windows goal, macOS arm64 and x64 after the macOS goal, Linux x64 after the Linux goal. The other five packages stay TypeScript and reach the binding through the native package.
+- The binding is loaded with a literal `require` per platform, the form `bun build --compile` embeds. The same `require` runs inside a `Worker`.
 - CI builds with `cargo` on one runner per OS. Consumers install no Rust.
 - `@n1h/sweetview-webview-bun` is folded into Sweetview's packages. Every name it exports, the input hooks and permissions among them, is exported by a Sweetview package or has a row in `docs/upgrading.md`.
 
@@ -560,7 +583,9 @@ Kept as TypeScript, untouched: `hit-regions.ts`, `icon.ts`, `menu.ts`, `fs.ts`, 
 
 ## Tabs
 
-Every file of `demos/native-tabs` on `main` and of the tabs library on `v1-drafting` was read in full for this section. The public API is `v1-drafting`'s: `new Window({ tabs: true })`, `WebView.openTab`, `Tab`, `TabOptions`, `createApp({ tabs: true })`.
+The public API: `new Window({ tabs: true })`, `WebView.openTab`, `Tab`, `TabOptions`, `createApp({ tabs: true })`. `rust-rewrite/reference/v1-drafting-tabs-and-window.md` is the inventory of what the tabs library does today, behaviour by behaviour; the checklists accept tabs against it.
+
+The tab state machines stay TypeScript: `packages/sweetview/src/tabs/win-tabs.ts` and `darwin-tabs.ts` keep the hosts, the tab records, selection, tear-off and merge. What moves to Rust is what they call: the frame window, the webviews, and the native events.
 
 ### Windows
 
@@ -568,8 +593,8 @@ Every file of `demos/native-tabs` on `main` and of the tabs library on `v1-draft
 |---|---|
 | One frame window per tabbed window, caption removed in `WM_NCCALCSIZE`, system border, shadow, snap and maximise kept | `tao` window with `with_decorations(false)` and `with_undecorated_shadow(true)` |
 | A 40 DIP strip webview across the top, drawing tabs, `+` and the caption buttons | a `wry` child webview from `build_as_child` with `with_bounds`; the strip's HTML, CSS and script (`win-strip-assets.ts`) and its 15 `strip.*` methods stay TypeScript |
-| One WebView2 per tab in a child pane; one shown at a time | one `wry` child webview per tab; `WebView::set_visible`, `set_bounds` |
-| Tear-off and merge: a tab moves to another window without reloading | `WebViewExtWindows::reparent(hwnd)` |
+| One WebView2 per tab in a child pane window; one shown at a time | one `wry` child webview per tab, a direct child of the frame, placed over the page area with `set_bounds` and shown or hidden with `set_visible`. The pane windows of `win32/tab-window.ts` exist to give the C library a parent to fill and have no counterpart |
+| Tear-off and merge: a tab moves to another window without reloading, by `SetParent` on its pane | `WebViewExtWindows::reparent(hwnd)` on the tab's webview |
 | Shortcuts while a page has focus: Ctrl+T, Ctrl+W, Ctrl+F4, Ctrl+Tab, Ctrl+Shift+Tab, Ctrl+PageUp, Ctrl+PageDown, Ctrl+1 to 9, Alt+F4 | `add_AcceleratorKeyPressed` on `controller()`, through the typed handler of `webview2-com`. The mapping in `shortcuts.ts` stays TypeScript |
 | `target="_blank"` and `window.open` become a tab | `wry` `with_new_window_req_handler` |
 | Keyboard returned to the page after a strip action | `MoveFocus` on `controller()` |
@@ -603,7 +628,7 @@ Showing, hiding, moving and destroying a webview is deferred to its own turn of 
 
 ## The `v1-drafting` features
 
-Every file of each feature on `v1-drafting` was read in full for this section. Names, limits and wire formats stay exactly as they are, so an old build and a new build of the same app still find each other.
+`rust-rewrite/reference/v1-drafting-features.md` is the inventory of what each feature does today, call by call. Names, limits and wire formats stay exactly as they are, so an old build and a new build of the same app still find each other.
 
 | Feature | What stays identical | Provided by |
 |---|---|---|
@@ -621,11 +646,11 @@ Every file of each feature on `v1-drafting` was read in full for this section. N
 | `Window` file drops | paths delivered to `onFileDrop` | `tao` `WindowEvent::DroppedFile` |
 | Shared Win32 start-up: STA, per-monitor DPI, the hidden first window | all three | `tao` sets DPI awareness and initialises OLE; the hidden first window is a hidden `tao` window created first |
 
-One disagreement between docs and code found while reading, kept as the code behaves: on Windows `tab.close()` on a window's last tab is offered to `onClose` listeners first and the tab stays when one intercepts; `docs/app.md` says it always closes.
+`docs/app.md` and the code disagree on one point. On Windows `tab.close()` on a window's last tab is offered to `onClose` listeners first, and the tab stays when one intercepts; `docs/app.md` says it always closes. The rewrite keeps what the code does, and the page is corrected.
 
 ## Linux
 
-No Linux code exists in Sweetview today, and the C++ fork's additions do nothing there. Scope for the last step: a `tao` window with a `wry` webview on WebKitGTK, assets and IPC, a tray menu and left click through `tray-icon`'s `ksni` feature, a notification through `notify-rust`. Overlays, hit regions, input hooks and tabs are not in scope on Linux.
+No Linux code exists in Sweetview today, and the C++ fork's additions do nothing there. Scope of the Linux goal: a `tao` window with a `wry` webview on WebKitGTK, assets and IPC, a tray menu and left click through `tray-icon`'s `ksni` feature, a notification through `notify-rust`. Overlays, hit regions, input hooks and tabs are not in scope on Linux.
 
 ## Order of work
 
@@ -653,11 +678,12 @@ Linux is the third goal, `CHECKLIST-linux.md`, scoped as the Linux section above
 |---|---|
 | The two loop mechanisms are proven on Windows and not on macOS | Group M0 of the macOS checklist runs the same proof on a Mac before any macOS module is built. If the timer pump fails there, the pump function dequeues events itself with `NSApplication::nextEventMatchingMask_untilDate_inMode_dequeue` and `sendEvent`, the calls today's `pumpEvents` makes; both are safe methods in `objc2-app-kit`. |
 | The tray proof used posted messages, not a person's click | Items W5.5 and M4.5 are `demos/menubar-only` and `demos/menubar-notify` clicked by hand. |
-| A rebuilt module behaves differently from today. Every game-critical path is re-implemented under this proposal, so each one can differ | Each is accepted against its existing tests and demo, and the dependents run of R2 upgrades a copy of each real application and runs its own checks. The published packages and tag `pre-rust-rewrite` stay as they are. |
-| The worker cannot load the binding a second time, or cannot wake the UI thread through it | Item W1.7 proves it before any webview work. If it fails, the wake goes through a `SharedArrayBuffer` flag the pump reads plus a thread message posted by a tiny `setup:` FFI call, recorded in `rust-rewrite/DECISIONS.md`. |
+| A rebuilt module behaves differently from today. Every path an overlay application depends on is re-implemented under this proposal, so each one can differ | Each is accepted against its existing tests and demo, and the dependents run of R2 upgrades a copy of each real application and runs its own checks. The published packages and tag `pre-rust-rewrite` stay as they are. |
+| The worker cannot load the binding a second time, or cannot wake the UI thread through it | Item W1.7 proves it before any webview work. If the binding cannot load in a `Worker`, the worker wakes the UI thread without it: it posts one window message to the binding's message window with `PostMessageW` through `bun:ffi`, which is one `setup:` file under requirement R3. The change is recorded in `rust-rewrite/DECISIONS.md`. |
 | `tao` queues window events while its handler is already running, so a handler that opens a modal loop sees no resize, move or close until it returns | Item W1.8 tests it. Page calls and worker replies arrive through WebView2's own callbacks and the wake message, not through `tao`'s event handler, so they are served inside the modal loop; window events that arrive late are delivered when the handler returns, as the OS queue would deliver them. |
 | A later `wry` release changes one of the native objects this project builds on | `wry` is pinned in `Cargo.lock`. Each of the five behaviours has its own test, so an upgrade that breaks one fails that test. |
-| `unsafe` spreads | `#![forbid(unsafe_code)]` on every Sweetview module outside `platform`. CI counts `unsafe` blocks and fails when the count rises without an entry in a tracked list. |
+| `unsafe` spreads | `#![forbid(unsafe_code)]` at the root of every crate that is not a platform crate. `rust-rewrite/verify.ts` fails on `unsafe` outside a platform crate and on a block with no `SAFETY:` comment, and rewrites `rust-rewrite/UNSAFE-LEDGER.md` with the count per file. A reviewer that did not write the code reads every block before a goal completes. |
+| `tao`'s undecorated window does not keep everything the tab frame has today: the system border, shadow, snap and maximise with the caption removed | Item W7.2 runs `demos/native-tabs/scripts/win-drive.ts` against it. If one of those is lost, the frame is a window this project creates in `platform`, with the `WM_NCCALCSIZE` handling `win32/tab-window.ts` has, and `tao` adopts nothing of it. |
 
 ## Alternatives ruled out
 
@@ -675,7 +701,10 @@ Linux is the third goal, `CHECKLIST-linux.md`, scoped as the Linux section above
 - `n0t-invented-here/sweetview-webview-bun`, branch `v1-drafting`: every file in `src/`, the README, every page in `docs/`, `scripts/build.ts`, the justfile.
 - `n0t-invented-here/sweetview-webview`, branch `v1-drafting`: every page in `sweetview/`; the full diff against upstream `f1a9d6b` of `engine_base.hh`, `win32_edge.hh` and `cocoa_webkit.hh`; `input_hooks.hh`.
 - This repository on `main`: `README.md`, `docs/app.md`, `docs/native.md`, `docs/webview-library.md`, `src/app.ts`, `src/worker.ts`, `src/webview-lib.ts`, `src/ring.ts`, and every file under `src/native/` except `icon.ts` and `hit-regions.ts`.
+- This repository on `v1-rust-rewrite`, in full: `README.md`; in `packages/sweetview/src/`: `index.ts`, `app.ts`, `worker.ts`, `webview-lib.ts`, `page.ts`; in `packages/sweetview-native/src/`: `index.ts`, `platform.ts`, `internal.ts`, `event-loop.ts`, `window.ts`, `win32/window.ts`, `win32/event-loop.ts`, `win32/init.ts`, `win32/message-window.ts`, `win32/notifier.ts`, `win32/tray.ts`; in `packages/sweetview-ipc/src/`: `frame.ts`, `bridge.ts`, `service.ts`.
+- The rest of the native package and the tabs library, through the three inventories in `rust-rewrite/reference/`. Each was written from a full reading of the files it names on `v1-drafting`. The `darwin/` folder, the tabs library and `win32/winrt-toast.ts` are read again in full by the goal that replaces them, before it designs their replacement.
 - docs.rs pages of `tao` 0.38.0 (`Window`, `WindowBuilder`, `WindowBuilderExtWindows`, `EventLoopExtRunReturn`), `wry` 0.58.2 (`WebViewBuilder`), `muda` 0.22.0 and `tray-icon` 0.27.0 (crate pages).
+- The source of `wry` 0.58.2 (`src/lib.rs`, `src/webview2/mod.rs`, `src/wkwebview/mod.rs`, `src/wkwebview/drag_drop.rs`, `src/wkwebview/class/url_scheme_handler.rs`) and of `tao` 0.38.0 (`src/event_loop.rs`, `src/platform/run_return.rs`, `src/platform/windows.rs`, `src/platform/macos.rs`, `src/window.rs`), for the items "API references" marks as read in source.
 
 ## Sources
 
