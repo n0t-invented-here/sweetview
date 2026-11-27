@@ -10,7 +10,7 @@ export declare class Notifier {
    * `appId`/`appName`: the toast identity (`null` uses `Sweetview.DesktopApp`); `iconIco`: the
    * `.ico` the balloon shows (`null`: the stock icon); `onClick(id, dataJson)` runs on the UI thread.
    */
-  constructor(appId?: string | undefined | null, appName?: string | undefined | null, iconIco?: Uint8Array | undefined | null, onClick?: ((arg0: string, arg1?: string | undefined | null) => void) | undefined | null)
+  constructor(appId: string | null, appName: string | null, iconIco: Uint8Array | null, onClick: ((id: string, dataJson: string | null) => void) | null)
   /** Shows a notification. True when it was handed to the OS; false once disposed. */
   notify(id: string, title: string, body: string, silent: boolean, dataJson?: string | undefined | null): boolean
   /** Replaces the `.ico` the balloon fallback shows. Throws on bytes that are not an icon. */
@@ -70,10 +70,10 @@ export declare function defer(job: () => void): void
 export declare function featurePermissions(feature: number): number
 
 /** Installs the process's keyboard hook: `(event, code, raw, modifiers) => swallow`. Returns a `webview_error_t`. */
-export declare function installKeyboardHook(handler: KeyHandler): number
+export declare function installKeyboardHook(handler: (event: number, code: string, raw: number, modifiers: number) => boolean): number
 
 /** Installs the process's mouse hook: `(event, x, y, wheel, modifiers) => swallow`. Returns a `webview_error_t`. */
-export declare function installMouseHook(handler: MouseHandler): number
+export declare function installMouseHook(handler: (event: number, x: number, y: number, wheel: number, modifiers: number) => boolean): number
 
 /** True while `runLoop()` is on the stack. */
 export declare function isLoopBlocking(): boolean

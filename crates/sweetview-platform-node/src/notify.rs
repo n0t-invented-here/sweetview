@@ -1,6 +1,6 @@
 //! Exports of `sweetview_napi::notify`.
 
-use napi::bindgen_prelude::{FnArgs, Function, Uint8Array};
+use napi::bindgen_prelude::Uint8Array;
 use napi::Env;
 use napi_derive::napi;
 use sweetview_napi::notify as imp;
@@ -16,13 +16,16 @@ pub struct Notifier {
 impl Notifier {
   /// `appId`/`appName`: the toast identity (`null` uses `Sweetview.DesktopApp`); `iconIco`: the
   /// `.ico` the balloon shows (`null`: the stock icon); `onClick(id, dataJson)` runs on the UI thread.
-  #[napi(constructor)]
+  #[napi(
+    constructor,
+    ts_args_type = "appId: string | null, appName: string | null, iconIco: Uint8Array | null, onClick: ((id: string, dataJson: string | null) => void) | null"
+  )]
   pub fn new(
     env: Env,
     app_id: Option<String>,
     app_name: Option<String>,
     icon_ico: Option<Uint8Array>,
-    on_click: Option<Function<'_, FnArgs<(String, Option<String>)>, ()>>,
+    on_click: Option<imp::ClickHandler<'_>>,
   ) -> napi::Result<Self> {
     Ok(Self { inner: imp::Notifier::new(env, app_id, app_name, icon_ico.map(|b| b.to_vec()), on_click)? })
   }

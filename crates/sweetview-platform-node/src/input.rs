@@ -5,7 +5,7 @@ use napi_derive::napi;
 use sweetview_napi::input as imp;
 
 /// Installs the process's mouse hook: `(event, x, y, wheel, modifiers) => swallow`. Returns a `webview_error_t`.
-#[napi]
+#[napi(ts_args_type = "handler: (event: number, x: number, y: number, wheel: number, modifiers: number) => boolean")]
 pub fn install_mouse_hook(env: Env, handler: imp::MouseHandler<'_>) -> napi::Result<i32> {
   imp::install_mouse_hook(env, handler)
 }
@@ -17,7 +17,7 @@ pub fn remove_mouse_hook() -> napi::Result<i32> {
 }
 
 /// Installs the process's keyboard hook: `(event, code, raw, modifiers) => swallow`. Returns a `webview_error_t`.
-#[napi]
+#[napi(ts_args_type = "handler: (event: number, code: string, raw: number, modifiers: number) => boolean")]
 pub fn install_keyboard_hook(env: Env, handler: imp::KeyHandler<'_>) -> napi::Result<i32> {
   imp::install_keyboard_hook(env, handler)
 }
