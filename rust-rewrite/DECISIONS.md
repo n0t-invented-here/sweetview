@@ -13,7 +13,14 @@ All under `crates/`, all from this repository; every dependency is from crates.i
 | `sweetview-platform-node` | the export table: the items that carry `#[napi]`, each forwarding to `sweetview-napi` | see D2 | generated only; none hand-written |
 | `sweetview-platform-loop` | the parts of the UI thread's loop `tao` has no API for: the window target while the loop runs, a wake and timers that arrive inside any modal loop | see D3 and D4 | yes |
 
-More crates are added by the groups that need them; each gets a row here when it lands.
+| `sweetview-http` | the rules of the webview's request handler that need no OS call: status and header validation, asset paths, origins, limits, the error codes | pure logic, ported with the C++ library's tests, shared by Windows now and macOS later | forbidden |
+| `sweetview-keycodes` | the tables that turn an OS key or mouse message into the values applications see | pure data and decisions for both platforms' hooks | forbidden |
+| `sweetview-window-logic` | what a window should do next, decided from cursor positions, button states and bounds: hit regions, the resize gesture, the frameless maximise, the extended-style policy | the state machines are testable without a window | forbidden |
+| `sweetview-platform-webview` | what the webview needs on top of `wry` that `wry` has no API for: the request handler with streamed bodies, drops, user scripts, the tab hooks | all of it reaches WebView2 through the typed interfaces `wry` hands out | yes |
+| `sweetview-platform-input` | system-wide mouse and keyboard hooks and the permission model | one OS mechanism, unrelated to windows or the webview | yes |
+| `sweetview-platform-window` | the window-level OS calls `tao` has no API for, and the events of any window by subclass | see D8 | yes |
+| `sweetview-platform-notify` | desktop notifications with a click that comes back | WinRT toasts and the balloon fallback are one feature with its own threads and registrations | yes |
+| `sweetview-platform-shell` | the shell integrations that are one OS conversation each: clipboard text, URL schemes, single instance, icon refresh | small, unrelated to the loop; none needs a window of Sweetview's | yes |
 
 ## D2. The binding is two crates: `sweetview-napi` and `sweetview-platform-node`
 
@@ -79,3 +86,23 @@ Reason: today's messages live in the TypeScript layer already, per handler; keep
 Bounds are set with one `SetWindowPos` in the platform crate, because `tao` offers an outer position and an inner size as two calls, and a window dragged by its left or top edge must move and resize in one step.
 
 Alternative left open: `tao`'s `WindowEvent`s and `set_ignore_cursor_events`, re-applying the extra styles after every `tao` call; it changes when events arrive and flickers a layered overlay each time click-through flips.
+
+## D9. A window is shown by the platform crate, and `tao` is told afterwards
+
+`tao`'s `set_visible(true)` shows with `SW_SHOW`, which activates even a `WS_EX_NOACTIVATE` window; `noActivate` windows must never take focus. `show()` therefore runs today's sequence in `sweetview-platform-window` (restore if minimised, `SW_SHOWNOACTIVATE` for `noActivate`, the foreground otherwise), and the subclass keeps `tao`'s later style rewrites from changing `WS_VISIBLE`.
+
+Alternative left open: `tao`'s `set_visible`, which changes focus behaviour for overlays.
+
+## D10. A quit asked for outside a blocking run waits for the next pump
+
+The C++ library ended a loop by posting a quit message, so `quit()` called while no `run()` was in progress ended the next `run()` at once, or made the next `pumpEvents()` return false, and `discardQuit` took it back. The runtime keeps that contract without the message: `Runtime::request_exit` outside a blocking run sets a flag the next pump reports and consumes, the next blocking run ends at once on it, and `discard_quit` clears it (and still takes back a real quit message an application posted).
+
+Alternative left open: make `quit()` a no-op unless a blocking run is in progress; an application that pumps with `runEventLoop` and ends its loop by `app.quit()` would then never stop.
+
+## D11. One pump dispatches everything that is waiting
+
+`tao` in poll mode hands its handler `MainEventsCleared` after each message, so a pump that exits there dispatches one message per call. `pumpEvents` has always dispatched everything waiting. `Runtime::pump` goes round until no posted message waits, bounded at 256 rounds, then takes the signal window's due timers (D3).
+
+## D12. The binding's built-in types are positional where an object would need `unsafe`
+
+`#[napi(object)]` structs compile under `#![forbid(unsafe_code)]` and are used for data that crosses the boundary as an object (`Rect`, `RawRequest`, `KeyData`, `WindowInit`). Callback types are written out in each `#[napi]` signature in `sweetview-platform-node`, because a Rust type alias erases the parameter types from the generated TypeScript declarations.

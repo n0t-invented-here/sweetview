@@ -68,15 +68,35 @@ Source of truth for behaviour: the bindings repository's `docs/` and `test/`, an
 
 ## W4. Loop, windows, overlays
 
-- [ ] W4.1 `runEventLoop`, `quitEventLoop`, `pumpEvents`, and `run()` on an app: both loop modes, with Bun timers and promises running between pumps.
+- [x] W4.1 `runEventLoop`, `quitEventLoop`, `pumpEvents`, and `run()` on an app: both loop modes, with Bun timers and promises running between pumps.
+
+    `rust-rewrite/evidence/w4-windows.txt`: `event-loop.test.ts` (`pumpEvents`, `runEventLoop`/`quitEventLoop`, a second loop refused), "both loop modes serve a window" (a close request and the hit-region poll under the blocking loop and under the Bun-timer loop), and `discardQuit`. Bun timers and promises between pumps: `rust-rewrite/evidence/w1-boundary.txt`, "the pumped loop delivers native timeouts while Bun timers and promises keep running". `run()` on an app: `packages/sweetview/src/app.test.ts` passes on the Rust loop in the full run of `bun test`.
+
 - [ ] W4.2 `Window`: every option of `WindowOptions` and every method, per `docs/native/windows.md`. `handle` is the real `HWND`. `Window.fromHandle` wraps a window this process did not create through Sweetview (an application's own `HWND`), with `onResize`, `onMove`, `onClose` and `onFileDrop` working on it, and `WebView.attach` mounts a webview inside it.
 - [ ] W4.2a A webview is mounted inside a window that already exists (`WebView.attach(window, options)`), and the window keeps its styles and outer bounds across the mount, as `preserveGeometry` ensures today.
-- [ ] W4.3 Overlays: transparent, colour key, opacity, topmost above the taskbar, hidden from the taskbar, no-activate, the hidden first window.
-- [ ] W4.4 `setClickThrough` and `setHitRegions` with the refiner, the 10 ms poll and the "no flip while a button is down" rule, per `docs/native/overlays-and-hit-regions.md`.
+- [x] W4.3 Overlays: transparent, colour key, opacity, topmost above the taskbar, hidden from the taskbar, no-activate, the hidden first window.
+
+    `rust-rewrite/evidence/w4-windows.txt`: "topmost, hideFromTaskbar, noActivate and layering, kept through a style rewrite", "show() leaves a noActivate window inactive and activates any other", the `colorKey` and opacity tests of `overlay.test.ts`. The hidden first window: `tao` creates a hidden top-level tool window with its event loop, before any window of Sweetview's (`tao` 0.38.0, `src/platform_impl/windows/event_loop.rs`), so Sweetview's own first window is never the process's first.
+
+- [x] W4.4 `setClickThrough` and `setHitRegions` with the refiner, the 10 ms poll and the "no flip while a button is down" rule, per `docs/native/overlays-and-hit-regions.md`.
+
+    `rust-rewrite/evidence/w4-windows.txt`: "setClickThrough sets and clears the click-through bits" and "the 10 ms poll follows the cursor into and out of a polygon, with and without the refiner" on a real window with the real cursor. The rule that click-through never flips while a mouse button is down is tested in the logic crate:
+
+    ```
+    $ cargo test -p sweetview-window-logic
+    test result: ok. 29 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+    ```
+
 - [ ] W4.5 `startDrag`, `startResize`, `minimize`, `toggleMaximize`, `isMaximized`, `closeToTrayOnLastWindow`, `onClose`, `onResize`, `onMove`, `onFileDrop`.
-- [ ] W4.6 `Screen`: `primary`, `all`, `at`, `of`, `bounds`, `cursor`.
+- [x] W4.6 `Screen`: `primary`, `all`, `at`, `of`, `bounds`, `cursor`.
+
+    `rust-rewrite/evidence/w4-windows.txt`: "Screen exposes primary, all, at, bounds, and cursor without a window", "Screen.of a window is the screen its frame is on; Screen.bounds holds every screen", "Screen.of(hwnd) resolves the monitor hosting a message window".
+
 - [ ] W4.7 `packages/sweetview-native/src/win32/window.test.ts` and `win32.test.ts` pass. `demos/desktop-pet` and `demos/web-app` run and compile.
-- [ ] W4.8 An application's own `bun:ffi` modal dialog and popup menu, opened from a `uiMethods` call, work under both loop modes. A fixture under `rust-rewrite/compat/` does this.
+- [x] W4.8 An application's own `bun:ffi` modal dialog and popup menu, opened from a `uiMethods` call, work under both loop modes. A fixture under `rust-rewrite/compat/` does this.
+
+    `rust-rewrite/evidence/w4-windows.txt`, `rust-rewrite/compat/own-modal-loops.test.ts`: an application's own `MessageBoxW` and `TrackPopupMenu`, called through `bun:ffi` from a handler, under the blocking loop and under `runEventLoop`; inside each modal loop a native timeout fires and a wake drains. 2 pass, 0 fail.
+
 
 ## W5. Tray, menus, notifications, dialogs, clipboard
 
