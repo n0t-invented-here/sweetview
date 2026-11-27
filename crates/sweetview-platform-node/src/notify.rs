@@ -84,6 +84,12 @@ impl Notifier {
     self.inner.debug_pending_balloons()
   }
 
+  /// Test hook: later toasts are removed by the platform after `seconds` (0: never).
+  #[napi]
+  pub fn debug_set_toast_life(&self, seconds: u32) {
+    self.inner.debug_set_toast_life(seconds);
+  }
+
   /// Test hook: balloons the shell accepted since the notifier was made.
   #[napi]
   pub fn debug_balloons_shown(&self) -> u32 {

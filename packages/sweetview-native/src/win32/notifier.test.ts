@@ -45,6 +45,10 @@ function cookieOf(shown: string | null, kind: "toast" | "balloon"): number {
   return Number(shown!.slice(kind.length + 1));
 }
 
+// Seconds after which the platform removes a toast these tests show, so a run leaves none on the
+// screen or in the notification centre of a machine with nobody at it. Applications' toasts never expire.
+const TEST_TOAST_LIFE = 4;
+
 describe.if(process.platform === "win32")("Windows notifier", () => {
   test("registers an AUMID and shows real WinRT toasts with independently routed clicks", async () => {
     const { createNotifier, debugNativeNotifier } = await import("./notifier");
@@ -55,6 +59,7 @@ describe.if(process.platform === "win32")("Windows notifier", () => {
     const real = createNotifier({ identity, onClick: () => {} });
     try {
       const realNative = debugNativeNotifier(real)!;
+      realNative.debugSetToastLife(TEST_TOAST_LIFE);
       cookieOf(realNative.debugShow("really shown", '<Title> & "quotes"', "It’s <body> & 'more'", true, "null"), "toast");
       expect(realNative.debugToastsAvailable()).toBe(true);
       expect(realNative.debugBalloonsShown()).toBe(0);
@@ -63,6 +68,7 @@ describe.if(process.platform === "win32")("Windows notifier", () => {
     }
     const backend = createNotifier({ identity, onClick: (click) => clicks.push(click) });
     const native = debugNativeNotifier(backend)!;
+    native.debugSetToastLife(TEST_TOAST_LIFE);
     try {
       const first = { id: 'first<&>"', data: { index: 1 } };
       const second = { id: "second", data: ["different", 2] };
@@ -125,6 +131,7 @@ describe.if(process.platform === "win32")("Windows notifier", () => {
     const clicks: NotificationClick[] = [];
     const backend = createNotifier({ appId, identity, onClick: (click) => clicks.push(click) });
     const native = debugNativeNotifier(backend)!;
+    native.debugSetToastLife(TEST_TOAST_LIFE);
     try {
       expect(backend.notify({ title: "WinRT", silent: true })).toBe(true);
       expect(native.debugToastsAvailable()).toBe(true);
@@ -163,6 +170,7 @@ describe.if(process.platform === "win32")("Windows notifier", () => {
     const originalError = console.error;
     const backend = createNotifier({ onClick: (click) => clicks.push(click) });
     const native = debugNativeNotifier(backend)!;
+    native.debugSetToastLife(TEST_TOAST_LIFE);
     try {
       native.debugForcePath("balloonOnly");
       setNotifierTrayIcon(dotIco({ sizes: [16, 32] }));
@@ -213,6 +221,7 @@ describe.if(process.platform === "win32")("Windows notifier", () => {
       },
     });
     const native = debugNativeNotifier(backend)!;
+    native.debugSetToastLife(TEST_TOAST_LIFE);
     try {
       native.debugForcePath("balloonOnly");
       const uid = cookieOf(native.debugShow("throws", "Throws", "", true, null), "balloon");

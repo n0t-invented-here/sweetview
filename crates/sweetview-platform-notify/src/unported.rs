@@ -40,6 +40,8 @@ impl Notifier {
 
   pub fn force_path(&self, _path: ForcedPath) {}
 
+  pub fn set_toast_life(&self, _seconds: Option<u32>) {}
+
   pub fn simulate_toast_event(&self, _cookie: u64, _event: ToastEvent) -> bool {
     false
   }

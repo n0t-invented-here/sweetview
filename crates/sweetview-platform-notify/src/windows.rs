@@ -17,7 +17,8 @@ use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use sweetview_platform_loop::{MessageWindow, Poster};
 use windows::core::{Ref, RuntimeType, HSTRING};
 use windows::Data::Xml::Dom::XmlDocument;
-use windows::Foundation::TypedEventHandler;
+use windows::core::Interface;
+use windows::Foundation::{DateTime, IReference, PropertyValue, TypedEventHandler};
 use windows::UI::Notifications::{
   ToastDismissedEventArgs, ToastFailedEventArgs, ToastNotification, ToastNotificationManager, ToastNotifier,
 };
@@ -395,11 +396,17 @@ impl Toasts {
     Ok(Self { notifier, pending: RefCell::new(HashMap::new()), disposed: Cell::new(false), _ro: ro })
   }
 
-  fn show(&self, notification: &Notification, target: &Poster, forced: ForcedPath) -> Result<u64, NotifyError> {
+  fn show(&self, notification: &Notification, target: &Poster, forced: ForcedPath, life: Option<u32>) -> Result<u64, NotifyError> {
     let xml = toast_xml(&notification.id, &notification.title, &notification.body, notification.silent);
     let document = XmlDocument::new().map_err(hresult_error("RoActivateInstance(XmlDocument)"))?;
     document.LoadXml(&HSTRING::from(xml)).map_err(hresult_error("IXmlDocumentIO.LoadXml"))?;
     let toast = ToastNotification::CreateToastNotification(&document).map_err(hresult_error("CreateToastNotification"))?;
+    if let Some(seconds) = life {
+      // A test's toast: the platform takes it off the screen and out of the notification centre
+      // by itself, so a test run leaves nothing behind on a machine with nobody at it.
+      let expires = expiry_after(seconds).map_err(hresult_error("PropertyValue.CreateDateTime"))?;
+      toast.SetExpirationTime(&expires).map_err(hresult_error("IToastNotification.put_ExpirationTime"))?;
+    }
     let cookie = NEXT_COOKIE.fetch_add(1, Ordering::SeqCst);
     let entry = PendingToast { toast: toast.clone(), subscriptions: Vec::new(), notification: notification.clone() };
     self.pending.borrow_mut().insert(cookie, entry);
@@ -524,6 +531,8 @@ struct Inner {
   window: RefCell<Option<NotifyWindow>>,
   toasts: RefCell<ToastSlot>,
   forced: Cell<ForcedPath>,
+  /// Seconds after which the platform removes a toast by itself; `None`, as applications get, never.
+  toast_life: Cell<Option<u32>>,
   /// Balloons the shell accepted, over this notifier's whole life.
   balloons_shown: Cell<u32>,
   disposed: Cell<bool>,
@@ -558,7 +567,7 @@ impl Inner {
       }
       if let (Some(toasts), Some(target)) = (self.toasts(), self.target()) {
         // A synchronous WinRT failure leaves the balloon responsible for delivery.
-        if let Ok(cookie) = toasts.show(notification, &target, forced) {
+        if let Ok(cookie) = toasts.show(notification, &target, forced, self.toast_life.get()) {
           return Some(Shown::Toast(cookie));
         }
       }
@@ -657,6 +666,7 @@ impl Notifier {
       window: RefCell::new(None),
       toasts: RefCell::new(ToastSlot::Untried),
       forced: Cell::new(ForcedPath::Auto),
+      toast_life: Cell::new(DEFAULT_TOAST_LIFE),
       balloons_shown: Cell::new(0),
       disposed: Cell::new(false),
     });
@@ -695,6 +705,12 @@ impl Notifier {
   /// Test hook: makes later notifications take a failure path. See [`ForcedPath`].
   pub fn force_path(&self, path: ForcedPath) {
     self.inner.forced.set(path);
+  }
+
+  /// Test hook: later toasts expire after `seconds`, when the platform removes them from the
+  /// screen and the notification centre by itself. `None`, what applications get, never expires.
+  pub fn set_toast_life(&self, seconds: Option<u32>) {
+    self.inner.toast_life.set(seconds);
   }
 
   /// Test hook: delivers a toast event as WinRT would. While the toast is
@@ -750,6 +766,20 @@ impl Drop for Notifier {
   fn drop(&mut self) {
     self.inner.dispose();
   }
+}
+
+/// How long this crate's own tests leave a toast with the platform; applications' toasts never expire.
+#[cfg(test)]
+const DEFAULT_TOAST_LIFE: Option<u32> = Some(4);
+#[cfg(not(test))]
+const DEFAULT_TOAST_LIFE: Option<u32> = None;
+
+/// The moment `seconds` from now, as the reference to a date and time a toast's expiry takes.
+fn expiry_after(seconds: u32) -> windows::core::Result<IReference<DateTime>> {
+  // A DateTime counts 100 ns ticks from 1601-01-01 UTC; the Unix epoch is 11 644 473 600 s after it.
+  let unix = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+  let ticks = (unix + 11_644_473_600 + u64::from(seconds)) * 10_000_000;
+  PropertyValue::CreateDateTime(DateTime { UniversalTime: ticks as i64 })?.cast()
 }
 
 fn validate_icon(bytes: &[u8]) -> Result<(), NotifyError> {

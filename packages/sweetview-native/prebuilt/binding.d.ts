@@ -112,6 +112,8 @@ export declare class Notifier {
   debugPendingToasts(): number
   /** Test hook: balloons shown that have not been clicked, timed out or hidden. */
   debugPendingBalloons(): number
+  /** Test hook: later toasts are removed by the platform after `seconds` (0: never). */
+  debugSetToastLife(seconds: number): void
   /** Test hook: balloons the shell accepted since the notifier was made. */
   debugBalloonsShown(): number
   /** Test hook: whether WinRT toasts are in use. */

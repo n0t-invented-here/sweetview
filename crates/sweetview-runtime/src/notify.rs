@@ -58,6 +58,11 @@ impl Notifier {
     self.inner.force_path(path);
   }
 
+  /// Test hook: later toasts are removed by the platform after `seconds`; `None` never.
+  pub fn set_toast_life(&self, seconds: Option<u32>) {
+    self.inner.set_toast_life(seconds);
+  }
+
   /// Test hook: delivers a toast event as WinRT would; it arrives from the loop.
   pub fn simulate_toast_event(&self, cookie: u64, event: ToastEvent) -> bool {
     self.inner.simulate_toast_event(cookie, event)
