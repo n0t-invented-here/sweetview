@@ -24,9 +24,63 @@ exit 0
 
 No undefined behaviour reported in these crates or in what they call of their dependencies (serde_json).
 
-Crates that cannot run under Miri:
+$ cargo +nightly miri test -p sweetview-runtime --lib -- bridge::tests icon::tests menu::tests tray::tests
+     Running unittests src\lib.rs (target\miri\x86_64-pc-windows-msvc\debug\build\sweetview-runtime/...)
+test bridge::tests::a_call_keeps_its_params_text_exactly_and_other_messages_are_not_calls ... ok
+test bridge::tests::a_reply_passes_json_text_as_a_string_and_empty_as_undefined ... ok
+test bridge::tests::bind_and_unbind_notices_name_the_function_as_json ... ok
+test bridge::tests::line_separators_are_escaped_so_the_literal_is_valid_javascript ... ok
+test bridge::tests::the_bind_script_lists_names_as_json_and_guards_the_top_frame ... ok
+test bridge::tests::the_init_script_guards_the_top_frame_and_posts_through_the_given_function ... ok
+test icon::tests::a_png_image_inside_the_ico_decodes ... ok
+test icon::tests::a_png_on_its_own_decodes_at_the_asked_size ... ok
+test icon::tests::bytes_that_are_no_icon_are_refused_with_a_reason ... ok
+test icon::tests::each_size_comes_from_its_own_image_or_the_next_larger_one ... ok
+test icon::tests::resampling_keeps_a_solid_colour_and_blends_an_edge ... ok
+test icon::tests::the_exact_size_else_the_next_larger_else_the_largest_is_picked ... ok
+test menu::tests::ampersands_are_doubled ... ok
+test menu::tests::only_ids_of_this_module_are_taken ... ok
+test tray::tests::a_click_after_a_double_click_is_a_click_again ... ok
+test tray::tests::a_click_left_alone_is_a_click_once_the_double_click_time_passes ... ok
+test tray::tests::a_double_click_is_a_double_click_and_no_click ... ok
+test tray::tests::only_left_and_right_button_ups_and_left_double_clicks_are_inputs ... ok
+test tray::tests::two_clicks_further_apart_than_the_double_click_time_are_two_clicks ... ok
+test tray::tests::with_no_click_handler_no_timer_runs ... ok
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 22 filtered out
+exit 0
 
-sweetview-runtime: every test starts the UI thread's COM apartment, windows or the WebView2 runtime through the platform crates, which call the OS; Miri stops at the first foreign call:
-  test activation::tests::a_second_acquisition_hands_off_and_release_frees_the_id ... error: unsupported operation: can't call foreign function `CoInitializeEx` on OS `windows`
+$ cargo +nightly miri test -p sweetview-napi
+     Running unittests src\lib.rs (target\miri\x86_64-pc-windows-msvc\debug\build\sweetview-napi/...)
+test objects::tests::an_unknown_appearance_is_the_default ... ok
+test objects::tests::sizes_are_rounded_and_never_negative ... ok
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+   Doc-tests: test result: ok. 0 passed; 0 failed
+exit 0
 
-sweetview-napi: it has no tests of its own (`cargo +nightly miri test -p sweetview-napi` runs 0 tests and passes); every function converts values through N-API, whose napi_* functions are provided by the host process (Bun) at load time, so none can run outside that host, under Miri or not. It is exercised by the Bun test suite.
+No undefined behaviour reported in these tests or in what they call of their dependencies (the image decoders behind icon.rs, serde_json).
+
+sweetview-runtime: the tests of bridge.rs, icon.rs, menu.rs and tray.rs make no OS call and pass under Miri (above). Every other test of the crate was run under Miri one at a time (`cargo +nightly miri test -p sweetview-runtime --lib -- --exact <test>`); each stops at its first foreign call, which Miri cannot make on Windows. Every one of them starts the UI thread's COM apartment (`Runtime::get`) or asks the shell, so none can run under Miri for a reason other than an OS call:
+  activation::tests::a_second_acquisition_hands_off_and_release_frees_the_id | can't call foreign function `CoInitializeEx`
+  activation::tests::another_thread_is_refused_but_schemes_are_validated_anywhere | can't call foreign function `CoInitializeEx`
+  clipboard::tests::another_thread_is_refused | can't call foreign function `CoInitializeEx`
+  clipboard::tests::text_round_trips_and_the_clipboard_is_restored | can't call foreign function `CoInitializeEx`
+  notify::tests::a_balloon_click_arrives_from_the_runtime_loop | can't call foreign function `CoInitializeEx`
+  notify::tests::another_thread_is_refused | can't call foreign function `CoInitializeEx`
+  runtime::tests::a_job_may_clear_itself_and_a_cleared_timeout_never_runs | can't call foreign function `CoInitializeEx`
+  runtime::tests::a_quit_request_ends_a_pump_and_can_be_taken_back | can't call foreign function `CoInitializeEx`
+  runtime::tests::another_thread_is_refused_and_can_still_wake | can't call foreign function `CoInitializeEx`
+  runtime::tests::one_pump_dispatches_everything_that_was_waiting | can't call foreign function `CoInitializeEx`
+  runtime::tests::the_blocking_run_serves_jobs_timeouts_and_wakes_and_ends_on_request | can't call foreign function `CoInitializeEx`
+  screen::tests::screens_without_a_window | can't call foreign function `CoInitializeEx`
+  shell::tests::refreshing_returns_on_any_thread | can't call foreign function `SHChangeNotify`
+  window::tests::a_tab_frame_keeps_the_system_frame_and_lays_out_a_strip_and_a_page | can't call foreign function `CoInitializeEx`
+  window::tests::adopting_a_handle_that_is_not_a_window_fails | can't call foreign function `CoInitializeEx`
+  window::tests::click_through_and_hit_regions_set_the_style_bits | can't call foreign function `CoInitializeEx`
+  window::tests::events_reach_every_wrapper_and_close_follows_the_listeners | can't call foreign function `CoInitializeEx`
+  window::tests::every_option_shows_in_the_window_styles_and_survives_a_style_rewrite | can't call foreign function `CoInitializeEx`
+  window::tests::frameless_maximise_uses_the_work_area_of_its_own_screen | can't call foreign function `CoInitializeEx`
+  window::tests::hidden_windows_take_their_exact_outer_bounds_and_dispose_destroys_them | can't call foreign function `CoInitializeEx`
+  window::tests::owned_windows_give_every_handle_back | can't call foreign function `CoInitializeEx`
+  window::tests::show_activates_unless_no_activate | can't call foreign function `CoInitializeEx`
+
+sweetview-napi: its own tests (`objects.rs`, the conversions of the object shapes) make no N-API call and pass under Miri (above). Every other function converts values through N-API, whose napi_* functions are provided by the host process (Bun) at load time, so none can run outside that host, under Miri or not. They are exercised by the Bun test suite.
