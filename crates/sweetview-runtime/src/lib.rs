@@ -4,9 +4,14 @@
 //! and gets plain values back.
 #![forbid(unsafe_code)]
 
+pub mod app;
+pub mod dialogs;
 mod error;
+pub mod icon;
+pub mod menu;
 pub mod runtime;
 pub mod threads;
+pub mod tray;
 
 pub use error::{Error, Result};
 pub use runtime::{wake, Runtime, TimeoutId};

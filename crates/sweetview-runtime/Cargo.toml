@@ -9,5 +9,10 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
+ico.workspace = true
+muda.workspace = true
+rfd.workspace = true
 sweetview-platform-loop.workspace = true
+sweetview-platform-window.workspace = true
 tao.workspace = true
+tray-icon.workspace = true
