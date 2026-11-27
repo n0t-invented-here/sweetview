@@ -29,14 +29,15 @@ mod imp {
   use std::marker::PhantomData;
   use std::time::Duration;
 
-  use windows::core::HSTRING;
+  use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+  use sweetview_platform_loop::MessageWindow;
   use windows::Win32::Foundation::{HANDLE, HGLOBAL, HWND};
   use windows::Win32::System::DataExchange::{CloseClipboard, EmptyClipboard, GetClipboardData, OpenClipboard, SetClipboardData};
   use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock, GMEM_MOVEABLE};
   use windows::Win32::System::Ole::CF_UNICODETEXT;
 
   use super::{decode_unicode_text, encode_unicode_text, OPEN_ATTEMPTS, OPEN_RETRY_MS};
-  use crate::win::{default_procedure, last_error, MessageWindow};
+  use crate::win::last_error;
   use crate::ShellError;
 
   /// The clipboard, open on this thread until dropped. It borrows the owner
@@ -49,7 +50,11 @@ mod imp {
   impl<'a> OpenedClipboard<'a> {
     /// Opens the clipboard for `owner` (none: the open is not associated with a window).
     fn open(owner: Option<&'a MessageWindow>) -> Result<Self, ShellError> {
-      let hwnd: Option<HWND> = owner.map(MessageWindow::hwnd);
+      // The owner's handle, borrowed from `owner` for as long as `'a`.
+      let hwnd: Option<HWND> = owner.and_then(|owner| match owner.window_handle().ok()?.as_raw() {
+        RawWindowHandle::Win32(handle) => Some(HWND(handle.hwnd.get() as *mut core::ffi::c_void)),
+        _ => None,
+      });
       let mut error = 0;
       for attempt in 0..OPEN_ATTEMPTS {
         // SAFETY: `hwnd` is none or the window of `owner`, which this value borrows for as
@@ -86,6 +91,8 @@ mod imp {
   struct LockedGlobal<'a> {
     memory: HGLOBAL,
     address: *mut u8,
+    /// The block's length, as `GlobalSize` reported it once the block was locked.
+    size: usize,
     _block: PhantomData<&'a ()>,
   }
 
@@ -97,23 +104,23 @@ mod imp {
       if address.is_null() {
         return Err(ShellError(format!("sweetview: GlobalLock failed ({})", last_error())));
       }
-      Ok(Self { memory, address: address.cast(), _block: PhantomData })
+      // SAFETY: GlobalSize takes the handle by value and reads no memory of ours. The block is
+      // locked and kept allocated for `'a`, so its size cannot change while this lock lives.
+      let size = unsafe { GlobalSize(memory) };
+      Ok(Self { memory, address: address.cast(), size, _block: PhantomData })
     }
 
     /// The whole block, as `GlobalSize` reports it.
     fn bytes(&self) -> &[u8] {
-      // SAFETY: GlobalSize takes the handle by value and reads no memory of ours.
-      let size = unsafe { GlobalSize(self.memory) };
-      // SAFETY: `address` points at the locked block, which is `size` bytes long, stays
+      // SAFETY: `address` points at the locked block, which is `self.size` bytes long, stays
       // locked and allocated while `self` lives, and is not written through while this
       // shared borrow of `self` lives.
-      unsafe { std::slice::from_raw_parts(self.address, size) }
+      unsafe { std::slice::from_raw_parts(self.address, self.size) }
     }
 
     /// Copies `data` to the start of the block, which must be at least that long.
     fn write(&mut self, data: &[u8]) -> Result<(), ShellError> {
-      // SAFETY: GlobalSize takes the handle by value and reads no memory of ours.
-      let size = unsafe { GlobalSize(self.memory) };
+      let size = self.size;
       if size < data.len() {
         return Err(ShellError(format!("sweetview: GlobalAlloc returned {size} bytes for {}", data.len())));
       }
@@ -180,7 +187,8 @@ mod imp {
 
   pub fn write_text(text: &str) -> Result<(), ShellError> {
     // EmptyClipboard assigns the open window as owner. No window cannot own new data.
-    let owner = MessageWindow::new(&HSTRING::from("SweetviewClipboardOwner"), &HSTRING::from("sweetview.clipboard"), Some(default_procedure))?;
+    let owner = MessageWindow::new("SweetviewClipboardOwner", "sweetview.clipboard", |_, _, _| None)
+      .map_err(|e| ShellError(format!("sweetview: {}(SweetviewClipboardOwner) failed ({})", e.call(), e.code())))?;
     let open = OpenedClipboard::open(Some(&owner))?;
     let data = encode_unicode_text(text);
     let memory = OwnedGlobal::alloc(data.len())?;

@@ -26,6 +26,8 @@ napi-build = "2.7.0"
 windows = "0.62.2"
 windows-core = "0.62.2"
 webview2-com = "0.39.1"
+# Microsoft's safe registry API, from the same repository and release line as `windows`.
+windows-registry = "0.6.1"
 raw-window-handle = "0.6"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
