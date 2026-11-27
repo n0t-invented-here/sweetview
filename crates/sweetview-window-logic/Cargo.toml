@@ -1,0 +1,11 @@
+[package]
+name = "sweetview-window-logic"
+description = "What a window should do next, decided from cursor positions, button states and bounds."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]

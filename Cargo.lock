@@ -1418,12 +1418,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "sweetview-platform-window"
+version = "1.0.0"
+dependencies = [
+ "raw-window-handle",
+ "sweetview-window-logic",
+ "tao",
+ "windows",
+]
+
+[[package]]
 name = "sweetview-runtime"
 version = "1.0.0"
 dependencies = [
  "sweetview-platform-loop",
  "tao",
 ]
+
+[[package]]
+name = "sweetview-window-logic"
+version = "1.0.0"
 
 [[package]]
 name = "syn"

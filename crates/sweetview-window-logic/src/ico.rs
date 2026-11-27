@@ -1,0 +1,92 @@
+//! Picking one image out of an `.ico` file, as `parseIco` and `pickIcoEntry`
+//! of `icon.ts` do.
+
+/// One image of an `.ico` directory.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IcoEntry {
+  pub width: u32,
+  pub height: u32,
+  pub offset: usize,
+  pub size: usize,
+}
+
+/// The directory of an `.ico` file. Errors carry the message `icon.ts` uses.
+pub fn parse_ico(bytes: &[u8]) -> Result<Vec<IcoEntry>, String> {
+  let u16_at = |at: usize| bytes.get(at..at + 2).map(|b| u16::from_le_bytes([b[0], b[1]]));
+  let u32_at = |at: usize| bytes.get(at..at + 4).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]));
+  if bytes.len() < 6 || u16_at(2) != Some(1) {
+    return Err("not a .ico file".into());
+  }
+  let count = usize::from(u16_at(4).unwrap_or(0));
+  let mut entries = Vec::with_capacity(count);
+  for i in 0..count {
+    let at = 6 + i * 16;
+    let (Some(size), Some(offset)) = (u32_at(at + 8), u32_at(at + 12)) else {
+      return Err("truncated .ico directory".into());
+    };
+    let width = match bytes[at] {
+      0 => 256,
+      w => u32::from(w),
+    };
+    let height = match bytes[at + 1] {
+      0 => 256,
+      h => u32::from(h),
+    };
+    let (offset, size) = (offset as usize, size as usize);
+    if offset.checked_add(size).is_none_or(|end| end > bytes.len()) {
+      return Err(format!(".ico image {i} runs past the end of the file"));
+    }
+    entries.push(IcoEntry { width, height, offset, size });
+  }
+  Ok(entries)
+}
+
+/// The image of `width == want`, else the smallest larger one, else the largest.
+pub fn pick_ico_entry(entries: &[IcoEntry], want: u32) -> Result<IcoEntry, String> {
+  if let Some(exact) = entries.iter().find(|e| e.width == want) {
+    return Ok(*exact);
+  }
+  let larger = entries.iter().filter(|e| e.width > want).min_by_key(|e| e.width);
+  larger.or_else(|| entries.iter().max_by_key(|e| e.width)).copied().ok_or_else(|| ".ico has no images".into())
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  fn ico(sizes: &[(u8, usize)]) -> Vec<u8> {
+    let mut out = vec![0, 0, 1, 0, sizes.len() as u8, 0];
+    let mut offset = 6 + sizes.len() * 16;
+    for &(w, len) in sizes {
+      out.extend([w, w, 0, 0, 1, 0, 32, 0]);
+      out.extend((len as u32).to_le_bytes());
+      out.extend((offset as u32).to_le_bytes());
+      offset += len;
+    }
+    for &(_, len) in sizes {
+      out.extend(std::iter::repeat_n(0u8, len));
+    }
+    out
+  }
+
+  #[test]
+  fn picks_exact_then_smallest_larger_then_largest() {
+    let entries = parse_ico(&ico(&[(16, 4), (32, 4), (0, 4)])).expect("valid");
+    assert_eq!(entries.iter().map(|e| e.width).collect::<Vec<_>>(), vec![16, 32, 256]);
+    assert_eq!(pick_ico_entry(&entries, 32).map(|e| e.width), Ok(32));
+    assert_eq!(pick_ico_entry(&entries, 20).map(|e| e.width), Ok(32));
+    assert_eq!(pick_ico_entry(&entries[..2], 48).map(|e| e.width), Ok(32));
+    assert!(pick_ico_entry(&[], 16).is_err());
+  }
+
+  #[test]
+  fn rejects_what_is_not_an_ico() {
+    assert_eq!(parse_ico(b"PNG"), Err("not a .ico file".into()));
+    let mut truncated = ico(&[(16, 4)]);
+    truncated.truncate(10);
+    assert_eq!(parse_ico(&truncated), Err("truncated .ico directory".into()));
+    let mut short = ico(&[(16, 4)]);
+    short.pop();
+    assert!(parse_ico(&short).is_err());
+  }
+}
