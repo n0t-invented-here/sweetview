@@ -11,11 +11,11 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { WebView, type Tab } from "../../src/index";
-import { Window, quitEventLoop, runEventLoop, type TabHandle } from "@n1h/sweetview-native";
+import { Screen, Window, quitEventLoop, runEventLoop, type TabHandle } from "@n1h/sweetview-native";
 import { getTabFrame } from "@n1h/sweetview-native/win32/tab-window";
 import { engineOf, scheduleNativeTimeout } from "@n1h/sweetview-native/internal";
 import { writeSync } from "node:fs";
-import { endMenu, openPopupMenu } from "../../../sweetview-native/test/win32-os";
+import { buttonsDown, endMenu, injectCursorMove, injectLeftButton, openPopupMenu } from "../../../sweetview-native/test/win32-os";
 import type { Key } from "@n1h/sweetview-native/win32/shortcuts";
 import { STRIP_HEIGHT } from "@n1h/sweetview-native/win32/strip-shared";
 import { _debugWinTabs, mergeAllWindows } from "../../src/tabs/win-tabs";
@@ -623,7 +623,29 @@ try {
   const f1 = await WebView.openTab(focusWin, page("focus"));
   focusWin.show();
   await Bun.sleep(300);
-  if (user32.GetForegroundWindow() !== BigInt(focusWin.handle!)) skip("focus returns to the page after a strip action", "the window is not the foreground window");
+  // A process started in the background is not given the foreground. A click of the user's (here
+  // injected, only over this window's own selected tab, with no button down) gives it, and is
+  // itself a strip action: the strip hands the focus back to the page when the press ends.
+  const focusHwnd = BigInt(focusWin.handle!);
+  for (let attempt = 0; attempt < 3 && user32.GetForegroundWindow() !== focusHwnd; attempt++) {
+    const o = clientOrigin(focusHwnd);
+    const s = user32.GetDpiForWindow(focusHwnd) / 96;
+    const at = { x: o.x + Math.round(60 * s), y: o.y + Math.round(20 * s) };
+    injectCursorMove(at.x, at.y, Screen.bounds());
+    await Bun.sleep(60);
+    if (buttonsDown() || windowAt(at.x, at.y) !== focusHwnd) {
+      await Bun.sleep(500);
+      continue;
+    }
+    try {
+      injectLeftButton(true);
+      await Bun.sleep(40);
+    } finally {
+      injectLeftButton(false);
+    }
+    await until(() => user32.GetForegroundWindow() === focusHwnd, 1500);
+  }
+  if (user32.GetForegroundWindow() !== focusHwnd) skip("focus returns to the page after a strip action", "the window is not the foreground window");
   else {
     const focusStrip = _debugWinTabs.strip(focusWin)!;
     await ask(focusStrip, "(document.body.focus(), 1)");
