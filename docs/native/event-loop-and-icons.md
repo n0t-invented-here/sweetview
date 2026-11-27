@@ -15,8 +15,9 @@ of the [native module](../native.md).
 
 Every window, tray, notifier and menu belongs to the UI thread, and their
 callbacks only run while that thread is dispatching OS events. There are two
-ways to do that. `webview.run()` / `app.run()` call the webview library's
-blocking loop, which stops Bun's own event loop on that thread until it
+ways to do that. `webview.run()` / `app.run()` run the platform's blocking
+loop (the Rust runtime's on Windows; the webview library's on macOS, until
+the macOS goal of the Rust rewrite), which stops Bun's own event loop on that thread until it
 returns. `runEventLoop` turns it around: a Bun timer dispatches pending OS
 events every few milliseconds, so timers, promises and I/O keep working on
 the UI thread and the app needs no worker. The
@@ -68,9 +69,10 @@ pumpEvents(): boolean
 Dispatches every OS event waiting for the UI thread and returns at once, for
 an app that drives its own loop.
 
-- Windows: `PeekMessage` / `TranslateMessage` / `DispatchMessage` until the
-  queue is empty. Returns `false` when it dequeues `WM_QUIT` (from
-  `PostQuitMessage`): the loop is over and the caller should stop pumping.
+- Windows: the Rust runtime pumps `tao`'s loop until no posted message
+  waits (at most 256 rounds), then runs the signal window's due timers.
+  Returns `false` when the pump meets a `WM_QUIT` (from `PostQuitMessage`),
+  or a `webview.quit()` made while no blocking `run()` was in progress: the loop is over and the caller should stop pumping.
 - macOS: on the first call, `[NSApp finishLaunching]`, so the app registers
   with the window server, status items appear and notification delegates
   start receiving callbacks. Each call runs one non-blocking

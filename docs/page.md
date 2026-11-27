@@ -135,5 +135,5 @@ The module declares both globals as optional properties of `Window`.
 
 | Global | Installed by | Meaning |
 |---|---|---|
-| `__sweetview_rpc(method, params): Promise<unknown>` | the host, with `webview_bind`, in `WebView.attach` / `createApp` | Sends a call. Resolves with the result (`undefined` as `null`); rejects with `{ message }`. |
+| `__sweetview_rpc(method, params): Promise<unknown>` | the host, with `RawWebview#bindRaw` (`webview_bind` on macOS), in `WebView.attach` / `createApp` | Sends a call. Resolves with the result (`undefined` as `null`); rejects with `{ message }`. |
 | `__sweetview_emit(name, payload): void` | `webviewTransport()`, on its first call | The host evaluates `__sweetview_emit(name, payload)` once per event (`undefined` payload as `null`); it passes the event to every `onEvent` listener. |

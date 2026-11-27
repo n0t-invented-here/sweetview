@@ -10,7 +10,7 @@ package `@n1h/sweetview-native`. Install and the overview are in the
 
 | Kind | Examples | Runs on |
 |---|---|---|
-| OS entry points, called over `bun:ffi` | `Window`, `Screen`, `Menu.popup`, `Tray`, `Notifier`, `pickFolder`, `Clipboard`, `setAppMenu`, `setAppIcon`, `runEventLoop`, `singleInstance` | Windows and macOS, on the UI thread (the main thread of the Bun process) |
+| OS entry points: on Windows the Rust binding (N-API), on macOS `bun:ffi` until the macOS goal of the Rust rewrite | `Window`, `Screen`, `Menu.popup`, `Tray`, `Notifier`, `pickFolder`, `Clipboard`, `setAppMenu`, `setAppIcon`, `runEventLoop`, `singleInstance` | Windows and macOS, on the UI thread (the main thread of the Bun process) |
 | Pure TypeScript | menu templates (`resolveMenu`), hit-region geometry, icon encoders and the PNG decoder, the regular-file helpers | any OS Bun runs on, any thread |
 
 An OS entry point picks its Windows or macOS backend on its first call. On
@@ -19,9 +19,20 @@ any other OS that call throws
 the module never throws, so a cross-platform build script can import the
 icon encoders from the same module.
 
-The native module never loads the webview library
-(`@n1h/sweetview-webview-bun`). A tray-only or menu-bar-only app uses it
-without a webview, a worker or a page.
+On Windows the OS entry points are Rust crates (`tao`, `muda`, `tray-icon`,
+`rfd` and this project's own `sweetview-platform-*` crates) compiled into one
+N-API binding, `prebuilt/sweetview.win32-x64-msvc.node`, which ships inside
+`@n1h/sweetview-native` and loads on the first call. `SWEETVIEW_NATIVE_PATH`
+names a binding you built yourself; `just native` builds it from source (see
+[Rebuilding](webview-library.md#rebuilding)). On macOS, until the macOS goal of
+the Rust rewrite, they call AppKit through `bun:ffi`. Either way an
+application's own `bun:ffi` calls on the UI thread, its own modal dialogs and
+popup menus included, keep working inside Sweetview's event loop.
+
+A tray-only or menu-bar-only app uses the native module without a webview, a
+worker or a page. On macOS the module never loads the webview library
+(`@n1h/sweetview-webview-bun`) for these; the `RawWebview` class and the
+input hooks it exports for macOS do.
 
 ## Windows start-up initialization
 

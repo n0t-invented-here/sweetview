@@ -157,14 +157,14 @@ for anyone writing a compatible host.
 
 | Message | Shape | Effect |
 |---|---|---|
-| init | `{ kind: "init"; ring: SharedArrayBuffer; webviewHandle: number; drainCallbackPtr: number; drainToken: bigint; libPath: string }` | Opens the webview library at the same path as the UI thread and flushes queued frames. |
+| init | `{ kind: "init"; ring: SharedArrayBuffer; wake: WorkerWake }` | Sets up how the worker wakes the UI thread and flushes queued frames. `wake` is `{ kind: "native"; token: number }` on Windows, a token the Rust binding (loaded again inside the worker) posts to the UI thread's signal window; on macOS, until the macOS goal of the Rust rewrite, it is `{ kind: "library"; libPath; webviewHandle; drainCallbackPtr; drainToken }`, and the worker opens the webview library at the same path as the UI thread. |
 | call | `{ kind: "call"; seq: string \| null; method: string; params: unknown }` | Runs the Service method. `seq: null` is a notification: no reply. |
 | http-request | `{ kind: "http-request"; id: bigint; method: string; url: string; headers: [string, string][]; body: Uint8Array }` | Runs the route handler. The UI thread copies the native request and transfers a nonempty body. |
 
-After writing a frame, the worker wakes the UI thread with
-`webview_dispatch` only when no wakeup is already pending, so a burst of
-frames costs one dispatch. The UI thread closes that dispatch gate before it
-destroys the webview.
+After writing a frame, the worker wakes the UI thread (through the binding's
+wake on Windows, `webview_dispatch` on macOS) only when no wakeup is already
+pending, so a burst of frames costs one dispatch. The UI thread closes that
+dispatch gate before it destroys the webview.
 
 ### Replies and events
 
@@ -195,9 +195,10 @@ Every frame carries the request ID as a decimal string, keeping all 64 bits.
 Chunks larger than the ring are split. If the headers alone cannot fit, the
 worker answers 500.
 
-With the library's streaming symbols, the UI thread forwards each chunk to
-the native response as it arrives; a reader failure after the begin frame
-ends the response with the bytes already sent. With a library that only has
+When the engine can stream (always on Windows; on macOS, a webview library
+with the streaming symbols), the UI thread forwards each chunk to the native
+response as it arrives; a reader failure after the begin frame ends the
+response with the bytes already sent. With a macOS library that only has
 `webview_complete_request`, the UI thread buffers the body and answers 500 on
 reader failure. Disposal discards partial responses.
 

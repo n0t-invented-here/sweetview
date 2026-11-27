@@ -9,7 +9,7 @@ Moving an application from an earlier version: [Upgrading to Sweetview 1.0](upgr
 
 | Module | Contents |
 |---|---|
-| [`@n1h/sweetview`](app.md) | `createApp`, `WebView` (`WebView.attach`, `WebView.openTab`), native tabs (`Tab`, `TabOptions`), dynamic requests, the ready handshake, `windowChromeMethods`, `indexHtml`, `assetMime`, `Ring`, `RawWebview`, and re-exports of the event loop, activation and app identity |
+| [`@n1h/sweetview`](app.md) | `createApp`, `WebView` (`WebView.attach`, `WebView.openTab`), native tabs (`Tab`, `TabOptions`), dynamic requests, the ready handshake, `windowChromeMethods`, `indexHtml`, `assetMime`, `Ring`, `RawWebview` (re-exported from `@n1h/sweetview-native`), and re-exports of the event loop, activation and app identity |
 | [`@n1h/sweetview/worker`](worker.md) | `hostService`, `hostRequestHandler`, chunked IPC and binary responses |
 | [`@n1h/sweetview/page`](page.md) | `isWebview`, `webviewTransport`, `signalReady` |
 | [`@n1h/sweetview/ipc`](ipc.md) | the contract: `defineService`, `createBridge`, `memoryTransport`, the wire frames |
@@ -27,7 +27,7 @@ Moving an application from an earlier version: [Upgrading to Sweetview 1.0](upgr
 | [`@n1h/sweetview/settings-store`](settings-store.md) | a JSON settings file in the user's application data folder; `defineAppIdentity` and `validateUrlScheme` |
 | [`@n1h/sweetview/window-chrome`](window-chrome.md) | a page-drawn title bar and resize handles backed by OS moves and resizes |
 | [`@n1h/sweetview/build`](build.md) | `writeIconFiles`, `makeMacApp` and `refreshWindowsIcons`; the page also covers the `make-app.ts` script and the `/file-imports` types |
-| [the webview library](webview-library.md) | C API additions, intercepted origins, drop control, symbol probing, the `^2.7.0` peer range, companion repositories and rebuilds |
+| [the webview](webview-library.md) | what the webview is on each OS (WebView2 through `wry` and the Rust binding on Windows, the C++ webview library on macOS), the additions over upstream webview, intercepted origins, drop control, loading the binding and the macOS library's symbol probing, the macOS `^2.7.0` peer range, companion repositories, and building the binding and the library |
 
 The [workspace table](../README.md#documentation) maps each facade subpath
 to its publishing package under `packages/`. Direct package imports are

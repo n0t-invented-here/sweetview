@@ -322,7 +322,7 @@ pointer is over:
 | Drop target | Windows | macOS |
 |---|---|---|
 | The native window itself (a window without a webview, or its frame) | `WM_DROPFILES` | the Sweetview `NSWindow` subclass registers as a drag destination and resolves Finder file-reference URLs to paths |
-| An attached webview's surface | the webview library's `webview_set_file_drop_handler`: WebView2 reports paths through `ICoreWebView2File` (WebView2 Runtime 113 or later; an older Runtime leaves the drop untouched for the page and the browser instead of swallowing it) | `webview_set_file_drop_handler`: the library's `SweetviewWKWebView` reads Finder file URLs |
+| An attached webview's surface | the Rust binding's file drop handler (`sweetview-platform-webview`): WebView2 reports paths through `ICoreWebView2File` (WebView2 Runtime 113 or later; an older Runtime leaves the drop untouched for the page and the browser instead of swallowing it) | the webview library's `webview_set_file_drop_handler` (until the macOS goal of the Rust rewrite): the library's `SweetviewWKWebView` reads Finder file URLs |
 
 Subscribe before or after attaching a webview. The first listener turns
 webview surface drops on, and removing the last listener turns them off,
@@ -344,16 +344,16 @@ that option does. Drags within the page keep working either way.
 
 What happens when `allowExternalDrop` cannot be applied depends on why:
 
-- A webview library without `webview_set_allow_external_drop` logs a
-  warning once per library path and continues with the engine default
-  (external drops allowed).
-- A library that has the symbol, running on a Windows WebView2 Runtime
-  without `ICoreWebView2Controller4`, returns an error, and `WebView.attach`
-  throws `webview_set_allow_external_drop failed (<code>)` when
+- On macOS, a webview library without `webview_set_allow_external_drop`
+  logs a warning once per library path and continues with the engine
+  default (external drops allowed).
+- On Windows, a WebView2 Runtime without `ICoreWebView2Controller4` returns
+  an error, and `WebView.attach` throws
+  `webview_set_allow_external_drop failed (<code>)` when
   `allowExternalDrop` is specified explicitly.
 
-A webview library without `webview_set_file_drop_handler` still delivers drops that
-land on the native window. In a tabbed app, drops over a tab's webview are
+On macOS, a webview library without `webview_set_file_drop_handler` still
+delivers drops that land on the native window. In a tabbed app, drops over a tab's webview are
 delivered to the tab's current logical tabbed `Window`, which changes when the
 tab tears off or merges.
 

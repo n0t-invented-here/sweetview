@@ -4,7 +4,9 @@ Desktop applications for **Bun**. This documentation covers Sweetview 1.0.0.
 
 <img width="400" height="55" alt="DesktopPet-MacOS" src="https://github.com/user-attachments/assets/a77f1b5f-dd96-43cd-a01f-5d46cf5861cc" />
 
-Written in TypeScript. Apps are shipped as one executable.
+Written in TypeScript, with a Rust native layer reached through N-API on
+Windows (macOS calls the OS through `bun:ffi` until the macOS goal of the
+Rust rewrite). Apps are shipped as one executable.
 
 - [Install](#install)
 - [Documentation](#documentation)
@@ -36,8 +38,17 @@ git clone https://github.com/n0t-invented-here/sweetview.git
 cd sweetview
 git checkout v1-drafting
 bun install
+just native              # Windows: builds the Rust binding (needs a Rust toolchain)
 just demos web-app app   # optional: a demo opens in a window
 ```
+
+On Windows the native layer is a Rust binding,
+`packages/sweetview-native/prebuilt/sweetview.win32-x64-msvc.node`. A clone
+does not contain it: `just native` builds it from the crates under `crates/`
+into that folder and regenerates its TypeScript declarations
+([Rebuilding](docs/webview-library.md#rebuilding)). On macOS, until the macOS
+goal of the Rust rewrite, the webview comes from `@n1h/sweetview-webview-bun`
+instead and no Rust build is needed.
 
 Every folder under `demos/` is a workspace member, so an app of your own
 goes in a new folder there and links the packages from the checkout. Create
@@ -49,46 +60,58 @@ goes in a new folder there and links the packages from the checkout. Create
   "private": true,
   "type": "module",
   "dependencies": {
-    "@n1h/sweetview": "workspace:*",
-    "@n1h/sweetview-webview-bun": "^2.7.0"
+    "@n1h/sweetview": "workspace:*"
   }
 }
 ```
 
-Run `bun install` again at the repository root, then follow the
-[Quickstart](#quickstart) inside `demos/hello/`.
+On macOS, also add `"@n1h/sweetview-webview-bun": "^2.7.0"` to its
+`dependencies`. Run `bun install` again at the repository root, then follow
+the [Quickstart](#quickstart) inside `demos/hello/`.
 
 ### From npm, once 1.0.0 is published
 
-A desktop application installs the package and its optional peer
-dependency, the native [webview library](docs/webview-library.md). Name the
-major version, so the command cannot fall back to 0.2.1:
-
-```bash
-bun add @n1h/sweetview@^1.0.0 @n1h/sweetview-webview-bun
-```
-
-Only the root module `@n1h/sweetview` loads the library, when it is
-imported. Every other module works without it, so a browser page, a web
-server or a tray-only app installs the package alone:
+Name the major version, so the command cannot fall back to 0.2.1. On
+Windows a desktop application installs the package alone: the native
+binding, WebView2 driven by Rust, ships inside `@n1h/sweetview-native`, which
+`@n1h/sweetview` depends on.
 
 ```bash
 bun add @n1h/sweetview@^1.0.0
 ```
 
-### The webview library version
+On macOS, until the macOS goal of the Rust rewrite, a desktop application
+also installs the optional peer dependency that holds the native
+[webview library](docs/webview-library.md):
 
-The peer range is `^2.7.0`. A 2.7.0 library runs windows, bundled pages,
-assets, transparency, tabs and IPC. Four features need the additions that
-arrive with `@n1h/sweetview-webview-bun` 2.8.0, which the range accepts:
-dynamic requests (`onRequest`), streamed worker responses,
+```bash
+bun add @n1h/sweetview@^1.0.0 @n1h/sweetview-webview-bun
+```
+
+On macOS only the root module `@n1h/sweetview` (and the `RawWebview` class
+and input hooks of the native module) load that library. Every other module
+works without it, so a browser page, a web server or a tray-only app
+installs `@n1h/sweetview` alone on either OS.
+
+`SWEETVIEW_NATIVE_PATH` names a custom build of the Rust binding (a `.node`
+file); it is read once, when the binding first loads. On Windows it replaces
+`WEBVIEW_PATH`, which has no effect there; see
+[Upgrading](docs/upgrading.md).
+
+### The webview library version on macOS
+
+On macOS the peer range is `^2.7.0`. A 2.7.0 library runs windows, bundled
+pages, assets, transparency, tabs and IPC. Four features need the additions
+that arrive with `@n1h/sweetview-webview-bun` 2.8.0, which the range
+accepts: dynamic requests (`onRequest`), streamed worker responses,
 `allowExternalDrop`, and file drops onto the webview (`Window.onFileDrop`
 over a page). Sweetview checks for each one separately when it is used: a
 missing request symbol throws with instructions, missing streaming symbols
 fall back to buffered responses, and the drop features log a warning or fall
 back to drops on the native window. Until 2.8.0 is published, set
 `WEBVIEW_PATH` to a library built from the `v1-drafting` branches; see
-[the webview library](docs/webview-library.md#where-it-comes-from).
+[the webview library](docs/webview-library.md#where-it-comes-from). On
+Windows the Rust binding has all four.
 
 ## Documentation
 
@@ -99,7 +122,7 @@ platform differences and thread rules.
 
 | Module | Contents |
 |---|---|
-| [`@n1h/sweetview`](docs/app.md) | `createApp`, `WebView` (`WebView.attach`, `WebView.openTab`), native tabs (`Tab`, `TabOptions`), `runEventLoop` and `quitEventLoop`, `windowChromeMethods`, `indexHtml`, `assetMime`, `Ring`, and `RawWebview` from the webview library |
+| [`@n1h/sweetview`](docs/app.md) | `createApp`, `WebView` (`WebView.attach`, `WebView.openTab`), native tabs (`Tab`, `TabOptions`), `runEventLoop` and `quitEventLoop`, `windowChromeMethods`, `indexHtml`, `assetMime`, `Ring`, and the low-level webview class `RawWebview` |
 | [`@n1h/sweetview/worker`](docs/worker.md) | `hostService`, `hostRequestHandler` |
 | [`@n1h/sweetview/page`](docs/page.md) | `isWebview`, `webviewTransport`, `signalReady` |
 | [`@n1h/sweetview/ipc`](docs/ipc.md) | the contract: `defineService`, `createBridge`, `memoryTransport`, the wire frames |
@@ -110,7 +133,7 @@ platform differences and thread rules.
 | [`@n1h/sweetview/settings-store`](docs/settings-store.md) | a JSON settings file in the user's application data folder, and the shared app identity (`defineAppIdentity`) |
 | [`@n1h/sweetview/window-chrome`](docs/window-chrome.md) | a page-drawn title bar and resize handles backed by OS moves and resizes |
 | [`@n1h/sweetview/build`](docs/build.md) | `writeIconFiles`, `makeMacApp` and `refreshWindowsIcons`; the page also covers the `make-app.ts` script and the `/file-imports` types |
-| [the webview library](docs/webview-library.md) | native assets and dynamic requests, transparency, the frames origin, and external drop control |
+| [the webview](docs/webview-library.md) | what the webview is on each OS (WebView2 through the Rust binding on Windows, the C++ webview library on macOS), native assets and dynamic requests, transparency, the frames origin, and external drop control |
 
 The workspace publishes eight packages. The facade includes the application,
 page and worker entry points and re-exports the standalone packages.
@@ -346,6 +369,7 @@ codesign --sign - --force --deep "App.app"
 | Path | Contents |
 |---|---|
 | `packages/` | the Sweetview facade, IPC, the WebSocket, Electron and Tauri transports, native helpers, settings and build packages |
+| `crates/` | the Rust native layer on Windows (`tao`, `wry`, `muda`, `tray-icon` and `rfd` behind this project's own crates), compiled by `just native` into the N-API binding `@n1h/sweetview-native` loads |
 | `docs/` | the reference pages, indexed by the [reference index](docs/README.md) |
 | [`demos/web-app/`](demos/web-app/README.md) | one backend and one React page run two ways: a desktop window with tray and notifications, or `Bun.serve` with WebSockets |
 | [`demos/web-app-electron/`](demos/web-app-electron/README.md) | the web-app page unchanged in an Electron shell, its service in the main process |
@@ -354,7 +378,7 @@ codesign --sign - --force --deep "App.app"
 | [`demos/menubar-only/`](demos/menubar-only/README.md) | a menu-bar app with no window, no webview and no worker: a status item, its menu and a tooltip clock on a plain `setInterval`, on `runEventLoop` |
 | [`demos/menubar-notify/`](demos/menubar-notify/README.md) | a menu-bar app whose menu sends a system notification now or five seconds later, with a window listing what was sent and clicked; a notification click opens it |
 | [`demos/native-tabs/`](demos/native-tabs/README.md) | tabs with one webview per tab. macOS: every tab is its own `NSWindow` hosting its own `WKWebView`, behind the tab bar AppKit draws. Windows: a window whose title bar is a tab strip, every tab a child window hosting its own `WebView2` |
-| [`webview/`](webview/README.md) | recipes that clone the webview-bun fork, with the webview fork as its submodule, and build the library from it, for working on the library itself; not needed to build the demos |
+| [`webview/`](webview/README.md) | recipes that clone the webview-bun fork, with the webview fork as its submodule, and build the library from it, for working on the library macOS uses; not needed to build the demos |
 
 Bun links the packages and demos through the root workspace. The `paths`
 mapping in `tsconfig.json` mirrors the package entry points for typechecking.
@@ -364,14 +388,15 @@ from the repository root:
 
 | Recipe | Does |
 |---|---|
-| `just check` | `tsc --noEmit` over `packages/` and `demos/`, then `bun test` |
+| `just native` | builds the Rust binding for this machine into `packages/sweetview-native/prebuilt/` and regenerates its `binding.d.ts` |
+| `just check` | `just native`, then `tsc --noEmit` over `packages/` and `demos/`, then `bun test` |
 | `just demos web-app serve` | the web build on `http://127.0.0.1:4747` (`PORT`, `HOST`) |
 | `just demos web-app app`, `just demos desktop-pet app`, `just demos menubar-only app`, `just demos menubar-notify app`, `just demos native-tabs app` | the desktop application from source, with `bun run` (`WEBVIEW_DEBUG=1` opens devtools) |
 | `just demos web-app compile`, `just demos desktop-pet compile`, `just demos menubar-only compile`, `just demos menubar-notify compile` | Windows exe, macOS arm64 binary and `.app` into each demo's `dist/` |
 | `just demos web-app-electron app`, `just demos web-app-tauri app` | the web-app page in an Electron or a Tauri 2 shell; `probe` instead of `app` records what the page shows and quits |
 | `just compile`, `just clean` | every demo that has that recipe (`native-tabs`, `web-app-electron` and `web-app-tauri` have no `compile`) |
-| `just pack` | what `bun publish` would upload for each of the eight packages |
-| `just publish` | publishes all eight packages in dependency order, with a registry login |
+| `just pack` | `just native`, then what `bun publish` would upload for each of the eight packages |
+| `just publish` | `just native`, then publishes all eight packages in dependency order, with a registry login |
 
 ## License
 
