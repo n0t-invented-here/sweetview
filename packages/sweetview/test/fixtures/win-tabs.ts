@@ -296,6 +296,34 @@ try {
   keys["Ctrl+F4 closes the selected tab"] = (await press(ctrl(0x73))) === true && (await until(() => closes.includes(t4), 1000));
   for (const [name, ok] of Object.entries(keys)) check(`shortcut ${name}`, ok);
 
+  // ---- reordering from the strip, a tab's webview disposed directly ---------------------------------
+  const r1 = await WebView.openTab(win, page("r1"));
+  const r2 = await WebView.openTab(win, page("r2")); // order: one, r1, r2
+  await ask(strip, `window.__sweetview_rpc("strip.move", { id: ${await stripId(strip, 2)}, index: 0 })`); // r2 first
+  await Bun.sleep(100);
+  await press(ctrl(0x31));
+  check("strip.move reorders the tabs", sel() === r2, (sel() as Tab<any, any> | undefined)?.title);
+  const closesBefore = closes.length;
+  r1.select();
+  await until(() => sel() === r1);
+  r1.webview.dispose();
+  await until(() => closes.length > closesBefore, 2000);
+  await Bun.sleep(100);
+  check(
+    "a tab whose webview is disposed directly leaves its window, which shows another tab",
+    closes.at(-1) === r1 && sel() !== r1 && webviewChildren(hwnd).filter((k) => k.visible).length === 2 && user32.IsWindow(hwnd) !== 0,
+    webviewChildren(hwnd),
+  );
+  r2.dispose();
+
+  // ---- the strip's close button -------------------------------------------------------------------------
+  const closing = make({ tabs: true });
+  let closeAsked = 0;
+  closing.onClose(() => closeAsked++);
+  await WebView.openTab(closing, page("closing"));
+  _debugWinTabs.strip(closing)!.raw.eval(`window.__sweetview_rpc("strip.closeWindow", null)`);
+  check("the strip's close button asks the window's onClose listeners", await until(() => closeAsked === 1, 2000));
+
   // ---- the last tab's close is offered to onClose first ------------------------------------------
   const last = make({ tabs: true });
   let asked = 0;

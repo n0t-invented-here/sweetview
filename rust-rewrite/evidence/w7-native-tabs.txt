@@ -149,6 +149,9 @@ $ bun test --reporter=junit packages/sweetview/src/tabs/win-tabs.test.ts package
 (pass) tabbed windows (win32, live) > shortcut the strip takes every key
 (pass) tabbed windows (win32, live) > shortcut Ctrl+W closes the selected tab
 (pass) tabbed windows (win32, live) > shortcut Ctrl+F4 closes the selected tab
+(pass) tabbed windows (win32, live) > strip.move reorders the tabs
+(pass) tabbed windows (win32, live) > a tab whose webview is disposed directly leaves its window, which shows another tab
+(pass) tabbed windows (win32, live) > the strip's close button asks the window's onClose listeners
 (pass) tabbed windows (win32, live) > shortcut Alt+F4 closes the window
 (pass) tabbed windows (win32, live) > last tab: an onClose listener intercepts, the tab stays
 (pass) tabbed windows (win32, live) > last tab: with no listener the window closes with it
@@ -199,24 +202,30 @@ $ bun test --reporter=junit packages/sweetview/src/tabs/win-tabs.test.ts package
 (pass) win32 Window > Window.fromHandle reports the wrapped window's frame and resizability
 (pass) win32 Window > disposing a Window.fromHandle wrapper of an owned Window preserves the owner's onClose listener
 
- 85 pass
+ 88 pass
  7 skip
  0 fail
- 311 expect() calls
-Ran 92 tests across 5 files. [9.46s]
+ 316 expect() calls
+Ran 95 tests across 5 files. [11.06s]
 
 The darwin tests skip on Windows. One check inside win-tabs.test.ts, "focus
 returns to the page after a strip action", needs this process's window to be
 the foreground window; a process started in the background is not given the
-foreground, so the fixture recorded it as skipped (the test logs
+foreground, so in this run the fixture recorded it as skipped (the test logs
 "skipped: ..." and passes):
 skipped: focus returns to the page after a strip action: the window is not the foreground window
+
+In two runs of the fixture on its own the window was given the foreground,
+and the check ran and passed:
+$ bun packages/sweetview/test/fixtures/win-tabs.ts   (RESULT line, summarised)
+52 checks; focus: {'ok': True}
+[]                                                   (no check failed)
 
 == The whole suite =============================================================
 
 $ bun test
 skipped: focus returns to the page after a strip action: the window is not the foreground window
- 283 pass
+ 286 pass
  15 skip
  0 fail
-Ran 298 tests across 38 files. [16.32s]
+Ran 301 tests across 38 files. [17.29s]
