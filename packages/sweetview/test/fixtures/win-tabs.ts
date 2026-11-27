@@ -441,6 +441,26 @@ try {
     closes.at(-1) === r1 && sel() !== r1 && webviewChildren(hwnd).filter((k) => k.visible).length === 2 && user32.IsWindow(hwnd) !== 0,
     webviewChildren(hwnd),
   );
+  // ---- titles; the strip's select, close and + -------------------------------------------------------
+  const s1 = await WebView.openTab(win, { assets: { "index.html": html("untitled") } });
+  const untitled = s1.title;
+  check("a tab opened with no title is called Tab <id>", /^Tab \d+$/.test(untitled), untitled);
+  s1.setTitle("  Spaced  ");
+  const trimmed = s1.title;
+  s1.setTitle("   ");
+  check(
+    "renaming a tab trims the title; an empty one becomes Tab <id>",
+    trimmed === "Spaced" && s1.title === untitled && getTitle(hwnd) === `${untitled} - ${unique}`,
+    { trimmed, now: s1.title, window: getTitle(hwnd) },
+  );
+  const idOf = async (title: string) => Number(await ask(strip, `window.__sweetview_rpc("strip.state", null).then((s) => s.tabs.find((t) => t.title === ${JSON.stringify(title)}).id)`));
+  await ask(strip, `window.__sweetview_rpc("strip.select", ${await idOf("r2")})`);
+  check("strip.select selects that tab", await until(() => sel() === r2, 2000), (sel() as Tab<any, any> | undefined)?.title);
+  await ask(strip, `window.__sweetview_rpc("strip.close", ${await idOf(untitled)})`);
+  check("strip.close closes that tab", await until(() => closes.at(-1) === s1, 2000) && s1.webview.raw.unsafeHandle === null);
+  const newBefore = newTabs.length;
+  await ask(strip, `window.__sweetview_rpc("strip.new", null)`);
+  check("strip.new asks the window for a new tab", await until(() => newTabs.length === newBefore + 1 && newTabs.at(-1) === win, 2000));
   r2.dispose();
 
   // ---- concurrent openTab calls while the host is being made; a retry after a failed host ----------
