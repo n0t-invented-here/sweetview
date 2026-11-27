@@ -38,7 +38,7 @@ mod platform;
 
 #[cfg(windows)]
 pub use platform::{create_environment, default_user_data_folder};
-pub use platform::{UserScript, WebviewExtras};
+pub use platform::{set_background_color, UserScript, WebviewExtras};
 pub use shared::Responder;
 pub use sweetview_http::ErrorCode;
 

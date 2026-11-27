@@ -117,6 +117,20 @@ fn hstring(s: &str) -> HSTRING {
     HSTRING::from(s)
 }
 
+/// The colour WebView2 paints behind the page (`ICoreWebView2Controller2::DefaultBackgroundColor`),
+/// through `wry`'s safe `WebView::set_background_color`. WebView2 takes only an alpha of 0 or 255;
+/// `wry` turns any other non-zero alpha into 255, and this refuses it instead, as the C++ library
+/// did. Any other alpha, or a runtime without the interface, is [`ErrorCode::Unspecified`].
+pub fn set_background_color(webview: &wry::WebView, r: u8, g: u8, b: u8, a: u8) -> ErrorCode {
+    if a != 0 && a != 255 {
+        return ErrorCode::Unspecified;
+    }
+    match webview.set_background_color((r, g, b, a)) {
+        Ok(()) => ErrorCode::Ok,
+        Err(_) => ErrorCode::Unspecified,
+    }
+}
+
 /// Whether `key` is down, from the thread's keyboard state.
 fn key_down(key: VIRTUAL_KEY) -> bool {
     // SAFETY: `GetKeyState` takes a plain integer and reads the calling thread's
@@ -256,22 +270,6 @@ impl WebviewExtras {
     /// The answering half, for any thread.
     pub fn responder(&self) -> Responder {
         Responder::new(self.inner.shared.clone())
-    }
-
-    /// `ICoreWebView2Controller2::DefaultBackgroundColor`. WebView2 takes only
-    /// an alpha of 0 or 255; any other alpha, or a runtime without the
-    /// interface, is [`ErrorCode::Unspecified`].
-    pub fn set_background_color(&self, r: u8, g: u8, b: u8, a: u8) -> ErrorCode {
-        let Ok(controller2) = self.inner.controller.cast::<ICoreWebView2Controller2>() else {
-            return ErrorCode::Unspecified;
-        };
-        let color = COREWEBVIEW2_COLOR { R: r, G: g, B: b, A: a };
-        // SAFETY: `controller2` is a COM reference this frame holds (from `cast`) to the
-        // controller `Inner` keeps alive; the colour is passed by value.
-        match unsafe { controller2.SetDefaultBackgroundColor(color) } {
-            Ok(()) => ErrorCode::Ok,
-            Err(_) => ErrorCode::Unspecified,
-        }
     }
 
     /// `ICoreWebView2Controller4::AllowExternalDrop`: whether content dragged

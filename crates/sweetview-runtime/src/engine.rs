@@ -511,7 +511,7 @@ impl Engine {
   }
 
   pub fn set_background_color(&self, r: u8, g: u8, b: u8, a: u8) -> ErrorCode {
-    self.inner.with_extras(|extras| extras.set_background_color(r, g, b, a))
+    self.inner.with_live(|live| sweetview_platform_webview::set_background_color(&live.webview, r, g, b, a)).unwrap_or(ErrorCode::InvalidState)
   }
 
   pub fn set_allow_external_drop(&self, allow: bool) -> ErrorCode {

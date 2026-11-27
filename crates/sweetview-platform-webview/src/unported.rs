@@ -22,6 +22,12 @@ pub struct WebviewExtras {
     _not_send: PhantomData<Rc<()>>,
 }
 
+/// Sets the colour painted behind the page. Not served on this platform yet.
+#[allow(unused_variables)]
+pub fn set_background_color(webview: &wry::WebView, r: u8, g: u8, b: u8, a: u8) -> ErrorCode {
+    ErrorCode::Unspecified
+}
+
 #[allow(clippy::unused_self, unused_variables)]
 impl WebviewExtras {
     /// Not served on this platform yet.
@@ -64,11 +70,6 @@ impl WebviewExtras {
     /// The answering half, for any thread.
     pub fn responder(&self) -> Responder {
         unreachable!("no WebviewExtras exists on this platform")
-    }
-
-    /// Sets the colour painted behind the page.
-    pub fn set_background_color(&self, r: u8, g: u8, b: u8, a: u8) -> ErrorCode {
-        ErrorCode::Unspecified
     }
 
     /// Allows or refuses drops from outside the app.
