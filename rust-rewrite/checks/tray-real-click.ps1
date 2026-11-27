@@ -8,7 +8,8 @@
 # exactly as a person's does: the shell posts the icon's callback message to the app.
 #
 #   -Action menu (the default): a right click; the script waits for the app's popup menu, then
-#     presses Up and Return, which chooses the menu's last item.
+#     presses -Keys, key names separated by commas (Up, Down, Return, Escape). The default is
+#     "Up,Return", which chooses the menu's last item (Up from no selection wraps to the end).
 #   -Action click: one left click.   -Action double: two left clicks inside the double-click time.
 #
 # It restores the cursor and never leaves a button or key down.
@@ -18,8 +19,12 @@
 param(
   [Parameter(Mandatory = $true)][string]$Tooltip,
   [Parameter(Mandatory = $true)][int]$ProcessId,
-  [ValidateSet("menu", "click", "double")][string]$Action = "menu"
+  [ValidateSet("menu", "click", "double")][string]$Action = "menu",
+  [string]$Keys = "Up,Return"
 )
+$virtualKeys = @{ Up = 0x26; Down = 0x28; Return = 0x0D; Escape = 0x1B }
+$keyNames = $Keys.Split(",") | ForEach-Object { $_.Trim() }
+foreach ($name in $keyNames) { if (-not $virtualKeys.ContainsKey($name)) { throw "-Keys: '$name' is not one of $($virtualKeys.Keys -join ', ')" } }
 $ErrorActionPreference = "Stop"
 Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
 Add-Type @"
@@ -77,12 +82,31 @@ public static class RC {
 
 $auto = [System.Windows.Automation.AutomationElement]
 $tree = [System.Windows.Automation.TreeScope]
-function Find-Icon($root) {
-  if (-not $root) { return $null }
-  $all = $root.FindAll($tree::Descendants, [System.Windows.Automation.Condition]::TrueCondition)
-  foreach ($e in $all) {
-    try { if ($e.Current.Name -and $e.Current.Name.StartsWith($Tooltip)) { return $e } } catch {}
+function Find-Icons($root) {
+  $found = @()
+  if (-not $root) { return $found }
+  foreach ($e in $root.FindAll($tree::Descendants, [System.Windows.Automation.Condition]::TrueCondition)) {
+    try { if ($e.Current.Name -and $e.Current.Name.StartsWith($Tooltip)) { $found += $e } } catch {}
   }
+  return $found
+}
+# The one icon with the tooltip. UI Automation does not say which process an icon belongs to, so
+# two icons with the same tooltip cannot be told apart: an icon left behind by a process that was
+# ended goes away when the pointer passes over it, so each is hovered once; if more than one is
+# still there, another running app has the same tooltip, and the script clicks nothing.
+function Find-Icon($root) {
+  $found = @(Find-Icons $root)
+  if ($found.Count -gt 1) {
+    foreach ($e in $found) {
+      $r = $e.Current.BoundingRectangle
+      [RC]::SetCursorPos([int]($r.Left + $r.Width / 2) - 2, [int]($r.Top + $r.Height / 2)) | Out-Null
+      foreach ($step in 1..2) { [RC]::Move(1, 0); Start-Sleep -Milliseconds 60 }
+      Start-Sleep -Milliseconds 250
+    }
+    $found = @(Find-Icons $root)
+  }
+  if ($found.Count -gt 1) { throw "$($found.Count) notification icons have a tooltip starting with '$Tooltip'; another app with that tooltip is running, so nothing was clicked" }
+  if ($found.Count -eq 1) { return $found[0] }
   return $null
 }
 function Top-Window($class) {
@@ -148,11 +172,9 @@ try {
   if (-not $opened) { "popup menu windows on screen, by process: $([RC]::Menus())" }
   "the app's popup menu is on screen: $opened"
   if (-not $opened) { throw "the real click did not open the app's menu" }
-  [RC]::Key(0x26)  # Up: from no selection it wraps to the last item
-  Start-Sleep -Milliseconds 150
-  [RC]::Key(0x0D)  # Return
+  foreach ($name in $keyNames) { [RC]::Key([uint16]$virtualKeys[$name]); Start-Sleep -Milliseconds 150 }
   Start-Sleep -Milliseconds 300
-  "Up, Return pressed; the menu is on screen: $([RC]::MenuOpen([uint32]$ProcessId))"
+  "$($keyNames -join ', ') pressed; the menu is on screen: $([RC]::MenuOpen([uint32]$ProcessId))"
 } catch {
   # Close whatever this script opened (the overflow flyout, a menu) before reporting.
   [RC]::Key(0x1B)
