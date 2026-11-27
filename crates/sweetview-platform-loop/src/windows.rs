@@ -14,6 +14,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use windows::core::w;
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
+use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::{
   CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, KillTimer, PeekMessageW, PostMessageW,
@@ -22,6 +23,42 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 use crate::signal::{Signal, SignalError, TimerId};
+
+/// The UI thread's membership of a single-threaded COM apartment.
+///
+/// The TypeScript layer entered one before it made its first window and never
+/// left it, and applications make COM calls of their own on the UI thread
+/// through `bun:ffi` counting on that. `tao` enters one only when it creates a
+/// window, so the runtime holds this from its start.
+///
+/// Dropping it leaves the apartment, when entering it succeeded.
+pub struct ComApartment {
+  entered: bool,
+  /// The apartment belongs to the thread that entered it.
+  _not_send: PhantomData<*const ()>,
+}
+
+impl ComApartment {
+  /// Enters a single-threaded apartment on this thread. A thread that is
+  /// already in one stays in it; a thread in a multithreaded apartment is left
+  /// as it is.
+  pub fn single_threaded() -> Self {
+    // SAFETY: no reserved pointer is passed; the call only changes this thread's COM state.
+    let result = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
+    // S_OK and S_FALSE both count as entered and must be balanced; RPC_E_CHANGED_MODE must not.
+    Self { entered: result.is_ok(), _not_send: PhantomData }
+  }
+}
+
+impl Drop for ComApartment {
+  fn drop(&mut self) {
+    if self.entered {
+      // SAFETY: balances the successful CoInitializeEx made by `single_threaded` on this
+      // same thread (the type is not `Send`).
+      unsafe { CoUninitialize() };
+    }
+  }
+}
 
 /// The message a [`Waker`] posts. `wParam` carries the token.
 const WM_SWEETVIEW_WAKE: u32 = WM_APP + 0x53;
@@ -310,6 +347,24 @@ mod tests {
       window.dispatch_due_timers();
     }
     assert!(fired.get() >= 3, "timers fired {} times", fired.get());
+  }
+
+  #[test]
+  fn the_com_apartment_is_entered_once_per_holder_and_left_on_drop() {
+    let _serial = serial();
+    let first = ComApartment::single_threaded();
+    assert!(first.entered, "a fresh test thread enters the apartment");
+    // A second holder on the same thread shares the apartment and balances its own entry.
+    let second = ComApartment::single_threaded();
+    assert!(second.entered);
+    drop(second);
+    drop(first);
+    // Left completely: the thread can now choose the other model, which an entered thread cannot.
+    // SAFETY: no reserved pointer is passed; the call only changes this thread's COM state.
+    let multithreaded = unsafe { CoInitializeEx(None, windows::Win32::System::Com::COINIT_MULTITHREADED) };
+    assert!(multithreaded.is_ok());
+    // SAFETY: balances the successful CoInitializeEx just above.
+    unsafe { CoUninitialize() };
   }
 
   #[test]

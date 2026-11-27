@@ -8,6 +8,9 @@
 #![deny(clippy::undocumented_unsafe_blocks)]
 #![deny(clippy::multiple_unsafe_ops_per_block)]
 #![deny(clippy::missing_safety_doc)]
+// The TypeScript declarations are generated from the signature text of each `#[napi]` item, and
+// a type alias would erase a callback's parameter types there, so callback types are written out.
+#![allow(clippy::type_complexity)]
 
 pub mod diagnostics;
 pub mod engine;

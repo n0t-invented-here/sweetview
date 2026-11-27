@@ -7,6 +7,17 @@ use std::marker::PhantomData;
 
 use crate::signal::{Signal, SignalError, TimerId};
 
+/// See the Windows implementation for the contract. Other platforms have no COM.
+pub struct ComApartment {
+  _not_send: PhantomData<*const ()>,
+}
+
+impl ComApartment {
+  pub fn single_threaded() -> Self {
+    Self { _not_send: PhantomData }
+  }
+}
+
 /// See the Windows implementation for the contract.
 pub struct SignalWindow {
   _not_send: PhantomData<*const ()>,

@@ -4,6 +4,8 @@
 //!   that runs while the loop is running.
 //! * [`SignalWindow`] delivers wakes from other threads and native timers through
 //!   whichever message loop the UI thread is in, a modal one included.
+//! * [`ComApartment`] keeps the UI thread in a single-threaded COM apartment
+//!   for as long as it lives.
 #![deny(unsafe_op_in_unsafe_fn)]
 #![deny(clippy::undocumented_unsafe_blocks)]
 #![deny(clippy::multiple_unsafe_ops_per_block)]
@@ -20,7 +22,7 @@ mod platform;
 mod platform;
 
 pub use loop_host::{AlreadyRunning, LoopHost};
-pub use platform::{SignalWindow, Waker};
+pub use platform::{ComApartment, SignalWindow, Waker};
 pub use signal::{Signal, SignalError, TimerId};
 
 /// Tests in this crate count the process's handles, so they run one at a time.

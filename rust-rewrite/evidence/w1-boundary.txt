@@ -1,0 +1,24 @@
+$ bun test packages/sweetview-native/src/binding.test.ts packages/sweetview-native/src/modal-loop.test.ts
+bun test v1.4.4 (38afee6c8)
+
+packages\sweetview-native\src\binding.test.ts:
+(pass) native binding: loading (W1.1) > the binding loads with a literal require and reports the UI thread [4.40ms]
+(pass) native binding: loading (W1.1) > a missing binary fails with a message that names the file looked for [4.22ms]
+(pass) native binding: loading (W1.1) > a binary for another platform fails with a message that names the file looked for [1.58ms]
+(pass) native binding: callbacks from inside the loop (W1.2, W1.4) > a JavaScript function is called from inside the blocking loop and its return value comes back [20.27ms]
+(pass) native binding: callbacks from inside the loop (W1.2, W1.4) > each call opens its own handle scope: ten thousand callbacks inside one blocking run [173.27ms]
+(pass) native binding: callbacks from inside the loop (W1.2, W1.4) > a callback may remove itself, and may destroy its owner, from inside its own call [59.15ms]
+(pass) native binding: both loop modes (W4.1 mechanism) > the pumped loop delivers native timeouts while Bun timers and promises keep running [79.53ms]
+(pass) native binding: threads (W1.5, W1.7) > a UI-thread function called from a Worker throws, and the worker is not the UI thread [5.42ms]
+(pass) native binding: threads (W1.5, W1.7) > from a Worker, a frame written to the ring then wake() runs the drain on the UI thread inside the blocking loop [6.79ms]
+(pass) native binding: threads (W1.5, W1.7) > from a Worker, a frame written to the ring then wake() runs the drain on the UI thread under the timer-pumped loop [9.66ms]
+
+packages\sweetview-native\src\modal-loop.test.ts:
+(pass) a modal loop opened by a handler (W1.8) > blocking loop: page calls are answered, a worker's wake drains and a native timeout fires while the dialog is open [599.73ms]
+(pass) a modal loop opened by a handler (W1.8) > pumped loop: page calls are answered, a worker's wake drains and a native timeout fires while the dialog is open [610.41ms]
+
+ 12 pass
+ 0 fail
+ 46 expect() calls
+Ran 12 tests across 2 files. [1.60s]
+exit: 0

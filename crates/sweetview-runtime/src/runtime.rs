@@ -18,7 +18,7 @@ use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
 use std::sync::{Mutex, PoisonError};
 
-use sweetview_platform_loop::{LoopHost, Signal, SignalWindow, TimerId, Waker};
+use sweetview_platform_loop::{ComApartment, LoopHost, Signal, SignalWindow, TimerId, Waker};
 use tao::event::Event;
 use tao::event_loop::{ControlFlow, EventLoop, EventLoopBuilder, EventLoopProxy, EventLoopWindowTarget};
 
@@ -77,6 +77,10 @@ pub struct Runtime {
   drains: RefCell<HashMap<u64, Rc<dyn Fn()>>>,
   listeners: RefCell<Vec<(u64, EventListener)>>,
   next_listener: Cell<u64>,
+  /// The UI thread stays in a single-threaded COM apartment for the life of the
+  /// runtime, as it did under the TypeScript layer. Declared last, so it is
+  /// left only after everything else here is dropped.
+  _com: ComApartment,
 }
 
 impl Runtime {
@@ -98,6 +102,7 @@ impl Runtime {
   }
 
   fn new() -> Result<Self> {
+    let com = ComApartment::single_threaded();
     let event_loop = build_event_loop();
     let proxy = event_loop.create_proxy();
     let signals = SignalWindow::new(|signal| {
@@ -120,6 +125,7 @@ impl Runtime {
       drains: RefCell::new(HashMap::new()),
       listeners: RefCell::new(Vec::new()),
       next_listener: Cell::new(1),
+      _com: com,
     })
   }
 
