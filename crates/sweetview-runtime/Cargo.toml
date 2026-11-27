@@ -11,6 +11,9 @@ publish.workspace = true
 [dependencies]
 sweetview-platform-input.workspace = true
 sweetview-platform-loop.workspace = true
+sweetview-platform-webview.workspace = true
+sweetview-platform-window.workspace = true
 serde.workspace = true
 serde_json = { workspace = true, features = ["raw_value"] }
 tao.workspace = true
+wry.workspace = true

@@ -10,6 +10,7 @@
 #![deny(clippy::missing_safety_doc)]
 
 pub mod diagnostics;
+pub mod engine;
 pub mod event_loop;
 pub mod input;
 

@@ -2,14 +2,13 @@
 // (worker -> UI thread) is IPC and binary HTTP response frames in the ring.
 
 import type { CallFrame } from "@n1h/sweetview-ipc";
+import type { WorkerWake } from "./webview-host";
 
 export type InitMessage = {
   kind: "init";
   ring: SharedArrayBuffer;
-  webviewHandle: number;
-  drainCallbackPtr: number;
-  drainToken: bigint;
-  libPath: string;
+  /** How the worker wakes the UI thread after it writes to the ring. */
+  wake: WorkerWake;
 };
 
 export type NativeRequest = {

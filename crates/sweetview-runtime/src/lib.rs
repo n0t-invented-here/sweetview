@@ -5,6 +5,7 @@
 #![forbid(unsafe_code)]
 
 pub mod bridge;
+pub mod engine;
 mod error;
 pub mod input;
 pub mod runtime;

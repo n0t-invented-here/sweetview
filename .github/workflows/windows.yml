@@ -32,7 +32,17 @@ jobs:
         run: just native
 
       - name: cargo test
-        run: cargo test --workspace
+        shell: pwsh
+        run: |
+          cargo test --workspace 2>&1 | Tee-Object -FilePath cargo-test-output.txt
+          $code = $LASTEXITCODE
+          if ($code -ne 0) {
+            $lines = Get-Content cargo-test-output.txt
+            $lines | Select-String -Pattern '^test .* FAILED|panicked at|^error' | Select-Object -First 10 | ForEach-Object { "::error::$($_.Line)" }
+            $lines | Select-String -Pattern 'assertion|left:|right:|^failures:|test result' | Select-Object -First 10 | ForEach-Object { "::warning::$($_.Line)" }
+            $lines | Select-Object -Last 10 | ForEach-Object { "::notice::$_" }
+            exit $code
+          }
 
       - name: cargo clippy
         run: cargo clippy --workspace --all-targets -- -D warnings

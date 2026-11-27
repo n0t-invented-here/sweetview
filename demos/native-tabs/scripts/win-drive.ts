@@ -6,7 +6,7 @@
 
 import { mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
-import type { Webview } from "@n1h/sweetview-webview-bun";
+import type { RawWebview as Webview } from "@n1h/sweetview";
 import { startDemoTabs } from "../app";
 import { captureWindow } from "./win-capture";
 

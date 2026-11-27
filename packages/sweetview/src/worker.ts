@@ -1,6 +1,6 @@
 // Worker side. The worker owns the Bun event loop and the app's Service.
 // Calls arrive from the UI thread by postMessage; replies and events go back
-// through the shared ring, with webview_dispatch as the wakeup.
+// through the shared ring, with a wake of the UI thread after each write.
 //
 //   // app-worker.ts
 //   import { hostService } from "@n1h/sweetview/worker";
@@ -8,11 +8,10 @@
 //   hostService(createService());
 
 import type { CallFrame, ChunkFrame, EventMap, Frame, MethodMap, ReplyFrame, Service } from "@n1h/sweetview-ipc";
-import type { Pointer } from "bun:ffi";
 import { requestError, writeRequestResponse, writeStreamingResponse } from "./request-response";
 import { WEBVIEW_SESSION, type HttpRequestMessage, type WorkerCrashFrame, type WorkerMessage } from "./messages";
 import { Ring } from "./ring";
-import { openWebviewCore } from "./webview-lib";
+import { workerWake } from "./worker-wake";
 
 declare const self: Worker;
 
@@ -245,10 +244,8 @@ function createWorkerHost() {
     if (msg.kind === "init") {
       ring = new Ring(msg.ring);
       const sharedRing = ring;
-      const { webview_dispatch: dispatch } = openWebviewCore(msg.libPath);
-      const handlePtr = msg.webviewHandle as Pointer;
-      const fn = msg.drainCallbackPtr as Pointer;
-      wake = () => sharedRing.dispatch(() => dispatch(handlePtr, fn, msg.drainToken));
+      const wakeUiThread = workerWake(msg.wake);
+      wake = () => sharedRing.dispatch(wakeUiThread);
       installCrashReporting(sharedRing, wake);
       const queued = beforeInit;
       beforeInit = [];

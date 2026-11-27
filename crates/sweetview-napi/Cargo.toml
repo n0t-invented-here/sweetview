@@ -10,4 +10,5 @@ publish.workspace = true
 
 [dependencies]
 napi.workspace = true
+napi-derive.workspace = true
 sweetview-runtime.workspace = true

@@ -1941,6 +1941,7 @@ name = "sweetview-napi"
 version = "1.0.0"
 dependencies = [
  "napi",
+ "napi-derive",
  "sweetview-runtime",
 ]
 
@@ -1999,6 +2000,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "sweetview-platform-window"
+version = "1.0.0"
+dependencies = [
+ "raw-window-handle",
+ "windows",
+]
+
+[[package]]
 name = "sweetview-runtime"
 version = "1.0.0"
 dependencies = [
@@ -2006,7 +2015,10 @@ dependencies = [
  "serde_json",
  "sweetview-platform-input",
  "sweetview-platform-loop",
+ "sweetview-platform-webview",
+ "sweetview-platform-window",
  "tao",
+ "wry",
 ]
 
 [[package]]

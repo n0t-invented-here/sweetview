@@ -3,19 +3,18 @@
 // starts, this thread runs the OS event loop (or runEventLoop() for tabbed /
 // multi-window apps).
 
-import { CString, FFIType, JSCallback, toArrayBuffer, type Pointer } from "bun:ffi";
 import type { HTMLBundle } from "bun";
 import { basename, extname } from "node:path";
 import { pathToFileURL } from "node:url";
-import { SizeHint, Webview as RawWebview } from "@n1h/sweetview-webview-bun";
 import { assetMime, indexHtml } from "./html";
 import { createFrameAssembler, type AnyEvent, type EventMap, type MethodMap, type WireFrame } from "@n1h/sweetview-ipc";
 import { RequestResponseAssembler, requestError, runNativeRequest, type NativeRequestResponse, type StreamingResponseFrame } from "./request-response";
 import type { HttpRequestMessage, InitMessage, NativeRequest, NativeResponse, WorkerCrashFrame } from "./messages";
-import { Window, quitEventLoop, runEventLoop, signalReady, type Rect, type TabHandle, type WindowOptions } from "@n1h/sweetview-native";
+import { RawWebview, SizeHint, Window, quitEventLoop, runEventLoop, signalReady, type Rect, type TabHandle, type WindowOptions } from "@n1h/sweetview-native";
 import { discardQuit, emitWindowFileDrop, getWindowMeta, holdWindowNativeDispose, isWindowDisposed, onWindowDispose, onWindowFileDropListenersChange, preserveWindowGeometry, scheduleNativeTimeout, windowFileDropCount } from "@n1h/sweetview-native/internal";
 import { Ring } from "./ring";
-import { ASSET_ORIGIN, allowExternalDropCall, backgroundColorCall, fileDropHandlerCall, openWebviewCore, requestHandlerCalls, setAssetCall, streamingResponseCalls, webviewLibPath } from "./webview-lib";
+import { webviewEngine, type WebviewHost, type WorkerWake } from "./webview-host";
+import { ASSET_ORIGIN } from "./webview-lib";
 
 /** Methods that return synchronously on the UI thread. */
 export type UiMethods<M extends MethodMap> = { [K in keyof M & string]?: (params: M[K][0]) => M[K][1] };
@@ -218,30 +217,6 @@ const startupErrorHtml = `<!doctype html>
 type UiHandler = (params: unknown) => unknown;
 type UiJob = { seq: string; method: string; fn: UiHandler; params: unknown };
 
-let nextDispatchId = 0n;
-const pendingUiDispatches = new Map<bigint, () => void>();
-const workerDrains = new Map<bigint, () => void>();
-// Cocoa may invoke an already-posted dispatch after the webview is gone. The
-// native trampoline stays valid while shutdown drops the per-view queue and
-// its dispatch token.
-let nativeDispatch: JSCallback | undefined;
-function nativeDispatchPointer(): Pointer {
-  nativeDispatch ??= new JSCallback(
-    (_webview, id: bigint) => {
-      const run = pendingUiDispatches.get(id) ?? workerDrains.get(id);
-      pendingUiDispatches.delete(id);
-      try {
-        run?.();
-      } catch (err) {
-        console.error("sweetview: UI dispatch failed:", err);
-      }
-    },
-    { args: [FFIType.ptr, FFIType.u64], returns: FFIType.void },
-  );
-  if (!nativeDispatch.ptr) throw new Error("sweetview: could not allocate the UI dispatcher");
-  return nativeDispatch.ptr;
-}
-
 export class WebView<M extends MethodMap = MethodMap, E extends EventMap = EventMap> {
   readonly raw: RawWebview;
   readonly window: Window;
@@ -302,10 +277,9 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
       }
     };
     ensureAttachable();
-    const libPath = await webviewLibPath();
+    const engine = await webviewEngine();
     ensureAttachable();
-    const requestCalls = onRequest === undefined ? undefined : requestHandlerCalls(libPath);
-    if (onRequest !== undefined && !requestCalls) {
+    if (onRequest !== undefined && !engine.hasRequests) {
       throw new Error("sweetview: onRequest requires webview_set_request_handler and webview_complete_request from @n1h/sweetview-webview-bun >= 2.8.0 or a compatible WEBVIEW_PATH");
     }
     const meta = getWindowMeta(window);
@@ -362,7 +336,7 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
       // either kept or destroyed, so it is never created on, or left bound to, a dead HWND.
       const releaseCreateHold = meta.owned ? holdWindowNativeDispose(window) : undefined;
       try {
-        const created = new RawWebview(options.debug ?? false, { width: widthDips, height: heightDips, hint }, Number(host) as Pointer);
+        const created = new RawWebview(options.debug ?? false, { width: widthDips, height: heightDips, hint }, host);
         if (created.unsafeHandle === null || Number(created.unsafeHandle) === 0) {
           throw new Error(
             process.platform === "win32"
@@ -383,29 +357,27 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
       }
     };
     const raw = createRaw();
+    let view: WebviewHost | undefined;
 
     try {
+      const engineHost = (view = engine.host(raw));
       raw.title = title;
       if (meta.owned && !meta.title && title) window.setTitle(title);
 
-      const core = openWebviewCore(libPath);
-      const handle = () => Number(raw.unsafeHandle) as Pointer;
       const quit = () => {
-        if (raw.unsafeHandle !== null) core.webview_terminate(handle());
+        if (raw.unsafeHandle !== null) engineHost.quit();
       };
 
       if (meta.transparent) {
-        const set = backgroundColorCall(libPath);
-        if (set) {
-          const err = set(handle(), 0, 0, 0, 0);
-          if (err !== 0) throw new Error(`sweetview: webview_set_background_color failed (${err})`);
-        } else {
+        const err = engineHost.setBackgroundColor(0, 0, 0, 0);
+        if (err === undefined) {
           console.warn("sweetview: this webview library has no webview_set_background_color; the page will not be transparent (see @n1h/sweetview-webview-bun)");
+        } else if (err !== 0) {
+          throw new Error(`sweetview: webview_set_background_color failed (${err})`);
         }
       }
       if (options.allowExternalDrop !== undefined) {
-        const set = allowExternalDropCall(libPath);
-        const error = set?.(handle(), options.allowExternalDrop ? 1 : 0);
+        const error = engineHost.setAllowExternalDrop(options.allowExternalDrop);
         if (error !== undefined && error !== 0) throw new Error(`sweetview: webview_set_allow_external_drop failed (${error})`);
       }
 
@@ -419,7 +391,7 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
       };
 
       const assembler = createFrameAssembler();
-      const streamCalls = onRequest === "worker" ? streamingResponseCalls(libPath) : undefined;
+      const streamCalls = onRequest === "worker" ? engineHost.streaming : undefined;
       const requestResponses = new RequestResponseAssembler(!streamCalls);
       const activeStreams = new Set<string>();
       // Work handed to the worker and not answered yet: page RPC seqs and native request ids.
@@ -432,8 +404,8 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
       const isLive = () => !down && !isWindowDisposed(window) && raw.unsafeHandle !== null;
       const completeRequest = ({ id, status, headers, body }: NativeRequestResponse) => {
         pendingWorkerRequests.delete(BigInt(id));
-        if (!isLive() || !requestCalls) return;
-        const error = requestCalls.completeRequest(handle(), BigInt(id), status, JSON.stringify(headers), body);
+        if (!isLive() || !engine.hasRequests) return;
+        const error = engineHost.completeRequest(BigInt(id), status, JSON.stringify(headers), body);
         if (error !== 0) console.error(`sweetview: webview_complete_request failed (${error})`);
       };
       const streamResponse = (frame: StreamingResponseFrame) => {
@@ -441,7 +413,7 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
         const { id } = frame;
         const requestId = BigInt(id);
         if (frame.kind === "begin") {
-          const error = streamCalls.beginResponse(handle(), requestId, frame.status, JSON.stringify(frame.headers));
+          const error = streamCalls.begin(requestId, frame.status, JSON.stringify(frame.headers));
           if (error === 0) activeStreams.add(id);
           else {
             console.error(`sweetview: webview_begin_response failed (${error})`);
@@ -451,14 +423,14 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
         }
         if (!activeStreams.has(id)) return;
         if (frame.kind === "chunk") {
-          const error = streamCalls.writeResponseChunk(handle(), requestId, frame.body);
+          const error = streamCalls.write(requestId, frame.body);
           if (error === 0) return;
           console.error(`sweetview: webview_write_response_chunk failed (${error})`);
         }
         // The native API can end an already-started response, including after a reader error.
         activeStreams.delete(id);
         pendingWorkerRequests.delete(requestId);
-        const error = streamCalls.endResponse(handle(), requestId);
+        const error = streamCalls.end(requestId);
         if (error !== 0) console.error(`sweetview: webview_end_response failed (${error})`);
       };
       const drain = () => {
@@ -508,14 +480,18 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
               : new URL(options.worker, pathToFileURL(Bun.main))
             : options.worker;
 
-      const drainToken = ++nextDispatchId;
-      const drainCallbackPtr = workerUrl ? Number(nativeDispatchPointer()) : 0;
+      // The worker's wake-up of this thread: registered with the engine once the worker starts.
+      let workerDrain: { wake: WorkerWake; close(): void } | undefined;
+      const closeWorkerDrain = () => {
+        workerDrain?.close();
+        workerDrain = undefined;
+      };
       const worker = workerUrl === undefined ? undefined : new Worker(workerUrl.href);
-      let reqCb: JSCallback | undefined;
+      let requestHandlerSet = false;
       let isReady = false;
       let cancelWatchdog: (() => void) | undefined;
       let deferScheduled = false;
-      let dispatchId: bigint | undefined;
+      let cancelDispatch: (() => void) | undefined;
       const queue: UiJob[] = [];
       const cancelStartup = () => {
         cancelWatchdog?.();
@@ -523,31 +499,19 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
       };
       const clearDispatches = () => {
         queue.length = 0;
-        if (dispatchId !== undefined) pendingUiDispatches.delete(dispatchId);
-        dispatchId = undefined;
+        cancelDispatch?.();
+        cancelDispatch = undefined;
       };
       const dropHost = (): Window => tabHooks?.fileDropHost() ?? window;
-      let dropCallback: JSCallback | undefined;
       let dropRegistered = false;
+      const onNativeDrop = (paths: string[]) => {
+        if (isLive() && dropRegistered) emitWindowFileDrop(dropHost(), paths);
+      };
       const setFileDrop = (enabled: boolean) => {
         if (enabled === dropRegistered || raw.unsafeHandle === null || (enabled && !isLive())) return;
-        const set = fileDropHandlerCall(libPath);
-        if (!set) return;
-        if (enabled) {
-          dropCallback ??= new JSCallback((json: Pointer | null) => {
-            if (!isLive() || !dropRegistered || !json) return;
-            let paths: unknown;
-            try {
-              paths = JSON.parse(new CString(json).toString());
-            } catch {
-              return;
-            }
-            if (Array.isArray(paths) && paths.every((path) => typeof path === "string")) {
-              emitWindowFileDrop(dropHost(), paths);
-            }
-          }, { args: [FFIType.ptr, FFIType.ptr], returns: FFIType.void });
-        }
-        const error = set(handle(), enabled ? dropCallback!.ptr : null, null);
+        const error = engineHost.setFileDropHandler(enabled ? onNativeDrop : null);
+        // An engine with no file drop handler leaves drops to the native window.
+        if (error === undefined) return;
         // On failure native keeps whatever it had, so the state stays as it was.
         if (error === 0) dropRegistered = enabled;
         else console.error(`sweetview: webview_set_file_drop_handler failed (${error})`);
@@ -570,12 +534,9 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
       const detachFileDrop = () => {
         unsubscribeFileDrop?.();
         unsubscribeFileDrop = undefined;
+        // A failed unregister leaves native holding the handler: the host keeps it
+        // alive until shutdown disposes it, once the webview is destroyed.
         setFileDrop(false);
-        // A failed unregister leaves native holding the trampoline: keep it alive
-        // (shutdown closes it once webview_destroy has run) rather than free it under native.
-        if (dropRegistered) return;
-        dropCallback?.close();
-        dropCallback = undefined;
       };
       // True while run() is inside webview_run: the native loop still owns the view.
       let running = false;
@@ -586,7 +547,7 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
         cancelStartup();
         clearDispatches();
         detachFileDrop();
-        workerDrains.delete(drainToken);
+        closeWorkerDrain();
         ring.stopDispatch();
         worker?.terminate();
         quit();
@@ -619,11 +580,11 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
         // Destroying the webview aborts native streams, including any waiting for their next chunk.
         activeStreams.clear();
         detachFileDrop();
-        if (reqCb && raw.unsafeHandle !== null) requestCalls?.setRequestHandler(handle(), null, null);
-        workerDrains.delete(drainToken);
+        if (requestHandlerSet && raw.unsafeHandle !== null) engineHost.setRequestHandler(null);
+        requestHandlerSet = false;
+        closeWorkerDrain();
         ring.stopDispatch();
         worker?.terminate();
-        reqCb?.close();
         if (raw.unsafeHandle !== null) {
           try {
             tabHooks?.beforeDestroy?.();
@@ -632,10 +593,9 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
           }
           raw.destroy();
         }
-        // Only now can a file-drop trampoline native failed to unregister be freed.
+        // Only now, with the webview destroyed, can the host free what native held.
         dropRegistered = false;
-        dropCallback?.close();
-        dropCallback = undefined;
+        engineHost.dispose();
       };
 
       const respond =(seq: string, status: number, value: unknown) => {
@@ -656,7 +616,7 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
         } catch (err) {
           console.error("sweetview: draining the failed worker's replies threw:", err);
         }
-        workerDrains.delete(drainToken);
+        closeWorkerDrain();
         worker?.terminate();
         for (const seq of [...pendingWorkerCalls]) replyError(seq, reason);
         pendingWorkerCalls.clear();
@@ -666,7 +626,7 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
             // The status line already went out; end the body so the reader is not left waiting.
             activeStreams.delete(key);
             if (isLive() && streamCalls) {
-              const error = streamCalls.endResponse(handle(), id);
+              const error = streamCalls.end(id);
               if (error !== 0) console.error(`sweetview: webview_end_response failed (${error})`);
             }
           } else {
@@ -694,28 +654,23 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
       const scheduleDeferred = () => {
         if (!isLive() || deferScheduled || queue.length === 0) return;
         deferScheduled = true;
-        const id = ++nextDispatchId;
-        dispatchId = id;
-        pendingUiDispatches.set(id, () => {
-          dispatchId = undefined;
-          try {
-            // Keep the scheduled flag set during handlers. A modal loop may
-            // pump more RPC messages while the current dialog is open.
-            for (const job of queue.splice(0)) {
-              if (!isLive()) break;
-              invoke(job);
-            }
-          } finally {
-            deferScheduled = false;
-            scheduleDeferred();
-          }
-        });
         try {
-          const error = core.webview_dispatch(handle(), nativeDispatchPointer(), id);
-          if (error !== 0) throw new Error(`sweetview: webview_dispatch failed (${error})`);
+          cancelDispatch = engineHost.dispatch(() => {
+            cancelDispatch = undefined;
+            try {
+              // Keep the scheduled flag set during handlers. A modal loop may
+              // pump more RPC messages while the current dialog is open.
+              for (const job of queue.splice(0)) {
+                if (!isLive()) break;
+                invoke(job);
+              }
+            } finally {
+              deferScheduled = false;
+              scheduleDeferred();
+            }
+          });
         } catch (err) {
-          pendingUiDispatches.delete(id);
-          dispatchId = undefined;
+          cancelDispatch = undefined;
           deferScheduled = false;
           for (const { seq } of queue.splice(0)) replyError(seq, err);
         }
@@ -737,10 +692,8 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
         bindFileDrop();
         if (tabHooks) tabHooks.rebindFileDrop = bindFileDrop;
         if (worker) {
-          workerDrains.set(drainToken, drain);
-          const init: InitMessage = {
-            kind: "init", ring: sab, webviewHandle: Number(raw.unsafeHandle), drainCallbackPtr, drainToken, libPath,
-          };
+          workerDrain = engineHost.openDrain(drain);
+          const init: InitMessage = { kind: "init", ring: sab, wake: workerDrain.wake };
           worker.postMessage(init);
           worker.onerror = (e) => {
             console.error("sweetview: the worker failed:", e.message ?? e);
@@ -751,22 +704,11 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
             failWorker("worker crashed: a message from the worker could not be deserialized");
           };
         }
-        if (onRequest !== undefined && requestCalls) {
-          reqCb = new JSCallback(
-            (id: bigint, method: Pointer, url: Pointer, headers: Pointer | null, body: Pointer | null, length: bigint) => {
+        if (onRequest !== undefined && engine.hasRequests) {
+          const error = engineHost.setRequestHandler((request: NativeRequest) => {
               if (!isLive()) return;
+              const { id } = request;
               try {
-                // The native strings and body belong to the callback. Copy
-                // them before the view returns control to the browser.
-                const request: NativeRequest = {
-                  id,
-                  method: new CString(method).toString(),
-                  url: new CString(url).toString(),
-                  headers: headers ? JSON.parse(new CString(headers).toString()) : [],
-                  body: body && length > 0n
-                    ? new Uint8Array(toArrayBuffer(body, 0, Number(length))).slice()
-                    : new Uint8Array(),
-                };
                 if (onRequest === "worker") {
                   if (workerFailure !== undefined) {
                     completeRequest(requestError(id, 500, "Internal Server Error"));
@@ -781,14 +723,9 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
               } catch {
                 completeRequest(requestError(id, 500, "Internal Server Error"));
               }
-            },
-            {
-              args: [FFIType.u64, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.ptr, FFIType.u64, FFIType.ptr],
-              returns: FFIType.void,
-            },
-          );
-          const error = requestCalls.setRequestHandler(handle(), reqCb.ptr, null);
+          });
           if (error !== 0) throw new Error(`sweetview: webview_set_request_handler failed (${error})`);
+          requestHandlerSet = true;
         }
         // A plain external page (a URL, no bundled page or assets) with nothing that answers
         // RPCs or waits for readiness gets no __sweetview_rpc binding: zero native surface.
@@ -838,14 +775,10 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
           tabHooks?.beforeNavigate?.(raw);
           raw.navigate(options.url!);
         } else {
-          const setAsset = setAssetCall(libPath);
-          if (!setAsset) {
-            throw new Error("sweetview: this webview library has no webview_set_asset; it needs the library @n1h/sweetview-webview-bun ships (is WEBVIEW_PATH pointing at a stock one?)");
-          }
           for (const [path, source] of Object.entries(assets)) {
             const bytes = await assetBytes(source);
             if (!isLive() || tabHooks?.isCancelled?.()) throw new Error("sweetview: the window was disposed during WebView.attach");
-            const err = setAsset(handle(), path, assetMime(path), bytes);
+            const err = engineHost.setAsset(path, assetMime(path), bytes);
             if (err !== 0) throw new Error(`sweetview: webview_set_asset(${path}) failed (${err})`);
           }
           if (!isLive() || tabHooks?.isCancelled?.()) throw new Error("sweetview: the window was disposed during WebView.attach");
@@ -888,7 +821,7 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
           const releaseWindowDispose = meta.owned ? holdWindowNativeDispose(window) : undefined;
           running = true;
           try {
-            core.webview_run(handle());
+            engineHost.run();
           } finally {
             running = false;
             try {
@@ -915,6 +848,7 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
         raw.destroy();
         discardQuit();
       }
+      view?.dispose();
       throw err;
     }
   }

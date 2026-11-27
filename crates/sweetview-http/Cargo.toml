@@ -1,0 +1,12 @@
+[package]
+name = "sweetview-http"
+description = "The rules of the webview's request handler that need no OS call."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde_json.workspace = true

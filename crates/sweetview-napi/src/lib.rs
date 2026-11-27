@@ -8,6 +8,7 @@
 
 mod callback;
 pub mod diagnostics;
+pub mod engine;
 mod errors;
 pub mod event_loop;
 pub mod input;

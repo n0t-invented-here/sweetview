@@ -1,3 +1,6 @@
+// macOS only, until the macOS goal of the Rust rewrite replaces it. On Windows
+// the webview is the Rust binding and nothing here is loaded.
+//
 // sweetview runs on the webview library that @n1h/sweetview-webview-bun ships:
 // upstream webview/webview plus the Sweetview additions in docs/webview-library.md.
 // webview-bun loads it from its build/ folder; `bun build --compile` embeds
@@ -125,17 +128,6 @@ export function setAssetCall(libPath: string): SetAsset | undefined {
     return undefined;
   }
 }
-
-/**
- * Where assets are served from, per platform. Windows intercepts
- * http://webview.localhost with WebView2's WebResourceRequested; macOS
- * registers a WKURLSchemeHandler for the "webview" scheme. Relative URLs in
- * the page work the same on both.
- */
-export const ASSET_ORIGIN = process.platform === "darwin" ? "webview://localhost" : "http://webview.localhost";
-
-/** The second intercepted origin, for content isolated from the app page. */
-export const FRAMES_ORIGIN = process.platform === "darwin" ? "webview-frames://localhost" : "http://frames.webview.localhost";
 
 function openRequestHandler(libPath: string) {
   const { webview_set_request_handler, webview_complete_request } = dlopen(libPath, {

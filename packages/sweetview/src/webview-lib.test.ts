@@ -1,8 +1,23 @@
 import { describe, expect, test } from "bun:test";
-import { backgroundColorCall, openWebviewCore, setAssetCall, webviewLibPath } from "./webview-lib";
+import { ASSET_ORIGIN, FRAMES_ORIGIN } from "./webview-lib";
 
-describe("webview-lib caching", () => {
+describe("webview origins", () => {
+  test("the asset and frames origins are this platform's, and differ", () => {
+    if (process.platform === "darwin") {
+      expect(ASSET_ORIGIN).toBe("webview://localhost");
+      expect(FRAMES_ORIGIN).toBe("webview-frames://localhost");
+    } else {
+      expect(ASSET_ORIGIN).toBe("http://webview.localhost");
+      expect(FRAMES_ORIGIN).toBe("http://frames.webview.localhost");
+    }
+    expect(ASSET_ORIGIN).not.toBe(FRAMES_ORIGIN);
+  });
+});
+
+// macOS runs on the webview library until the macOS goal: its symbol lookups stay cached per library path.
+describe.if(process.platform === "darwin")("webview library symbol caching (macOS)", () => {
   test("caches core, backgroundColor, and setAsset symbol lookups per libPath", async () => {
+    const { backgroundColorCall, openWebviewCore, setAssetCall, webviewLibPath } = await import("./darwin-webview-lib");
     const libPath = await webviewLibPath();
     const core1 = openWebviewCore(libPath);
     const core2 = openWebviewCore(libPath);

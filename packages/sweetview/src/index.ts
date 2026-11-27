@@ -1,6 +1,6 @@
 // UI-thread entry. The worker entry is "@n1h/sweetview/worker", the page side is
-// "@n1h/sweetview/page". The page side pulls in no bun:ffi; the worker dlopens
-// the webview library for webview_dispatch but never imports webview-bun.
+// "@n1h/sweetview/page". The page side pulls in no native code; the worker loads
+// the native binding only to wake this thread.
 import "./tabs";
 export {
   createApp,
@@ -44,4 +44,4 @@ export {
   type SingleInstanceOptions,
 } from "@n1h/sweetview-native";
 export { defineAppIdentity, type AppIdentity, type AppIdentityInput } from "@n1h/sweetview-settings";
-export { SizeHint, WEBVIEW_VERSION, Webview as RawWebview } from "@n1h/sweetview-webview-bun";
+export { RawWebview, SizeHint, WEBVIEW_VERSION } from "@n1h/sweetview-native";

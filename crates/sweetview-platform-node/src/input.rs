@@ -1,12 +1,13 @@
 //! Exports of `sweetview_napi::input`.
 
+use napi::bindgen_prelude::{FnArgs, Function};
 use napi::Env;
 use napi_derive::napi;
 use sweetview_napi::input as imp;
 
 /// Installs the process's mouse hook: `(event, x, y, wheel, modifiers) => swallow`. Returns a `webview_error_t`.
 #[napi]
-pub fn install_mouse_hook(env: Env, handler: imp::MouseHandler<'_>) -> napi::Result<i32> {
+pub fn install_mouse_hook(env: Env, handler: Function<'_, FnArgs<(i32, f64, f64, f64, u32)>, bool>) -> napi::Result<i32> {
   imp::install_mouse_hook(env, handler)
 }
 
@@ -18,7 +19,7 @@ pub fn remove_mouse_hook() -> napi::Result<i32> {
 
 /// Installs the process's keyboard hook: `(event, code, raw, modifiers) => swallow`. Returns a `webview_error_t`.
 #[napi]
-pub fn install_keyboard_hook(env: Env, handler: imp::KeyHandler<'_>) -> napi::Result<i32> {
+pub fn install_keyboard_hook(env: Env, handler: Function<'_, FnArgs<(i32, String, u32, u32)>, bool>) -> napi::Result<i32> {
   imp::install_keyboard_hook(env, handler)
 }
 

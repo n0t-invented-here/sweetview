@@ -9,7 +9,7 @@
 import { mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { Tab } from "@n1h/sweetview";
-import type { Webview } from "@n1h/sweetview-webview-bun";
+import type { RawWebview as Webview } from "@n1h/sweetview";
 import { asId, jsString, NIL, sel, send, sendInt, sendPtr, sharedApp } from "@n1h/sweetview-native/darwin/objc";
 import { scheduleNativeTimeout } from "@n1h/sweetview-native/internal";
 import { startDemoTabs } from "../app";

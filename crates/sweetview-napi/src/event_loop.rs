@@ -12,15 +12,22 @@ pub fn run_loop() -> napi::Result<()> {
   Runtime::get().or_throw()?.run_blocking().or_throw()
 }
 
-/// Ends the `runLoop()` in progress. With none in progress it does nothing.
+/// Ends the `runLoop()` in progress. With none in progress the quit waits: the next
+/// `pumpEvents()` returns false, and the next `runLoop()` returns at once.
 pub fn quit_loop() -> napi::Result<()> {
   Runtime::get().or_throw()?.request_exit();
   Ok(())
 }
 
 /// Dispatches what is waiting in the OS loop and returns. Called from inside the loop it does nothing.
-pub fn pump_events() -> napi::Result<()> {
-  Runtime::get().or_throw()?.pump();
+/// Returns false when a quit was waiting, which it consumes.
+pub fn pump_events() -> napi::Result<bool> {
+  Ok(Runtime::get().or_throw()?.pump())
+}
+
+/// Takes back a quit that is waiting, so it ends nothing.
+pub fn discard_quit() -> napi::Result<()> {
+  Runtime::get().or_throw()?.discard_quit();
   Ok(())
 }
 

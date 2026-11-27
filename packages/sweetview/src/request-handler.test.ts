@@ -6,7 +6,6 @@ import { fileURLToPath } from "node:url";
 import { RequestResponseAssembler, requestError, runNativeRequest, writeRequestResponse, writeStreamingResponse, type NativeRequestResponse, type StreamingResponseFrame } from "./request-response";
 import { Ring } from "./ring";
 import type { NativeResponse } from "./messages";
-import { fileDropHandlerCall, requestHandlerCalls, streamingResponseCalls, webviewLibPath } from "./webview-lib";
 
 test("a synchronous handler that returns a rejected Promise gets an immediate 500", () => {
   const answer = runNativeRequest(
@@ -86,16 +85,22 @@ test("forwards stream frames before EOF and splits oversized chunks, with a lega
   expect(failed.locked).toBe(false);
 });
 
-const nativeFile = process.platform === "darwin" ? "libwebview.dylib" : "libwebview.dll";
-const siblingLib = fileURLToPath(new URL(`../../../../sweetview-webview-bun/build/${nativeFile}`, import.meta.url));
-const libPath = process.env.WEBVIEW_PATH ?? (await Bun.file(siblingLib).exists() ? siblingLib : undefined);
-const desktop = process.platform === "win32" || process.platform === "darwin";
-const resolvedLibPath = desktop
-  ? libPath ?? await webviewLibPath().catch(() => undefined)
-  : undefined;
-const live = resolvedLibPath !== undefined && requestHandlerCalls(resolvedLibPath) !== undefined;
-const nativeStreaming = resolvedLibPath !== undefined && streamingResponseCalls(resolvedLibPath) !== undefined;
-const nativeDrop = resolvedLibPath !== undefined && fileDropHandlerCall(resolvedLibPath) !== undefined;
+// Which engine features the live tests can count on. Windows: the Rust binding has all of
+// them. macOS: whatever the webview library in use has, probed as before (a library with the
+// request handler is needed: WEBVIEW_PATH, or a sibling checkout of the bindings).
+let resolvedLibPath: string | undefined;
+let live = process.platform === "win32";
+let nativeStreaming = live;
+let nativeDrop = live;
+if (process.platform === "darwin") {
+  const lib = await import("./darwin-webview-lib");
+  const siblingLib = fileURLToPath(new URL("../../../../sweetview-webview-bun/build/libwebview.dylib", import.meta.url));
+  const libPath = process.env.WEBVIEW_PATH ?? (await Bun.file(siblingLib).exists() ? siblingLib : undefined);
+  resolvedLibPath = libPath ?? await lib.webviewLibPath().catch(() => undefined);
+  live = resolvedLibPath !== undefined && lib.requestHandlerCalls(resolvedLibPath) !== undefined;
+  nativeStreaming = resolvedLibPath !== undefined && lib.streamingResponseCalls(resolvedLibPath) !== undefined;
+  nativeDrop = resolvedLibPath !== undefined && lib.fileDropHandlerCall(resolvedLibPath) !== undefined;
+}
 
 async function runLive(mode: string) {
   const profile = mkdtempSync(join(tmpdir(), "sweetview-request-handler-"));

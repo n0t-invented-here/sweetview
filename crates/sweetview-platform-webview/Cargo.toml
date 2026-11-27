@@ -1,0 +1,32 @@
+[package]
+name = "sweetview-platform-webview"
+description = "What the webview needs on top of wry that wry has no API for."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+sweetview-http.workspace = true
+wry.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+webview2-com.workspace = true
+windows-core.workspace = true
+windows = { workspace = true, features = [
+  "Win32_Foundation",
+  "Win32_System_Com",
+  "Win32_UI_Input_KeyboardAndMouse",
+  "Win32_UI_Shell",
+  "Win32_UI_WindowsAndMessaging",
+] }
+
+[dev-dependencies]
+tao.workspace = true
+serde_json.workspace = true
+
+[target.'cfg(windows)'.dev-dependencies]
+webview2-com.workspace = true
+windows = { workspace = true, features = ["Win32_System_Threading"] }

@@ -11,16 +11,24 @@ pub fn run_loop() -> napi::Result<()> {
   imp::run_loop()
 }
 
-/// Ends the `runLoop()` in progress. With none in progress it does nothing.
+/// Ends the `runLoop()` in progress. With none in progress the quit waits: the next
+/// `pumpEvents()` returns false, and the next `runLoop()` returns at once.
 #[napi]
 pub fn quit_loop() -> napi::Result<()> {
   imp::quit_loop()
 }
 
 /// Dispatches what is waiting in the OS loop and returns. Called from inside the loop it does nothing.
+/// Returns false when a quit was waiting, which it consumes.
 #[napi]
-pub fn pump_events() -> napi::Result<()> {
+pub fn pump_events() -> napi::Result<bool> {
   imp::pump_events()
+}
+
+/// Takes back a quit that is waiting, so it ends nothing.
+#[napi]
+pub fn discard_quit() -> napi::Result<()> {
+  imp::discard_quit()
 }
 
 /// True while `runLoop()` is on the stack.

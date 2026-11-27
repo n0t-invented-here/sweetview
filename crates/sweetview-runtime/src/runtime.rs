@@ -67,6 +67,10 @@ pub struct Runtime {
   exit_requested: Cell<bool>,
   /// True while `run_blocking` is on the stack.
   blocking: Cell<bool>,
+  /// A quit asked for while no blocking run was in progress. The next pump
+  /// reports it and the next blocking run ends at once, as a quit message
+  /// waiting in the thread's queue did.
+  quit_pending: Cell<bool>,
   deferred: RefCell<VecDeque<Box<dyn FnOnce()>>>,
   timers: RefCell<HashMap<u32, Timer>>,
   next_timer: Cell<u32>,
@@ -109,6 +113,7 @@ impl Runtime {
       proxy,
       exit_requested: Cell::new(false),
       blocking: Cell::new(false),
+      quit_pending: Cell::new(false),
       deferred: RefCell::new(VecDeque::new()),
       timers: RefCell::new(HashMap::new()),
       next_timer: Cell::new(1),
@@ -142,6 +147,9 @@ impl Runtime {
     if self.host.is_running() {
       return Err(Error::state("sweetview: the event loop is already running on this thread"));
     }
+    if self.quit_pending.replace(false) {
+      return Ok(());
+    }
     self.exit_requested.set(false);
     self.blocking.set(true);
     let ran = self.host.run(|event, target, control_flow| {
@@ -155,9 +163,11 @@ impl Runtime {
     ran.map_err(|e| Error::state(format!("sweetview: {e}")))
   }
 
-  /// Ends the blocking run in progress. With none in progress it does nothing.
+  /// Ends the blocking run in progress. With none in progress the quit waits:
+  /// the next [`Runtime::pump`] reports it, and the next blocking run ends at once.
   pub fn request_exit(&self) {
     if !self.blocking.get() {
+      self.quit_pending.set(true);
       return;
     }
     self.exit_requested.set(true);
@@ -165,9 +175,15 @@ impl Runtime {
     let _ = self.proxy.send_event(());
   }
 
+  /// Takes back a quit that is waiting, so it ends nothing.
+  pub fn discard_quit(&self) {
+    self.quit_pending.set(false);
+  }
+
   /// Dispatches what is waiting and returns. Called while the loop is already
-  /// running (from a callback) it does nothing.
-  pub fn pump(&self) {
+  /// running (from a callback) it does nothing. Returns false when a quit was
+  /// waiting, which it consumes: the caller's loop should stop.
+  pub fn pump(&self) -> bool {
     let _ = self.host.run(|event, target, control_flow| {
       *control_flow = ControlFlow::Poll;
       self.dispatch(&event, target);
@@ -178,6 +194,7 @@ impl Runtime {
     // A pumped loop always has its own repaint request queued, which the OS
     // serves before any timer; the timers are taken explicitly.
     self.signals.dispatch_due_timers();
+    !self.quit_pending.replace(false)
   }
 
   /// Lends the loop's window target, for building windows.
@@ -400,6 +417,14 @@ mod tests {
         })
         .expect("interval");
       slot.set(Some(interval));
+      // A quit asked for outside a blocking run waits for the next pump, once.
+      runtime.request_exit();
+      assert!(!runtime.pump());
+      assert!(runtime.pump());
+      // Taken back, it ends nothing.
+      runtime.request_exit();
+      runtime.discard_quit();
+      assert!(runtime.pump());
       let never = runtime.set_timeout(1, || panic!("a cleared timeout ran")).expect("timeout");
       runtime.clear_timeout(never);
       let deadline = Instant::now() + Duration::from_millis(200);

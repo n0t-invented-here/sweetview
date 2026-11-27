@@ -29,11 +29,10 @@ import {
   isWindowDisposed,
   onWindowDispose,
 } from "@n1h/sweetview-native/internal";
-import { webviewLibPath } from "../webview-lib";
 import { STRIP_BODY, STRIP_CSS, STRIP_JS } from "./win-strip-assets";
 import { loadFailedPage } from "./load-failed";
 import { controllerOf, moveFocus, notifyMoved, onAcceleratorKey, onNavigationFailed, onNewWindowRequested, setVisible, type Controller } from "./win-webview2";
-import type { Webview as RawWebview } from "@n1h/sweetview-webview-bun";
+import type { RawWebview } from "@n1h/sweetview-native";
 
 const FOLLOW_TITLE = `(() => {
   const report = () => {
@@ -127,11 +126,6 @@ const hosts = new Map<Window, WinTabHost>();
 const hostOrder: WinTabHost[] = [];
 const tabRecordByApi = new WeakMap<object, WinTabRecord>();
 let nextTabId = 1;
-let cachedLibPath: string | undefined;
-
-async function libPath(): Promise<string> {
-  return (cachedLibPath ??= await webviewLibPath());
-}
 
 function stripState(host: WinTabHost): StripState {
   return {
@@ -561,7 +555,6 @@ async function ensureHost(window: Window): Promise<WinTabHost> {
   // not destroy the strip pane under WebView2 initialization: it waits for this release.
   const releaseFrameDispose = holdWindowNativeDispose(window);
   try {
-    const lp = await libPath();
     const stripOptions: WebViewOptions<StripMethods> & { [tabAttachHooks]: TabAttachHooks } = {
       title: meta.title || "Tabs",
       assets: {
@@ -602,7 +595,7 @@ async function ensureHost(window: Window): Promise<WinTabHost> {
         // A disposed window abandons the attach before it touches the strip pane again.
         isCancelled: () => host.closed,
         beforeNavigate: (raw) => {
-          host.stripController = controllerOf(raw, lp);
+          host.stripController = controllerOf(raw);
           host.stripCleanups.add(onAcceleratorKey(host.stripController, (key) => {
             const found = shortcutFor(key);
             if (found !== undefined) later(() => handleShortcut(host, found));
@@ -677,7 +670,6 @@ export const winTabsDriver: TabsDriver = {
     const cleanups = cleanupList();
     const native: { controller?: Controller } = {};
     let navEpoch = 0;
-    let lp: string;
     const hooks: TabAttachHooks = {
       fileDropHost: () => logicalHost().window,
       revealWindow: () => {
@@ -689,7 +681,7 @@ export const winTabsDriver: TabsDriver = {
       // Registered before the first navigation starts, so even an initial
       // navigation that fails at once (a refused port) shows the failed-load page.
       beforeNavigate: (raw: RawWebview) => {
-        const controller = controllerOf(raw, lp);
+        const controller = controllerOf(raw);
         native.controller = controller;
         // Host navigation intent: every navigate/setHTML issued on this tab's webview (the
         // initial one included, which follows this hook) bumps it, so a failed navigation's
@@ -771,7 +763,6 @@ export const winTabsDriver: TabsDriver = {
     const releaseFrameDispose = holdWindowNativeDispose(window);
     try {
       try {
-        lp = await libPath();
         webview = await WebView.attach<M, E>(paneWin, attachOptions);
       } catch (err) {
         abandon();

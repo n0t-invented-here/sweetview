@@ -3,11 +3,9 @@ import { WebView } from "@n1h/sweetview";
 import { Window } from "@n1h/sweetview/native";
 import { scheduleNativeTimeout } from "@n1h/sweetview-native/internal";
 import { controllerOf, devTools } from "../../src/tabs/win-webview2";
-import { webviewLibPath } from "../../src/webview-lib";
 
 const path = join(process.env.WEBVIEW2_USER_DATA_FOLDER!, "dropped ü.txt");
 await Bun.write(path, "file drop fixture");
-const libPath = await webviewLibPath();
 const win = new Window({ title: "WebView2 file drop test" });
 const states: boolean[] = [];
 let delivered: string[] | undefined;
@@ -47,8 +45,8 @@ const view = await WebView.attach<{ advance: [boolean, void] }>(win, {
           });
           break;
         case 4: {
-          const controller = controllerOf(view.raw, libPath);
-          // Drive Chromium through WebView2's in-process COM API. Attaching a
+          const controller = controllerOf(view.raw);
+          // Drive Chromium through WebView2's DevTools protocol. Attaching a
           // real file lets WebView2 return its path through ICoreWebView2File.
           const data = { items: [], files: [path], dragOperationsMask: 1 };
           for (const type of ["dragEnter", "dragOver", "drop"]) {
