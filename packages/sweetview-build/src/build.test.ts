@@ -145,3 +145,31 @@ describe("makeMacApp", () => {
     expect(info).not.toContain("dev.example.my-app");
   });
 });
+
+describe("refreshWindowsIcons", () => {
+  test("goes through the native binding, with no bun:ffi in the build package", () => {
+    for (const file of ["build.ts", "refresh-icons.ts", "make-app.ts", "index.ts"]) {
+      const source = readFileSync(join(import.meta.dir, file), "utf8");
+      expect(source).not.toMatch(/(from|import\()\s*["']bun:ffi["']|require\(["']bun:ffi["']\)/);
+    }
+  });
+
+  test.if(process.platform === "win32")("tells the shell that icons changed and returns", async () => {
+    const { refreshWindowsIcons } = await import("./build");
+    // The binding the build package reaches is the native package's.
+    const { refreshShellIcons } = await import("@n1h/sweetview-native/shell-icons");
+    expect(typeof refreshShellIcons).toBe("function");
+    expect(refreshWindowsIcons()).toBeUndefined();
+  });
+
+  test("does nothing on another OS", async () => {
+    const { refreshWindowsIcons } = await import("./build");
+    const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+    Object.defineProperty(process, "platform", { ...platform, value: process.platform === "win32" ? "darwin" : process.platform });
+    try {
+      expect(refreshWindowsIcons()).toBeUndefined();
+    } finally {
+      Object.defineProperty(process, "platform", platform);
+    }
+  });
+});

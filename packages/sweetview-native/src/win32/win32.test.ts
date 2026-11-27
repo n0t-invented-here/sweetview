@@ -172,20 +172,6 @@ describe.if(onWindows)("win32 icons", () => {
     win.destroy();
   });
 
-  test("hiddenBalloonData sets NIS_HIDDEN and NIF_INFO for standalone notifications", async () => {
-    const { hiddenBalloonData } = await import("./notifier");
-    const t = await import("./tray");
-    const nid = hiddenBalloonData(0x4444n, 10001, 0x11n, 0x22n, "Hello", "World", true);
-    const dv = new DataView(nid.buffer);
-    expect(dv.getUint32(0, true)).toBe(t.NID_SIZE);
-    expect(dv.getBigUint64(t.NID_HWND, true)).toBe(0x4444n);
-    expect(dv.getUint32(t.NID_UID, true)).toBe(10001);
-    // NIF_MESSAGE|NIF_ICON|NIF_TIP|NIF_STATE|NIF_INFO
-    expect(dv.getUint32(t.NID_FLAGS, true)).toBe(0x1 | 0x2 | 0x4 | 0x8 | 0x10);
-    expect(dv.getUint32(296, true)).toBe(1); // NIS_HIDDEN
-    expect(dv.getUint32(300, true)).toBe(1); // NIS_HIDDEN mask
-  });
-
   test("buildMenu and destroyMenu handle submenus, separators, checkmarks, and icons", async () => {
     const { buildMenu, destroyMenu } = await import("./menu");
     const built = buildMenu([

@@ -127,6 +127,7 @@
       "name": "@n1h/sweetview-build",
       "version": "1.0.0",
       "dependencies": {
+        "@n1h/sweetview-native": "workspace:*",
         "@n1h/sweetview-settings": "workspace:*",
       },
     },

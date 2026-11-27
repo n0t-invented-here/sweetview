@@ -1,9 +1,14 @@
-// Live Windows FFI tests for custom URL scheme registration (HKCU),
+// Live Windows tests for custom URL scheme registration (HKCU),
 // two-process singleInstance (CreateMutexW + HWND_MESSAGE + WM_COPYDATA),
 // and activation URL buffering -> signalReady() drain.
+//
+// probe: `bun:ffi` is used only to hide and show the primary's message window
+// (FindWindowExW, SetWindowTextW), the OS state the race test needs and no
+// Sweetview API reaches. The registry is read with reg.exe.
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { ptr } from "bun:ffi";
+import { dlopen, FFIType, ptr } from "bun:ffi";
+import { spawnSync } from "node:child_process";
 import {
   _resetActivationForTest,
   emitActivationUrl,
@@ -47,24 +52,15 @@ describe("activation URL buffering & extraction", () => {
 });
 
 describe.if(onWindows)("win32 URL schemes & single-instance", () => {
-  test("registerUrlScheme writes HKCU keys and unregisterUrlScheme removes them cleanly", async () => {
-    const { advapi32, HKEY_CURRENT_USER, wstr } = await import("./api");
+  test("registerUrlScheme writes HKCU keys and unregisterUrlScheme removes them cleanly", () => {
     const scheme = `sweetview-test-${process.pid}-${Date.now()}`;
-    const RRF_RT_REG_SZ = 0x00000002;
+    /** A REG_SZ value under HKCU, read with reg.exe; `null` names the default value. */
     const readReg = (subKey: string, value: string | null): string | null => {
-      const lenBuf = new Uint32Array([4096]);
-      const dataBuf = new Uint8Array(4096);
-      const st = advapi32.RegGetValueW(
-        HKEY_CURRENT_USER,
-        wstr(subKey),
-        value === null ? null : wstr(value),
-        RRF_RT_REG_SZ,
-        null,
-        ptr(dataBuf),
-        ptr(lenBuf),
-      );
-      if (st !== 0) return null;
-      return Buffer.from(dataBuf.subarray(0, Math.max(0, lenBuf[0]! - 2))).toString("utf16le");
+      const args = ["query", `HKCU\\${subKey}`, ...(value === null ? ["/ve"] : ["/v", value])];
+      const out = spawnSync("reg", args, { encoding: "utf8" });
+      if (out.status !== 0) return null;
+      const line = out.stdout.split(/\r?\n/).find((l) => /\sREG_SZ(\s|$)/.test(l));
+      return line === undefined ? null : line.replace(/^.*?\sREG_SZ\s{0,4}/, "");
     };
 
     try {
@@ -87,23 +83,58 @@ describe.if(onWindows)("win32 URL schemes & single-instance", () => {
   });
 
   test("singleInstance retries when the mutex exists before its message window is discoverable", async () => {
-    const { HWND_MESSAGE, user32, wstr } = await import("./api");
+    // `acquire` is synchronous, so the racing secondary is another process; the primary's
+    // window is hidden from its lookups until it has missed at least once.
+    const user32 = dlopen("user32.dll", {
+      FindWindowExW: { args: [FFIType.i64, FFIType.u64, FFIType.ptr, FFIType.ptr], returns: FFIType.u64 },
+      SetWindowTextW: { args: [FFIType.u64, FFIType.ptr], returns: FFIType.i32 },
+    }).symbols;
+    const HWND_MESSAGE = -3n;
+    const wide = (text: string) => Buffer.from(`${text}\0`, "utf16le");
     const appId = `dev.sweetview.test.race-${process.pid}-${Date.now()}`;
-    const title = wstr(`sweetview.instance.${appId}`);
-    const windowClass = wstr("SweetviewSingleInstanceWindow");
+    const title = wide(`sweetview.instance.${appId}`);
+    const windowClass = wide("SweetviewSingleInstanceWindow");
     const received: SecondInstanceEvent[] = [];
     const primary = await singleInstance({ appId, args: [], onSecondInstance: (event) => received.push(event) });
     try {
-      const hwnd = user32.FindWindowExW(HWND_MESSAGE, 0n, windowClass, title);
+      const hwnd = user32.FindWindowExW(HWND_MESSAGE, 0n, ptr(windowClass), ptr(title));
       expect(hwnd).not.toBe(0n);
-      user32.SetWindowTextW(hwnd, wstr("not yet discoverable"));
-      expect(user32.FindWindowExW(HWND_MESSAGE, 0n, windowClass, title)).toBe(0n);
-      const pending = singleInstance({ appId, args: ["--raced"] });
-      user32.SetWindowTextW(hwnd, title);
-      const secondary = await pending;
-      secondary.dispose();
-      expect(secondary.isPrimary).toBe(false);
-      expect(secondary.handedOff).toBe(true);
+      user32.SetWindowTextW(hwnd, ptr(wide("not yet discoverable")));
+      expect(user32.FindWindowExW(HWND_MESSAGE, 0n, ptr(windowClass), ptr(title))).toBe(0n);
+      const childScript = `
+        import { singleInstance } from "@n1h/sweetview-native";
+        console.log("LOOKING");
+        const lock = await singleInstance({ appId: ${JSON.stringify(appId)}, args: ["--raced"] });
+        console.log(JSON.stringify({ isPrimary: lock.isPrimary, handedOff: lock.handedOff }));
+        lock.dispose();
+      `;
+      const child = Bun.spawn([process.execPath, "-e", childScript], { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" });
+      const reader = child.stdout.getReader();
+      let stdout = "";
+      while (!stdout.includes("LOOKING\n")) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        stdout += new TextDecoder().decode(value).replace(/\r/g, "");
+      }
+      // The child's first lookup is made at once; it retries every 25 ms for about a quarter second.
+      await Bun.sleep(60);
+      user32.SetWindowTextW(hwnd, ptr(title));
+      let childDone = false;
+      void child.exited.then(() => (childDone = true));
+      const deadline = Date.now() + 10_000;
+      while (!childDone && Date.now() < deadline) {
+        pumpEvents();
+        await Bun.sleep(5);
+      }
+      pumpEvents();
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        stdout += new TextDecoder().decode(value).replace(/\r/g, "");
+      }
+      expect(await new Response(child.stderr).text()).toBe("");
+      expect(await child.exited).toBe(0);
+      expect(JSON.parse(stdout.trim().split(/\r?\n/).pop()!)).toEqual({ isPrimary: false, handedOff: true });
       expect(received[0]?.args).toEqual(["--raced"]);
     } finally {
       primary.dispose();
