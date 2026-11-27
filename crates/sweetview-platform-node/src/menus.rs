@@ -1,78 +1,40 @@
-//! Exports of `sweetview_napi::menus`, and the object shapes they take.
-//!
-//! The `#[napi(object)]` shapes live here because their derive expands to
-//! `unsafe` conversion code; each is turned into the runtime's own type by a
-//! field-for-field copy below, and nothing else is decided here.
+//! Exports of `sweetview_napi::menus`. The object shapes and their conversion
+//! to the runtime's menu data live there (D12); each export here forwards.
 
-use napi::bindgen_prelude::{BigInt, Function, Uint8Array};
+use napi::bindgen_prelude::{BigInt, Function};
 use napi::Env;
 use napi_derive::napi;
 use sweetview_napi::menus as imp;
-use sweetview_runtime::icon::IconBytes as RuntimeIconBytes;
-use sweetview_runtime::menu::{MenuData, MenuItem};
-
-/// One icon, as Sweetview's `Icon` type carries it. Windows reads `ico`, then `png`.
-#[napi(object)]
-pub struct IconBytes {
-  pub ico: Option<Uint8Array>,
-  pub png: Option<Uint8Array>,
-  pub symbol: Option<String>,
-  pub template: Option<bool>,
-}
-
-/// One menu entry. `kind` says which fields are read: an `item` has `id` (from 1), `label`,
-/// `enabled`, `checked` and `icon`; a `submenu` has `label`, `enabled`, `icon` and `items`.
-#[napi(object)]
-pub struct MenuItemData {
-  #[napi(ts_type = "'item' | 'submenu' | 'separator'")]
-  pub kind: String,
-  pub id: Option<u32>,
-  pub label: Option<String>,
-  pub enabled: Option<bool>,
-  pub checked: Option<bool>,
-  pub icon: Option<IconBytes>,
-  pub items: Option<Vec<MenuItemData>>,
-}
-
-/// A point on the screen, in physical pixels.
-#[napi(object)]
-pub struct Point {
-  pub x: f64,
-  pub y: f64,
-}
-
-pub(crate) fn icon_bytes(icon: IconBytes) -> RuntimeIconBytes {
-  RuntimeIconBytes { ico: icon.ico.map(|b| b.to_vec()), png: icon.png.map(|b| b.to_vec()), symbol: icon.symbol, template: icon.template }
-}
-
-fn menu_data(items: Vec<MenuItemData>) -> MenuData {
-  items
-    .into_iter()
-    .filter_map(|item| match item.kind.as_str() {
-      "separator" => Some(MenuItem::Separator),
-      "submenu" => Some(MenuItem::Submenu {
-        label: item.label.unwrap_or_default(),
-        enabled: item.enabled.unwrap_or(true),
-        icon: item.icon.map(icon_bytes),
-        items: menu_data(item.items.unwrap_or_default()),
-      }),
-      "item" => Some(MenuItem::Item {
-        id: item.id.unwrap_or(0),
-        label: item.label.unwrap_or_default(),
-        enabled: item.enabled.unwrap_or(true),
-        checked: item.checked.unwrap_or(false),
-        icon: item.icon.map(icon_bytes),
-      }),
-      _ => None,
-    })
-    .collect()
-}
+pub use sweetview_napi::menus::{icon_bytes, IconBytes, MenuItemData, Point};
 
 /// Shows `menu` as a popup menu owned by the window `owner`, at the screen point `at` (physical
 /// pixels) or at the cursor, and returns the chosen item's `id` after it closes; `null` when dismissed.
+/// With `above`, the menu opens upward from the point (its bottom-left corner there), as the tray's
+/// menu does; otherwise downward (its top-left corner there). Either mouse button chooses an item.
 #[napi]
-pub fn popup_menu(owner: BigInt, menu: Vec<MenuItemData>, at: Option<Point>) -> napi::Result<Option<u32>> {
-  imp::popup_menu(owner, menu_data(menu), at.map(|p| (p.x, p.y)))
+pub fn popup_menu(owner: BigInt, menu: Vec<MenuItemData>, at: Option<Point>, above: Option<bool>) -> napi::Result<Option<u32>> {
+  imp::popup_menu(owner, menu, at, above)
+}
+
+/// Builds `menu` and returns its popup menu handle (`HMENU`) for the application's own
+/// `TrackPopupMenu`. Each item's command id is its `id`. The menu, its submenus and its item
+/// bitmaps stay alive until `destroyMenu` is called with the handle.
+#[napi]
+pub fn build_menu(menu: Vec<MenuItemData>) -> napi::Result<BigInt> {
+  imp::build_menu(menu)
+}
+
+/// Frees a menu `buildMenu` made. False when the handle names no such menu (freed already).
+#[napi]
+pub fn destroy_menu(handle: BigInt) -> napi::Result<bool> {
+  imp::destroy_menu(handle)
+}
+
+/// Shows the system menu (Restore, Move, Size, Minimize, Maximize, Close) of `owner`, a window of
+/// this thread, at the cursor, and carries out the chosen command. Any other value shows nothing.
+#[napi]
+pub fn window_menu(owner: BigInt) -> napi::Result<()> {
+  imp::window_menu(owner)
 }
 
 /// The OS folder dialog, owned by the window `owner` when given. Blocks until it closes and
@@ -91,7 +53,7 @@ pub fn install_app_menu(app_name: String, about_text: String) -> napi::Result<()
 /// macOS: the running application's Dock icon. Windows: nothing.
 #[napi]
 pub fn set_app_icon(icon: IconBytes) -> napi::Result<()> {
-  imp::set_app_icon(icon_bytes(icon))
+  imp::set_app_icon(icon)
 }
 
 /// macOS: the process's activation policy. Windows: nothing.
@@ -122,7 +84,7 @@ impl Tray {
     menu_chosen: Function<'_, u32, ()>,
   ) -> napi::Result<Self> {
     let functions = imp::TrayFunctions { on_click, on_double_click, open_menu, menu_chosen };
-    imp::Tray::new(env, tooltip, icon.map(icon_bytes), has_menu, functions, menu_data).map(Self)
+    imp::Tray::new(env, tooltip, icon, has_menu, functions).map(Self)
   }
 
   #[napi]
@@ -133,7 +95,7 @@ impl Tray {
   /// `null` shows the stock application icon.
   #[napi]
   pub fn set_icon(&self, icon: Option<IconBytes>) -> napi::Result<()> {
-    self.0.set_icon(icon.map(icon_bytes))
+    self.0.set_icon(icon)
   }
 
   /// Whether a right click opens the menu.

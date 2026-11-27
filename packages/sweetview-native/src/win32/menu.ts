@@ -1,6 +1,8 @@
 // Popup menus. The native binding builds the menu (muda) fresh for every
-// showing from plain data, shows it, and answers with the chosen item's number
+// showing from plain data, tracks it, and answers with the chosen item's number
 // after it closes; the click handlers stay here, kept under those numbers.
+// Either mouse button chooses an item. `buildMenu` hands an application the
+// built menu itself, for its own `TrackPopupMenu`, until `destroyMenu`.
 
 import type { IconBytes, MenuItemData } from "../../prebuilt/binding";
 import { binding } from "../binding";
@@ -39,6 +41,45 @@ export function handleValue(owner: WindowHandle): bigint {
   return BigInt(owner);
 }
 
+type Built = {
+  /** The popup menu (`HMENU`), for the application's own `TrackPopupMenu`. */
+  hmenu: bigint;
+  /** The click handler of each item, under the command id `TrackPopupMenu` returns for it (from 1, in template order). */
+  commands: Map<number, () => void>;
+  /**
+   * The item bitmaps the application had to free. Always empty: the native
+   * layer owns the menu, its submenus and its item bitmaps, and `destroyMenu`
+   * frees them all.
+   */
+  bitmaps: bigint[];
+};
+
+/**
+ * Builds `template` into a popup menu for the application's own
+ * `TrackPopupMenu`: check marks, icons, submenus, separators and disabled items
+ * as `Menu.popup` shows them. Each item's command id is its number in
+ * `commands` (from 1, depth first in template order), so the id
+ * `TrackPopupMenu` returns (with `TPM_RETURNCMD`) or a `WM_COMMAND` carries
+ * names its click handler. The menu stays alive until `destroyMenu(built)`.
+ */
+export function buildMenu(template: MenuTemplate): Built {
+  const { data, handlers } = menuData(template);
+  return { hmenu: binding().buildMenu(data), commands: handlers, bitmaps: [] };
+}
+
+/** Frees a menu `buildMenu` made, its submenus and its item bitmaps. Safe to call twice. */
+export function destroyMenu(built: Built): void {
+  binding().destroyMenu(built.hmenu);
+}
+
+function show(owner: bigint, template: MenuTemplate, at: Point | null, above: boolean): boolean {
+  const { data, handlers } = menuData(template);
+  const chosen = binding().popupMenu(owner, data, at, above);
+  const handler = chosen === null ? undefined : handlers.get(chosen);
+  handler?.();
+  return handler !== undefined;
+}
+
 /**
  * Shows `template` at `at` (or the cursor when omitted), owned by `owner`, and
  * runs the chosen item's click handler. Blocks until the menu closes. Returns
@@ -46,15 +87,14 @@ export function handleValue(owner: WindowHandle): bigint {
  */
 export function popupMenu(owner: WindowHandle, template: MenuTemplate, at?: Point): boolean {
   if (template.length === 0) return false;
-  const hwnd = handleValue(owner);
-  const { data, handlers } = menuData(template);
-  const chosen = binding().popupMenu(hwnd, data, at ?? null);
-  const handler = chosen === null ? undefined : handlers.get(chosen);
-  handler?.();
-  return handler !== undefined;
+  return show(handleValue(owner), template, at ?? null, false);
 }
 
-/** Shows `template` at the cursor, owned by `owner`, and runs the chosen item's click handler. */
+/**
+ * Shows `template` at the cursor aligned above it (for tray menus, so the menu
+ * sits above the taskbar), owned by `owner`, and runs the chosen item's click handler.
+ */
 export function popupMenuAtCursor(owner: bigint, template: MenuTemplate): boolean {
-  return popupMenu(owner, template);
+  if (template.length === 0) return false;
+  return show(handleValue(owner), template, null, true);
 }

@@ -11,7 +11,8 @@
 
 import { binding } from "../binding";
 import type { TabFrame as NativeTabFrame, Window as NativeWindow } from "../../prebuilt/binding";
-import { isSeparator, isSubmenu, type MenuTemplate } from "../menu";
+import type { MenuTemplate } from "../menu";
+import { popupMenu } from "./menu";
 import type { Point, Rect } from "../types";
 import type { Appearance, ResizeEdge } from "../window";
 
@@ -153,25 +154,21 @@ export const leftButtonDown = (): boolean => binding().leftButtonDown();
 export const cursorPosition = (): Point => binding().cursor();
 
 /**
- * Shows `template` as a popup menu at the cursor, owned by the tabbed
- * window's frame `owner`, and runs the chosen item's click handler. Blocks
- * until the menu closes. Items are flat: a submenu shows as a disabled item,
- * and icons and check marks are not drawn. Returns whether an item ran;
- * `false` when `owner` is not a tab frame.
+ * Shows `template` as a popup menu at the cursor, owned by `owner` (a tabbed
+ * window's frame, or any window of this thread), and runs the chosen item's
+ * click handler. Blocks until the menu closes. The menu is the one
+ * `Menu.popup` shows: submenus, icons, check marks, separators and disabled
+ * items. Returns whether an item was chosen.
  */
 export function showTabPopupMenu(owner: bigint, template: MenuTemplate): boolean {
-  const tab = frames.get(owner)?.tab ?? binding().TabFrame.of(owner);
-  if (!tab || template.length === 0) return false;
-  const entries = template.map((item) =>
-    isSeparator(item) ? { enabled: false } : { label: item.label, enabled: item.enabled !== false && !isSubmenu(item) },
-  );
-  const chosen = template[tab.showMenu(entries)];
-  if (chosen === undefined || isSeparator(chosen) || isSubmenu(chosen)) return false;
-  chosen.click?.();
-  return true;
+  return popupMenu(owner, template);
 }
 
-/** Shows the Windows system titlebar menu (Restore, Move, Size, Minimize, Maximize, Close) of a tab frame. */
+/**
+ * Shows the Windows system titlebar menu (Restore, Move, Size, Minimize,
+ * Maximize, Close) of `hwnd`, any window of this thread, at the cursor, and
+ * carries out the chosen command (`WM_SYSCOMMAND`). Blocks until it closes.
+ */
 export function windowMenu(hwnd: bigint): void {
-  (frames.get(hwnd)?.tab ?? binding().TabFrame.of(hwnd))?.showSystemMenu();
+  binding().windowMenu(hwnd);
 }
