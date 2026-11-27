@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Tabs with one webview per tab. macOS: every tab is its own NSWindow hosting its own WKWebView, joined by AppKit window tabbing, so the tab bar, the + button, drag to reorder and tear-off are the system's. Windows: a window whose title bar is a tab strip, every tab a child window hosting its own WebView2.",
+  "description": "Tabs with one webview per tab. macOS: every tab is its own NSWindow hosting its own WKWebView, joined by AppKit window tabbing, so the tab bar, the + button, drag to reorder and tear-off are the system's. Windows: a window whose title bar is a tab strip, every tab a WebView2 webview that is a child of that window.",
   "dependencies": {
     "@n1h/sweetview": "workspace:*",
     "@n1h/sweetview-webview-bun": "^2.7.0",

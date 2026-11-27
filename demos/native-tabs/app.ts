@@ -1,6 +1,6 @@
 // Tabs with one webview per tab, built on @n1h/sweetview's built-in native tabs API.
 // macOS uses AppKit window tabbing; Windows uses a captionless frame with a built-in
-// tab strip and child WebView2 panes.
+// tab strip, and every tab a child WebView2 of that frame.
 //
 //   just demos native-tabs app
 
@@ -19,7 +19,7 @@ const PAGE_BODY = tabPageBody({
   lede:
     process.platform === "darwin"
       ? "This tab is its own <code>WKWebView</code> inside its own <code>NSWindow</code>. macOS draws the tab bar."
-      : "This tab is its own <code>WebView2</code> in a child window of its own. The tab strip above is built into sweetview.",
+      : "This tab is its own <code>WebView2</code>, a child of the window. The tab strip above is built into sweetview.",
   hint:
     process.platform === "darwin"
       ? "Try the <kbd>+</kbd> in the tab bar, <kbd>⌘T</kbd> and <kbd>⌘W</kbd>, dragging a tab out of the window, and Window › Merge All Windows."

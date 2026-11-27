@@ -136,7 +136,7 @@ and that shows in the `Window` you get back:
 
 | | Windows | macOS |
 |---|---|---|
-| Structure | one framed `HWND` whose title bar is a Sweetview tab strip; every tab is a child pane hosting its own WebView2 | an AppKit window tab group: every tab is its own `NSWindow` hosting its own `WKWebView`, and AppKit draws the tab bar |
+| Structure | one framed `HWND` whose title bar is a Sweetview tab strip; the strip and every tab are WebView2 webviews made as children of that window, one tab shown at a time | an AppKit window tab group: every tab is its own `NSWindow` hosting its own `WKWebView`, and AppKit draws the tab bar |
 | `win.handle` | the frame's `HWND` | `null`: the `Window` is virtual and stands for the whole group, because no single `NSWindow` is the container |
 | Default size | 1040 x 720 content plus the strip, centered | 1040 x 720 at (100, 100) |
 | Appearance | `appearance` themes the frame and strip | `appearance` applies to each tab's `NSWindow` |
