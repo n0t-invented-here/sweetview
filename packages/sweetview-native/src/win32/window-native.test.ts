@@ -23,19 +23,25 @@ const probe = onWindows
       GetAncestor: { args: [FFIType.u64, FFIType.u32], returns: FFIType.u64 },
       GetGUIThreadInfo: { args: [FFIType.u32, FFIType.ptr], returns: FFIType.i32 },
       GetAsyncKeyState: { args: [FFIType.i32], returns: FFIType.i16 },
+      GetKeyState: { args: [FFIType.i32], returns: FFIType.i16 },
       GetCursorPos: { args: [FFIType.ptr], returns: FFIType.i32 },
     }).symbols
   : undefined;
 
 /** What the OS says about a drag in progress on this thread: read from inside the move loop when a drag test fails. */
-function dragState(): { inMoveSize: boolean; leftDown: boolean; cursor: { x: number; y: number } } {
+function dragState(): { inMoveSize: boolean; leftDown: boolean; leftDownForThisThread: boolean; cursor: { x: number; y: number } } {
   const info = new Uint8Array(72); // GUITHREADINFO, x64: cbSize, flags, six handles, the caret rectangle
   const view = new DataView(info.buffer);
   view.setUint32(0, 72, true);
   probe!.GetGUIThreadInfo(0, ptr(info)); // 0: the calling thread
   const point = new Int32Array(2);
   probe!.GetCursorPos(ptr(point));
-  return { inMoveSize: (view.getUint32(4, true) & 0x2) !== 0, leftDown: probe!.GetAsyncKeyState(0x01) < 0, cursor: { x: point[0]!, y: point[1]! } }; // GUI_INMOVESIZE
+  return {
+    inMoveSize: (view.getUint32(4, true) & 0x2) !== 0, // GUI_INMOVESIZE
+    leftDown: probe!.GetAsyncKeyState(0x01) < 0,
+    leftDownForThisThread: probe!.GetKeyState(0x01) < 0,
+    cursor: { x: point[0]!, y: point[1]! },
+  };
 }
 const dwm = onWindows ? dlopen("dwmapi.dll", { DwmGetWindowAttribute: { args: [FFIType.u64, FFIType.u32, FFIType.ptr, FFIType.u32], returns: FFIType.i32 } }).symbols : undefined;
 
@@ -380,7 +386,9 @@ describe.if(onWindows)("Window on the binding: click-through, hit regions, the r
       }
       leftButton(true);
       pressed = true;
-      await settle(30);
+      // The OS starts its move loop only when this thread has seen the press: the button's state
+      // as the thread's own queue has it, which follows the press message, not the injection.
+      await settle(2000, () => probe!.GetKeyState(0x01) < 0);
       // The OS runs its own move loop from here until the button is released, so the cursor is
       // moved and the button released from native timeouts, which fire inside that loop.
       let duringDrag: ReturnType<Window["bounds"]> | undefined;

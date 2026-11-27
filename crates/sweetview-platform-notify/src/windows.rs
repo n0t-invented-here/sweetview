@@ -1138,16 +1138,30 @@ mod tests {
       round(false);
     }
     let idle = settled();
+    // Showing rounds are measured twice and the smaller growth counts: what a notifier leaks it
+    // leaks every round, so it shows in both runs; what the notification platform's client side
+    // sets up once in the process, some time after its first use, shows in one.
     for _ in 0..32 {
       round(true);
     }
-    let after = settled();
-    eprintln!("(USER, GDI, kernel) before {before:?}, after 100 notifiers that show nothing {idle:?}, after 32 that show {after:?}");
+    let first = settled();
+    for _ in 0..32 {
+      round(true);
+    }
+    let second = settled();
+    eprintln!(
+      "(USER, GDI, kernel) before {before:?}, after 100 notifiers that show nothing {idle:?}, after 32 that show {first:?}, after 32 more {second:?}"
+    );
+    let grew = |from: (u32, u32, u32), to: (u32, u32, u32)| {
+      (i64::from(to.0) - i64::from(from.0), i64::from(to.1) - i64::from(from.1), i64::from(to.2) - i64::from(from.2))
+    };
+    let (a, b) = (grew(idle, first), grew(first, second));
+    let shown = (a.0.min(b.0), a.1.min(b.1), a.2.min(b.2));
     // `<=`: an earlier test's thread may still be exiting, freeing its own USER objects.
-    assert!(after.0 <= before.0, "USER objects returned to the starting count: {before:?} -> {after:?}");
-    assert!(after.1 <= before.1, "GDI objects returned to the starting count: {before:?} -> {after:?}");
+    assert!(idle.0 <= before.0 && shown.0 <= 0, "USER objects returned to the starting count: {before:?} -> {idle:?} -> {first:?} -> {second:?}");
+    assert!(idle.1 <= before.1 && shown.1 <= 0, "GDI objects returned to the starting count: {before:?} -> {idle:?} -> {first:?} -> {second:?}");
     assert!(idle.2 <= before.2 + 4, "kernel handles returned to the starting count with nothing shown: {before:?} -> {idle:?}");
-    assert!(after.2 <= before.2 + 4, "kernel handles returned to the starting count: {before:?} -> {after:?}");
+    assert!(shown.2 <= 4, "kernel handles returned to the starting count: {idle:?} -> {first:?} -> {second:?}");
     assert_eq!(live_toast_handlers(), 0);
   }
 }
