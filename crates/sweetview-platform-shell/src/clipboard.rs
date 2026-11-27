@@ -42,7 +42,7 @@ mod imp {
 
   /// The clipboard, open on this thread until dropped. It borrows the owner
   /// window it was opened with, so that window outlives the open clipboard.
-  struct OpenedClipboard<'a> {
+  pub(super) struct OpenedClipboard<'a> {
     _owner: PhantomData<&'a MessageWindow>,
     _not_send: PhantomData<*const ()>,
   }
@@ -86,20 +86,41 @@ mod imp {
     }
   }
 
-  /// A global memory block locked until dropped. It borrows the block: the
-  /// clipboard or an [`OwnedGlobal`] owns it, and outlives this lock.
-  struct LockedGlobal<'a> {
+  /// The owner of a global block that a [`LockedGlobal`] borrows for as long as it is locked.
+  pub(super) enum Block<'a> {
+    /// A block this process allocated and has not handed over, borrowed exclusively:
+    /// no other lock of it, and no free, while this one lives.
+    Owned(&'a mut OwnedGlobal),
+    /// The clipboard's `CF_UNICODETEXT` block, which the clipboard keeps allocated
+    /// while it stays open, which the borrow of the open clipboard guarantees.
+    ClipboardText(&'a OpenedClipboard<'a>),
+  }
+
+  /// A global memory block locked until dropped. It borrows the block's owner
+  /// (see [`Block`]), so the block stays allocated for as long as it is locked.
+  pub(super) struct LockedGlobal<'a> {
     memory: HGLOBAL,
     address: *mut u8,
     /// The block's length, as `GlobalSize` reported it once the block was locked.
     size: usize,
-    _block: PhantomData<&'a ()>,
+    _block: PhantomData<Block<'a>>,
   }
 
   impl<'a> LockedGlobal<'a> {
-    fn lock(memory: HGLOBAL) -> Result<Self, ShellError> {
-      // SAFETY: `memory` is a movable global block that the caller's owner keeps allocated
-      // for `'a`; GlobalLock reads no memory of ours.
+    /// Locks the block `block` names; `None` when the clipboard holds no text.
+    pub(super) fn lock(block: Block<'a>) -> Result<Option<Self>, ShellError> {
+      let memory = match block {
+        Block::Owned(owned) => owned.handle(),
+        Block::ClipboardText(_open) => {
+          // SAFETY: the clipboard is open on this thread for as long as `_open` is borrowed,
+          // which is `'a`, the life of this lock and of every use of the handle.
+          let data = unsafe { GetClipboardData(u32::from(CF_UNICODETEXT.0)) };
+          let Ok(handle) = data else { return Ok(None) };
+          HGLOBAL(handle.0)
+        }
+      };
+      // SAFETY: `memory` is a movable global block that `block`'s owner keeps allocated for
+      // `'a` (see `Block`); GlobalLock reads no memory of ours.
       let address = unsafe { GlobalLock(memory) };
       if address.is_null() {
         return Err(ShellError(format!("sweetview: GlobalLock failed ({})", last_error())));
@@ -107,7 +128,7 @@ mod imp {
       // SAFETY: GlobalSize takes the handle by value and reads no memory of ours. The block is
       // locked and kept allocated for `'a`, so its size cannot change while this lock lives.
       let size = unsafe { GlobalSize(memory) };
-      Ok(Self { memory, address: address.cast(), size, _block: PhantomData })
+      Ok(Some(Self { memory, address: address.cast(), size, _block: PhantomData }))
     }
 
     /// The whole block, as `GlobalSize` reports it.
@@ -119,7 +140,7 @@ mod imp {
     }
 
     /// Copies `data` to the start of the block, which must be at least that long.
-    fn write(&mut self, data: &[u8]) -> Result<(), ShellError> {
+    pub(super) fn write(&mut self, data: &[u8]) -> Result<(), ShellError> {
       let size = self.size;
       if size < data.len() {
         return Err(ShellError(format!("sweetview: GlobalAlloc returned {size} bytes for {}", data.len())));
@@ -143,16 +164,16 @@ mod imp {
 
   /// A global memory block this value allocated and frees, until it is handed
   /// to the clipboard.
-  struct OwnedGlobal(Option<HGLOBAL>);
+  pub(super) struct OwnedGlobal(Option<HGLOBAL>);
 
   impl OwnedGlobal {
-    fn alloc(bytes: usize) -> Result<Self, ShellError> {
+    pub(super) fn alloc(bytes: usize) -> Result<Self, ShellError> {
       // SAFETY: GlobalAlloc takes its flags and size by value and reads no memory of ours.
       let memory = unsafe { GlobalAlloc(GMEM_MOVEABLE, bytes) };
       memory.map(|m| Self(Some(m))).map_err(|_| ShellError(format!("sweetview: GlobalAlloc failed ({})", last_error())))
     }
 
-    fn handle(&self) -> HGLOBAL {
+    pub(super) fn handle(&self) -> HGLOBAL {
       self.0.unwrap_or_default()
     }
 
@@ -166,8 +187,8 @@ mod imp {
     fn drop(&mut self) {
       if let Some(memory) = self.0 {
         // SAFETY: `memory` was allocated by `alloc` for this value alone, was not handed to
-        // the clipboard (`transferred` clears it), and is not locked: every lock borrows it
-        // and has ended.
+        // the clipboard (`transferred` clears it), and is not locked: a lock borrows this
+        // value exclusively (`Block::Owned`), so every lock has ended before this drop.
         let freed = unsafe { windows::Win32::Foundation::GlobalFree(Some(memory)) };
         let _ = freed;
       }
@@ -175,12 +196,9 @@ mod imp {
   }
 
   pub fn read_text() -> Result<Option<String>, ShellError> {
-    let _open = OpenedClipboard::open(None)?;
-    // SAFETY: the clipboard is open on this thread (`_open`) for the whole use of the handle.
-    let data = unsafe { GetClipboardData(u32::from(CF_UNICODETEXT.0)) };
-    let Ok(handle) = data else { return Ok(None) };
-    // The clipboard owns the block and keeps it while the clipboard stays open.
-    let lock = LockedGlobal::lock(HGLOBAL(handle.0))?;
+    let open = OpenedClipboard::open(None)?;
+    // The clipboard owns the block and keeps it while `open` is borrowed.
+    let Some(lock) = LockedGlobal::lock(Block::ClipboardText(&open))? else { return Ok(None) };
     // GlobalSize bounds the scan. Padding after the terminator is not text.
     decode_unicode_text(lock.bytes()).map(Some)
   }
@@ -191,8 +209,10 @@ mod imp {
       .map_err(|e| ShellError(format!("sweetview: {}(SweetviewClipboardOwner) failed ({})", e.call(), e.code())))?;
     let open = OpenedClipboard::open(Some(&owner))?;
     let data = encode_unicode_text(text);
-    let memory = OwnedGlobal::alloc(data.len())?;
-    LockedGlobal::lock(memory.handle())?.write(&data)?;
+    let mut memory = OwnedGlobal::alloc(data.len())?;
+    if let Some(mut lock) = LockedGlobal::lock(Block::Owned(&mut memory))? {
+      lock.write(&data)?;
+    }
     open.empty()?;
     // SAFETY: the clipboard is open on this thread (`open`), and `memory` is an unlocked
     // movable block holding NUL-terminated UTF-16 text, as CF_UNICODETEXT requires.
@@ -261,7 +281,6 @@ mod tests {
   #[cfg(windows)]
   mod live {
     use super::super::*;
-    use crate::win::test_support::counts;
 
     /// Restores the clipboard's text when the test ends, passed or failed.
     struct Restore(Option<String>);
@@ -293,18 +312,31 @@ mod tests {
     fn writing_returns_every_handle() {
       let _serial = crate::serial();
       let _restore = Restore(read_text().expect("read the clipboard first"));
-      // One round first, so one-time costs (the window class) are paid.
-      write_text("warm").expect("write");
-      let before = counts();
-      for round in 0..100 {
+      let mut round = 0u32;
+      sweetview_platform_loop::testing::assert_gives_back_every_handle(100, || {
+        round += 1;
         write_text(&format!("round {round}")).expect("write");
         assert!(read_text().expect("read").is_some());
-      }
+      });
       clear().expect("clear");
-      let after = counts();
-      // `<=`: an earlier test's thread may still be exiting, freeing its own USER objects.
-      assert!(after.0 <= before.0 && after.1 <= before.1, "USER and GDI objects returned to the starting count: {before:?} -> {after:?}");
-      assert!(after.2 <= before.2 + 2, "kernel handles returned to the starting count: {before:?} -> {after:?}");
+    }
+
+    /// The handle counts do not include global memory, so the block a write
+    /// allocates is checked directly: one that is not handed to the clipboard
+    /// is freed when its owner drops.
+    #[test]
+    fn a_global_block_not_handed_over_is_freed() {
+      use windows::Win32::System::Memory::GlobalSize;
+      let text = encode_unicode_text("never handed to the clipboard");
+      let mut memory = super::super::imp::OwnedGlobal::alloc(text.len()).expect("alloc");
+      super::super::imp::LockedGlobal::lock(super::super::imp::Block::Owned(&mut memory)).expect("lock").expect("a block").write(&text).expect("write");
+      let handle = memory.handle();
+      // SAFETY: GlobalSize takes a handle value by value and only reports on it, 0 for a value
+      // that names no block; nothing of ours is read or written.
+      let block_size = |block| unsafe { GlobalSize(block) };
+      assert!(block_size(handle) >= text.len(), "a live block while owned");
+      drop(memory);
+      assert_eq!(block_size(handle), 0, "freed by the owner's drop");
     }
   }
 }

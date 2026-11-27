@@ -1,6 +1,6 @@
 //! The folder dialog, through `rfd`.
 
-use sweetview_platform_window::ForeignWindow;
+use sweetview_platform_window::BorrowedWindow;
 
 use crate::error::Result;
 use crate::runtime::Runtime;
@@ -14,10 +14,12 @@ pub fn pick_folder(owner: Option<isize>, title: &str) -> Result<Option<String>> 
   // The runtime first: making it initialises COM on this thread as a single-threaded
   // apartment, which the dialog needs, and sets the DPI awareness every window shares.
   Runtime::get()?;
-  let mut dialog = rfd::FileDialog::new().set_title(title);
-  let owner = owner.and_then(ForeignWindow::from_handle_value);
-  if let Some(owner) = &owner {
-    dialog = dialog.set_parent(owner);
-  }
-  Ok(dialog.pick_folder().map(|path| path.to_string_lossy().into_owned()))
+  let dialog = rfd::FileDialog::new().set_title(title);
+  let pick = |dialog: rfd::FileDialog| dialog.pick_folder().map(|path| path.to_string_lossy().into_owned());
+  // The owner is lent for the whole dialog: `rfd` passes its handle to the OS dialog as its owner.
+  let owned = owner.and_then(|owner| BorrowedWindow::with_handle_value(owner, |owner| pick(dialog.clone().set_parent(owner))));
+  Ok(match owned {
+    Some(chosen) => chosen,
+    None => pick(dialog),
+  })
 }

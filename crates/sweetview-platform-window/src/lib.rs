@@ -4,20 +4,81 @@
 //!   events of any window on this thread, one Sweetview made through `tao` or
 //!   one an application made itself, from inside whichever message loop
 //!   dispatches them. It also holds the window's [`ExStylePolicy`].
-//! * [`ForeignWindow`] names a window by its handle value, checked when it is
-//!   made: an application's own window (adopted, or a webview mounted in it),
-//!   or the window a popup menu or a dialog is shown for.
+//! * [`BorrowedWindow`] lends a window named by its handle value for the
+//!   length of one call ([`BorrowedWindow::with_handle_value`]), checked to be
+//!   a window when it is lent: an application's own window (adopted, or a
+//!   webview mounted in it), or the window a popup menu or a dialog is shown
+//!   for. Nothing outside an owning type keeps a window handle: a window
+//!   Sweetview did not make is kept as its handle value and lent again for
+//!   each call.
 //! * The free functions are one OS call each (or one short sequence), on a
-//!   [`NativeWindow`]: a `tao` window or a [`ForeignWindow`].
+//!   [`NativeWindow`]: a `tao` window or a [`BorrowedWindow`].
 //!
 //! The public API has no raw handle in it: windows are named by the types
-//! that own or check them, and handle values are plain integers.
+//! that own or borrow them, and handle values are plain integers.
 #![deny(unsafe_op_in_unsafe_fn)]
 #![deny(clippy::undocumented_unsafe_blocks)]
 #![deny(clippy::multiple_unsafe_ops_per_block)]
 #![deny(clippy::missing_safety_doc)]
 
-pub use sweetview_window_logic::{ExStylePolicy, Point, Rect};
+pub use sweetview_window_logic::{ExStylePolicy, Point, Rect, ResizeEdge};
+
+/// Where [`set_placement`] puts a window in the z-order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ZOrder {
+  /// Its place in the z-order is kept.
+  #[default]
+  Keep,
+  /// Into (or re-asserted in) the topmost band.
+  Topmost,
+  /// Out of the topmost band.
+  NotTopmost,
+}
+
+/// One change of a window's outer frame and z-order, made in one step
+/// ([`set_placement`]) and never activating the window. The default changes nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Placement {
+  /// The outer frame's new top-left corner, in screen pixels; `None` keeps it.
+  pub position: Option<Point>,
+  /// The outer frame's new width and height; `None` keeps them.
+  pub size: Option<(i32, i32)>,
+  pub z: ZOrder,
+  /// The frame is measured again after a style change.
+  pub frame_changed: bool,
+}
+
+impl Placement {
+  /// The whole outer frame. A topmost window is re-asserted topmost; any
+  /// other keeps its place in the z-order.
+  pub fn bounds(rect: Rect, topmost: bool) -> Self {
+    Self {
+      position: Some(Point { x: rect.x, y: rect.y }),
+      size: Some((rect.width, rect.height)),
+      z: if topmost { ZOrder::Topmost } else { ZOrder::Keep },
+      frame_changed: false,
+    }
+  }
+}
+
+/// A show state [`show_as`] puts a window in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShowAs {
+  Hidden,
+  Minimized,
+  Maximized,
+  /// Back from minimised or maximised.
+  Restored,
+}
+
+/// The part of a window's frame a press is handed to the OS as ([`press_frame`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FramePart {
+  /// The title bar: the OS move loop.
+  Caption,
+  /// An edge or corner: the OS size loop.
+  Edge(ResizeEdge),
+}
 
 #[cfg(windows)]
 #[path = "windows.rs"]
@@ -75,6 +136,12 @@ pub use sweetview_platform_loop::ResourceCounts as HandleCounts;
 pub(crate) static TEST_SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
 mod metrics;
 mod popup;
+
+/// Reads back what the OS shows, for the tests of this crate and of the
+/// runtime (which enables the `test-support` feature as a dev-dependency only).
+#[cfg(all(windows, any(test, feature = "test-support")))]
+#[path = "test_support.rs"]
+pub mod test_support;
 
 pub use metrics::{double_click_time_ms, small_icon_size};
 pub use popup::{check_item, show_popup, PopupAt};

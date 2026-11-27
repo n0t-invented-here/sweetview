@@ -8,6 +8,11 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+[features]
+# `test_support`: reads back what the OS shows, for the tests of crates that
+# depend on this one. Enabled only as a dev-dependency.
+test-support = []
+
 [dependencies]
 tao.workspace = true
 muda.workspace = true

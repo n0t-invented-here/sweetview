@@ -7,14 +7,16 @@
 
 #[cfg(windows)]
 mod imp {
-  use windows::Win32::UI::Input::KeyboardAndMouse::GetDoubleClickTime;
+  use windows::UI::ViewManagement::UISettings;
   use windows::Win32::UI::WindowsAndMessaging::SM_CXSMICON;
 
   use crate::platform::metric;
 
+  /// The user's double-click time through WinRT's `UISettings`, a safe call
+  /// of the `windows` crate that reads the same setting as `GetDoubleClickTime`
+  /// (the test below compares the two).
   pub fn double_click_time_ms() -> u32 {
-    // SAFETY: GetDoubleClickTime takes no arguments and only reads a user setting.
-    let ms = unsafe { GetDoubleClickTime() };
+    let ms = UISettings::new().and_then(|settings| settings.DoubleClickTime()).unwrap_or(0);
     if ms == 0 {
       500
     } else {
@@ -38,8 +40,8 @@ mod imp {
   }
 }
 
-/// The user's double-click interval in milliseconds (Windows: `GetDoubleClickTime`).
-/// A second click inside it makes a double click.
+/// The user's double-click interval in milliseconds (Windows: `UISettings::DoubleClickTime`,
+/// the setting `GetDoubleClickTime` reads). A second click inside it makes a double click.
 pub fn double_click_time_ms() -> u32 {
   imp::double_click_time_ms()
 }
@@ -56,5 +58,19 @@ mod tests {
   fn metrics_are_sane() {
     assert!((100..=5000).contains(&super::double_click_time_ms()));
     assert!((16..=256).contains(&super::small_icon_size()));
+  }
+
+  /// The safe WinRT reading is the one the Win32 call gives.
+  #[cfg(windows)]
+  #[test]
+  fn the_double_click_time_is_the_one_win32_reports() {
+    use windows::Win32::UI::Input::KeyboardAndMouse::GetDoubleClickTime;
+    // SAFETY: GetDoubleClickTime takes no arguments and only reads a user setting.
+    let win32 = unsafe { GetDoubleClickTime() };
+    // Read without the fallback, so a failed WinRT call cannot pass as the default.
+    let winrt = windows::UI::ViewManagement::UISettings::new().and_then(|settings| settings.DoubleClickTime()).expect("UISettings");
+    eprintln!("double-click time: GetDoubleClickTime {win32} ms, UISettings::DoubleClickTime {winrt} ms");
+    assert_eq!(winrt, win32);
+    assert_eq!(super::double_click_time_ms(), win32);
   }
 }

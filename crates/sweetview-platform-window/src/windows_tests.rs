@@ -23,8 +23,9 @@ impl TestWindow {
     Self(hwnd)
   }
 
-  pub(crate) fn foreign(&self) -> ForeignWindow {
-    ForeignWindow::from_handle_value(self.0 .0 as isize).expect("a live window")
+  /// The window, lent for as long as this value is borrowed: it is destroyed only in its `Drop`.
+  pub(crate) fn foreign(&self) -> BorrowedWindow<'_> {
+    BorrowedWindow { hwnd: self.0, _window: PhantomData, _not_send: PhantomData }
   }
 
   pub(crate) fn send(&self, message: u32, wparam: usize) -> LRESULT {
@@ -49,20 +50,27 @@ fn serial() -> std::sync::MutexGuard<'static, ()> {
 }
 
 #[test]
-fn a_handle_value_names_a_window_only_when_it_is_one() {
+fn a_handle_value_is_lent_only_when_it_names_a_window() {
   let _serial = serial();
-  assert!(ForeignWindow::from_handle_value(0).is_none());
-  assert!(ForeignWindow::from_handle_value(1).is_none());
+  assert!(BorrowedWindow::with_handle_value(0, |_| ()).is_none());
+  assert!(BorrowedWindow::with_handle_value(1, |_| ()).is_none());
   let window = TestWindow::new();
-  let foreign = window.foreign();
-  assert_eq!(handle_value(&foreign), window.0 .0 as isize);
-  assert!(is_on_this_thread(&foreign));
-  assert!(is_window(&foreign));
-  let raw = foreign.window_handle().expect("a handle").as_raw();
-  assert!(matches!(raw, RawWindowHandle::Win32(h) if h.hwnd.get() == window.0 .0 as isize));
-  drop(window);
-  assert!(!is_window(&foreign));
-  assert!(matches!(foreign.window_handle(), Err(HandleError::Unavailable)));
+  let value = window.0 .0 as isize;
+  let lent = BorrowedWindow::with_handle_value(value, |borrowed| {
+    assert_eq!(handle_value(borrowed), value);
+    assert!(is_on_this_thread(borrowed));
+    assert!(is_window(borrowed));
+    let raw = borrowed.window_handle().expect("a handle").as_raw();
+    assert!(matches!(raw, RawWindowHandle::Win32(h) if h.hwnd.get() == value));
+    // Destroyed by code the call runs: the OS refuses the handle from then on.
+    // SAFETY: the test's own window, destroyed on this thread; `TestWindow`'s later drop fails harmlessly.
+    unsafe { DestroyWindow(window.0) }.expect("DestroyWindow");
+    assert!(!is_window(borrowed));
+    assert!(matches!(borrowed.window_handle(), Err(HandleError::Unavailable)));
+    assert!(outer_bounds(borrowed).is_none(), "the OS validates the handle on each call");
+  });
+  assert_eq!(lent, Some(()));
+  assert!(BorrowedWindow::with_handle_value(value, |_| ()).is_none(), "a value that names no window is not lent");
 }
 
 #[test]
@@ -79,7 +87,7 @@ fn the_subclass_delivers_bounds_close_and_destroy() {
   .expect("subclass");
   assert!(WindowSubclass::install(&window.foreign(), |_| false).is_err(), "one subclass per window");
 
-  assert!(set_outer_bounds(&window.foreign(), Rect::new(60, 70, 320, 240), false));
+  assert!(set_placement(&window.foreign(), Placement::bounds(Rect::new(60, 70, 320, 240), false)));
   assert_eq!(outer_bounds(&window.foreign()), Some(Rect::new(60, 70, 320, 240)));
   {
     let seen = seen.borrow();
@@ -95,15 +103,58 @@ fn the_subclass_delivers_bounds_close_and_destroy() {
   // STATIC's default procedure destroys the window on WM_CLOSE: the subclass sees it go.
   window.send(WM_CLOSE, 0);
   assert_eq!(seen.borrow().as_slice(), &[WindowEvent::CloseRequested, WindowEvent::Destroyed]);
-  assert!(!is_window(&window.foreign_unchecked()));
+  assert!(!is_window(&window.foreign()));
   drop(subclass);
 }
 
-impl TestWindow {
-  fn foreign_unchecked(&self) -> ForeignWindow {
-    ForeignWindow { hwnd: self.0, _not_send: PhantomData }
-  }
+/// After its window is gone, a `WindowSubclass` does nothing with the handle
+/// value it was installed on, which may name another window by then: not the
+/// next window's state, not its subclass, not its styles.
+#[test]
+fn a_subclass_whose_window_is_gone_leaves_a_later_window_alone() {
+  let _serial = serial();
+  // The real sequence: the window goes first, then its subclass's methods and drop do nothing.
+  let first = TestWindow::new();
+  let stale = WindowSubclass::install(&first.foreign(), |_| false).expect("subclass");
+  drop(first);
+  assert!(stale.state.gone.get(), "WM_NCDESTROY marked the subclass gone");
+  stale.set_policy(ExStylePolicy { tool_window: true, ..Default::default() });
+  stale.force_style(WS_CLIPCHILDREN_FOR_TEST);
+  drop(stale);
+
+  // The handle value given to a later window, which the OS does: a subclass of the
+  // earlier window, gone, holding the same value as the later window's live subclass.
+  let later = TestWindow::new();
+  let later_events = Rc::new(Cell::new(0u32));
+  let sink = later_events.clone();
+  let current = WindowSubclass::install(&later.foreign(), move |_| {
+    sink.set(sink.get() + 1);
+    false
+  })
+  .expect("subclass");
+  let earlier_state = Rc::new(SubclassState {
+    handler: Rc::new(|_| false),
+    policy: Cell::new(ExStylePolicy::default()),
+    fill_child: Cell::new(false),
+    hold_visibility: Cell::new(false),
+    forced_style: Cell::new(0),
+    gone: Cell::new(true),
+  });
+  let earlier = WindowSubclass { hwnd: later.0, state: earlier_state, _not_send: PhantomData };
+  let (style_before, ex_before) = (style(&later.foreign()), ex_style(&later.foreign()));
+  earlier.set_policy(ExStylePolicy { tool_window: true, click_through: Some(true), ..Default::default() });
+  earlier.force_style(WS_CLIPCHILDREN_FOR_TEST);
+  assert_eq!((style(&later.foreign()), ex_style(&later.foreign())), (style_before, ex_before), "no style written to the later window");
+  drop(earlier);
+  assert!(state_of(later.0).is_some_and(|known| Rc::ptr_eq(&known, &current.state)), "the later window's state is kept");
+  // The later window's subclass is still installed and delivering.
+  later_events.set(0);
+  assert!(set_placement(&later.foreign(), Placement::bounds(Rect::new(50, 60, 310, 210), false)));
+  assert!(later_events.get() > 0, "the later window's events still arrive");
+  drop(current);
 }
+
+const WS_CLIPCHILDREN_FOR_TEST: u32 = 0x0200_0000;
 
 #[test]
 fn the_style_policy_holds_whoever_changes_the_style() {
@@ -136,8 +187,8 @@ fn a_subclass_on_a_window_of_another_thread_is_refused() {
   let window = TestWindow::new();
   let value = window.0 .0 as isize;
   let refused = std::thread::spawn(move || {
-    let foreign = ForeignWindow::from_handle_value(value).expect("a live window");
-    (is_on_this_thread(&foreign), WindowSubclass::install(&foreign, |_| false).err())
+    BorrowedWindow::with_handle_value(value, |foreign| (is_on_this_thread(foreign), WindowSubclass::install(foreign, |_| false).err()))
+      .expect("a live window")
   })
   .join()
   .expect("thread");
@@ -155,7 +206,7 @@ fn layered_attributes_chrome_and_geometry_restore() {
 
   let snapshot = GeometrySnapshot::take(&foreign);
   window.set_ex_style(0);
-  set_outer_bounds(&foreign, Rect::new(0, 0, 100, 100), false);
+  set_placement(&foreign, Placement::bounds(Rect::new(0, 0, 100, 100), false));
   snapshot.restore(&foreign);
   assert_eq!(GeometrySnapshot::take(&foreign), snapshot);
 }
@@ -164,14 +215,7 @@ fn layered_attributes_chrome_and_geometry_restore() {
 fn owning_types_give_every_handle_back() {
   let _serial = serial();
   let ico = test_ico();
-  // One round first, so one-time costs (classes, lazily loaded modules) are paid.
-  {
-    let window = TestWindow::new();
-    let _subclass = WindowSubclass::install(&window.foreign(), |_| true).expect("subclass");
-    let _icons = WindowIcons::set(&window.foreign(), Some(&ico)).expect("icons");
-  }
-  let before = handle_counts();
-  for _ in 0..100 {
+  sweetview_platform_loop::testing::assert_gives_back_every_handle(100, || {
     let window = TestWindow::new();
     let subclass = WindowSubclass::install(&window.foreign(), |_| true).expect("subclass");
     let first = WindowIcons::set(&window.foreign(), Some(&ico)).expect("icons");
@@ -180,11 +224,37 @@ fn owning_types_give_every_handle_back() {
     let _stock = WindowIcons::set(&window.foreign(), None).expect("stock icons");
     drop(second);
     drop(subclass);
-  }
-  let after = handle_counts();
-  assert_eq!(after.user_objects, before.user_objects, "USER objects returned to the starting count");
-  assert_eq!(after.gdi_objects, before.gdi_objects, "GDI objects returned to the starting count");
-  assert!(after.kernel_handles <= before.kernel_handles + 2, "kernel handles returned to the starting count");
+  });
+}
+
+/// Icons a window still shows survive the drop of their `WindowIcons` (an
+/// adopted window that is released): the window goes on showing icons
+/// `GetIconInfo` accepts. Once the window is gone they are destroyed at the
+/// next icon change, so the loop gives every handle back.
+#[test]
+fn icons_a_live_window_shows_outlive_their_owner_and_go_with_the_window() {
+  let _serial = serial();
+  let ico = test_ico();
+  let window = TestWindow::new();
+  let icons = WindowIcons::set(&window.foreign(), Some(&ico)).expect("icons");
+  assert!(crate::test_support::shows_valid_icons(&window.foreign()));
+  drop(icons);
+  assert!(crate::test_support::shows_valid_icons(&window.foreign()), "the released window's icons are still valid");
+  // Replaced by other icons: the parked ones are no longer shown and go at the next change.
+  let replaced = WindowIcons::set(&window.foreign(), Some(&ico)).expect("new icons");
+  assert!(crate::test_support::shows_valid_icons(&window.foreign()));
+  drop(replaced);
+  drop(window);
+
+  sweetview_platform_loop::testing::assert_gives_back_every_handle(100, || {
+    let window = TestWindow::new();
+    drop(WindowIcons::set(&window.foreign(), Some(&ico)).expect("icons"));
+    assert!(crate::test_support::shows_valid_icons(&window.foreign()));
+    drop(window);
+    // The next change destroys the icons of the window that is gone.
+    let other = TestWindow::new();
+    drop(WindowIcons::set(&other.foreign(), None).expect("stock icons"));
+  });
 }
 
 #[test]
@@ -259,7 +329,7 @@ fn a_shell_drop_is_read_and_freed_by_the_window() {
   .expect("subclass");
   subclass.set_policy(ExStylePolicy { accept_files: Some(true), ..Default::default() });
   let paths = [r"C:\sweetview test\one.txt", "C:\\sweetview test\\t\u{e9}st two.png"];
-  let growth = sweetview_platform_loop::testing::smallest_growth(50, || {
+  sweetview_platform_loop::testing::assert_gives_back_every_handle(50, || {
     // SAFETY: GlobalSize takes a handle value by value and only reports on it, 0 for a value
     // that names no block; nothing of ours is read or written.
     let block_size = |block| unsafe { GlobalSize(block) };
@@ -270,6 +340,5 @@ fn a_shell_drop_is_read_and_freed_by_the_window() {
     assert_eq!(seen.borrow().as_slice(), &[WindowEvent::FilesDropped(paths.iter().map(|p| (*p).to_owned()).collect())]);
     assert_eq!(block_size(drop), 0, "DragFinish freed the drop");
   });
-  assert!(growth.within(0), "{growth:?}");
   drop(subclass);
 }

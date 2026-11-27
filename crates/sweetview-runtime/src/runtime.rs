@@ -392,16 +392,6 @@ pub(crate) mod testing {
     let _release = Release;
     body(Runtime::get().expect("runtime"));
   }
-
-  /// Pumps until `done` or five seconds pass.
-  pub(crate) fn pump_until(runtime: &Runtime, done: impl Fn() -> bool) -> bool {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-    while !done() && std::time::Instant::now() < deadline {
-      runtime.pump();
-      std::thread::sleep(std::time::Duration::from_millis(1));
-    }
-    done()
-  }
 }
 
 #[cfg(all(test, windows))]

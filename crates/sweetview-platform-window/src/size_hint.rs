@@ -43,8 +43,6 @@ pub use imp::apply_given_window_size;
 
 #[cfg(windows)]
 mod imp {
-  use std::ffi::c_void;
-
   use windows::Win32::Foundation::{HWND, RECT};
   use windows::Win32::UI::HiDpi::AdjustWindowRectExForDpi;
   use windows::Win32::UI::WindowsAndMessaging::{
@@ -53,14 +51,14 @@ mod imp {
 
   use super::{scale_to_dpi, style_for_size_hint, GivenWindowSizeHint};
   use crate::platform::{dpi_of, set_style_of, set_window_pos};
-  use crate::{handle_value, style, NativeWindow, Rect};
+  use crate::{style, NativeWindow, Rect};
 
   /// Applies `webview_set_size(width, height, hint)` to a window the webview
   /// was given, as the C++ library did (see the module). False when the OS
   /// refused a step; a window that is gone refuses every step.
   pub fn apply_given_window_size(window: &impl NativeWindow, width: u32, height: u32, hint: GivenWindowSizeHint) -> bool {
-    // The value of a window named by `NativeWindow`: checked when it was named.
-    let hwnd = HWND(handle_value(window) as *mut c_void);
+    // The window named by `NativeWindow`; the OS validates it on each call below.
+    let hwnd: HWND = window.hwnd();
     let new_style = style_for_size_hint(style(window), hint);
     // On a window that is gone the call fails with ERROR_INVALID_WINDOW_HANDLE and writes nothing.
     let _previous = set_style_of(hwnd, GWL_STYLE, new_style as isize);

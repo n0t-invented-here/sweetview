@@ -9,7 +9,7 @@
 use std::cell::Cell;
 
 use muda::{CheckMenuItem, IconMenuItem, IsMenuItem, Menu, MenuEvent, MenuId, MenuItem as MudaItem, PredefinedMenuItem, Submenu};
-use sweetview_platform_window::{check_item, show_popup, ForeignWindow, PopupAt};
+use sweetview_platform_window::{check_item, show_popup, BorrowedWindow, PopupAt};
 
 use crate::error::{Error, Result};
 use crate::icon::IconBytes;
@@ -161,7 +161,7 @@ thread_local! {
 /// handler. For the length of the call this function puts its own handler in
 /// front, which takes the events of this menu and hands any other to the
 /// handler that was there before, and puts that handler back afterwards.
-pub fn show(menu: &BuiltMenu, owner: &ForeignWindow, at: PopupAt) -> Option<u32> {
+pub fn show(menu: &BuiltMenu, owner: &BorrowedWindow<'_>, at: PopupAt) -> Option<u32> {
   let previous = MenuEvent::set_event_handler(None);
   let forward = previous.clone();
   MenuEvent::set_event_handler(Some(std::sync::Arc::new(move |event: MenuEvent| match id_of(&event.id) {
@@ -193,13 +193,15 @@ pub fn popup(owner: isize, data: &[MenuItem], at: Option<(f64, f64)>) -> Result<
   if data.is_empty() {
     return Ok(None);
   }
-  let Some(owner) = ForeignWindow::from_handle_value(owner) else { return Ok(None) };
+  if BorrowedWindow::with_handle_value(owner, |_| ()).is_none() {
+    return Ok(None);
+  }
   let built = build(data)?;
   let at = match at {
     Some((x, y)) => PopupAt::Screen { x: x.round() as i32, y: y.round() as i32 },
     None => PopupAt::Cursor,
   };
-  Ok(show(&built, &owner, at))
+  Ok(BorrowedWindow::with_handle_value(owner, |owner| show(&built, owner, at)).flatten())
 }
 
 #[cfg(test)]

@@ -95,8 +95,8 @@ mod tests {
     let _serial = crate::TEST_SERIAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     // On a thread of its own, so the first enter really initialises COM and the last drop
     // really uninitialises it, in every round.
-    let growth = std::thread::spawn(|| {
-      crate::testing::smallest_growth(100, || {
+    std::thread::spawn(|| {
+      crate::testing::assert_gives_back_every_handle(100, || {
         let outer = ComApartment::enter().expect("an STA");
         let inner = ComApartment::enter().expect("entered again");
         drop(inner);
@@ -104,7 +104,6 @@ mod tests {
       })
     })
     .join()
-    .expect("thread");
-    assert!(growth.within(0), "{growth:?}");
+    .expect("every count returned to its starting value");
   }
 }
