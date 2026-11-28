@@ -555,6 +555,11 @@ impl Core {
   /// Destroys an owned window now, or forgets an adopted one, and releases
   /// everything kept for it. Safe to call twice.
   fn destroy(&self) {
+    #[cfg(feature = "webview")]
+    let webview_drop_waits_in = crate::engine::drop_waits_in;
+    // Without the webview engine (the native binding of D50) no webview's drop waits.
+    #[cfg(not(feature = "webview"))]
+    let webview_drop_waits_in = |_: isize| false;
     if !self.alive.replace(false) {
       return;
     }
@@ -572,7 +577,7 @@ impl Core {
     // inside a webview callback) goes first: the window is hidden now and destroyed after it, by
     // a job queued behind the webview's own (D49, R3 of its first review).
     let tao = match tao {
-      Some(tao) if crate::engine::drop_waits_in(self.handle) => match Runtime::existing() {
+      Some(tao) if webview_drop_waits_in(self.handle) => match Runtime::existing() {
         Some(runtime) => {
           tao.set_visible(false);
           let _ = UNDESTROYED.try_with(|pending| pending.borrow_mut().push(tao));
