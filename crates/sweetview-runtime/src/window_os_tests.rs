@@ -1047,12 +1047,13 @@ fn a_topmost_overlay_as_the_first_window_of_a_process_started_hidden_is_shown_ab
   for _ in 0..3 {
     let out = std::env::temp_dir().join(format!("sweetview-overlay-{}.txt", std::process::id()));
     let command = format!(
-      "Start-Process -FilePath '{}' -ArgumentList '{name} --exact --nocapture --test-threads=1' -WindowStyle Hidden -Wait -RedirectStandardOutput '{}'",
+      "$child = Start-Process -FilePath '{}' -ArgumentList '{name} --exact --nocapture --test-threads=1' -WindowStyle Hidden -Wait -PassThru -RedirectStandardOutput '{}'; exit $child.ExitCode",
       exe.display(),
       out.display()
     );
     let status = std::process::Command::new("pwsh").args(["-NoProfile", "-NonInteractive", "-Command", &command]).env(OVERLAY_CHILD, "1").status().expect("pwsh");
-    assert!(status.success(), "the hidden child ran");
+    // `exit $child.ExitCode`: pwsh's own code is the child's.
+    assert_eq!(status.code(), Some(0), "the hidden child's exit code");
     let text = std::fs::read_to_string(&out).unwrap_or_default();
     let _ = std::fs::remove_file(&out);
     let line = text.split("RESULT ").nth(1).and_then(|rest| rest.lines().next()).unwrap_or("null");
