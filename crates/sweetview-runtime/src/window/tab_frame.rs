@@ -300,7 +300,7 @@ impl TabFrame {
   pub fn show_system_menu(&self) -> Result<()> {
     if self.is_live() {
       let at = screen::cursor()?;
-      self.core.with_tao(|tao| platform::show_system_menu(tao, at));
+      self.core.show_system_menu(at)?;
     }
     Ok(())
   }

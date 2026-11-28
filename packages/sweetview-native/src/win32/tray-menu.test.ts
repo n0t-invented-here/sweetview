@@ -20,6 +20,7 @@ import {
   VK,
   WM_CLOSE,
   buttonsDown,
+  chooseMenuItem,
   chooseInFolderDialog,
   cursor,
   guiObjects,
@@ -515,6 +516,67 @@ describe.if(onWindows)("Menu.popup (binding: muda)", () => {
 });
 
 describe.if(onWindows)("Window#showSystemMenu", () => {
+  test("follows Sweetview's own state: a frameless window maximises and restores through its work-area toggle, a minimised window can be restored, a window that cannot be sized offers no Size or Maximize", async () => {
+    // Review finding 2 and N1. The items, in order: Restore, Move, Size, Minimize, Maximize, a separator, Close.
+    const area = Screen.primary().workArea;
+    const at = { x: area.x + 90, y: area.y + 90, width: 420, height: 300 };
+    const states = (win: Window): string[] => {
+      let read: string[] = [];
+      whenMenuOpens((menuWindow) => {
+        read = readMenu(menuOfWindow(menuWindow)).map((e) => (e.separator ? "-" : e.disabled ? "off" : "on"));
+        pressKeys(menuWindow, VK.ESCAPE);
+      });
+      win.showSystemMenu();
+      return read;
+    };
+    const choose = (win: Window, position: number) => {
+      whenMenuOpens((menuWindow) => chooseMenuItem(menuWindow, position));
+      win.showSystemMenu();
+    };
+    const frameless = new Window({ title: unique("frameless system menu"), frame: false, noActivate: true, bounds: at });
+    const framed = new Window({ title: unique("framed system menu"), noActivate: true, bounds: at });
+    const fixed = new Window({ title: unique("fixed system menu"), resizable: false, noActivate: true, bounds: at });
+    const fixedTabs = new Window({ tabs: true, resizable: false, noActivate: true });
+    try {
+      const seen: boolean[] = [];
+      frameless.onMaximizeChange((m) => seen.push(m));
+      frameless.show();
+      // (a) Not maximised: Maximize is Sweetview's work-area toggle; a frameless window is not resizable by default.
+      expect(states(frameless)).toEqual(["off", "on", "off", "on", "on", "-", "on"]);
+      choose(frameless, 4);
+      await pumpUntil(() => frameless.isMaximized(), 2000);
+      expect({ maximized: frameless.isMaximized(), bounds: frameless.bounds(), seen }).toEqual({ maximized: true, bounds: Screen.of(frameless).workArea, seen: [true] });
+      // (b) Maximised: Restore only, no Move or Size; Restore gives back the bounds it had.
+      expect(states(frameless)).toEqual(["on", "off", "off", "on", "off", "-", "on"]);
+      choose(frameless, 0);
+      await pumpUntil(() => !frameless.isMaximized(), 2000);
+      expect({ maximized: frameless.isMaximized(), bounds: frameless.bounds(), seen }).toEqual({ maximized: false, bounds: at, seen: [true, false] });
+      // The next toggle saves the right bounds: there and back.
+      frameless.toggleMaximize();
+      frameless.toggleMaximize();
+      expect(frameless.bounds()).toEqual(at);
+
+      // A minimised window: Restore is enabled and restores it.
+      framed.show();
+      framed.minimize();
+      expect(states(framed)[0]).toBe("on");
+      choose(framed, 0);
+      await pumpUntil(() => !framed.isMinimized(), 2000);
+      expect(framed.isMinimized()).toBe(false);
+
+      // (c) Framed or tabbed, resizable: false: no Size, no Maximize.
+      fixed.show();
+      expect(states(fixed)).toEqual(["off", "on", "off", "on", "off", "-", "on"]);
+      fixedTabs.show();
+      expect(states(fixedTabs)).toEqual(["off", "on", "off", "on", "off", "-", "on"]);
+    } finally {
+      fixedTabs.dispose();
+      fixed.dispose();
+      framed.dispose();
+      frameless.dispose();
+    }
+  }, 30_000);
+
   test("shows the window's system menu, read from a second process, and choosing Minimize minimises it", async () => {
     const area = Screen.primary().workArea;
     const win = new Window({ title: unique("public system menu"), bounds: { x: area.x + 80, y: area.y + 80, width: 420, height: 300 }, noActivate: true });

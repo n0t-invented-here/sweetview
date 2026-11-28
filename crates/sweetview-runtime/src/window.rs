@@ -188,6 +188,12 @@ thread_local! {
   static NEXT_WRAPPER: Cell<u64> = const { Cell::new(1) };
 }
 
+/// Shows the system menu of the window `handle` names when it is one of
+/// Sweetview's own (see `Core::show_system_menu`); `None` for any other window.
+pub(crate) fn show_own_system_menu(handle: isize, at: Point) -> Option<Result<()>> {
+  core_of(handle).map(|core| core.show_system_menu(at))
+}
+
 fn core_of(handle: isize) -> Option<Rc<Core>> {
   WINDOWS.try_with(|w| w.borrow().get(&handle).cloned()).ok().flatten()
 }
@@ -273,6 +279,47 @@ impl Core {
       }
       let listeners: Vec<BoolListener> = self.listeners.borrow().maximize.iter().map(|(_, l)| l.clone()).collect();
       listeners.iter().for_each(|l| l(now));
+    }
+  }
+
+  /// A frameless window's maximise: between its bounds and the work area of
+  /// the screen it is on, the bounds kept to go back to.
+  fn toggle_frameless_maximize(&self) -> Result<()> {
+    let work_area = screen::of_window(self.handle)?.work_area;
+    let (next, restore) = logic::toggle_frameless_maximize(self.restore.get(), self.bounds(), work_area);
+    self.restore.set(restore);
+    self.set_bounds(next);
+    // The bounds may not have changed size (no resize to notice it by).
+    self.note_maximized();
+    Ok(())
+  }
+
+  /// Shows the window's system menu at `at`, its items enabled for the
+  /// window's state as Sweetview knows it, and carries out the chosen command:
+  /// a frameless window is maximised and restored by its own work-area toggle,
+  /// which the OS's `WM_SYSCOMMAND` knows nothing of; everything else goes to
+  /// the OS, as the title bar's own menu sends it.
+  fn show_system_menu(&self, at: Point) -> Result<()> {
+    if !self.alive.get() {
+      return Ok(());
+    }
+    let minimized = self.with_native(|window| platform::is_minimized(window)).unwrap_or(false);
+    // A minimised window keeps the state it is restored to.
+    let maximized = if minimized { self.maximized.get() } else { self.maximized_now() };
+    let state = platform::SystemMenuState {
+      maximized,
+      minimized,
+      can_size: self.chrome.resizable,
+      // A frameless window's maximise is Sweetview's toggle, which any frameless window has.
+      can_maximize: !self.chrome.frame || self.chrome.resizable,
+    };
+    let Some(command) = self.with_native(|window| platform::track_system_menu(window, at, state)).flatten() else { return Ok(()) };
+    match command {
+      platform::SystemCommand::Maximize | platform::SystemCommand::Restore if !self.chrome.frame && !minimized => self.toggle_frameless_maximize(),
+      command => {
+        self.with_native(|window| platform::post_system_command(window, command));
+        Ok(())
+      }
     }
   }
 
@@ -854,13 +901,7 @@ impl Window {
       }
       return Ok(());
     }
-    let work_area = screen::of_window(core.handle)?.work_area;
-    let (next, restore) = logic::toggle_frameless_maximize(core.restore.get(), core.bounds(), work_area);
-    core.restore.set(restore);
-    core.set_bounds(next);
-    // The bounds may not have changed size (no resize to notice it by).
-    core.note_maximized();
-    Ok(())
+    core.toggle_frameless_maximize()
   }
 
   pub fn is_maximized(&self) -> bool {

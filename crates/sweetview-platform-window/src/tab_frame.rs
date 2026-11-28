@@ -22,7 +22,8 @@ use windows::Win32::UI::Shell::{RemoveWindowSubclass, SetWindowSubclass};
 use windows::Win32::UI::WindowsAndMessaging::{
   AppendMenuW, CreatePopupMenu, DestroyMenu, EnableMenuItem, GetForegroundWindow, GetSystemMenu, SendMessageW, SetMenuDefaultItem, TrackPopupMenu, HMENU, MENU_ITEM_FLAGS, MF_ENABLED,
   MF_GRAYED, MF_SEPARATOR, MF_STRING, SC_CLOSE, SC_MAXIMIZE, SC_MINIMIZE, SC_MOVE, SC_RESTORE, SC_SIZE, SWP_NOACTIVATE, SWP_NOZORDER,
-  TPM_RETURNCMD, TPM_RIGHTBUTTON, WM_CLOSE, WM_DPICHANGED, WM_ERASEBKGND, WM_NCDESTROY, WM_SYSCOMMAND, WS_CLIPCHILDREN,
+  TPM_RETURNCMD, TPM_RIGHTBUTTON, WM_CLOSE, WM_DPICHANGED, WM_ERASEBKGND, WM_NCDESTROY, WM_SYSCOMMAND, WS_CLIPCHILDREN, WS_MAXIMIZEBOX,
+  WS_THICKFRAME,
 };
 
 use crate::platform::{after_popup_menu, client_size, dpi_of, forward as forward_frame, post_message, set_foreground, set_window_pos};
@@ -92,23 +93,105 @@ fn track(menu: &impl TrackedMenu, window: &impl NativeWindow, at: Point) -> u32 
   u32::try_from(chosen.0).unwrap_or(0)
 }
 
+/// What a window's system menu offers, from the window's state as whoever
+/// owns it knows it: a frameless Sweetview window is maximised by its own
+/// work-area toggle, which the OS knows nothing of.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SystemMenuState {
+  pub maximized: bool,
+  pub minimized: bool,
+  /// The window can be sized: Size is offered while it is neither maximised nor minimised.
+  pub can_size: bool,
+  /// The window can be maximised: Maximize is offered while it is not maximised.
+  pub can_maximize: bool,
+}
+
+/// A command chosen from a system menu.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SystemCommand {
+  Restore,
+  Move,
+  Size,
+  Minimize,
+  Maximize,
+  Close,
+  /// A command another program added to the menu, by its id.
+  Other(u32),
+}
+
+impl SystemCommand {
+  fn from_id(id: u32) -> Self {
+    match id {
+      id if id == SC_RESTORE => Self::Restore,
+      id if id == SC_MOVE => Self::Move,
+      id if id == SC_SIZE => Self::Size,
+      id if id == SC_MINIMIZE => Self::Minimize,
+      id if id == SC_MAXIMIZE => Self::Maximize,
+      id if id == SC_CLOSE => Self::Close,
+      other => Self::Other(other),
+    }
+  }
+
+  fn id(self) -> u32 {
+    match self {
+      Self::Restore => SC_RESTORE,
+      Self::Move => SC_MOVE,
+      Self::Size => SC_SIZE,
+      Self::Minimize => SC_MINIMIZE,
+      Self::Maximize => SC_MAXIMIZE,
+      Self::Close => SC_CLOSE,
+      Self::Other(id) => id,
+    }
+  }
+}
+
+/// Which of the system menu's commands `state` offers, by command.
+pub fn system_menu_items(state: SystemMenuState) -> [(SystemCommand, bool); 6] {
+  let normal = !state.maximized && !state.minimized;
+  [
+    (SystemCommand::Restore, state.maximized || state.minimized),
+    (SystemCommand::Move, normal),
+    (SystemCommand::Size, normal && state.can_size),
+    (SystemCommand::Minimize, !state.minimized),
+    (SystemCommand::Maximize, !state.maximized && state.can_maximize),
+    (SystemCommand::Close, true),
+  ]
+}
+
 /// Shows the window's system menu (Restore, Move, Size, Minimize, Maximize,
-/// Close) at `at`, with the items enabled for its maximised state, and carries
-/// out the chosen command as the title bar's own menu does.
-pub fn show_system_menu(window: &impl NativeWindow, at: Point) {
-  let hwnd = window.hwnd();
-  let Some(menu) = SystemMenu::of(window) else { return };
-  let zoomed = is_zoomed(window);
-  for (command, enabled) in [(SC_RESTORE, zoomed), (SC_MOVE, !zoomed), (SC_SIZE, !zoomed), (SC_MINIMIZE, true), (SC_MAXIMIZE, !zoomed)] {
-    let state = if enabled { MF_ENABLED } else { MF_GRAYED };
+/// Close) at `at`, its items enabled for `state`, and returns the command
+/// chosen, for the caller to carry out. Blocks until the menu closes.
+pub fn track_system_menu(window: &impl NativeWindow, at: Point, state: SystemMenuState) -> Option<SystemCommand> {
+  let menu = SystemMenu::of(window)?;
+  for (command, enabled) in system_menu_items(state) {
+    let flag = if enabled { MF_ENABLED } else { MF_GRAYED };
     // SAFETY: `menu` is the window's own system menu, alive while the window is.
-    let _previous = unsafe { EnableMenuItem(menu.menu, command, state) };
+    let _previous = unsafe { EnableMenuItem(menu.menu, command.id(), flag) };
   }
   // SAFETY: the same menu; `SC_CLOSE` is one of its commands (by command, not position).
   let _set = unsafe { SetMenuDefaultItem(menu.menu, SC_CLOSE, 0) };
   let chosen = track(&menu, window, at);
-  if chosen != 0 {
-    post_message(hwnd, WM_SYSCOMMAND, chosen as usize);
+  (chosen != 0).then(|| SystemCommand::from_id(chosen))
+}
+
+/// Carries out `command` as the title bar's own menu does: posted to the window as `WM_SYSCOMMAND`.
+pub fn post_system_command(window: &impl NativeWindow, command: SystemCommand) {
+  post_message(window.hwnd(), WM_SYSCOMMAND, command.id() as usize);
+}
+
+/// Shows the system menu of a window Sweetview did not make, its items enabled
+/// for the state the OS knows (`IsZoomed`, `IsIconic`, and the
+/// `WS_THICKFRAME` and `WS_MAXIMIZEBOX` styles), and carries out the chosen command.
+pub fn show_system_menu(window: &impl NativeWindow, at: Point) {
+  let style = crate::style(window);
+  let state = SystemMenuState {
+    maximized: is_zoomed(window),
+    minimized: crate::is_minimized(window),
+    can_size: style & WS_THICKFRAME.0 != 0,
+    can_maximize: style & WS_MAXIMIZEBOX.0 != 0,
+  };
+  if let Some(command) = track_system_menu(window, at, state) {
+    post_system_command(window, command);
   }
 }
 

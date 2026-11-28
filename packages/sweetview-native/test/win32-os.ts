@@ -499,6 +499,7 @@ export function postTrayMouse(trayWindow: bigint, ...messages: number[]): void {
 // ---- popup menus ------------------------------------------------------------------------
 
 const MN_GETHMENU = 0x01e1;
+const MN_SELECTITEM = 0x01e5;
 const MF_BYPOSITION = 0x400;
 const WM_KEYDOWN = 0x0100;
 export const VK = { RETURN: 0x0d, ESCAPE: 0x1b, RIGHT: 0x27, DOWN: 0x28 } as const;
@@ -558,6 +559,12 @@ export function menuItemRect(hmenu: bigint, position: number): { left: number; t
 export const menuItemId = (hmenu: bigint, position: number): number => user32.GetMenuItemID(hmenu, position);
 
 /** Posts key presses to a popup menu window, which its menu loop takes as the keyboard. */
+/** Selects the item at `position` of an open menu and presses Enter on it, as the keyboard would, through messages to the menu's own window. */
+export function chooseMenuItem(menuWindow: bigint, position: number): void {
+  user32.SendMessageW(menuWindow, MN_SELECTITEM, BigInt(position), 0n);
+  post(menuWindow, WM_KEYDOWN, BigInt(VK.RETURN), 1n);
+}
+
 export function pressKeys(menuWindow: bigint, ...keys: number[]): void {
   for (const key of keys) post(menuWindow, WM_KEYDOWN, BigInt(key), 1n);
 }
