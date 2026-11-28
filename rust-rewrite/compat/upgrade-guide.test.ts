@@ -314,7 +314,7 @@ describe("docs/upgrading.md", () => {
     ...["CAPTION_WIDTH", "DRAG_ROOM", "NEW_TAB_WIDTH", "STRIP_HEIGHT", "StripEvents", "StripMethods", "StripPoint", "StripState", "StripTab", "TABS_LEFT", "TAB_MAX_WIDTH", "TAB_MIN_WIDTH", "dropIndex", "scrollToShow", "tabWidth", "tabsViewport"].map((n) => `\`@n1h/sweetview-native/win32/strip-shared\` | \`${n}\``),
     ...["FrameCallbacks", "FrameWindow", "getTabFrame"].map((n) => `\`@n1h/sweetview-native/win32/tab-window\` | \`${n}\``),
     ...["stripPane", "layout()", "stripRect()"].map((n) => `\`FrameWindow\` and \`FrameCallbacks\` members that changed | \`${n}\``),
-    ...["_debugTrackedCount", "asHwnd", "systemIsDark"].map((n) => `\`@n1h/sweetview-native/win32/window\` | \`${n}\``),
+    ...["_debugTrackedCount", "systemIsDark"].map((n) => `\`@n1h/sweetview-native/win32/window\` | \`${n}\``),
     ...["buildMenu", "destroyMenu"].map((n) => `\`@n1h/sweetview-native/win32/menu\` | \`${n}\``),
     ...PANE_ROWS.map((old) => `\`FrameWindow\` and \`FrameCallbacks\` members that changed | ${old}`),
     ...Object.entries(DARWIN_NO_PUBLIC).flatMap(([module, names]) => names.map((n) => `\`@n1h/sweetview-native/darwin/${module}\` | \`${n}\``)),

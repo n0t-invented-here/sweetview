@@ -866,6 +866,7 @@ export const RUNNERS: Record<string, Runner> = {
     must(fn({ windows: { ico: dotIco() } }) === undefined, "Windows: nothing to set at run time");
   }),
   setAppMenu: desktop((fn) => must(fn({ appName: "compat", aboutText: "compat" }) === undefined, "Windows: no app menu bar")),
+  unload: here((fn) => must(fn() === undefined, "with no live webview it does nothing")),
   completeWebviewRequest: desktop((fn, ctx) => RUNNERS.endWebviewResponse!.run(fn, { ...ctx, complete: fn } as never)),
   beginWebviewResponse: desktop((fn, ctx) => RUNNERS.endWebviewResponse!.run(fn, ctx as never)),
   writeWebviewResponseChunk: desktop((fn, ctx) => RUNNERS.endWebviewResponse!.run(fn, ctx as never)),

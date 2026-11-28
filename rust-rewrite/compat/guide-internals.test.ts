@@ -50,7 +50,7 @@ describe("the ready watchdog is opt-in, and every passage says so", () => {
       // Paragraphs, and each bullet, numbered step and table row of a list on its own; a code block whole.
       for (const block of text.split(/\r?\n\s*\r?\n/).flatMap((b) => (b.includes("```") ? [b] : b.split(/\r?\n(?=\s*(?:- |\d+\. |\| ))/)))) {
         const code = block.includes("```") || /^\s*(const|await|import) /m.test(block);
-        const needs = (/showOnReady/.test(block) && /watchdog/.test(block)) || (code && /showOnReady: true/.test(block));
+        const needs = (/showOnReady/.test(block) && /watchdog/.test(block)) || /showOnReady: true/.test(block);
         if (needs && !/readyTimeoutMs/.test(block)) lacking.push(`${path}: ${block.trim().slice(0, 90)}`);
       }
     }
@@ -88,15 +88,24 @@ describe("one recipe for each thing", () => {
     }).toEqual({ overlayHides: false, overlayCloseToTray: true, appCloseToTray: true, appHideOnlyNeverClose: true });
   });
 
-  test("unload: on Windows the call is deleted, on macOS it is kept until its goal; no Write now tells a Windows reader to call it", () => {
-    const rows = guideLines.filter((l) => l.startsWith("| `unload` |"));
+  test("unload: each row's Write now is the macOS form an application on the bindings keeps, and its Change says to delete the call on Windows", () => {
+    const partA = row("`@n1h/sweetview-webview-bun` 2.x, as a 0.x application imports it", "`unload`");
+    const partCRow = row("`@n1h/sweetview-webview-bun`", "`unload`");
     const partC = guideLines.slice(guideLines.indexOf("### C. The bindings package, imported directly")).join(" ");
+    const says = (l: string) => /On macOS, until the macOS goal, keep the call/.test(l) && /On Windows delete it/.test(l);
     expect({
-      rows: rows.length,
-      writeNowCalls: rows.filter((l) => l.split(" | ")[1]!.includes("unload()")).length,
-      saysBoth: rows.filter((l) => /On Windows delete the call/.test(l) && /on macOS, until the macOS goal, keep it/i.test(l)).length,
+      partAWriteNow: partA.split(" | ")[1],
+      partCWriteNow: partCRow.split(" | ")[1],
+      partASays: says(partA),
+      partCSays: says(partCRow),
       stepSaysBoth: /Delete the `unload\(\)` call on Windows/.test(partC) && /On macOS, until the macOS goal, keep it/.test(partC),
-    }).toEqual({ rows: 2, writeNowCalls: 0, saysBoth: 2, stepSaysBoth: true });
+    }).toEqual({
+      partAWriteNow: '`import { unload } from "@n1h/sweetview/native"`; `unload()`',
+      partCWriteNow: '`import { unload } from "@n1h/sweetview-native"`; `unload()`',
+      partASays: true,
+      partCSays: true,
+      stepSaysBoth: true,
+    });
   });
 });
 
@@ -110,8 +119,8 @@ describe("rows and paragraphs say what the code does, no more", () => {
     const attach = read("docs/app.md").replace(/\s+/g, " ");
     const attachPara = attach.slice(attach.indexOf("Mounts a webview inside an existing `Window`"), attach.indexOf("Mounts a webview inside an existing `Window`") + 900);
     expect({
-      metaTabsField: /`tabs` field/.test(meta),
-      holdSaysWhenItWaits: /while a `WebView#run\(\)`/.test(hold) && !/releases it at once \|/.test(hold),
+      metaTabsField: /`tabs` field/.test(meta) || /of those, a `Window` gives its bounds/.test(meta) || !/reads a window's current frame, not the options it was made with/.test(meta),
+      holdSaysWhenItWaits: /a `WebView#run\(\)` of the window is in progress/.test(hold) && /`WebView\.attach`, while WebView2 creates it/.test(hold) && !/releases it at once \|/.test(hold),
       trayClickAtConstruction: /click handler, given when it is made/.test(tray),
       pumpsSayWindows: pumps.length === 5 && pumps.every((l) => /On Windows/.test(l) && /on macOS/.test(l)),
       attachKeepsShown: /already shown stays shown/.test(attachPara),
@@ -119,14 +128,48 @@ describe("rows and paragraphs say what the code does, no more", () => {
   });
 });
 
+describe("the short list says what is true, for whom", () => {
+  test("no line contradicts another, a Windows fact says on Windows, the changes a migrating application meets first are there, and no recipe rebuilds 0.x fault delivery", () => {
+    const start = guideLines.indexOf("## What changes, in the order you meet it");
+    const end = guideLines.indexOf("## What changed for every application");
+    const list = guideLines.slice(start, end).join(" ").replace(/\s+/g, " ");
+    const steps = guideLines.join("\n").replace(/\r/g, "");
+    expect({
+      everyNameKept: /Every public name keeps its module and its name/.test(list),
+      renamesNamed: /createWebviewApp/.test(list) && /maximized\(\)/.test(list),
+      loopOnWindows: /On Windows, `pumpEvents\(\)` inside a running loop does nothing/.test(list),
+      handleOnWindows: /the real `HWND` on Windows/.test(list),
+      envOnWindows: /On Windows, `SWEETVIEW_NATIVE_PATH` replaces `WEBVIEW_PATH`/.test(list),
+      callbackFaults: /`onCallbackError`/.test(list) && /uncaughtException/.test(list),
+      opaqueHandle: /`Webview\.unsafeHandle` is an opaque number/.test(list),
+      workerThrows: /from a `Worker`/.test(list) && /`Window\.fromHandle` throws/.test(list),
+      isolatedInstalls: /isolated installs/.test(list),
+      initMessage: /`wake`/.test(list),
+      reEmitRecipe: /process\.emit\("uncaughtException"/.test(steps),
+      envStepsOnWindows: (steps.match(/set `SWEETVIEW_NATIVE_PATH`/g) ?? []).length === (steps.match(/On Windows, if you set `WEBVIEW_PATH`, set `SWEETVIEW_NATIVE_PATH`/g) ?? []).length,
+    }).toEqual({ everyNameKept: false, renamesNamed: true, loopOnWindows: true, handleOnWindows: true, envOnWindows: true, callbackFaults: true, opaqueHandle: true, workerThrows: true, isolatedInstalls: true, initMessage: true, reEmitRecipe: false, envStepsOnWindows: true });
+  });
+});
+
+describe("twin rows say the same thing", () => {
+  test("asHwnd and its macOS twin asNSWindow both name Window#handle and say the conversion of a raw handle has no public call", () => {
+    const hwnd = row("`@n1h/sweetview-native/win32/window`", "`asHwnd`").split(" | ");
+    const ns = row("`@n1h/sweetview-native/darwin/window`", "`asNSWindow`").split(" | ");
+    const SAME = "a window's handle is `Window#handle` (the `HWND` on Windows, the `NSWindow` pointer on macOS); converting a raw handle to the native layer's form, as this did (throwing for NULL), has no public call in 1.0";
+    expect({ hwnd: [hwnd[1], hwnd[2]], ns: [ns[1], ns[2]] }).toEqual({ hwnd: ['`import { Window } from "@n1h/sweetview-native"`; `Window#handle`', `${SAME} |`], ns: ['`import { Window } from "@n1h/sweetview-native"`; `Window#handle`', `${SAME} |`] });
+  });
+});
+
 describe("what the guide says its test does", () => {
   test("the guide says a row with a new form is run, and what is checked of a row that says no public call in 1.0", () => {
     const text = guideLines.join(" ").replace(/\s+/g, " ");
     expect({
-      everyRowIsRun: /Every row is run by/.test(text),
-      newFormRun: /A row with a new form is run by `rust-rewrite\/compat\/upgrade-guide\.test\.ts`/.test(text),
+      everyRowIsRun: /Every row is run by/.test(text) || /A row with a new form is run by/.test(text),
+      valueRun: /A row whose new form is a value is imported, checked against what the row says, and run once on Windows/.test(text),
+      typeNotRun: /A row whose new form is a type is checked by the TypeScript compiler and not run/.test(text),
+      macosNotRun: /A row of a module that loads only on macOS is checked from its source and not run on Windows/.test(text),
       noPublicChecked: /A row that says `no public call in 1\.0` is checked by name/.test(text),
-    }).toEqual({ everyRowIsRun: false, newFormRun: true, noPublicChecked: true });
+    }).toEqual({ everyRowIsRun: false, valueRun: true, typeNotRun: true, macosNotRun: true, noPublicChecked: true });
   });
 });
 

@@ -644,3 +644,21 @@ pub fn registered_message(name: &str) -> u32 {
   // SAFETY: `name` is a NUL-terminated wide string owned by this frame for the call.
   unsafe { RegisterWindowMessageW(&name) }
 }
+
+/// The window's DPI (`GetDpiForWindow`).
+pub fn dpi_of(window: isize) -> u32 {
+  // SAFETY: takes the handle by value; the OS validates it and answers 0 for one that names no window.
+  unsafe { windows::Win32::UI::HiDpi::GetDpiForWindow(hwnd_of(window)) }
+}
+
+/// The width of a sizable window's resize border at `dpi`: `SM_CXSIZEFRAME` plus
+/// `SM_CXPADDEDBORDER`, as the system frame draws it.
+pub fn frame_edge(dpi: u32) -> i32 {
+  use windows::Win32::UI::HiDpi::GetSystemMetricsForDpi;
+  use windows::Win32::UI::WindowsAndMessaging::{SM_CXPADDEDBORDER, SM_CXSIZEFRAME};
+  // SAFETY: takes a metric index and a DPI, and touches no memory of ours.
+  let frame = unsafe { GetSystemMetricsForDpi(SM_CXSIZEFRAME, dpi) };
+  // SAFETY: as above.
+  let padded = unsafe { GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi) };
+  frame + padded
+}

@@ -3,7 +3,7 @@
 // calls is logged with today's message and the loop goes on, with the
 // callback's fallback result; and a callback may remove or replace itself, or
 // destroy its owner, from inside its own call. The kinds other tests cover
-// are listed in rust-rewrite/evidence/w1-callbacks.txt with their tests.
+// were listed with their tests in checklist item W1.3's run output, kept on the machine outside git.
 //
 // Inputs are the ones the OS would deliver: messages posted or sent to this
 // process's own windows (the tray icon's window, the popup menu, the
