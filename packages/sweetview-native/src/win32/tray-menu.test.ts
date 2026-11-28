@@ -36,7 +36,7 @@ import {
   windowRect,
   type MenuEntry,
 } from "../../test/win32-os";
-import { buildMenu, destroyMenu } from "./menu";
+import { buildMenu, destroyMenu, popupMenuAtCursor } from "./menu";
 import { windowMenu } from "./tab-window";
 import { createTray, currentTray } from "./tray";
 
@@ -166,6 +166,23 @@ describe.if(onWindows)("Menu.popup (binding: muda)", () => {
     } finally {
       owner.destroy();
     }
+  });
+
+  test("popupMenuAtCursor asks the binding for the menu at the cursor, opening above it (where the OS puts it is proven in Rust: menu_tray_os_tests.rs)", () => {
+    const native = binding() as unknown as { popupMenu: (owner: bigint, data: unknown[], at: unknown, above: boolean) => number | null };
+    const real = native.popupMenu;
+    const asked: { at: unknown; above: boolean }[] = [];
+    native.popupMenu = (_owner, _data, at, above) => {
+      asked.push({ at, above });
+      return null;
+    };
+    try {
+      expect(popupMenuAtCursor(1n, [{ label: "One" }])).toBe(false);
+      expect(popupMenuAtCursor(1n, [])).toBe(false); // an empty menu asks nothing
+    } finally {
+      native.popupMenu = real;
+    }
+    expect(asked).toEqual([{ at: null, above: true }]);
   });
 
   test("an empty menu shows nothing, and a null owner throws as before", () => {

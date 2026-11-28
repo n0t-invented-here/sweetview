@@ -727,3 +727,30 @@ pub fn frame_edge(dpi: u32) -> i32 {
   let padded = unsafe { GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi) };
   frame + padded
 }
+
+// ---- notification icons, by the shell's own record -------------------------------------------
+
+fn notify_icon_data(window: isize, uid: u32, flags: windows::Win32::UI::Shell::NOTIFY_ICON_DATA_FLAGS) -> windows::Win32::UI::Shell::NOTIFYICONDATAW {
+  use windows::Win32::UI::Shell::NOTIFYICONDATAW;
+  // A state change with an empty mask: a modify of nothing.
+  NOTIFYICONDATAW { cbSize: size_of::<NOTIFYICONDATAW>() as u32, hWnd: hwnd_of(window), uID: uid, uFlags: flags, ..Default::default() }
+}
+
+/// Whether the shell holds a notification icon added under the window `window` with id `uid`: a
+/// modify that changes nothing, which the shell accepts only for an icon it holds.
+pub fn shell_holds_icon(window: isize, uid: u32) -> bool {
+  use windows::Win32::UI::Shell::{Shell_NotifyIconW, NIF_STATE, NIM_MODIFY};
+  let data = notify_icon_data(window, uid, NIF_STATE);
+  // SAFETY: `data` is a fully initialised NOTIFYICONDATAW on this frame for the call; it changes
+  // nothing of the icon it names.
+  unsafe { Shell_NotifyIconW(NIM_MODIFY, &data) }.as_bool()
+}
+
+/// Deletes the shell's notification icon `(window, uid)` behind its owner's back, as the shell
+/// loses every icon when Explorer restarts.
+pub fn delete_shell_icon(window: isize, uid: u32) -> bool {
+  use windows::Win32::UI::Shell::{Shell_NotifyIconW, NIM_DELETE, NOTIFY_ICON_DATA_FLAGS};
+  let data = notify_icon_data(window, uid, NOTIFY_ICON_DATA_FLAGS(0));
+  // SAFETY: `data` is a fully initialised NOTIFYICONDATAW on this frame for the call.
+  unsafe { Shell_NotifyIconW(NIM_DELETE, &data) }.as_bool()
+}
