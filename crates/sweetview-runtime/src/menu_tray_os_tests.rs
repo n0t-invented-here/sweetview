@@ -690,3 +690,208 @@ fn explorer_shows_the_trays_tooltip_and_icon_and_follows_set_icon_and_set_toolti
     tray.dispose();
   });
 }
+
+// ---- a tray's own window, the system menu of windows Sweetview did not make, the folder dialog ----
+
+/// `tray-menu.test.ts` "a tray is made with its own window and disposed, twice safely": the tray
+/// has a window of its own; disposed, its window is gone and its handle reads 0, and a second
+/// dispose does nothing. (That it is the current tray, and is not once disposed, is TypeScript's.)
+#[test]
+fn a_tray_is_made_with_a_window_of_its_own_and_disposed_twice_safely() {
+  on_ui_thread(|_| {
+    let is_window = |handle: isize| BorrowedWindow::with_handle_value(handle, |_| ()).is_some();
+    let tray = Tray::new(TrayInit { icon: icon(RED), ..tray_init(&unique("tray own window")) }).expect("tray");
+    let window = tray.window_handle_value();
+    assert!(window != 0 && is_window(window), "the tray has a window of its own");
+    tray.dispose();
+    tray.dispose();
+    assert!(!is_window(window), "its window is gone");
+    assert_eq!(tray.window_handle_value(), 0);
+  });
+}
+
+/// Set in the environment of the child process that holds a window of its own.
+const FOREIGN_CHILD: &str = "SWEETVIEW_RUNTIME_TEST_FOREIGN_WINDOW";
+
+/// `tray-menu.test.ts` "a window Sweetview did not make gets the system menu the tag's
+/// windowMenu(hwnd) gave it": the tag enabled Restore when `IsZoomed`, Move, Size and Maximize
+/// when not, Minimize always, and left Close alone. A window of another process shows no menu (and
+/// `window_menu` returns at once, entering no menu loop); this thread's own windows, sizable but not
+/// maximisable, the other way round, and both with a greyed Close, get exactly that, and once
+/// maximised by the system's own command, Restore only.
+#[test]
+fn a_window_sweetview_did_not_make_gets_the_tags_system_menu_and_one_of_another_process_none() {
+  use std::io::{BufRead, Write};
+  if std::env::var(FOREIGN_CHILD).is_ok() {
+    let window = os::OwnWindow::framed(&unique("foreign system menu"), (-3000, -3000, 320, 200), |_| {}).expect("the foreign window");
+    println!("HANDLE {}", window.handle_value());
+    let mut line = String::new();
+    let _ = std::io::stdin().read_line(&mut line);
+    return;
+  }
+  on_ui_thread(|runtime| {
+    // Another process's window.
+    let mut holder = std::process::Command::new(std::env::current_exe().expect("the test executable"))
+      .args(["menu_tray_os_tests::a_window_sweetview_did_not_make_gets_the_tags_system_menu_and_one_of_another_process_none", "--exact", "--nocapture", "--test-threads=1"])
+      .env(FOREIGN_CHILD, "1")
+      .stdin(std::process::Stdio::piped())
+      .stdout(std::process::Stdio::piped())
+      .spawn()
+      .expect("the child process");
+    // Read on a thread of its own, so a child that never reports cannot hold this test: the harness
+    // prints `test <name> ... ` before the test runs, so the handle is found anywhere in its line.
+    let stdout = holder.stdout.take().expect("its stdout");
+    let (send, reported) = std::sync::mpsc::channel::<isize>();
+    // The child's output is read to its end, so its harness never writes to a closed pipe.
+    std::thread::spawn(move || {
+      for line in std::io::BufReader::new(stdout).lines().map_while(Result::ok) {
+        if let Some(handle) = line.split_once("HANDLE ").and_then(|(_, value)| value.trim().parse::<isize>().ok()) {
+          let _ = send.send(handle);
+        }
+      }
+    });
+    let Ok(foreign) = reported.recv_timeout(Duration::from_secs(15)) else {
+      let _ = holder.kill(); // the child this test started
+      let _ = holder.wait();
+      panic!("the child process reported no window within 15 s");
+    };
+    let (fired, seen) = (Rc::new(Cell::new(false)), Rc::new(Cell::new(false)));
+    let (fire, see) = (fired.clone(), seen.clone());
+    runtime
+      .set_timeout(300, move || {
+        fire.set(true);
+        if os::open_popup_menu() != 0 {
+          see.set(true);
+          platform::end_menu_for_tests();
+        }
+      })
+      .expect("watch");
+    menu::window_menu(foreign).expect("window_menu");
+    assert!(!fired.get(), "window_menu returned at once: no menu loop was entered");
+    pump_until(&runtime, 2000, || fired.get());
+    assert!(!seen.get(), "another process's window shows no menu");
+    holder.stdin.take().expect("its stdin").write_all(b"\n").expect("ended");
+    assert!(holder.wait().expect("the child").success());
+
+    // This thread's own windows, by their styles.
+    const WS_THICKFRAME: u32 = 0x0004_0000;
+    const WS_MAXIMIZEBOX: u32 = 0x0001_0000;
+    let make = |style: u32| os::OwnWindow::styled(&unique("own system menu"), (200, 200, 320, 200), style).expect("an own window");
+    let (sizable, maximisable, no_close) = (make(WS_THICKFRAME), make(WS_MAXIMIZEBOX), make(WS_THICKFRAME | WS_MAXIMIZEBOX));
+    assert!(os::disable_system_close(no_close.handle_value()));
+    // The items as the menu shows them, read inside its loop; then the menu is closed.
+    let states = |window: isize| {
+      let read: Rc<RefCell<Vec<&'static str>>> = Rc::default();
+      let into = read.clone();
+      when_menu_opens(&runtime, move |menu_window| {
+        *into.borrow_mut() = os::read_menu(os::menu_of_window(menu_window))
+          .iter()
+          .map(|entry| if entry.separator { "-" } else if entry.disabled { "off" } else { "on" })
+          .collect();
+        os::press_keys(menu_window, &[VK_ESCAPE]);
+      });
+      menu::window_menu(window).expect("window_menu");
+      read.take()
+    };
+    // Restore, Move, Size, Minimize, Maximize, a separator, Close.
+    assert_eq!(states(sizable.handle_value()), ["off", "on", "on", "on", "on", "-", "on"], "sizable, not maximisable");
+    assert_eq!(states(maximisable.handle_value()), ["off", "on", "on", "on", "on", "-", "on"], "maximisable, not sizable");
+    assert_eq!(states(no_close.handle_value()), ["off", "on", "on", "on", "on", "-", "off"], "its own greyed Close is kept");
+    os::send(sizable.handle_value(), os::Message::SysCommand(0xf030)); // SC_MAXIMIZE
+    assert_eq!(states(sizable.handle_value()), ["on", "off", "off", "on", "off", "-", "on"], "maximised: Restore only, as IsZoomed says");
+  });
+}
+
+/// Runs `step` on this process's folder dialog titled `title` from inside the dialog's own loop,
+/// every 20 ms until it returns true. A dialog still up 10 s later is closed, so a failing test
+/// never leaves one open.
+fn when_dialog_opens(runtime: &Rc<Runtime>, title: &str, step: impl FnMut(isize) -> bool + 'static) {
+  let (started, title, step) = (Instant::now(), title.to_owned(), RefCell::new(step));
+  let id: Rc<Cell<Option<TimeoutId>>> = Rc::default();
+  let (own, inner) = (id.clone(), runtime.clone());
+  let interval = runtime
+    .set_interval(20, move || {
+      let dialog = os::own_dialog_titled(&title);
+      let done = dialog != 0 && (step.borrow_mut())(dialog);
+      if !done && started.elapsed() < Duration::from_secs(10) {
+        return;
+      }
+      if let Some(id) = own.take() {
+        inner.clear_timeout(id);
+      }
+      let title = title.clone();
+      let close = move || {
+        let left = os::own_dialog_titled(&title);
+        if left != 0 {
+          os::post(left, os::Message::Close);
+        }
+      };
+      if done {
+        inner.set_timeout(10_000, close).expect("closer");
+      } else {
+        close();
+      }
+    })
+    .expect("watcher");
+  id.set(Some(interval));
+}
+
+/// `tray-menu.test.ts` "pickFolder (binding)": cancelled with no loop running (the timer-pumped
+/// mode) it gives nothing; cancelled from inside the blocking loop it gives nothing and the loop
+/// goes on; and it gives the folder chosen in the dialog, which the given window owns, leaving the
+/// working directory as it was.
+#[test]
+fn the_folder_dialog_gives_nothing_when_cancelled_in_either_loop_mode_and_the_folder_chosen_in_it() {
+  on_ui_thread(|runtime| {
+    // Cancelled, with no loop running.
+    let title = unique("folder");
+    let found = Rc::new(Cell::new(false));
+    let saw = found.clone();
+    when_dialog_opens(&runtime, &title, move |dialog| {
+      saw.set(true);
+      os::post(dialog, os::Message::Close)
+    });
+    assert_eq!(crate::dialogs::pick_folder(None, &title).expect("pick_folder"), None);
+    assert!(found.get(), "the dialog was open");
+
+    // Cancelled from inside the blocking loop.
+    let title = unique("folder");
+    when_dialog_opens(&runtime, &title, |dialog| os::post(dialog, os::Message::Close));
+    type Outcome = Option<(bool, Option<String>)>;
+    let outcome: Rc<RefCell<Outcome>> = Rc::default();
+    let (into, inner) = (outcome.clone(), runtime.clone());
+    runtime
+      .set_timeout(5, move || {
+        let blocking = inner.is_blocking();
+        *into.borrow_mut() = Some((blocking, crate::dialogs::pick_folder(None, &title).expect("pick_folder")));
+        inner.request_exit();
+      })
+      .expect("pick");
+    let ender = runtime.clone();
+    let limit = runtime.set_timeout(20_000, move || ender.request_exit()).expect("limit");
+    runtime.run_blocking().expect("the blocking run");
+    runtime.clear_timeout(limit);
+    assert_eq!(outcome.take(), Some((true, None)), "inside the blocking loop, cancelled: nothing, and the loop went on to its end");
+
+    // Chosen, with an owner.
+    let owner = os::OwnWindow::framed(&unique("folder owner"), (120, 120, 400, 300), |_| {}).expect("owner");
+    let folder = std::env::temp_dir().join(unique("sweetview-pick").replace(' ', "-"));
+    std::fs::create_dir(&folder).expect("the folder");
+    let cwd = std::env::current_dir().expect("cwd");
+    let title = unique("folder");
+    let (owned, typed) = (Rc::new(Cell::new(0isize)), Rc::new(Cell::new(false)));
+    let (own, typing, path) = (owned.clone(), typed.clone(), folder.to_string_lossy().into_owned());
+    when_dialog_opens(&runtime, &title, move |dialog| {
+      own.set(os::owner_of(dialog));
+      typing.set(os::choose_in_folder_dialog(dialog, &path));
+      typing.get()
+    });
+    let picked = crate::dialogs::pick_folder(Some(owner.handle_value()), &title).expect("pick_folder");
+    let canonical = std::fs::canonicalize(&folder).expect("canonical").to_string_lossy().trim_start_matches(r"\\?\").to_lowercase();
+    let _ = std::fs::remove_dir(&folder);
+    assert!(typed.get(), "the folder was typed into the dialog");
+    assert_eq!(owned.get(), owner.handle_value(), "the dialog is owned by the given window");
+    assert_eq!(picked.map(|p| p.to_lowercase()), Some(canonical));
+    assert_eq!(std::env::current_dir().expect("cwd"), cwd, "the working directory is unchanged");
+  });
+}

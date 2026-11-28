@@ -813,3 +813,69 @@ pub fn delete_shell_icon(window: isize, uid: u32) -> bool {
   // SAFETY: `data` is a fully initialised NOTIFYICONDATAW on this frame for the call.
   unsafe { Shell_NotifyIconW(NIM_DELETE, &data) }.as_bool()
 }
+
+// ---- system menus of windows the application made, and the folder dialog ------------------
+
+impl OwnWindow {
+  /// A window of the application's own with a caption, a system menu, a minimise box and the
+  /// styles in `style` (`WS_THICKFRAME`, `WS_MAXIMIZEBOX`, ...), shown at `rect` and not activated,
+  /// as an application makes one outside Sweetview.
+  pub fn styled(title: &str, rect: (i32, i32, i32, i32), style: u32) -> Option<OwnWindow> {
+    use windows::Win32::UI::WindowsAndMessaging::{WINDOW_EX_STYLE, WINDOW_STYLE, WS_CAPTION, WS_MINIMIZEBOX, WS_SYSMENU};
+    Self::make(title, rect, WINDOW_EX_STYLE(0), WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WINDOW_STYLE(style), false, |_| {})
+  }
+}
+
+/// Greys the Close item of the window's own system menu, as an application that may not be
+/// closed does. False when the window has no system menu or the item was not there.
+pub fn disable_system_close(window: isize) -> bool {
+  use windows::Win32::UI::WindowsAndMessaging::{EnableMenuItem, SC_CLOSE};
+  // SAFETY: the OS validates the handle value; `false` asks for the window's own menu, not a copy.
+  let menu = unsafe { GetSystemMenu(hwnd_of(window), false) };
+  if menu.is_invalid() {
+    return false;
+  }
+  // SAFETY: `menu` is the window's system menu, just read; the item and flags are constants.
+  let previous = unsafe { EnableMenuItem(menu, SC_CLOSE, MF_BYCOMMAND | MF_GRAYED) };
+  previous.0 != -1
+}
+
+/// The window's class name, as `GetClassNameW` reads it.
+pub fn class_of(window: isize) -> String {
+  use windows::Win32::UI::WindowsAndMessaging::GetClassNameW;
+  let mut name = [0u16; 256];
+  // SAFETY: `name` is a buffer owned by this frame for the call; its length comes from the slice.
+  let length = unsafe { GetClassNameW(hwnd_of(window), &mut name) };
+  String::from_utf16_lossy(&name[..usize::try_from(length).unwrap_or(0)])
+}
+
+/// The dialog (class `#32770`) of this process titled `title`; 0 when there is none.
+pub fn own_dialog_titled(title: &str) -> isize {
+  own_top_level_windows().into_iter().find(|&window| class_of(window) == "#32770" && title_of(window) == title).unwrap_or(0)
+}
+
+/// The window's owner (`GW_OWNER`); 0 when it has none.
+pub fn owner_of(window: isize) -> isize {
+  use windows::Win32::UI::WindowsAndMessaging::{GetWindow, GW_OWNER};
+  // SAFETY: the OS validates the handle value and answers an error for one with no owner.
+  unsafe { GetWindow(hwnd_of(window), GW_OWNER) }.map_or(0, |owner| owner.0 as isize)
+}
+
+/// Types `path` into the folder dialog's folder field and presses its OK button, as a user does.
+/// The field is the common item dialog's Edit with control id 1152 (`edt1`), a visible direct
+/// child of the dialog; OK is its button with id 1 (`IDOK`). False when either is not there yet.
+pub fn choose_in_folder_dialog(dialog: isize, path: &str) -> bool {
+  use windows::Win32::UI::WindowsAndMessaging::{GetDlgItem, WM_SETTEXT};
+  // SAFETY: the OS validates the handle value; an error for an id no child has.
+  let child = |id: i32| unsafe { GetDlgItem(Some(hwnd_of(dialog)), id) }.map_or(0, |child| child.0 as isize);
+  let (edit, ok) = (child(1152), child(1));
+  // SAFETY: the OS validates the handle value; it reads no memory of ours.
+  if edit == 0 || ok == 0 || class_of(edit) != "Edit" || class_of(ok) != "Button" || !unsafe { IsWindowVisible(hwnd_of(edit)) }.as_bool() {
+    return false;
+  }
+  let text = HSTRING::from(path);
+  // SAFETY: `text` is a NUL-terminated wide string owned by this frame, alive for the whole
+  // (synchronous) call, which is what `WM_SETTEXT` reads.
+  unsafe { SendMessageW(hwnd_of(edit), WM_SETTEXT, None, Some(LPARAM(text.as_ptr() as isize))) };
+  post_integers(ok, 0x00f5, 0, 0) // BM_CLICK
+}

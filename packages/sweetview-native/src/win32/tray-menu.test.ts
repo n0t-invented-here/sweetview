@@ -3,8 +3,8 @@
 // numbering, the current tray, the option mapping, a handler's exception. What the OS shows and
 // does (the real menus read back, their places, the right button, the tray's clicks, menus and
 // handles, Explorer's reading of the icon) is proven in Rust: `crates/sweetview-runtime/src/
-// menu_tray_os_tests.rs` and `icon.rs`. The system menu and the folder dialog are still proven
-// here. Input is a message posted to one of this process's own windows.
+// menu_tray_os_tests.rs` and `icon.rs`, the folder dialog too. The system menu is still proven
+// here where a second process reads it. Input is a message posted to one of this process's own windows.
 
 import { afterEach, describe, expect, test } from "bun:test";
 import { binding } from "../binding";
@@ -16,20 +16,13 @@ import { Window } from "../window";
 import {
   TRAY,
   VK,
-  WM_CLOSE,
   chooseMenuItem,
-  hInstance,
-  wide,
-  chooseInFolderDialog,
   user32,
   endMenu,
-  isWindow,
   menuOfWindow,
   openPopupMenu,
   ownWindows,
   ownWindow,
-  ownerOf,
-  post,
   postTrayMouse,
   pressKeys,
   readMenu,
@@ -258,81 +251,9 @@ describe.if(onWindows)("Menu.popup (binding: muda)", () => {
 });
 
 describe.if(onWindows)("Window#showSystemMenu", () => {
-  test("a window Sweetview did not make gets the system menu the tag's windowMenu(hwnd) gave it: one of another process shows none; one of this thread, whatever its styles, has its items from IsZoomed and keeps its own disabled Close", async () => {
-    // Review round 3, measure A. The tag's windowMenu(hwnd) (win32/tab-window.ts, lines 589 to 608)
-    // enabled Restore when IsZoomed, Move, Size and Maximize when not, Minimize always, left Close
-    // alone, made Close the default item and posted the chosen command. Every window Sweetview did not
-    // make (another process's; this thread's own with WS_THICKFRAME, with WS_MAXIMIZEBOX, with both
-    // and a disabled Close), each wrapped by Window.fromHandle, gets exactly that.
-    const states = (win: Window): string[] => {
-      let read: string[] = [];
-      whenMenuOpens((menuWindow) => {
-        read = readMenu(menuOfWindow(menuWindow)).map((e) => (e.separator ? "-" : e.disabled ? "off" : "on"));
-        pressKeys(menuWindow, VK.ESCAPE);
-      });
-      win.showSystemMenu();
-      return read;
-    };
-    // Another process's window: the menu is not shown (it was not before Window.fromHandle registered it either).
-    const holder = Bun.spawn([process.execPath, require("node:url").fileURLToPath(new URL("../../../../rust-rewrite/compat/fixtures/foreign-window.ts", import.meta.url)), "hold"], { stdin: "pipe", stdout: "pipe", stderr: "pipe" });
-    try {
-      const reader = holder.stdout.getReader();
-      let text = "";
-      while (!/\r?\n/.test(text)) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        text += new TextDecoder().decode(value);
-      }
-      const foreign = Window.fromHandle(BigInt(text.trim()));
-      let opened = false;
-      whenMenuOpens((menuWindow) => {
-        opened = true;
-        pressKeys(menuWindow, VK.ESCAPE);
-      });
-      foreign.showSystemMenu();
-      await pumpFor(300);
-      expect(opened).toBe(false);
-      foreign.dispose();
-      // Its watcher saw no menu and is still armed: disarmed, so the next menus are read by their own.
-      for (const cancel of [...menuWatchers]) cancel();
-    } finally {
-      holder.stdin.end();
-      await Promise.race([holder.exited, Bun.sleep(10_000)]);
-    }
-
-    // This thread's own windows, by their styles: sizable but not maximisable, and the other way round.
-    const WS_CAPTION = 0x00c00000;
-    const WS_SYSMENU = 0x00080000;
-    const WS_THICKFRAME = 0x00040000;
-    const WS_MINIMIZEBOX = 0x00020000;
-    const WS_MAXIMIZEBOX = 0x00010000;
-    const WS_VISIBLE = 0x10000000;
-    const MF_GRAYED = 0x1;
-    const SC_CLOSE = 0xf060;
-    const make = (style: number) => {
-      const hwnd = user32.CreateWindowExW(0, wide("STATIC"), wide(unique("own system menu")), WS_VISIBLE | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | style, 200, 200, 320, 200, 0n, 0n, hInstance(), null);
-      expect(hwnd).not.toBe(0n);
-      return hwnd;
-    };
-    const sizable = make(WS_THICKFRAME);
-    const maximisable = make(WS_MAXIMIZEBOX);
-    const noClose = make(WS_THICKFRAME | WS_MAXIMIZEBOX);
-    user32.EnableMenuItem(user32.GetSystemMenu(noClose, 0), SC_CLOSE, MF_GRAYED);
-    const wrapped = [sizable, maximisable, noClose].map((h) => Window.fromHandle(h));
-    try {
-      // Restore, Move, Size, Minimize, Maximize, a separator, Close.
-      expect(states(wrapped[0]!)).toEqual(["off", "on", "on", "on", "on", "-", "on"]);
-      expect(states(wrapped[1]!)).toEqual(["off", "on", "on", "on", "on", "-", "on"]);
-      expect(states(wrapped[2]!)).toEqual(["off", "on", "on", "on", "on", "-", "off"]);
-      // Maximised: Restore only, as IsZoomed says.
-      user32.SendMessageW(sizable, 0x0112, 0xf030n, 0n); // WM_SYSCOMMAND, SC_MAXIMIZE
-      expect(states(wrapped[0]!)).toEqual(["on", "off", "off", "on", "off", "-", "on"]);
-    } finally {
-      for (const w of wrapped) w.dispose();
-      for (const h of [sizable, maximisable, noClose]) user32.DestroyWindow(h);
-    }
-  }, 40_000);
-
+  // A window Sweetview did not make (another process's; this thread's own, by their styles, a
+  // greyed Close kept, maximised): proven in Rust, menu_tray_os_tests.rs
+  // a_window_sweetview_did_not_make_gets_the_tags_system_menu_and_one_of_another_process_none.
   test("shows the window's system menu, read from a second process, and choosing Minimize minimises it", async () => {
     const area = Screen.primary().workArea;
     const win = new Window({ title: unique("public system menu"), bounds: { x: area.x + 80, y: area.y + 80, width: 420, height: 300 }, noActivate: true });
@@ -360,15 +281,13 @@ describe.if(onWindows)("Window#showSystemMenu", () => {
 });
 
 describe.if(onWindows)("Tray (binding: tray-icon)", () => {
-  test("a tray is made with its own window and disposed, twice safely", () => {
+  // Its own window, gone once disposed: proven in Rust (menu_tray_os_tests.rs).
+  test("a tray is the current tray until disposed, twice safely, and then has no window handle", () => {
     const tray = createTray({ tooltip: unique("tray"), icon: { windows: { ico: dotIco() } } });
-    const hwnd = tray.windowHandle();
-    expect(hwnd).not.toBe(0n);
-    expect(isWindow(hwnd)).toBe(true);
+    expect(tray.windowHandle()).not.toBe(0n);
     expect(currentTray()).toBe(tray);
     tray.dispose();
     tray.dispose();
-    expect(isWindow(hwnd)).toBe(false);
     expect(tray.windowHandle()).toBe(0n);
     expect(currentTray()).toBeUndefined();
   });
@@ -484,80 +403,9 @@ describe.if(onWindows)("Tray (binding: tray-icon)", () => {
 
 });
 
-describe.if(onWindows)("pickFolder (binding)", () => {
-  /**
-   * Runs `step` on the folder dialog titled `title` from inside the dialog's own loop, every
-   * 20 ms until it returns true. A dialog still up after 10 s is closed, so a failing test never leaves one open.
-   */
-  function whenDialogOpens(title: string, step: (dialog: bigint) => boolean): void {
-    const native = binding();
-    const started = Date.now();
-    const id = native.scheduleInterval(20, () => {
-      const dialog = ownWindows("#32770", title)[0] ?? 0n;
-      if (dialog !== 0n && step(dialog)) {
-        native.cancelTimeout(id);
-        native.scheduleTimeout(10_000, () => void ownWindows("#32770", title).forEach((left) => post(left, WM_CLOSE)));
-      } else if (Date.now() - started > 10_000) {
-        native.cancelTimeout(id);
-        if (dialog !== 0n) post(dialog, WM_CLOSE);
-      }
-    });
-  }
-
-  test("cancelled with no loop running (the timer-pumped mode) returns null", () => {
-    const { pickFolder } = require("../folder-picker") as typeof import("../folder-picker");
-    const title = unique("folder");
-    let found = false;
-    whenDialogOpens(title, (dialog) => {
-      found = true;
-      return post(dialog, WM_CLOSE);
-    });
-    expect(pickFolder(null, title)).toBeNull();
-    expect(found).toBe(true);
-  }, 20_000);
-
-  test("cancelled from inside the blocking loop returns null, and the loop goes on", () => {
-    const { pickFolder } = require("../folder-picker") as typeof import("../folder-picker");
-    const native = binding();
-    const title = unique("folder");
-    let result: string | null | undefined;
-    let blocking = false;
-    whenDialogOpens(title, (dialog) => post(dialog, WM_CLOSE));
-    native.scheduleTimeout(5, () => {
-      blocking = native.isLoopBlocking();
-      result = pickFolder(null, title);
-      native.quitLoop();
-    });
-    native.runLoop();
-    expect(blocking).toBe(true);
-    expect(result).toBeNull();
-  }, 20_000);
-
-  test("returns the chosen folder, with the dialog owned by the given window", () => {
-    const { pickFolder } = require("../folder-picker") as typeof import("../folder-picker");
-    const owner = ownWindow();
-    const folder = require("node:fs").mkdtempSync(require("node:path").join(require("node:os").tmpdir(), "sweetview-pick-"));
-    const cwd = process.cwd();
-    try {
-      const title = unique("folder");
-      let owned = 0n;
-      let typed = false;
-      whenDialogOpens(title, (dialog) => {
-        owned = ownerOf(dialog);
-        typed = chooseInFolderDialog(dialog, folder);
-        return typed;
-      });
-      const picked = pickFolder(owner.hwnd, title);
-      expect(typed).toBe(true);
-      expect(owned).toBe(owner.hwnd);
-      expect(picked?.toLowerCase()).toBe(require("node:fs").realpathSync.native(folder).toLowerCase());
-      expect(process.cwd()).toBe(cwd);
-    } finally {
-      owner.destroy();
-      require("node:fs").rmSync(folder, { recursive: true, force: true });
-    }
-  }, 20_000);
-});
+// pickFolder (cancelled in either loop mode, and the folder chosen, owned by the given window):
+// proven in Rust, menu_tray_os_tests.rs
+// the_folder_dialog_gives_nothing_when_cancelled_in_either_loop_mode_and_the_folder_chosen_in_it.
 
 describe.if(onWindows)("app-wide settings (binding)", () => {
   test("setAppMenu, setAppIcon and setActivationPolicy are accepted and change nothing on Windows", async () => {
