@@ -72,9 +72,9 @@ at that screen's scale. `{ contentSize: { width: 1100, height: 720 } }` is a
 1100 x 720 page at 100 % (a 1100 x 720 client area) and at 150 % (1650 x 1080
 physical pixels), the same size to the eye. A window that would not fit is cut
 to the work area. Give `bounds` or `contentSize`, not both: both throw
-`sweetview: bounds and contentSize cannot both be given`. On macOS, where
-points already are CSS pixels, it is the content rectangle AppKit frames;
-a macOS tabbed window takes it as its frame's size until the macOS goal.
+`sweetview: bounds and contentSize cannot both be given`. On macOS, until the
+macOS goal of the Rust rewrite, `contentSize` is not used: the window is made
+from `bounds` or the default, as before the option existed.
 
 `options.bounds`, `bounds()`, `setBounds()`, `moveTo()`, `resize()`,
 `onMove` and `onResize` all use the outer frame: the rectangle that includes
@@ -202,9 +202,9 @@ the menu bar. See [`setActivationPolicy`](menus-and-tray.md#setactivationpolicy)
 | `setTitle(title)` | Title bar text. |
 | `setIcon(icon)` | Windows: title bar, taskbar and Alt+Tab icon from `icon.windows.ico`; `undefined` restores the stock icon. macOS: no-op. [Why](event-loop-and-icons.md#app-icon-vs-window-icon). |
 | `minimize()` | Minimizes. |
-| `isMinimized()` | Whether the window is minimized: `IsIconic` on Windows (created, frameless, tabbed and `fromHandle` windows alike), `isMiniaturized` on macOS (a tabbed window: its active tab). `isVisible()` is also true for a minimized window, so "on screen" is `isVisible() && !isMinimized()`. A window made hidden, or restored by `show()`, reads `false`. |
+| `isMinimized()` | Whether the window is minimized: `IsIconic` on Windows (created, frameless, tabbed and `fromHandle` windows alike), `isMiniaturized` on macOS (a tabbed window: its active tab). `isVisible()` is also true for a minimized window, so "on screen" is `isVisible() && !isMinimized()`. A window made hidden, or restored by `show()`, reads `false`; one minimized and then hidden stays minimized and reads `true` until `show()` restores it. |
 | `toggleMaximize()`, `isMaximized()` | Framed Windows: `SW_MAXIMIZE` / `SW_RESTORE` and `IsZoomed`. Frameless Windows: work area vs saved bounds. macOS: `zoom:` and `isZoomed`. |
-| `onMaximizeChange(fn: (maximized: boolean) => void)` | Called with `true` when the window becomes maximized and `false` when it is restored, by any means: the frame's button, a snap gesture, a title bar double click, the system menu, `toggleMaximize()` (a frameless window: filling its work area). Once per change: minimizing a maximized window and restoring it reports nothing. Windows: from the window's `WM_SIZE`; macOS: from its resize notifications and `isZoomed`. Replaces polling `isMaximized()`. |
+| `onMaximizeChange(fn: (maximized: boolean) => void)` | Called with `true` when the window becomes maximized and `false` when it is restored, by any means. A framed window: the frame's button, a snap gesture, a title bar double click, the system menu, `toggleMaximize()`. A frameless window, whose maximize is filling its work area: `toggleMaximize()` (what a page-drawn chrome's button and double click call) and its system menu ([`showSystemMenu()`](#window-members)); moved or sized off the work area (dragged by `startDrag()`, say), it is no longer maximized and says so. Once per change: minimizing a maximized window and restoring it reports nothing. Windows: from the window's `WM_SIZE`. macOS: until the macOS goal of the Rust rewrite, it registers nothing and is never called. Replaces polling `isMaximized()`. |
 | `showSystemMenu()` | Windows: the window's system menu (Restore, Move, Size, Minimize, Maximize, Close) at the cursor, its items offered for the window's state as Sweetview knows it (Restore while maximized or minimized; Move and Size only while neither, Size and Maximize only for a window that can be sized, and Maximize for any frameless window, whose maximize is `toggleMaximize()`'s work-area fill), the choice carried out: Maximize and Restore of a frameless window through `toggleMaximize()`, so `isMaximized()` and `onMaximizeChange` follow, everything else as the title bar's own menu sends it; for a page-drawn title bar's right click ([window chrome](../window-chrome.md)). Blocks until it closes. macOS: does nothing; AppKit windows have no such menu. |
 | `setTopmost(on)` | Changes `topmost` after creation. |
 | `startDrag()`, `startResize(edge)` | Page-driven move and resize; see [below](#moving-and-resizing-from-the-page). |

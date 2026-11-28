@@ -101,6 +101,13 @@ if (native && internal) {
   unregister();
   result.lifetime = { exitListenersAdded: process.listenerCount("exit") - exitListeners, released, macosKeepsTagPath: internal.macosKeepsTagPath() };
 
+  // What the Windows goal added to the macOS window code: held back (review finding 8 and N2).
+  const heldBack = await import("../../src/darwin/held-back");
+  result.windowCode = { contentSize: heldBack.macosContentSize({ contentSize: { width: 1100, height: 800 } }) ?? null, maximizeEvents: heldBack.macosMaximizeEvents() };
+  // The demos' windows: the outer frame each passed at the tag.
+  const { demoWindowSize } = await import("../../../../demos/window-size");
+  result.demoWindowSize = demoWindowSize({ width: 1100, height: 800 }, () => ({ x: 410, y: 140, width: 1100, height: 800 }));
+
   if (scenario === "absent") {
     result.webviewError = errorOf(() => new RawWebview(false, size, 5n));
     result.mouseHookError = errorOf(() => installMouseHook(() => false));

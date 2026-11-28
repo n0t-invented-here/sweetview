@@ -19,6 +19,13 @@ describe("on macOS, until the macOS goal", () => {
     expect(r.permissionsError).toBe(MISSING);
   });
 
+  test("the window code the Windows goal added is held back: contentSize is not used, onMaximizeChange registers nothing, and the demos pass the outer frame they passed at the tag", async () => {
+    // Review finding 8 and N2.
+    const { r } = await runFixture("macos-seam.ts", ["fake"]);
+    expect(r.windowCode).toEqual({ contentSize: null, maximizeEvents: false });
+    expect(r.demoWindowSize).toEqual({ bounds: { x: 410, y: 140, width: 1100, height: 800 } });
+  });
+
   test("nothing is registered for release at exit, and no exit listener is added", async () => {
     const { r } = await runFixture("macos-seam.ts", ["fake"]);
     expect(r.lifetime).toEqual({ exitListenersAdded: 0, released: 0, macosKeepsTagPath: true });

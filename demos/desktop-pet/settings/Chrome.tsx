@@ -14,19 +14,26 @@ import { useEffect, useState, type ReactNode } from "react";
 const chrome = windowChromeControls(webviewTransport());
 
 const TITLE_HEIGHT = 38;
+/** The page is in a macOS WKWebView. */
+const MACOS = /Macintosh|Mac OS X/.test(navigator.userAgent);
 const HANDLES = resizeHandles(6); // px of the window's edge that resizes it
 
 export function Chrome({ children }: { children: ReactNode }) {
   const [info, setInfo] = useState<WindowChromeInfo>({ chrome: "os", maximized: false });
   useEffect(() => {
     void chrome.info().then(setInfo);
-    // Every change, by the title bar's double click, a snap gesture or the button, arrives here.
+    // Every change, by the title bar's double click, the button, the system menu or a drag off the work area, arrives here.
     return chrome.onMaximizeChange((maximized) => setInfo((current) => ({ ...current, maximized })));
   }, []);
 
   if (info.chrome === "os") return <>{children}</>;
 
-  const maximize = () => chrome.toggleMaximize();
+  const maximize = () => {
+    chrome.toggleMaximize();
+    // macOS, until its goal, keeps the tag's path (rust-rewrite/HANDOFF-macos.md section 8): no
+    // maximise event reaches the page there, so it asks again after its own toggle, as it did then.
+    if (MACOS) setTimeout(() => void chrome.info().then(setInfo), 50);
+  };
 
   return (
     <Box
