@@ -146,6 +146,16 @@ thread_local! {
   static UNDROPPED: RefCell<Vec<Weak<Inner>>> = const { RefCell::new(Vec::new()) };
 }
 
+/// Whether a webview made in the window `handle` was destroyed and its drop still waits for a
+/// later turn (a webview callback was on the stack): the window must outlive it (D46).
+pub(crate) fn drop_waits_in(handle: isize) -> bool {
+  UNDROPPED
+    .try_with(|all| {
+      all.borrow().iter().filter_map(Weak::upgrade).any(|inner| inner.window_value.get() == handle && inner.live.try_borrow().map(|live| live.is_some()).unwrap_or(true))
+    })
+    .unwrap_or(false)
+}
+
 /// Destroys every webview of this thread that is still alive, and drops those whose drop was
 /// waiting for a later turn of the loop, unless a webview's callback is on the stack now (the
 /// process is ending from inside one): those are left to the OS. Each webview goes before the
@@ -955,6 +965,37 @@ mod tests {
         "its own window closed"
       );
       assert_eq!(on_screen_as_it_goes(&runtime, |_, _| release_all()), Some(false), "the release at the end");
+    });
+  }
+
+  /// R3 of the first review of D46: a webview whose drop waits because a webview callback is on
+  /// the stack (a synchronous handler that disposes the application) still goes before the window
+  /// it fills. Inside a callback scope the webview is destroyed, then its window disposed; once
+  /// the scope is left and the loop turns, the order the two went in is read from their
+  /// `WM_DESTROY`s: WebView2's own window under the container first, the window after.
+  #[test]
+  fn a_webview_whose_drop_waits_for_a_callback_still_goes_before_its_window() {
+    on_ui_thread(|runtime| {
+      let window = crate::window::Window::create(crate::window::WindowInit { title: "rt r3".into(), frame: true, resizable: true, no_activate: true, ..Default::default() }).expect("window");
+      let handle = window.handle();
+      let engine = Engine::create(false, Host::Fill(handle)).expect("webview");
+      let container = engine.inner.with_live(|live| live.webview.hwnd().0 as isize).expect("live");
+      let browser = BorrowedWindow::with_handle_value(container, |c| first_child(c)).flatten().expect("WebView2's window under the container");
+      let order = Rc::new(std::cell::RefCell::new(Vec::new()));
+      let (to_webview, to_window) = (order.clone(), order.clone());
+      let watch_webview = BorrowedWindow::with_handle_value(browser, |b| watch_destroy(b, move || to_webview.borrow_mut().push("webview"))).expect("WebView2's window").expect("watched");
+      let watch_window = BorrowedWindow::with_handle_value(handle, |w| watch_destroy(w, move || to_window.borrow_mut().push("window"))).expect("the window").expect("watched");
+      {
+        let _in_a_callback = CallbackScope::enter();
+        engine.destroy();
+        window.dispose();
+      }
+      let deadline = Instant::now() + Duration::from_secs(5);
+      while order.borrow().len() < 2 && Instant::now() < deadline {
+        runtime.pump();
+      }
+      drop((watch_webview, watch_window));
+      assert_eq!(*order.borrow(), ["webview", "window"]);
     });
   }
 }

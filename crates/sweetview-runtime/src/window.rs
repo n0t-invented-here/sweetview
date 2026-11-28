@@ -436,6 +436,21 @@ impl Core {
     let subclass = self.subclass.borrow_mut().take();
     drop(subclass);
     let tao = self.tao.borrow_mut().take();
+    // A webview made in this window whose drop waits for a later turn (it was destroyed from
+    // inside a webview callback) goes first: the window is hidden now and destroyed after it, by
+    // a job queued behind the webview's own (D46, R3 of its first review).
+    let tao = match tao {
+      Some(tao) if crate::engine::drop_waits_in(self.handle) => match Runtime::existing() {
+        Some(runtime) => {
+          tao.set_visible(false);
+          let _ = UNDESTROYED.try_with(|pending| pending.borrow_mut().push(tao));
+          runtime.defer(destroy_undestroyed);
+          None
+        }
+        None => Some(tao),
+      },
+      other => other,
+    };
     if let Some(tao) = tao {
       // Destroyed now, not when `tao` gets to its own deferred destroy, so
       // `dispose()` and a default close leave no window behind.
