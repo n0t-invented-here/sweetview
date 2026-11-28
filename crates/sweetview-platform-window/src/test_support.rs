@@ -17,7 +17,7 @@ use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_USE_IMMERSIVE_D
 use windows::Win32::Graphics::Gdi::{ClientToScreen, DeleteObject, GetDC, GetPixel, InvalidateRect, ReleaseDC, CLR_INVALID};
 use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentProcessId, GetCurrentThreadId};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-  GetAsyncKeyState, GetKeyState, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBDINPUT, KEYBD_EVENT_FLAGS,
+  GetActiveWindow, GetAsyncKeyState, GetKeyState, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBDINPUT, KEYBD_EVENT_FLAGS,
   KEYEVENTF_KEYUP, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEINPUT, VIRTUAL_KEY, VK_LBUTTON, VK_MBUTTON, VK_RBUTTON,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -76,6 +76,12 @@ pub fn post(window: isize, message: u32, wparam: usize, lparam: isize) -> bool {
 pub fn foreground() -> isize {
   // SAFETY: takes nothing and reads no memory of ours.
   unsafe { GetForegroundWindow() }.0 as isize
+}
+
+/// The handle value of this thread's active window; 0 when it has none.
+pub fn active() -> isize {
+  // SAFETY: takes nothing and reads no memory of ours.
+  unsafe { GetActiveWindow() }.0 as isize
 }
 
 /// Brings `window` to the foreground: asked plainly first; when the OS refuses, this thread's
