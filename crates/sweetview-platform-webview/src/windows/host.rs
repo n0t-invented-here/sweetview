@@ -685,6 +685,28 @@ mod tests {
         drop(orphan);
     }
 
+    // W3: a thread that made a webview and ends, with nothing let go of early, gives back its
+    // WebView2 environment in its thread's teardown without faulting (the process survives
+    // the join), three times over.
+    #[test]
+    fn a_thread_that_made_a_webview_ends_cleanly() {
+        for round in 0..3 {
+            let ended = std::thread::spawn(move || {
+                use tao::event_loop::EventLoopBuilder;
+                use tao::platform::windows::EventLoopBuilderExtWindows;
+                let event_loop = EventLoopBuilder::new().with_any_thread(true).build();
+                let parent = tao::window::WindowBuilder::new().with_visible(false).build(&event_loop).expect("parent");
+                let webview = Webview::create(&BorrowedWindow::of(&parent), Layout::Fill, false, None).expect("webview");
+                drop(webview);
+                drop(parent);
+                drop(event_loop);
+                round
+            })
+            .join();
+            assert_eq!(ended.ok(), Some(round), "round {round}: the thread ended");
+        }
+    }
+
     // W3: a failure after WebView2 has handed the controller over and before the `Webview`
     // exists (here forced right after it) closes that controller, and its widget goes after it.
     #[test]
