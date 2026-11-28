@@ -214,7 +214,71 @@ pub fn popup(owner: isize, data: &[MenuItem], at: Option<(f64, f64)>, corner: Po
   }
   let built = build(data)?;
   let at = popup_point(at, corner)?;
+  if crate::window::is_no_activate(owner) {
+    return popup_for_a_no_activate_owner(&built, at);
+  }
   Ok(BorrowedWindow::with_handle_value(owner, |owner| show(&built, owner, at)).flatten())
+}
+
+/// A menu's owner is made the foreground window to track it, and a window made with `no_activate`
+/// must never take the foreground (D9). So the menu of such an owner is tracked by a hidden
+/// stand-in owner, made as the tray's menu owner is ([`hidden_menu_owner`]), and the window that
+/// was in front before gets the foreground back: at once when nothing was chosen; after the chosen
+/// item's handler has run when one was (it runs when this returns, so the hand-back waits for the
+/// loop's next turn), and then only if the stand-in still holds the foreground: a window the
+/// handler showed or focused stays in front. When that window is gone, or the OS refuses it the
+/// foreground, the stand-in keeps it: the overlay never had it.
+fn popup_for_a_no_activate_owner(built: &BuiltMenu, at: PopupAt) -> Result<Option<u32>> {
+  let before = sweetview_platform_window::foreground_handle_value();
+  let stand_in = stand_in_owner()?;
+  let chosen = BorrowedWindow::with_handle_value(stand_in, |owner| show(built, owner, at)).flatten();
+  match (chosen, Runtime::existing()) {
+    (Some(_), Some(runtime)) => runtime.defer(move || {
+      let _asked = sweetview_platform_window::pass_foreground_back(stand_in, before);
+    }),
+    _ => {
+      let _asked = sweetview_platform_window::pass_foreground_back(stand_in, before);
+    }
+  }
+  Ok(chosen)
+}
+
+thread_local! {
+  /// The hidden owner of the menus of `no_activate` owners, made on first use and kept: destroying
+  /// the foreground window would let the OS activate another of this thread's windows, the overlay
+  /// among them. Released with the menus (`release_all`).
+  static STAND_IN: RefCell<Option<tao::window::Window>> = const { RefCell::new(None) };
+}
+
+/// The handle value of the stand-in owner, made on first use.
+fn stand_in_owner() -> Result<isize> {
+  if STAND_IN.with(|slot| slot.borrow().is_none()) {
+    let window = hidden_menu_owner("sweetview.popup-menu")?;
+    STAND_IN.with(|slot| *slot.borrow_mut() = Some(window));
+  }
+  let handle = STAND_IN.with(|slot| slot.borrow().as_ref().map_or(0, window_handle_value));
+  BorrowedWindow::with_handle_value(handle, |_| handle).ok_or_else(|| Error::state("sweetview: the popup menu's owner window is gone"))
+}
+
+/// A hidden window that can own a popup menu and hold the foreground for it: the tray's menu owner
+/// (whose icon window cannot be activated) and the stand-in for a `no_activate` owner. One way to
+/// make it, for both.
+pub(crate) fn hidden_menu_owner(title: &str) -> Result<tao::window::Window> {
+  let runtime = Runtime::get()?;
+  runtime
+    .with_target(|target| tao::window::WindowBuilder::new().with_visible(false).with_title(title).build(target))?
+    .map_err(|e| Error::os("a popup menu's owner window could not be made", e))
+}
+
+#[cfg(windows)]
+pub(crate) fn window_handle_value(window: &tao::window::Window) -> isize {
+  use tao::platform::windows::WindowExtWindows;
+  window.hwnd()
+}
+
+#[cfg(not(windows))]
+pub(crate) fn window_handle_value(_window: &tao::window::Window) -> isize {
+  0
 }
 
 thread_local! {
@@ -250,6 +314,8 @@ pub(crate) fn release_all() {
   // Dropped after the borrow ends.
   let built: Vec<BuiltMenu> = HANDED_OUT.try_with(|menus| menus.borrow_mut().drain().map(|(_, menu)| menu).collect()).unwrap_or_default();
   drop(built);
+  let stand_in = STAND_IN.try_with(|slot| slot.borrow_mut().take()).ok().flatten();
+  drop(stand_in);
 }
 
 /// `windowMenu` and `Window#showSystemMenu`: shows the system menu (Restore,
