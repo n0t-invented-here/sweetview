@@ -274,6 +274,8 @@ describe.if(onWindows)("win32 Window", () => {
     try {
       for (const [name, win] of [["framed", framed], ["frameless", frameless], ["tabbed", tabbed], ["wrapped", wrapped]] as const) {
         expect({ name, visible: win.isVisible(), minimized: win.isMinimized(), iconic: iconic(win) }).toEqual({ name, visible: false, minimized: false, iconic: false });
+        win.show();
+        expect({ name, visible: win.isVisible(), minimized: win.isMinimized(), iconic: iconic(win) }).toEqual({ name, visible: true, minimized: false, iconic: false });
         win.minimize();
         // isVisible() stays true for a minimised window; isMinimized() tells the two apart.
         expect({ name, visible: win.isVisible(), minimized: win.isMinimized(), iconic: iconic(win) }).toEqual({ name, visible: true, minimized: true, iconic: true });
@@ -282,6 +284,7 @@ describe.if(onWindows)("win32 Window", () => {
         win.hide();
         expect({ name, visible: win.isVisible(), minimized: win.isMinimized() }).toEqual({ name, visible: false, minimized: false });
       }
+      framed.show();
       framed.minimize();
       expect(wrapperOfOwned.isMinimized()).toBe(true);
       framed.show();
