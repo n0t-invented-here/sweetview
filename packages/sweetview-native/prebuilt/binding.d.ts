@@ -124,7 +124,7 @@ export interface WindowInit {
 }
 
 /**
- * One webview: `wry` on the platform's web view, plus Sweetview's request handling.
+ * One webview: on Windows WebView2, made as the C++ library made it, plus Sweetview's request handling.
  * Numeric results are `webview_error_t` codes.
  */
 export declare class Engine {
