@@ -875,14 +875,22 @@ fn a_tab_frame_with_no_tab_paints_its_strip_and_page_in_the_appearances_colours(
       let (_, height) = os::client_size(handle);
       let strip_at = os::client_to_screen(handle, 30, ((f64::from(STRIP_HEIGHT) - 4.0) * scale).round() as i32);
       let page_at = os::client_to_screen(handle, 30, height - 10);
-      let read = || (os::screen_pixel(strip_at.0, strip_at.1), os::screen_pixel(page_at.0, page_at.1));
+      // One reading: whether both points are the frame's, and the colours there, taken together.
+      let read = || {
+        let ours = os::window_at(strip_at.0, strip_at.1) == handle && os::window_at(page_at.0, page_at.1) == handle;
+        (ours, (os::screen_pixel(strip_at.0, strip_at.1), os::screen_pixel(page_at.0, page_at.1)))
+      };
       let want = (Some(strip_colour), Some(page_colour));
-      pump_until(runtime.as_ref(), 2000, || read() == want);
-      let ours = os::window_at(strip_at.0, strip_at.1) == handle && os::window_at(page_at.0, page_at.1) == handle;
-      if read() != want && !ours {
+      let last = Cell::new(read());
+      pump_until(runtime.as_ref(), 2000, || {
+        last.set(read());
+        last.get() == (true, want)
+      });
+      let (ours, seen) = last.get();
+      if !ours {
         panic!("refused to judge: another window covers the frame on the shared desktop; run again");
       }
-      assert_eq!(read(), want, "{appearance:?}: the strip and the page in their own colours");
+      assert_eq!(seen, want, "{appearance:?}: the strip and the page in their own colours, read where the frame is the window");
       frame.dispose();
     }
   });
