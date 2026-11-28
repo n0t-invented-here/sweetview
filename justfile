@@ -40,6 +40,32 @@ pack: native::build
         try { bun pm pack --dry-run } finally { Pop-Location }
     }
 
+# The native package ships the binding, so it is built first. See docs/local-checkout.md.
+# Registers this checkout's eight packages with `bun link`, for an application elsewhere to run against
+[script("pwsh", "-NoProfile", "-File")]
+link: native::build
+    $ErrorActionPreference = 'Stop'
+    $names = foreach ($package in Get-ChildItem packages -Directory) {
+        if (!(Test-Path (Join-Path $package.FullName 'package.json'))) { continue }
+        $output = bun link --cwd $package.FullName 2>&1
+        if ($LASTEXITCODE -ne 0) { $output | ForEach-Object { [Console]::Error.WriteLine($_) }; exit $LASTEXITCODE }
+        (Get-Content (Join-Path $package.FullName 'package.json') -Raw | ConvertFrom-Json).name
+    }
+    Write-Output "just link: registered $($names.Count) packages of this checkout with bun link ($($names -join ', ')); in an application, run 'just link-sweetview' (docs/local-checkout.md)."
+
+# A name is removed whichever checkout registered it.
+# Unregisters the eight package names from `bun link`
+[script("pwsh", "-NoProfile", "-File")]
+unlink:
+    $ErrorActionPreference = 'Stop'
+    $names = foreach ($package in Get-ChildItem packages -Directory) {
+        if (!(Test-Path (Join-Path $package.FullName 'package.json'))) { continue }
+        $output = bun unlink --cwd $package.FullName 2>&1
+        if ($LASTEXITCODE -ne 0) { $output | ForEach-Object { [Console]::Error.WriteLine($_) }; exit $LASTEXITCODE }
+        (Get-Content (Join-Path $package.FullName 'package.json') -Raw | ConvertFrom-Json).name
+    }
+    Write-Output "just unlink: unregistered $($names.Count) packages ($($names -join ', ')); in an application still linked, run 'just unlink-sweetview' first, or its next bun install fails."
+
 [script("pwsh", "-NoProfile", "-File")]
 publish: native::build
     $ErrorActionPreference = 'Stop'
