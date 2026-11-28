@@ -47,6 +47,7 @@ its logic lives. The [Reference](#reference) then covers each export once.
   - [The RPC trust boundary](#the-rpc-trust-boundary)
 - [Startup and deferred UI](#startup-and-deferred-ui)
 - [Dynamic requests](#dynamic-requests)
+- [Exceptions in page calls, requests and the worker](#exceptions-in-page-calls-requests-and-the-worker)
 - [Transport](#transport)
 - [Examples](#examples)
 
@@ -693,6 +694,40 @@ incrementally. WebView2 buffers intercepted responses until EOF, as observed
 in the live Windows test. For real-time SSE-style updates and other desktop
 push, use Sweetview IPC events (`emit` and `onEvent`, or `bridge.on` in the
 page). [WebView2 Feedback #3519](https://github.com/MicrosoftEdge/WebView2Feedback/issues/3519).
+
+## Exceptions in page calls, requests and the worker
+
+An exception thrown by one of these handlers never reaches
+`process.on("uncaughtException")`, and it is not logged either: the page or
+the request gets the failure instead.
+
+| Handler | What happens to its exception |
+|---|---|
+| A `uiMethods` method | the page's call is rejected with the error's message |
+| A `deferredUiMethods` method | the page's call is rejected with the error's message, on the later tick the method ran in |
+| An `onRequest` function | the request is answered `500 Internal Server Error` |
+| A method of the worker's service (`hostService`) | the page's call is rejected with the error's message; a call sent with `notify` (no reply) is logged in the worker as `<method> failed:` ([worker](worker.md#replies-and-events)) |
+| The worker's own uncaught exception | the worker ends: `sweetview: the worker failed:` is logged on the UI thread, and every call waiting on it is rejected |
+| A worker route handler (`onRequest: "worker"`) | the request is answered `500` ([worker](worker.md)) |
+
+A page that calls a method without awaiting it never sees the rejection.
+To see these, `await` each call in the page (or `catch` it) and report from
+there, or wrap the UI-thread handler with the `reported` wrapper of
+[the native module](native.md#exceptions-thrown-by-your-callbacks), which
+hands the exception to the application's `uncaughtException` listeners and
+then rethrows it, so the page's call is still rejected:
+
+```ts
+const app = await createApp({
+  page,
+  uiMethods: { "settings.save": reported((params) => saveSettings(params)) },
+  deferredUiMethods: { "folder.pick": reported(() => pickFolder(app.window, "Pick a folder")) },
+});
+```
+
+The callbacks of the native module (trays, menus, window listeners,
+notifications, hooks) are logged instead; their table is in
+[the native module](native.md#exceptions-thrown-by-your-callbacks).
 
 ## Transport
 

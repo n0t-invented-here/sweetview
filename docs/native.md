@@ -50,6 +50,80 @@ needs as a z-order anchor. Creation order therefore does not matter: querying
 awareness or topmost behaviour. macOS needs no equivalent; AppKit is
 initialized when the shared `NSApplication` is first touched.
 
+## Exceptions thrown by your callbacks
+
+The functions an application hands Sweetview to call later (a tray's
+`onClick`, a menu item's `click`, a `Window` listener, a page's UI-thread
+method, ...) run on the UI thread, called from inside the event loop. An
+exception one of them throws is caught there: it never ends the loop, and
+it never reaches `process.on("uncaughtException")`. What Sweetview does with
+it on Windows:
+
+| Callback | What happens to its exception |
+|---|---|
+| `Tray` `onClick`, `onDoubleClick`, its `menu` function, a tray menu item's `click` | logged `sweetview: message window handler threw:` with the error; a `menu` function that throws opens no menu |
+| A `Menu.popup` item's `click` | thrown from `Menu.popup`, to the code that called it: the click runs after the menu has closed, inside that call |
+| `Window` `onResize`, `onMove`, `onClose` | logged `sweetview: onResize handler threw:` (`onMove`, `onClose`); a close request is still taken, so the window stays open |
+| `Window` `onFileDrop`, `onNewTab`, `onTabSelect`, `onTabClose` | logged `sweetview: onFileDrop handler threw:` (and the others by name) |
+| `Notifier` `onClick` | logged `sweetview: notification onClick threw:` |
+| A hit-region refiner (`setHitRegions(polygons, refine)`) | logged `sweetview: hit region poll threw:`; the polygon's answer stands |
+| `installMouseHook`, `installKeyboardHook` handlers | logged `sweetview: mouse hook handler threw:` (`keyboard hook`); the event is not swallowed. On macOS the hooks are still the bindings package's, which does not catch: Bun throws the exception at the JavaScript that was running the loop |
+| `singleInstance` `onSecondInstance`, `onOpenUrl` listeners | logged `sweetview: onSecondInstance handler threw:`, `sweetview: onOpenUrl handler threw:`; the other listeners still run |
+| `uiMethods`, `deferredUiMethods` | not logged: the page's call is rejected with the error's message ([app](app.md#exceptions-in-page-calls-requests-and-the-worker)) |
+| An `onRequest` function | not logged: the request is answered `500 Internal Server Error` |
+| `onReady`, `onReadyTimeout` | logged `sweetview: onReady handler threw:` (`onReadyTimeout`) |
+| A method of the worker's service | the page's call is rejected with the error; see [app](app.md#exceptions-in-page-calls-requests-and-the-worker) |
+
+Each logged line is one `console.error(message, error)` call. Should
+anything get past these, the binding writes `sweetview: <kind> threw:
+<reason>` to stderr from native code, without `console.error`. An executable
+compiled with `--windows-hide-console` has no stderr, so in a shipped
+application nobody sees any of these lines unless the application routes
+them somewhere.
+
+To see its own faults, an application can:
+
+- wrap each handler it hands Sweetview so that an exception goes to its own
+  `uncaughtException` listeners, as an unhandled one would. This wrapper
+  rethrows afterwards, so Sweetview's fallback still applies (the line is
+  logged, the page's call rejects, a hook lets the event through):
+
+  ```ts
+  /**
+   * Wraps a handler Sweetview calls (a click, a listener, a UI-thread method). An exception it throws
+   * goes to the process's "uncaughtException" listeners, as an unhandled exception would, then on to
+   * Sweetview as before (logged; a page call is rejected; a hook lets the event through).
+   */
+  function reported<A extends unknown[], R>(handler: (...args: A) => R): (...args: A) => R {
+    return (...args: A): R => {
+      try {
+        return handler(...args);
+      } catch (err) {
+        const error = err instanceof Error ? err : new Error(String(err));
+        if (!process.emit("uncaughtException", error, "uncaughtException")) console.error(error);
+        throw err;
+      }
+    };
+  }
+  ```
+
+  ```ts
+  process.on("uncaughtException", (err) => {
+    writeFaultLog(err); // the application's own reporter
+    process.exit(1);
+  });
+  const tray = new Tray({ tooltip: "Notes", onClick: reported(() => win.show()), menu: [{ label: "Export", click: reported(exportNotes) }] });
+  const win = new Window({ title: "Notes", onClose: reported(() => win.hide()) });
+  ```
+
+  A listener that exits ends the process from inside Sweetview's call.
+- replace `console.error` with a function that also writes to its own log.
+  It then receives every line in the table that says "logged", with the
+  error as its second argument. It does not receive the rejected page calls,
+  the `500` answers or the binding's last-resort line.
+- in the page, `await` each call (or attach a `catch`), so that a rejected
+  call is seen there.
+
 ## Guides
 
 | Guide | Covers |
