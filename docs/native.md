@@ -106,7 +106,7 @@ exception leaves the bindings package as it always did.
 |---|---|---|---|
 | `tray.onClick`, `tray.onDoubleClick` | `Tray` `onClick`, `onDoubleClick` | `sweetview: message window handler threw:` | none |
 | `tray.menu` | a `Tray`'s `menu` function | `sweetview: message window handler threw:` | no menu opens |
-| `menu.click` | a tray menu item's `click` (on macOS also a `Menu.popup` item's) | `sweetview: message window handler threw:` | none |
+| `menu.click` | a tray menu item's `click` | `sweetview: message window handler threw:` | none |
 | `notifier.onClick` | `Notifier` `onClick` | `sweetview: notification onClick threw:` | none |
 | `window.onClose`, `window.onResize`, `window.onMove` | those `Window` listeners | `sweetview: onClose handler threw:` (`onResize`, `onMove`) | a close request is still taken: the window stays open |
 | `window.onFileDrop`, `window.onNewTab`, `window.onTabSelect`, `window.onTabClose` | those `Window` listeners | `sweetview: onFileDrop handler threw:` (and the others by name) | none |
