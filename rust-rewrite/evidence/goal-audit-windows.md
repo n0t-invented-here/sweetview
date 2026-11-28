@@ -204,3 +204,17 @@ Twenty-eight places.
 - The evidence files line by line, the commit history as a process, and the verifier's bookkeeping. They were set aside as paperwork.
 - The repository's appearance-and-feel rule: its file is generated and is not present in this checkout.
 - The results of the real applications' upgrades, which are outside the repository.
+
+## Answers
+
+### 11
+
+Agreed, and macOS is put back on the tag's path where the Windows goal changed what runs there (decision D42; `rust-rewrite/HANDOFF-macos.md` section 8 lists every seam for the macOS goal).
+
+- The bindings package: `import "@n1h/sweetview-native"` (and `@n1h/sweetview/native`) no longer needs `@n1h/sweetview-webview-bun` on macOS. `darwin/library.ts` keeps a failed load and throws it at the first use of `RawWebview`, an input hook or `permissions`, so it is the optional peer it was at the tag. With it installed, importing the native package alone now evaluates it (a `dlopen` of its library, no webview made); its top-level await allows no lazy synchronous load, so that one difference stays and is recorded.
+- The release at exit: `releaseAtEnd` registers nothing on macOS and adds no `exit` listener, so no AppKit or WebKit teardown runs from Bun's `exit` event there, inside a native callback or not.
+- The demos and the worker: a webview's worker is not `unref`'d on macOS (`unrefWorker` in `packages/sweetview/src/app.ts`), and each demo ends on macOS with the tag's disposes and `process.exit()`, in one block at its end.
+- The handle: the library's `webview_create` gets the window handle as a number again, as at the tag (`createWebview` in `darwin/webview.ts`).
+- Also found: a request the library hands over that cannot be read is answered with the tag's 500 again; `just check`, `pack`, `link` and `publish` need `cargo` on a Mac (left as D34 made them, and handed over).
+
+One predicate, `macosKeepsTagPath()` in `packages/sweetview-native/src/platform.ts`, marks each library seam. Windows runs the same code as before. `packages/sweetview-native/src/macos-seam.test.ts` and `packages/sweetview/src/macos-seam.test.ts` decide the seams on Windows with `process.platform` set to `darwin` and a stand-in for the bindings package; they show the old code's import error, release and bigint handle, and the new code's absence of them. None of it runs AppKit, and the right thing the finding names stands: `bun test` and each demo on a Mac before this reaches a Mac user.

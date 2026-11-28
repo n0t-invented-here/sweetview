@@ -83,7 +83,7 @@ const app: App<Methods, Events> = await createApp<Methods, Events>({
   },
 });
 
-createTray({ tooltip: APP_NAME, icon: TRAY_ICON, menu: () => menu() });
+const tray = createTray({ tooltip: APP_NAME, icon: TRAY_ICON, menu: () => menu() });
 // The toasts carry the demo's name, not Sweetview's.
 const notifier = createNotifier({
   identity: IDENTITY,
@@ -122,3 +122,11 @@ const menu = (): MenuTemplate => [
 logLine(`started; log at ${LOG_PATH}`);
 app.run(); // the OS loop, until Quit
 logLine("quit");
+// Until the macOS goal of the Rust rewrite, macOS runs the code it ran at the tag pre-rust-rewrite,
+// which releases nothing at exit: there the demo tears down and exits as it did then.
+if (process.platform === "darwin") {
+  notifier.dispose();
+  tray.dispose();
+  app.dispose();
+  process.exit(0);
+}

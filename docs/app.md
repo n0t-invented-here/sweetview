@@ -111,7 +111,8 @@ does once the loop has ended: after Quit the script ends, and Sweetview
 releases the tray, the webview and the window as the process exits
 ([the end of the application](#the-end-of-the-application)). A timer or
 other handle of the application's own still counts: `unref()` it, as above,
-or clear it.
+or clear it. That is Windows; macOS, until the macOS goal of the Rust rewrite,
+is under [the end of the application](#the-end-of-the-application).
 
 ### Choosing
 
@@ -121,7 +122,7 @@ or clear it.
 | Bun on the UI thread | blocked: timers, promises, I/O wait | alive |
 | App logic | in a worker | on the UI thread, or in a worker if you want one |
 | Ends when | `quit()` (or main window closes in `createApp`) | `quitEventLoop()`, or `WM_QUIT` |
-| Cleanup | automatic: on return, and at exit | automatic: when the script ends (at exit) |
+| Cleanup | automatic: on return, and at exit (Windows) | automatic: when the script ends, at exit (Windows) |
 | Idle cost | none | one wake per interval, about 0.5 % CPU at 16 ms |
 | Worker | required for async logic | optional |
 | Native tabs | no | yes (`createApp({ tabs: true }).run()` uses this) |
@@ -191,11 +192,11 @@ quitting releases nothing twice and logs nothing. When the process exits from
 inside a callback, a webview whose own callback is on the stack is left to the
 OS, which reclaims it with the process.
 
-On macOS, until the macOS goal of the Rust rewrite, a raw `Webview` an
-application makes itself with `new RawWebview(...)` is not released at the end
-(the webview library's own `destroy` is not known to be safe to call twice);
-the webviews of `WebView.attach`, `createApp` and tabs are. Destroy a raw one
-yourself before the process ends.
+On macOS, until the macOS goal of the Rust rewrite, none of this section
+applies: macOS runs the code it ran before 1.0, which releases nothing at exit,
+and a webview's worker keeps the process alive there, so a macOS application
+disposes what it made and calls `process.exit()` after its loop, as the demos
+do there.
 
 ## Reference
 
@@ -433,7 +434,7 @@ call `WebView.openTab(origin, ...)` to open the tab there
 | `onEvent(fn)` | `webview.onEvent(fn)`. | Registers nothing and returns an inert unsubscribe function; subscribe on each `tab.webview` instead. |
 | `run()` | Blocks in `webview.run()`; returns `void`. After a `dispose()` made inside the loop, it disposes the window once the loop unwinds. The window and everything else are released when the process ends ([the end of the application](#the-end-of-the-application)). | Returns the promise of `runEventLoop()`; `await` it. The tabs and windows are released when the process ends. |
 | `quit()` | `webview.quit()`. | `quitEventLoop()`. |
-| `dispose()` | Disposes the webview, then the window (inside `run()`, the window waits for `run()` to return). Not needed at the end of the application. Idempotent. | Closes `app.window` and the tabs in it. Torn-off windows created by `moveToNewWindow()` or tab tear-off have their own lifetime; dispose them (or their tabs) separately, or merge them back first with `mergeAllWindows()`. At the end of the application every window is released, torn-off ones included. Idempotent. |
+| `dispose()` | Disposes the webview, then the window (inside `run()`, the window waits for `run()` to return). Not needed at the end of the application on Windows (macOS: [the end of the application](#the-end-of-the-application)). Idempotent. | Closes `app.window` and the tabs in it. Torn-off windows created by `moveToNewWindow()` or tab tear-off have their own lifetime; dispose them (or their tabs) separately, or merge them back first with `mergeAllWindows()`. At the end of the application every window is released, torn-off ones included. Idempotent. |
 
 ### Asset
 

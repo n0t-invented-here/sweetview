@@ -5,6 +5,17 @@
 // bundler still embeds both folders (the strings are static), evaluating only
 // the one the process is on.
 
+/**
+ * True on macOS until the macOS goal of the Rust rewrite: there, shared code the Windows goal
+ * changed keeps the path it had at the tag `pre-rust-rewrite`, because nothing new on that path
+ * has been run on a Mac. Every place that holds new behaviour back from macOS asks this, so a
+ * search for the name finds them all; `rust-rewrite/HANDOFF-macos.md` lists them. Read when
+ * called, not at import, so a test can set `process.platform` around a call.
+ */
+export function macosKeepsTagPath(): boolean {
+  return process.platform === "darwin";
+}
+
 export function backend<T>(win32: () => T, darwin: () => T): () => T {
   let loaded: T | undefined;
   return () => {
