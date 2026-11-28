@@ -29,7 +29,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 type Counts = { user: number; gdi: number; handles: number; privateBytes: number; webview2Processes: number };
-type PathResult = { path: string; rounds: number; afterWarmUp: Counts; atEnd: Counts; privateBytes: number[]; stillWindows: number; closedHandles: number; roundMs: number[] };
+type PathResult = { path: string; rounds: number; afterWarmUp: Counts; atMid: Counts; atEnd: Counts; privateBytes: number[]; stillWindows: number; closedHandles: number; roundMs: number[] };
 
 const ROUNDS = 30;
 const WARM_UP = 10;
@@ -40,6 +40,12 @@ const WARM_UP = 10;
  * over 5 lives (crates/sweetview-platform-webview/tests/teardown.rs), which is this allowance.
  */
 const KERNEL_HANDLES_PER_WINDOW = 1.2;
+/**
+ * Kernel handles any run may end with besides those it keeps per window (a run of tabs keeps none), whatever the number of
+ * rounds: what WebView2 opens once in the process, when it pleases (D20). Measured over 20 windows: 19 to 25 handles in six runs; over 20
+ * rounds: -1, 0 and +1 in three runs, and 0 over 75; one handle kept per tab would be 20.
+ */
+const KERNEL_HANDLES_ONCE = 2;
 /**
  * Private bytes move in steps as the allocator takes and gives back segments, up and down: the
  * largest step measured over 80 rounds was 8 MB (the tab path, once), with no climb over the 80
@@ -85,19 +91,25 @@ describe.if(process.platform === "win32")("a closed window gives back what it he
     `${ROUNDS} rounds of each close path`,
     async () => {
       const run = await runReclaim();
-      console.log(JSON.stringify(run.results.map(({ path, afterWarmUp, atEnd, stillWindows, closedHandles, privateBytes }) => ({ path, afterWarmUp, atEnd, stillWindows, closedHandles, privateBytesClimb: climb(privateBytes) }))));
+      console.log(JSON.stringify(run.results.map(({ path, afterWarmUp, atMid, atEnd, stillWindows, closedHandles, privateBytes }) => ({ path, afterWarmUp, atMid, atEnd, stillWindows, closedHandles, privateBytesClimb: climb(privateBytes) }))));
       expect(run.failure).toBeUndefined();
       expect(run.exitCode).toBe(0);
       expect(run.stderr).toBe("");
       expect(run.results.map((r) => r.path)).toEqual(["close", "dispose", "app-dispose", "tab"]);
       for (const r of run.results) {
-        const measured = ROUNDS - WARM_UP;
+        // Measured twice (the warm-up to halfway, halfway to the end), and the smaller growth of each
+        // count is the one judged: what a close path leaks it leaks in every round, so it shows in
+        // both; an object WebView2 or the shell makes once in the process, when it pleases, shows in
+        // one (D20, as sweetview_platform_loop::testing::smallest_growth does).
+        const growth = (key: "user" | "gdi" | "handles" | "webview2Processes") =>
+          Math.min(r.atMid[key] - r.afterWarmUp[key], r.atEnd[key] - r.atMid[key]);
+        const measured = Math.floor((ROUNDS - WARM_UP) / 2);
         expect({ path: r.path, stillWindows: r.stillWindows }).toEqual({ path: r.path, stillWindows: 0 });
         // A window and its webview's container, or a tab's container alone.
         expect(r.closedHandles).toBeGreaterThanOrEqual(r.path === "tab" ? ROUNDS : ROUNDS * 2);
-        expect({ path: r.path, user: r.atEnd.user <= r.afterWarmUp.user, gdi: r.atEnd.gdi <= r.afterWarmUp.gdi }).toEqual({ path: r.path, user: true, gdi: true });
-        expect(r.atEnd.handles - r.afterWarmUp.handles).toBeLessThanOrEqual(r.path === "tab" ? 0 : KERNEL_HANDLES_PER_WINDOW * measured);
-        expect(r.atEnd.webview2Processes).toBeLessThanOrEqual(r.afterWarmUp.webview2Processes);
+        expect({ path: r.path, user: growth("user") <= 0, gdi: growth("gdi") <= 0 }).toEqual({ path: r.path, user: true, gdi: true });
+        expect(growth("handles")).toBeLessThanOrEqual(r.path === "tab" ? KERNEL_HANDLES_ONCE : KERNEL_HANDLES_PER_WINDOW * measured + KERNEL_HANDLES_ONCE);
+        expect(growth("webview2Processes")).toBeLessThanOrEqual(0);
         expect(climb(r.privateBytes)).toBeLessThanOrEqual(PRIVATE_BYTES_NOISE);
       }
     },

@@ -45,8 +45,9 @@ type Counts = { user: number; gdi: number; handles: number; privateBytes: number
 type PathResult = {
   path: string;
   rounds: number;
-  /** After WARM_UP rounds, and at the end. */
+  /** After WARM_UP rounds, halfway through the rest, and at the end: two measurements, as D20's convention takes. */
   afterWarmUp: Counts;
+  atMid: Counts;
   atEnd: Counts;
   /** Private bytes after every round from the warm-up on, for the trend. */
   privateBytes: number[];
@@ -206,6 +207,8 @@ try {
     const privateBytes: number[] = [];
     const roundMs: number[] = [];
     let afterWarmUp: Counts | undefined;
+    let atMid: Counts | undefined;
+    const mid = WARM_UP + Math.floor((ROUNDS - WARM_UP) / 2);
     for (let i = 1; i <= ROUNDS; i++) {
       const started = performance.now();
       closed.push(...(await round(path)));
@@ -214,10 +217,11 @@ try {
         const now = await settled();
         privateBytes.push(now.privateBytes);
         if (i === WARM_UP) afterWarmUp = now;
+        if (i === mid) atMid = now;
       }
     }
     const atEnd = await settled();
-    results.push({ path, rounds: ROUNDS, afterWarmUp: afterWarmUp!, atEnd, privateBytes, stillWindows: closed.filter(isWindow).length, closedHandles: closed.length, roundMs });
+    results.push({ path, rounds: ROUNDS, afterWarmUp: afterWarmUp!, atMid: atMid!, atEnd, privateBytes, stillWindows: closed.filter(isWindow).length, closedHandles: closed.length, roundMs });
     if (tabHost) {
       tabHost.dispose();
       tabHost = undefined;
