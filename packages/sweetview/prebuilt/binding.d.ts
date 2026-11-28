@@ -397,6 +397,12 @@ export declare function buildMenu(menu: Array<MenuItemData>): bigint
 /** Cancels a timeout or an interval. Cancelling one that is gone does nothing. */
 export declare function cancelTimeout(id: number): void
 
+/**
+ * The file of the binding that owns this process: `file` when this is the process's first claim,
+ * else the file the first claim recorded, which the loader then uses on every thread (D50).
+ */
+export declare function claimProcess(file: string): string
+
 /** Empties the clipboard. UI thread. */
 export declare function clipboardClear(): void
 

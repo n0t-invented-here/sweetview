@@ -76,7 +76,7 @@ function load(): NativeBinding {
 
 /** The binding, loaded on first use. Throws with the name of the file it looked for when it cannot be loaded. */
 export function binding(): NativeBinding {
-  return (loaded ??= customPath === undefined && provided !== undefined ? provided() : load());
+  return (loaded ??= customPath === undefined && provided !== undefined ? provided() : adopt(load()));
 }
 
 /**
@@ -91,6 +91,23 @@ export function provideBinding(load: () => NativeBinding): void {
     throw new Error("sweetview: @n1h/sweetview-native loaded its own binding before @n1h/sweetview was imported; import @n1h/sweetview before the first native call, so that one binding, the one with the webview, is loaded");
   }
   provided = load;
+}
+
+/**
+ * The binding that owns this process (D50): the one just loaded when it is the process's first, else
+ * the file the first load recorded, `@n1h/sweetview`'s on a `Worker` of an application of it, so
+ * every thread calls one runtime.
+ */
+function adopt(own: NativeBinding): NativeBinding {
+  if (process.platform !== "win32") return own;
+  const file = customPath ?? require.resolve("../prebuilt/sweetview.win32-x64-msvc.node");
+  const owner = own.claimProcess(file);
+  if (owner === file) return own;
+  try {
+    return require(owner) as NativeBinding;
+  } catch (err) {
+    fail(`${owner} (the binding that owns this process)`, err);
+  }
 }
 
 /** Loads the binding from a given file, bypassing the cache. For the loader's own tests. */

@@ -37,5 +37,7 @@ mod reentry_tests;
 mod person_tests;
 
 pub use error::{Error, Result};
+/// Which binding owns this process (D50).
+pub use sweetview_platform_loop::process_owner::claim as claim_process;
 pub use sweetview_window_logic::{Point, Rect, ResizeEdge};
 pub use runtime::{wake, Runtime, TimeoutId};

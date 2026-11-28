@@ -20,6 +20,7 @@
 
 mod com;
 mod loop_host;
+pub mod process_owner;
 mod signal;
 
 #[cfg(windows)]

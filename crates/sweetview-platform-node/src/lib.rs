@@ -35,6 +35,13 @@ pub fn on_load(_exports: napi::bindgen_prelude::Object, env: napi::Env) -> napi:
   sweetview_napi::prepare_environment(env)
 }
 
+/// The file of the binding that owns this process: `file` when this is the process's first claim,
+/// else the file the first claim recorded, which the loader then uses on every thread (D50).
+#[napi(catch_unwind)]
+pub fn claim_process(file: String) -> napi::Result<String> {
+  sweetview_napi::claim_process(&file)
+}
+
 /// True on the thread that loaded the binding first.
 #[napi(catch_unwind)]
 pub fn is_ui_thread() -> bool {

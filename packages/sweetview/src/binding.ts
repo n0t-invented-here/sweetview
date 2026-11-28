@@ -15,8 +15,13 @@ const NOT_BUILT =
 
 function load(): WebviewBinding {
   try {
-    if (process.platform === "win32") return require("../prebuilt/sweetview-webview.win32-x64-msvc.node") as WebviewBinding;
-    throw new Error(`the Windows binding does not load on ${process.platform}`);
+    if (process.platform !== "win32") throw new Error(`the Windows binding does not load on ${process.platform}`);
+    const own = require("../prebuilt/sweetview-webview.win32-x64-msvc.node") as WebviewBinding;
+    const file = require.resolve("../prebuilt/sweetview-webview.win32-x64-msvc.node");
+    // The process's one runtime is the first binding loaded in it (D50).
+    const owner = own.claimProcess(file);
+    if (owner === file) return own;
+    return require(owner) as WebviewBinding;
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
     const missing = (err as { code?: unknown } | null)?.code === "MODULE_NOT_FOUND";
