@@ -23,6 +23,20 @@ The Windows goal is **not complete**. This file says what is on the main branch,
 
 Until 2026-11-28 no product code had landed on `v1-rust-rewrite` since the first part of the public API additions: five branches held all the work, each held back until both required reviewers passed it, and none had passed. That rule was the coordinator's, not the owner's, and it kept finished work off this branch. From now on: **a branch is merged here as soon as its author reports a full run with no failure on its head and the merged tree passes the same run**; the two required reviewers then review it here, and their findings are fixed here as further commits. Nothing is called done by being merged: the reviews, their rounds and the final full review by Neon are still required before any completion claim.
 
+Since then authors run only the tests of what they changed, and the coordinator takes one full run (build, typecheck, clippy, `cargo test --workspace`, `bun test`) on each merged tree under the input lock.
+
+### Landed on 2026-11-28, each after a full run of the merged tree
+
+| Commit on this branch | What | Full run | Review after landing |
+|---|---|---|---|
+| `9335594` | Public API fixes (three failed review rounds answered under the tag-parity rule) and `onCallbackError` | `cargo test` all suites ok; `bun test` 577 pass, 0 fail | round 4, both required reviewers: FAIL on each; findings being fixed on `rust-rewrite-api-round4` and `rust-rewrite-callback-errors-followups` |
+| `39e9020` | Callback follow-ups: macOS on the tag's path for three fixes in shared files; the guard made when the binding loads; the stderr lines with no listener as before | 583 pass, 2 fail: two `app-exit` tests that read the shell's balloon, failing on the main branch's own build too | |
+| `0ad766a` | More callback fixes (the guard's state per call); internals not for applications: no document, demo or guide row sends an application to an internal entry, 46 guide rows say "no public call in 1.0", a guard test; the first part of the upgrade guide as a migration | 596 pass, 3 fail: the same two, and one webview test once (a race under load; passes 3 of 3 alone) | round 2 of the internals work, both: FAIL (two tray demos start differently on macOS; a ready-signal window with no timeout; two close-to-tray recipes; guard gaps); with its author |
+| `c8a4a2b` | The two `app-exit` tests corrected (cause: an application running full screen puts the shell in its busy state, which ends balloons; the tests now ask the notifier itself); the first slice of tests moved from TypeScript into Rust (input hooks, notifier, modal loop: 1,265 lines of TypeScript to 336) | 561 pass, 4 fail: four tab-menu checks closed by other activity on the desktop; the same build then passed the tabs fixtures 3 runs of 3 | |
+| `97dacaf` | Four more slices of tests moved from TypeScript into Rust (window, tray and menu, "removes itself from inside its own call", and the helper file they used), each moved test with a named Rust test | `cargo test` all suites ok; `bun test` 545 pass, 0 fail; tabs fixtures 100 of 100 and 10 of 10 | |
+
+Still unmerged: the Windows webview rebuilt without `wry` (`rust-rewrite-fix-webview-behaviour`; one tab check fails 2 runs of 3 and round 3 review findings are open), the quit flash (`rust-rewrite-fix-quit-flash`; its own screen test still sees one white frame at a tabbed window's reveal), regressions against the tag (`rust-rewrite-fix-regressions`), round 4 fixes of the API (`rust-rewrite-api-round4`), the second slice of tests moved into Rust, and then the webview's move out of the native package.
+
 ## Why the checklist reads complete and the goal is not
 
 Every box of `CHECKLIST-windows.md` is ticked and `bun rust-rewrite/verify.ts windows` printed `COMPLETE` at `c8dab02`. That claim was withdrawn. The verifier and the checklist were satisfied without any real application having been upgraded and run, and the goal audit then found the gaps listed below. The boxes stay ticked as records of what was run then; their evidence blocks are stale against the current tree and are produced again before any new claim.

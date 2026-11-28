@@ -12,8 +12,8 @@ export type Methods = {
   "notify.now": [void, void];
   /** Worker: emits `notify.due` after `seconds`. A newer request replaces an older one still pending. */
   "notify.later": [{ seconds: number }, void];
-  /** Answered on the UI thread: everything that happened so far, for the page to show when it loads. */
-  "log.history": [void, LogEntry[]];
+  /** Answered on the UI thread when the page has loaded: everything that happened so far. */
+  "page.ready": [void, LogEntry[]];
 };
 
 export type Events = {
@@ -30,8 +30,8 @@ export function createService(): Service<Methods, Events> {
       "notify.now": () => {
         throw new Error("notify.now is answered on the UI thread");
       },
-      "log.history": () => {
-        throw new Error("log.history is answered on the UI thread");
+      "page.ready": () => {
+        throw new Error("page.ready is answered on the UI thread");
       },
       "notify.later": ({ seconds }) => {
         clearTimeout(pending);

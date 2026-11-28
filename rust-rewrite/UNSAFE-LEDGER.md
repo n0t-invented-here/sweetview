@@ -1,13 +1,13 @@
 # Unsafe ledger
 
-Rewritten by `bun rust-rewrite/verify.ts <platform> --ledger`. 263 uses in 22 files.
+Rewritten by `bun rust-rewrite/verify.ts <platform> --ledger`. 328 uses in 22 files.
 
 | File | Uses of `unsafe` |
 |---|---|
 | `crates/sweetview-platform-input/src/windows.rs` | 8 |
 | `crates/sweetview-platform-input/tests/windows_hooks.rs` | 7 |
 | `crates/sweetview-platform-loop/src/com.rs` | 4 |
-| `crates/sweetview-platform-loop/src/windows.rs` | 36 |
+| `crates/sweetview-platform-loop/src/windows.rs` | 41 |
 | `crates/sweetview-platform-notify/src/windows.rs` | 11 |
 | `crates/sweetview-platform-shell/src/clipboard.rs` | 13 |
 | `crates/sweetview-platform-shell/src/icons.rs` | 1 |
@@ -23,9 +23,9 @@ Rewritten by `bun rust-rewrite/verify.ts <platform> --ledger`. 263 uses in 22 fi
 | `crates/sweetview-platform-window/src/size_hint.rs` | 1 |
 | `crates/sweetview-platform-window/src/tab_frame.rs` | 16 |
 | `crates/sweetview-platform-window/src/tab_frame_tests.rs` | 12 |
-| `crates/sweetview-platform-window/src/test_support.rs` | 2 |
+| `crates/sweetview-platform-window/src/test_support.rs` | 67 |
 | `crates/sweetview-platform-window/src/windows.rs` | 40 |
-| `crates/sweetview-platform-window/src/windows_tests.rs` | 14 |
+| `crates/sweetview-platform-window/src/windows_tests.rs` | 9 |
 
 ## Reasons
 
