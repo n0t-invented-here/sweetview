@@ -214,7 +214,127 @@ pub fn popup(owner: isize, data: &[MenuItem], at: Option<(f64, f64)>, corner: Po
   }
   let built = build(data)?;
   let at = popup_point(at, corner)?;
+  if crate::window::is_no_activate(owner) {
+    return popup_for_a_no_activate_owner(owner, &built, at);
+  }
   Ok(BorrowedWindow::with_handle_value(owner, |owner| show(&built, owner, at)).flatten())
+}
+
+/// A menu's owner is made the foreground window to track it, and a window made with `no_activate`
+/// must never take the foreground (D9). So the menu of such an owner is tracked by a hidden
+/// stand-in owner, made as the tray's menu owner is ([`hidden_menu_owner`]), and the window that
+/// was in front before gets the foreground back (`pass_foreground_back`, which also keeps the
+/// stand-in from being left with it): at once when nothing was chosen; after the chosen item's
+/// handler has run when one was (it runs when this returns, so the hand-back waits for the loop's
+/// next turn), and then only if the stand-in still holds the foreground, so a window the handler
+/// showed or focused stays in front.
+///
+/// One hand-back is pending at a time on a thread. A popup opened while one is pending (an item's
+/// handler opens another at once) takes it over: it keeps the window that was in front before the
+/// first, and the first's deferred hand-back, now stale, does nothing; no hand-back runs while a
+/// popup is open.
+fn popup_for_a_no_activate_owner(owner: isize, built: &BuiltMenu, at: PopupAt) -> Result<Option<u32>> {
+  let stand_in = stand_in_owner()?;
+  let before = match PENDING.with(|pending| pending.borrow_mut().take()) {
+    Some(pending) => pending.before,
+    // In front now is the stand-in itself when a popup opens before anything else took the
+    // foreground back: then there is no earlier window to give it to.
+    None => Some(sweetview_platform_window::foreground_handle_value()).filter(|&window| window != stand_in).unwrap_or(0),
+  };
+  let generation = GENERATION.with(|counter| {
+    counter.set(counter.get() + 1);
+    counter.get()
+  });
+  OPEN.with(|open| open.set(open.get() + 1));
+  let chosen = BorrowedWindow::with_handle_value(stand_in, |menu_owner| show(built, menu_owner, at)).flatten();
+  OPEN.with(|open| open.set(open.get() - 1));
+  match (chosen, Runtime::existing()) {
+    (Some(_), Some(runtime)) => {
+      PENDING.with(|pending| *pending.borrow_mut() = Some(PendingHandBack { before, overlay: owner, generation }));
+      defer_hand_back(&runtime, stand_in, generation);
+    }
+    _ => {
+      let _gave = sweetview_platform_window::pass_foreground_back(stand_in, before, owner);
+    }
+  }
+  Ok(chosen)
+}
+
+/// The hand-back a chosen item leaves pending until its handler has run.
+#[derive(Clone, Copy)]
+struct PendingHandBack {
+  before: isize,
+  overlay: isize,
+  generation: u64,
+}
+
+thread_local! {
+  static PENDING: RefCell<Option<PendingHandBack>> = const { RefCell::new(None) };
+  static GENERATION: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+  /// How many `no_activate` popups are open on this thread (one inside another's handler's loop).
+  static OPEN: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+/// Runs the pending hand-back of `generation` on the loop's next turn: not at all when a later
+/// popup took it over, and later again while a popup is open.
+fn defer_hand_back(runtime: &Runtime, stand_in: isize, generation: u64) {
+  runtime.defer(move || {
+    let current = PENDING.with(|pending| pending.borrow().filter(|pending| pending.generation == generation));
+    let Some(pending) = current else { return };
+    if OPEN.with(std::cell::Cell::get) > 0 {
+      if let Some(runtime) = Runtime::existing() {
+        defer_hand_back(&runtime, stand_in, generation);
+      }
+      return;
+    }
+    PENDING.with(|slot| slot.borrow_mut().take());
+    let _gave = sweetview_platform_window::pass_foreground_back(stand_in, pending.before, pending.overlay);
+  });
+}
+
+/// For tests: the stand-in owner's handle value; 0 when none is made.
+#[cfg(test)]
+pub(crate) fn stand_in_for_tests() -> isize {
+  STAND_IN.with(|slot| slot.borrow().as_ref().map_or(0, window_handle_value))
+}
+
+thread_local! {
+  /// The hidden owner of the menus of `no_activate` owners, made on first use and kept: destroying
+  /// the foreground window would let the OS activate another of this thread's windows, the overlay
+  /// among them. Released with the menus (`release_all`).
+  static STAND_IN: RefCell<Option<tao::window::Window>> = const { RefCell::new(None) };
+}
+
+/// The handle value of the stand-in owner, made on first use.
+fn stand_in_owner() -> Result<isize> {
+  if STAND_IN.with(|slot| slot.borrow().is_none()) {
+    let window = hidden_menu_owner("sweetview.popup-menu", "a popup menu's owner window could not be made")?;
+    STAND_IN.with(|slot| *slot.borrow_mut() = Some(window));
+  }
+  let handle = STAND_IN.with(|slot| slot.borrow().as_ref().map_or(0, window_handle_value));
+  BorrowedWindow::with_handle_value(handle, |_| handle).ok_or_else(|| Error::state("sweetview: the popup menu's owner window is gone"))
+}
+
+/// A hidden window that can own a popup menu and hold the foreground for it: the tray's menu owner
+/// (whose icon window cannot be activated) and the stand-in for a `no_activate` owner. One way to
+/// make it, for both.
+/// `failure` is the error's wording when it cannot be made: each caller's own, as it always was.
+pub(crate) fn hidden_menu_owner(title: &str, failure: &'static str) -> Result<tao::window::Window> {
+  let runtime = Runtime::get()?;
+  runtime
+    .with_target(|target| tao::window::WindowBuilder::new().with_visible(false).with_title(title).build(target))?
+    .map_err(|e| Error::os(failure, e))
+}
+
+#[cfg(windows)]
+pub(crate) fn window_handle_value(window: &tao::window::Window) -> isize {
+  use tao::platform::windows::WindowExtWindows;
+  window.hwnd()
+}
+
+#[cfg(not(windows))]
+pub(crate) fn window_handle_value(_window: &tao::window::Window) -> isize {
+  0
 }
 
 thread_local! {
@@ -250,6 +370,9 @@ pub(crate) fn release_all() {
   // Dropped after the borrow ends.
   let built: Vec<BuiltMenu> = HANDED_OUT.try_with(|menus| menus.borrow_mut().drain().map(|(_, menu)| menu).collect()).unwrap_or_default();
   drop(built);
+  let _pending = PENDING.try_with(|slot| slot.borrow_mut().take());
+  let stand_in = STAND_IN.try_with(|slot| slot.borrow_mut().take()).ok().flatten();
+  drop(stand_in);
 }
 
 /// `windowMenu` and `Window#showSystemMenu`: shows the system menu (Restore,

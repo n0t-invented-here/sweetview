@@ -8,7 +8,13 @@
 
 mod callback;
 pub mod diagnostics;
+#[cfg(feature = "webview")]
 pub mod engine;
+
+/// The file of the binding that owns this process: `file` for the first claim, else the first's (D50).
+pub fn claim_process(file: &str) -> napi::Result<String> {
+  sweetview_runtime::claim_process(file).map_err(napi::Error::from_reason)
+}
 mod errors;
 pub mod event_loop;
 pub mod input;

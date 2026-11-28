@@ -52,6 +52,7 @@ impl<Args: JsValuesTupleIntoVec, Return: FromNapiValue> JsCallback<Args, Return>
 
   /// The same, with the name the application gave the function (a binding's name), which the
   /// sink is handed with an exception it throws.
+  #[cfg(feature = "webview")]
   pub(crate) fn named(env: Env, function: &Function<'_, Args, Return>, kind: &'static str, label: &str) -> napi::Result<Rc<Self>> {
     Ok(Rc::new(Self { env, function: guarded(env, function, kind, Some(label))?, kind, label: Some(label.to_owned()) }))
   }
@@ -113,6 +114,8 @@ const GUARD_SCRIPT: &str = r#"(() => {
   const create = Object.create;
   const toText = String;
   const encode = encodeURIComponent;
+  // An unpaired surrogate makes encodeURIComponent throw: each becomes U+FFFD first, so only it is lost.
+  const toWellFormed = String.prototype.toWellFormed;
   const state = { sink: null, guard: null };
   const textOf = (value) => {
     try {
@@ -123,7 +126,7 @@ const GUARD_SCRIPT: &str = r#"(() => {
   };
   const encoded = (text) => {
     try {
-      return encode(text);
+      return encode(apply(toWellFormed, text, []));
     } catch {
       return encode("(text that is not well-formed)");
     }

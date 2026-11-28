@@ -21,14 +21,16 @@ use raw_window_handle::{DisplayHandle, HandleError, HasDisplayHandle, HasWindowH
 use sweetview_window_logic::ico::{parse_ico, pick_ico_entry};
 use tao::platform::windows::{MonitorHandleExtWindows, WindowExtWindows};
 use windows::core::PCWSTR;
+use windows::core::BOOL;
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, RECT, WPARAM};
+use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_CLOAK};
 use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, MonitorFromWindow, HMONITOR, MONITORINFO, MONITOR_DEFAULTTONEAREST};
 use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
-use windows::Win32::UI::Input::KeyboardAndMouse::{GetActiveWindow, GetAsyncKeyState, ReleaseCapture, VK_LBUTTON, VK_MBUTTON, VK_RBUTTON};
+use windows::Win32::UI::Input::KeyboardAndMouse::{GetActiveWindow, GetAsyncKeyState, IsWindowEnabled, ReleaseCapture, VK_LBUTTON, VK_MBUTTON, VK_RBUTTON};
 use windows::Win32::UI::Shell::{DefSubclassProc, DragFinish, DragQueryFileW, RemoveWindowSubclass, SetWindowSubclass, HDROP};
 use windows::Win32::UI::WindowsAndMessaging::{
-  CreateIconFromResourceEx, DestroyIcon, DestroyWindow, GetClientRect, GetForegroundWindow, GetSystemMetrics, GetWindow, GetWindowLongPtrW,
+  CreateIconFromResourceEx, DestroyIcon, DestroyWindow, GetClientRect, GetForegroundWindow, GetShellWindow, GetSystemMetrics, GetTopWindow, GetWindow, GetWindowLongPtrW, GW_HWNDNEXT, WS_EX_NOACTIVATE,
   GetWindowPlacement, GetWindowRect, WINDOWPLACEMENT, WPF_RESTORETOMAXIMIZED, GetWindowThreadProcessId, IsIconic, IsWindow, IsWindowVisible, IsZoomed, LoadIconW, MoveWindow,
   PostMessageW, SendMessageTimeoutW, SendMessageW, SetForegroundWindow, SetLayeredWindowAttributes, SetWindowLongPtrW, SetWindowPos,
   SetWindowTextW, SMTO_ABORTIFHUNG, SMTO_BLOCK,
@@ -354,6 +356,36 @@ pub fn show(window: &impl NativeWindow, no_activate: bool, topmost: bool, tab_fr
   if !no_activate && !topmost {
     bring_to_front(window);
   }
+}
+
+/// A window kept off the screen while it is shown (DWM's cloak, `DWMWA_CLOAK`): it is visible
+/// to itself and to what it holds, so a webview in it draws, and DWM puts none of it on the
+/// screen until this guard goes, which uncloaks it. Sweetview reveals a window this way when its
+/// page has to draw first (D49). Only a top-level window of this process can be cloaked.
+pub struct Cloak {
+  hwnd: HWND,
+}
+
+impl Cloak {
+  /// Cloaks the window; `None` when DWM refuses (a child window, another process's).
+  pub fn new(window: &impl NativeWindow) -> Option<Self> {
+    let hwnd = window.hwnd();
+    set_cloak(hwnd, true).then_some(Self { hwnd })
+  }
+}
+
+impl Drop for Cloak {
+  fn drop(&mut self) {
+    // A window destroyed meanwhile makes the call fail, which leaves nothing to undo.
+    set_cloak(self.hwnd, false);
+  }
+}
+
+fn set_cloak(hwnd: HWND, cloaked: bool) -> bool {
+  let value = BOOL::from(cloaked);
+  // SAFETY: a window function on a handle named by `NativeWindow` (or one `Cloak` took from it),
+  // which DWM validates; the attribute is a `BOOL` local, read for the length of the call.
+  unsafe { DwmSetWindowAttribute(hwnd, DWMWA_CLOAK, (&raw const value).cast(), size_of::<BOOL>() as u32) }.is_ok()
 }
 
 /// Puts a window `tao` did not make in a show state (`ShowWindow`). A `tao`
@@ -701,6 +733,62 @@ pub fn left_button_down() -> bool {
   key_down(VK_LBUTTON)
 }
 
+/// The handle value of the foreground window; 0 when there is none.
+pub fn foreground_handle_value() -> isize {
+  // SAFETY: takes nothing and reads no memory of ours.
+  unsafe { GetForegroundWindow() }.0 as isize
+}
+
+/// The end of a popup menu tracked by a hidden stand-in owner (`holder`) for an owner that must
+/// never take the foreground (`overlay`). When the stand-in still holds the foreground, it is given
+/// to `to`, the window in front before, if that window can still take it; else, so the hidden
+/// stand-in is not left with the keyboard while a person sees another window, to the topmost window
+/// they could be using (visible, enabled, not minimised, not `WS_EX_NOACTIVATE`, and never `overlay`
+/// or `holder`), and to the shell's own window last. Nothing when the stand-in no longer holds it:
+/// a window the person or a handler brought forward keeps it. True when the stand-in does not hold
+/// the foreground afterwards; each grant is checked, as the OS may refuse one.
+pub fn pass_foreground_back(holder: isize, to: isize, overlay: isize) -> bool {
+  if foreground_handle_value() != holder {
+    return true;
+  }
+  let takes = |window: HWND| {
+    let value = window.0 as isize;
+    value != 0 && value != holder && value != overlay && is_window_handle(window) && can_take_the_foreground(window) && set_foreground(window) && foreground_handle_value() == value
+  };
+  if takes(HWND(to as *mut core::ffi::c_void)) {
+    return true;
+  }
+  // SAFETY: takes no window (the desktop's top-level windows) and reads no memory of ours.
+  let mut next = unsafe { GetTopWindow(None) }.ok();
+  while let Some(window) = next {
+    if takes(window) {
+      return true;
+    }
+    // SAFETY: `window` is a handle value the OS just returned, validated again by the call.
+    next = unsafe { GetWindow(window, GW_HWNDNEXT) }.ok();
+  }
+  // SAFETY: takes nothing and reads no memory of ours.
+  let shell = unsafe { GetShellWindow() };
+  if !shell.is_invalid() {
+    let _granted = set_foreground(shell);
+  }
+  foreground_handle_value() != holder
+}
+
+/// Whether a person could be using `window` now: visible, enabled, not minimised, and not made
+/// never to activate.
+fn can_take_the_foreground(window: HWND) -> bool {
+  // SAFETY: takes the handle by value, validates it, and reads no memory of ours.
+  let visible = unsafe { IsWindowVisible(window) }.as_bool();
+  // SAFETY: as above.
+  let enabled = unsafe { IsWindowEnabled(window) }.as_bool();
+  // SAFETY: as above.
+  let minimised = unsafe { IsIconic(window) }.as_bool();
+  // SAFETY: as above.
+  let ex_style = unsafe { GetWindowLongPtrW(window, GWL_EXSTYLE) } as u32;
+  visible && enabled && !minimised && ex_style & WS_EX_NOACTIVATE.0 == 0
+}
+
 /// The one of `monitors` the OS has the window on (`MonitorFromWindow`): the one its frame overlaps
 /// most, else the nearest, and for a minimised window the one its restored position is on. `None`
 /// when the handle names no window or the monitor is not among `monitors`.
@@ -941,29 +1029,10 @@ fn deliver(state: &SubclassState, event: &WindowEvent) -> bool {
 
 /// Makes `hwnd` the foreground window. The OS may refuse the foreground to a
 /// process that does not hold it; that is not an error.
-pub(crate) fn set_foreground(hwnd: HWND) {
+/// True when the OS granted it.
+pub(crate) fn set_foreground(hwnd: HWND) -> bool {
   // SAFETY: takes the handle by value and reads no memory of ours; the OS validates the handle.
-  let _granted = unsafe { SetForegroundWindow(hwnd) };
-}
-
-/// The foreground window now; a null handle when there is none.
-pub(crate) fn foreground_window() -> HWND {
-  // SAFETY: takes nothing and reads no memory of ours.
-  unsafe { GetForegroundWindow() }
-}
-
-/// After a popup menu whose `owner` was made the foreground window to track it:
-/// puts back `before`, the window that was in front when the menu was asked for,
-/// so a menu leaves the foreground where it found it. Only when the owner still
-/// holds it (nothing took it while the menu was open: a click elsewhere that
-/// dismissed the menu gives it to the window clicked) and was not in front
-/// before (an owner that was keeps it, as it always did). An item's handler runs
-/// after this, so a window it shows or focuses is not covered.
-pub(crate) fn give_back_foreground(owner: HWND, before: HWND) {
-  if before.is_invalid() || before == owner || !is_window_handle(before) || foreground_window() != owner {
-    return;
-  }
-  set_foreground(before);
+  unsafe { SetForegroundWindow(hwnd) }.as_bool()
 }
 
 /// Passes a message the OS gave a subclass procedure on to the next procedure

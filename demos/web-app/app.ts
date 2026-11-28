@@ -61,6 +61,9 @@ const app: App<Methods, Events> = await createApp<Methods, Events>({
     return { x: workArea.x + Math.round((workArea.width - width) / 2), y: workArea.y + Math.round((workArea.height - height) / 2), width, height };
   }),
   icon: APP_ICON,
+  // Windows: the page is dark, so are the title bar and what the window paints where no page is
+  // drawn. macOS starts as at the tag pre-rust-rewrite until its goal (D42).
+  ...(MAC_TAG_PATH ? {} : { appearance: "dark" as const }),
   assets: { "index.html": indexHtml({ title: APP_NAME }), "main.js": appJs, "main.css": appCss },
   worker: new URL("./app-worker.ts", import.meta.url),
   debug: process.env.WEBVIEW_DEBUG === "1",

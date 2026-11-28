@@ -3,6 +3,8 @@
 //! pointer to pass to them, so 0 is such a handle too. Moved here from the native package's
 //! `request-handler.test.ts` (W2.7 binding exports).
 
+#![cfg(feature = "webview")]
+
 use napi::bindgen_prelude::{BigInt, Uint8Array};
 use sweetview_napi::engine::{begin_response, complete_request, end_response, write_response_chunk, Engine};
 

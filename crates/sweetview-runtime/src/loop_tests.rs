@@ -5,10 +5,15 @@
 //! Each runs in both loop modes where the mode matters: the blocking run, and the loop pumped in
 //! short bursts as `pumpEvents` from a Bun timer.
 
+// Without the webview feature its modal test is not built, nor are the helpers only it uses (D50).
+#![cfg_attr(not(feature = "webview"), allow(dead_code))]
+
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
-use std::sync::{mpsc, Arc, Mutex, OnceLock};
+#[cfg(feature = "webview")]
+use std::sync::{mpsc, Mutex};
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use sweetview_platform_window::test_support as os;
@@ -426,6 +431,7 @@ const DRAIN_TOKEN: u64 = 7801;
 /// tracked with the OS's own calls; a native interval inside each closes it (`WM_CLOSE` posted to
 /// the box, `EndMenu` for the menu) once all of that has happened, or after 6 s.
 #[test]
+#[cfg(feature = "webview")]
 fn page_calls_wakes_and_timeouts_are_served_inside_the_applications_own_modal_loops_in_both_loop_modes() {
   use crate::engine::{Engine, Host, SizeHint};
   use_test_webview_profile();

@@ -14,8 +14,8 @@
 // TypeScript: the wrappers, their conversions and checks, and a Worker
 // answering through them.
 
-import { binding } from "../../src/binding";
-import { completeWebviewRequest, Webview, WebviewError, writeWebviewResponseChunk, type WebviewRequest } from "../../src/index";
+import { binding } from "../../../sweetview/src/binding";
+import { completeWebviewRequest, Webview, WebviewError, writeWebviewResponseChunk, type WebviewRequest } from "../../../sweetview/src/raw-webview";
 import { watchdog } from "./kit";
 
 watchdog(60_000);

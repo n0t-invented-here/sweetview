@@ -20,6 +20,7 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
   GetActiveWindow, GetAsyncKeyState, GetKeyState, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBDINPUT, KEYBD_EVENT_FLAGS,
   KEYEVENTF_KEYUP, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEINPUT, VIRTUAL_KEY, VK_LBUTTON, VK_MBUTTON, VK_RBUTTON,
 };
+use windows::Win32::UI::Shell::{RemoveWindowSubclass, SetWindowSubclass};
 use windows::Win32::UI::WindowsAndMessaging::{
   AppendMenuW, BringWindowToTop, GetSystemMenu, MF_BYCOMMAND, MF_DISABLED, MF_GRAYED, SC_MAXIMIZE, SC_MINIMIZE, SC_MOVE, SC_RESTORE,
   SC_SIZE, GetClientRect, GetMenuItemCount, GetMenuItemID, GetMenuItemInfoW, GetMenuItemRect, GetMenuState,
@@ -28,11 +29,11 @@ use windows::Win32::UI::WindowsAndMessaging::{
   FindWindowW, GetCursorPos, GetForegroundWindow, GetIconInfo, GetWindowThreadProcessId, IsWindowVisible, MessageBoxW, PostMessageW,
   RegisterClassW, SetCursorPos, SetForegroundWindow, SetWindowPos, TrackPopupMenu, WindowFromPoint, HICON, HMENU, HWND_TOPMOST, ICONINFO,
   ICON_BIG, ICON_SMALL, MB_OK, MF_STRING, SWP_NOACTIVATE, SWP_SHOWWINDOW, TPM_NONOTIFY, TPM_RETURNCMD, WM_GETICON, WM_NCDESTROY,
-  WNDCLASSW, WS_EX_TOOLWINDOW, WS_POPUP,
+  WNDCLASSW, WS_EX_TOOLWINDOW, WS_POPUP, GetWindow, GW_CHILD, WM_DESTROY,
 };
 
-use crate::platform::icon_message;
-use crate::NativeWindow;
+use crate::platform::{forward, icon_message};
+use crate::{is_on_this_thread, NativeWindow};
 
 /// True when the window shows a small and a big icon (`WM_GETICON`) and
 /// `GetIconInfo` accepts both: icons that exist, not ones already destroyed.
@@ -74,6 +75,96 @@ fn icon_is_valid(icon: HICON) -> bool {
     }
   }
   true
+}
+
+/// The id the destroy watch's procedure is installed under ("DW").
+const WATCH_SUBCLASS_ID: usize = 0x4457;
+
+type OnDestroy = Box<dyn FnOnce()>;
+
+thread_local! {
+  /// What to call when each watched window of this thread is destroyed, by handle value.
+  static WATCHED: RefCell<HashMap<isize, OnDestroy>> = RefCell::new(HashMap::new());
+}
+
+/// Calls a function when a window of this thread receives `WM_DESTROY`, for a test to read what
+/// else is alive or on the screen at that moment (the order a teardown runs in). Dropping it
+/// before the window is destroyed takes the watch back; after, it does nothing.
+pub struct DestroyWatch {
+  hwnd: HWND,
+}
+
+/// Watches `window` until it is destroyed: `on_destroy` runs inside its `WM_DESTROY`.
+pub fn watch_destroy(window: &impl NativeWindow, on_destroy: impl FnOnce() + 'static) -> Result<DestroyWatch, String> {
+  if !is_on_this_thread(window) {
+    return Err("sweetview: a window of another thread cannot be watched".into());
+  }
+  let hwnd = window.hwnd();
+  WATCHED.with(|watched| watched.borrow_mut().insert(hwnd.0 as isize, Box::new(on_destroy)));
+  // SAFETY: installs this module's procedure on a window of this thread (checked above). The
+  // procedure finds what to call by handle value in a thread-local table, and is removed by
+  // `Drop` or on `WM_NCDESTROY`.
+  let installed = unsafe { SetWindowSubclass(hwnd, Some(watch_proc), WATCH_SUBCLASS_ID, 0) }.as_bool();
+  if !installed {
+    WATCHED.with(|watched| watched.borrow_mut().remove(&(hwnd.0 as isize)));
+    return Err("sweetview: SetWindowSubclass failed".into());
+  }
+  Ok(DestroyWatch { hwnd })
+}
+
+impl Drop for DestroyWatch {
+  fn drop(&mut self) {
+    let still = WATCHED.try_with(|watched| watched.borrow_mut().remove(&(self.hwnd.0 as isize)).is_some()).unwrap_or(false);
+    if still {
+      // SAFETY: removes this module's procedure from the window it was installed on; the
+      // window is alive (its entry is removed on `WM_NCDESTROY`, which had not come).
+      let _removed = unsafe { RemoveWindowSubclass(self.hwnd, Some(watch_proc), WATCH_SUBCLASS_ID) };
+    }
+  }
+}
+
+/// The destroy watch's procedure. A safe `extern "system"` function, which `SUBCLASSPROC`'s
+/// `unsafe` function pointer type accepts; its body runs inside `catch_unwind`.
+extern "system" fn watch_proc(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM, _id: usize, _data: usize) -> LRESULT {
+  let _ran = catch_unwind(AssertUnwindSafe(|| {
+    if message == WM_DESTROY {
+      // Taken out of the table first, so the function may watch or drop anything.
+      let on_destroy = WATCHED.try_with(|watched| watched.borrow_mut().remove(&(hwnd.0 as isize))).ok().flatten();
+      if let Some(on_destroy) = on_destroy {
+        on_destroy();
+      }
+    } else if message == WM_NCDESTROY {
+      let _forgotten = WATCHED.try_with(|watched| watched.borrow_mut().remove(&(hwnd.0 as isize)));
+      // SAFETY: removes this procedure from the window being destroyed, inside its own
+      // message, as `RemoveWindowSubclass` allows.
+      let _removed = unsafe { RemoveWindowSubclass(hwnd, Some(watch_proc), WATCH_SUBCLASS_ID) };
+    }
+  }));
+  forward(hwnd, message, wparam, lparam)
+}
+
+/// The handle value of a window's first child (`GetWindow` with `GW_CHILD`), if it has one.
+pub fn first_child(window: &impl NativeWindow) -> Option<isize> {
+  // SAFETY: one call with a handle the OS validates; it returns an error for none.
+  let child = unsafe { GetWindow(window.hwnd(), GW_CHILD) }.ok()?;
+  Some(child.0 as isize)
+}
+
+/// Whether DWM keeps the window off the screen (`DWMWA_CLOAKED` reads any reason: this process's
+/// cloak, the shell's, or another desktop's).
+pub fn is_cloaked(window: &impl NativeWindow) -> bool {
+  let mut cloaked = 0u32;
+  // SAFETY: one call with a handle DWM validates; the out-value is a `u32` local of the size given.
+  let read = unsafe {
+    windows::Win32::Graphics::Dwm::DwmGetWindowAttribute(window.hwnd(), windows::Win32::Graphics::Dwm::DWMWA_CLOAKED, (&raw mut cloaked).cast(), size_of::<u32>() as u32)
+  };
+  read.is_ok() && cloaked != 0
+}
+
+/// Posts `WM_CLOSE` to a window, as a click on its title bar's close button does: the loop
+/// delivers it when it next pumps.
+pub fn post_close(window: &impl NativeWindow) {
+  crate::platform::post_message(window.hwnd(), windows::Win32::UI::WindowsAndMessaging::WM_CLOSE, 0);
 }
 
 fn hwnd_of(value: isize) -> HWND {
@@ -186,7 +277,15 @@ pub fn own_top_level_windows() -> Vec<isize> {
   found
 }
 
-/// A layered window's colour key (a COLORREF, `0x00bbggrr`), alpha and `LWA_*` flags, as
+/// Minimises the window with handle value `window` (`ShowWindow(SW_MINIMIZE)`), as its minimise
+/// button does.
+pub fn minimise(window: isize) {
+  use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_MINIMIZE};
+  // SAFETY: takes the handle value and a command by value; the OS validates the handle.
+  let _was_visible = unsafe { ShowWindow(hwnd_of(window), SW_MINIMIZE) };
+}
+
+/// The class name of the window with handle value `window`; empty when it names none.
 /// `GetLayeredWindowAttributes` reads them; `None` for a window that is not layered.
 pub fn layered_attributes(window: isize) -> Option<(u32, u8, u32)> {
   use windows::Win32::Foundation::COLORREF;
@@ -732,4 +831,31 @@ pub fn frame_edge(dpi: u32) -> i32 {
   // SAFETY: as above.
   let padded = unsafe { GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi) };
   frame + padded
+}
+
+// ---- notification icons, by the shell's own record -------------------------------------------
+
+fn notify_icon_data(window: isize, uid: u32, flags: windows::Win32::UI::Shell::NOTIFY_ICON_DATA_FLAGS) -> windows::Win32::UI::Shell::NOTIFYICONDATAW {
+  use windows::Win32::UI::Shell::NOTIFYICONDATAW;
+  // A state change with an empty mask: a modify of nothing.
+  NOTIFYICONDATAW { cbSize: size_of::<NOTIFYICONDATAW>() as u32, hWnd: hwnd_of(window), uID: uid, uFlags: flags, ..Default::default() }
+}
+
+/// Whether the shell holds a notification icon added under the window `window` with id `uid`: a
+/// modify that changes nothing, which the shell accepts only for an icon it holds.
+pub fn shell_holds_icon(window: isize, uid: u32) -> bool {
+  use windows::Win32::UI::Shell::{Shell_NotifyIconW, NIF_STATE, NIM_MODIFY};
+  let data = notify_icon_data(window, uid, NIF_STATE);
+  // SAFETY: `data` is a fully initialised NOTIFYICONDATAW on this frame for the call; it changes
+  // nothing of the icon it names.
+  unsafe { Shell_NotifyIconW(NIM_MODIFY, &data) }.as_bool()
+}
+
+/// Deletes the shell's notification icon `(window, uid)` behind its owner's back, as the shell
+/// loses every icon when Explorer restarts.
+pub fn delete_shell_icon(window: isize, uid: u32) -> bool {
+  use windows::Win32::UI::Shell::{Shell_NotifyIconW, NIM_DELETE, NOTIFY_ICON_DATA_FLAGS};
+  let data = notify_icon_data(window, uid, NOTIFY_ICON_DATA_FLAGS(0));
+  // SAFETY: `data` is a fully initialised NOTIFYICONDATAW on this frame for the call.
+  unsafe { Shell_NotifyIconW(NIM_DELETE, &data) }.as_bool()
 }

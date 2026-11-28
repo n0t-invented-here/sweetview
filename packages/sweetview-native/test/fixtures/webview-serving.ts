@@ -7,7 +7,7 @@
 // teardown) are proven in Rust: `crates/sweetview-platform-webview/tests/`
 // and `crates/sweetview-runtime/src/engine_os_tests.rs`.
 
-import { SizeHint, Webview, type WebviewRequest, type WebviewResponse } from "../../src/webview";
+import { SizeHint, Webview, type WebviewRequest, type WebviewResponse } from "../../../sweetview/src/raw-webview";
 import { codeOf, finish, native, report, watchdog } from "./kit";
 
 watchdog(40_000);

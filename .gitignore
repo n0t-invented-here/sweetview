@@ -27,6 +27,7 @@ build/
 # Rust: cargo's build directory, and the binding `just native build` builds into the native package
 target/
 packages/sweetview-native/prebuilt/*.node
+packages/sweetview/prebuilt/*.node
 
 # Run output and reports of the rewrite: kept on the machine, not in git.
 rust-rewrite/evidence/

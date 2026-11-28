@@ -16,13 +16,12 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use sweetview_platform_window::{self as platform, FramePart, Placement};
-pub use sweetview_platform_window::PopupEntry;
 use tao::dpi::{LogicalSize, PhysicalSize};
 use tao::window::Theme;
 
 use super::{core_of, screen, Appearance, Core, WINDOWS};
 use sweetview_window_logic::{self as logic, Dips};
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::{Point, Rect, ResizeEdge};
 
 /// The page the frame is sized for when no bounds are given, in device-independent pixels.
@@ -34,8 +33,10 @@ const DEFAULT_MIN_PAGE: (f64, f64) = (560.0, 420.0);
 /// across the top, the page's below, light or dark (red, green, blue).
 const STRIP_LIGHT: (u8, u8, u8) = (0xe9, 0xea, 0xee);
 const STRIP_DARK: (u8, u8, u8) = (0x29, 0x2a, 0x30);
-const PAGE_LIGHT: (u8, u8, u8) = (0xf9, 0xf9, 0xfb);
-const PAGE_DARK: (u8, u8, u8) = (0x15, 0x16, 0x1a);
+/// Also what a window without tabs paints where no webview covers it (its backdrop).
+pub(super) const PAGE_LIGHT: (u8, u8, u8) = (0xf9, 0xf9, 0xfb);
+pub(super) const PAGE_DARK: (u8, u8, u8) = (0x15, 0x16, 0x1a);
+
 
 /// Called with `true` when the frame becomes the active window, `false` when it stops being it.
 pub type ActivateListener = Rc<dyn Fn(bool)>;
@@ -311,7 +312,20 @@ impl TabFrame {
       return Ok(None);
     }
     let at = screen::cursor()?;
-    self.core.with_tao(|tao| platform::popup_menu(tao, entries, at)).unwrap_or(Ok(None)).map_err(Error::state)
+    // Built and tracked as every popup menu is (`menu::build`, `show_popup`, D26): entry `i` is the
+    // item numbered `i + 1`, at the cursor with the menu's top-left corner there.
+    let data: Vec<crate::menu::MenuItem> = entries
+      .iter()
+      .enumerate()
+      .map(|(index, entry)| match entry {
+        PopupEntry::Item { label, enabled } => crate::menu::MenuItem::Item { id: u32::try_from(index + 1).unwrap_or(u32::MAX), label: label.clone(), enabled: *enabled, checked: false, icon: None },
+        PopupEntry::Separator => crate::menu::MenuItem::Separator,
+      })
+      .collect();
+    let built = crate::menu::build(&data)?;
+    let at = platform::PopupAt { x: at.x, y: at.y, corner: platform::PopupCorner::TopLeft };
+    let chosen = platform::BorrowedWindow::with_handle_value(self.handle(), |owner| crate::menu::show(&built, owner, at)).flatten();
+    Ok(chosen.and_then(|id| usize::try_from(id).ok()).and_then(|id| id.checked_sub(1)).filter(|index| *index < entries.len()))
   }
 
   /// The appearance the frame was made with.
@@ -355,6 +369,13 @@ pub fn left_button_down() -> bool {
 /// True when `handle` names a window now.
 pub fn window_exists(handle: isize) -> bool {
   platform::BorrowedWindow::with_handle_value(handle, |_| ()).is_some()
+}
+
+/// One line of a tab menu ([`TabFrame::show_menu`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PopupEntry {
+  Item { label: String, enabled: bool },
+  Separator,
 }
 
 /// What a tab menu entry is made from: a label, or `None` for a separator.

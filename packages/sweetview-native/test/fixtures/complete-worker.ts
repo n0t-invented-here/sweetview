@@ -9,7 +9,7 @@
 // binding refuses, an event split over writes and the single connection of
 // an EventSource are proven in Rust (`crates/sweetview-platform-webview/tests/serving_os.rs`).
 
-import { binding } from "../../src/binding";
+import { binding } from "../../../sweetview/src/binding";
 import {
   beginWebviewResponse,
   completeWebviewRequest,
@@ -17,7 +17,7 @@ import {
   WebviewError,
   writeWebviewResponseChunk,
   type WebviewRequest,
-} from "../../src/index";
+} from "../../../sweetview/src/raw-webview";
 
 declare var self: Worker;
 

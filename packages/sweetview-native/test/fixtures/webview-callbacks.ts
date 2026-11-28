@@ -13,7 +13,7 @@
 // straight to the engine, to reach the binding's own backstop.
 
 import { join } from "node:path";
-import { engineOf, SizeHint, Webview } from "../../src/webview";
+import { engineOf, SizeHint, Webview } from "../../../sweetview/src/raw-webview";
 import { finish, native, report, watchdog } from "./kit";
 import * as probe from "./win32-probe";
 

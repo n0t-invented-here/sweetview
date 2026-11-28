@@ -32,10 +32,11 @@ application's own `bun:ffi` calls on the UI thread, its own modal dialogs and
 popup menus included, keep working inside Sweetview's event loop.
 
 A tray-only or menu-bar-only app uses the native module without a webview, a
-worker or a page. On macOS the module does not need the webview library
+worker or a page: the webview is `RawWebview` of `@n1h/sweetview`, and on
+Windows the binding this package ships has no webview in it (D50). On macOS the module does not need the webview library
 (`@n1h/sweetview-webview-bun`) for these: it loads the library when imported
-if it is installed, and only the `RawWebview` class, the input hooks and
-`permissions` throw without it, when used.
+if it is installed, and only the input hooks and `permissions` (and
+`@n1h/sweetview`'s `RawWebview`) throw without it, when used.
 
 ## Windows start-up initialization
 
@@ -88,7 +89,10 @@ module runs, it throws `sweetview: this call must be made on the UI thread`.
 - With a listener set, the listener is called in place of that line, and
   before the callback's fallback, which still applies: a hook lets the event
   through, a menu function that throws opens no menu, a close request is
-  still taken.
+  still taken. The `worker` kind is the exception: an `onEvent` listener's
+  exception is reported after the delivery it was thrown in has finished
+  (the other listeners and the page get the event, the frames still queued
+  are delivered), several thrown in one delivery as one `AggregateError`.
 - A listener that throws never takes the application down: Sweetview
   catches it, prints its own line for the original error and
   `sweetview: an onCallbackError handler threw:` for the listener's, and
@@ -119,7 +123,7 @@ exception leaves the bindings package as it always did.
 | `webview.bindRaw` | a function bound with `bindRaw` (caught by the binding itself; `name` is the name it was bound under) | `sweetview: a binding threw:` | the page's call is left unanswered |
 | `webview.setRequestHandler` | the raw webview class's request handler, which throws or whose promise rejects | nothing; for a returned value whose check for a Promise throws (its `then`, an `instanceof` trap), `sweetview: a request handler threw:`, as before | the request is answered `500` |
 | `webview.setFileDropHandler` | the raw webview class's file drop handler | nothing | none |
-| `worker` | an `onEvent` listener of a `createApp` application or a `WebView`, called as the worker's events are delivered on the UI thread | `sweetview: UI dispatch failed:` (several in one delivery: one `AggregateError`) | the other listeners and the page still get the event, and the delivery goes on. An event delivered while Sweetview cleans up after the worker failed is not reported: that cleanup prints `sweetview: draining the failed worker's replies threw:` |
+| `worker` | an `onEvent` listener of a `createApp` application or a `WebView`, called as the worker's events are delivered on the UI thread | `sweetview: UI dispatch failed:` (several in one delivery: one `AggregateError`) | the other listeners and the page still get the event, and the delivery goes on: the report comes after the delivery has finished, not before it. An event delivered while Sweetview cleans up after the worker failed is not reported: that cleanup prints `sweetview: draining the failed worker's replies threw:` |
 | `internal` | the native module's own code at a callback boundary (the tab frame's callbacks, a window's dispose hooks, its own native timeouts, intervals and deferred jobs, which no public call makes); a fault here is a defect of Sweetview's | its own line | that boundary's |
 
 What a listener is not told about, each handled as with no listener
@@ -165,10 +169,13 @@ onCallbackError((error, { kind, name }) => {
 
 On Windows, a fault caught at a callback boundary never reaches
 `process.on("uncaughtException")`, and the application goes on: one whose
-`uncaughtException` listener writes its fault log writes these faults from
-its `onCallbackError` listener, as above. On macOS, until its goal, no
-listener is called; the faults are printed as the paragraph on macOS above
-says.
+`uncaughtException` listener writes its fault log writes, from its
+`onCallbackError` listener as above, the faults of the callback kinds that
+listener is told of. A page's failing `uiMethods` call is not one of them: it
+is the page's call that fails (its promise is rejected), not a report. On
+macOS, until its goal, each boundary keeps the behaviour it had at the tag:
+no listener is called, and the faults are printed as the paragraph on macOS
+above says.
 
 In the page, `await` each call (or `catch` it): a call a page never awaits
 is rejected unseen there, whatever the UI thread does with the fault.

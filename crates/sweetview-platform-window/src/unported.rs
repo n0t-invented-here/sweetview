@@ -100,6 +100,13 @@ pub fn set_placement(_window: &impl NativeWindow, _placement: Placement) -> bool
 }
 pub fn bring_to_front(_window: &impl NativeWindow) {}
 pub fn show(_window: &impl NativeWindow, _no_activate: bool, _topmost: bool, _tab_frame: bool) {}
+/// A window kept off the screen while it is shown. Not served on this platform: never made.
+pub struct Cloak;
+impl Cloak {
+  pub fn new(_window: &impl NativeWindow) -> Option<Self> {
+    None
+  }
+}
 pub fn show_as(_window: &impl NativeWindow, _state: ShowAs) {}
 pub fn set_title(_window: &impl NativeWindow, _title: &str) -> bool {
   false
@@ -117,6 +124,12 @@ pub fn mouse_buttons_down() -> bool {
   false
 }
 pub fn left_button_down() -> bool {
+  false
+}
+pub fn foreground_handle_value() -> isize {
+  0
+}
+pub fn pass_foreground_back(_holder: isize, _to: isize, _overlay: isize) -> bool {
   false
 }
 pub fn monitor_of(_window: &impl NativeWindow, _monitors: impl IntoIterator<Item = tao::monitor::MonitorHandle>) -> Option<tao::monitor::MonitorHandle> {

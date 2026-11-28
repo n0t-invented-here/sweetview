@@ -20,6 +20,32 @@ fn alive(handle: isize) -> bool {
   BorrowedWindow::with_handle_value(handle, |_| ()).is_some()
 }
 
+/// D49: Sweetview's reveal shows a hidden window cloaked, visible to what it holds and off the
+/// screen, until `uncloak`. The application's own `show()` and `hide()` let the cloak go, and a
+/// window already visible is left as it is.
+#[test]
+fn a_window_shown_cloaked_is_visible_and_off_the_screen_until_uncloaked() {
+  on_ui_thread(|_runtime| {
+    let window = Window::create(WindowInit { bounds: Some(Rect::new(100, 100, 300, 200)), no_activate: true, ..init("rt cloak") }).expect("window");
+    let cloaked = |w: &Window| native(w, |n| sweetview_platform_window::test_support::is_cloaked(n));
+    assert!(window.show_cloaked().expect("shown"), "cloaked");
+    assert!(window.is_visible() && cloaked(&window), "visible, and off the screen");
+    window.uncloak();
+    assert!(window.is_visible() && !cloaked(&window), "on the screen once uncloaked");
+    assert!(!window.show_cloaked().expect("shown"), "a visible window is left as it is");
+    assert!(!cloaked(&window), "and is not cloaked");
+    window.hide();
+    assert!(window.show_cloaked().expect("shown"));
+    window.show().expect("shown");
+    assert!(window.is_visible() && !cloaked(&window), "the application's own show() shows at once");
+    window.hide();
+    assert!(window.show_cloaked().expect("shown"));
+    window.hide();
+    assert!(!window.is_visible() && !cloaked(&window), "hide() lets the cloak go");
+    window.dispose();
+  });
+}
+
 #[test]
 fn hidden_windows_take_their_exact_outer_bounds_and_dispose_destroys_them() {
   on_ui_thread(|_runtime| {

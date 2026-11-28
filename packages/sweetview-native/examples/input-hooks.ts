@@ -13,10 +13,11 @@ import {
   KeyEvent,
   MouseEvent,
   permissions,
-  Webview,
   type KeyboardHook,
   type MouseHook,
 } from "../src/index";
+// The webview is @n1h/sweetview's (D50).
+import { RawWebview as Webview } from "@n1h/sweetview";
 
 // ---- the permission toggle: the app decides when, if ever, the system asks the user ----------------
 

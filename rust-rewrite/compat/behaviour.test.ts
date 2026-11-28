@@ -11,7 +11,8 @@ import { join } from "node:path";
 import { SizeHint as RootSizeHint, windowChromeMethods } from "@n1h/sweetview";
 import { wsHost } from "@n1h/sweetview/ipc-ws";
 import { defineService } from "@n1h/sweetview/ipc";
-import { Feature, KeyEvent, Modifier, MouseEvent, Permission, SizeHint, Window, dotIco, setAppMenu, unload } from "@n1h/sweetview-native";
+import { Feature, KeyEvent, Modifier, MouseEvent, Permission, Window, dotIco, setAppMenu, unload } from "@n1h/sweetview-native";
+import { SizeHint } from "@n1h/sweetview";
 
 const root = join(import.meta.dir, "..", "..");
 const fixture = (name: string) => join(import.meta.dir, "fixtures", name);
@@ -216,6 +217,21 @@ describe.skipIf(!onWindows)("Windows behaviour an application notices", () => {
       closeToTrayAnotherVisible: { disposed: true, osWindowExists: false, onHideTold: false },
       appCloseToTray: { disposed: false, osWindowExists: true, visible: false, webviewAlive: true },
       appWithoutListener: { runReturned: true, disposed: true, osWindowExists: false },
+    });
+  }, 120_000);
+
+  test("the window's background: with no backgroundColor, neither transparent nor colour-keyed, a window paints its appearance's page colour (#15161a dark, #f9f9fb light) where it painted white", async () => {
+    // What each window erases its background with; #ff00ff is a window that paints nothing.
+    expect(await runChild(fixture("window-backdrop.ts"))).toEqual({ dark: "#15161a", light: "#f9f9fb", backgroundColor: "#336699", transparent: "#ff00ff" });
+  }, 120_000);
+
+  test("the window after run(): hidden before its webview goes and still a window (isVisible() false, not in Window.visibleWindows()); the next run() and show() bring it back; the application's own hide() stands", async () => {
+    const after = { isVisible: false, osVisible: false, alive: true, listed: false };
+    expect(await runChild(fixture("run-end-hidden.ts"))).toEqual({
+      afterRun: after,
+      secondRun: { whileRunning: true, after },
+      afterShow: { isVisible: true, osVisible: true, alive: true, listed: true },
+      ownHide: { whileRunning: false, after },
     });
   }, 120_000);
 

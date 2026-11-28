@@ -16,6 +16,8 @@ export type NativeBinding = typeof Binding;
 const customPath = process.env.SWEETVIEW_NATIVE_PATH || undefined;
 
 let loaded: NativeBinding | undefined;
+/** The loader `@n1h/sweetview` handed over: its binding, which has these calls and the webview's (D50). */
+let provided: (() => NativeBinding) | undefined;
 
 // Follows the message when the package's own file is not there. In a checkout of the repository it
 // is built from source and ignored by git; an installed package always ships it.
@@ -74,7 +76,58 @@ function load(): NativeBinding {
 
 /** The binding, loaded on first use. Throws with the name of the file it looked for when it cannot be loaded. */
 export function binding(): NativeBinding {
-  return (loaded ??= load());
+  return (loaded ??= customPath === undefined && provided !== undefined ? provided() : adopt(load()));
+}
+
+/**
+ * Internal: `@n1h/sweetview` hands over its own binding, which has every call of this package's and
+ * the webview's, when it loads (D50). One binding is then loaded in the process, the facade's; an
+ * application that imports only this package loads this package's, which has no webview.
+ * @throws {Error} When this package's binding was loaded already, by a call made before
+ * `@n1h/sweetview` was imported.
+ */
+export function provideBinding(load: () => NativeBinding): void {
+  if (loaded !== undefined && provided !== load) {
+    throw new Error("sweetview: @n1h/sweetview-native loaded its own binding before @n1h/sweetview was imported; import @n1h/sweetview before the first native call, so that one binding, the one with the webview, is loaded");
+  }
+  provided = load;
+}
+
+/**
+ * The file `require` loaded a binding from, as its cache names it: the path on disk, or inside a
+ * `bun build --compile` executable the embedded file's (`B:/~BUN/root/<name>-<hash>.node`).
+ * Internal: `@n1h/sweetview` names its own binding's file with it too.
+ */
+export function loadedFile(name: string, from?: string): string | undefined {
+  const cached = Object.keys(require.cache).find((key) => {
+    const base = key.split(/[\/]/).pop() ?? "";
+    return base.endsWith(".node") && (base === `${name}.node` || base.startsWith(`${name}-`));
+  });
+  if (cached !== undefined || from === undefined) return cached;
+  // A Worker's cache does not list it: resolved at run time (a computed name, which no bundler resolves).
+  try {
+    return require.resolve([from, `${name}.node`].join("/"));
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The binding that owns this process (D50): the one just loaded when it is the process's first, else
+ * the file the first load recorded, `@n1h/sweetview`'s on a `Worker` of an application of it, so
+ * every thread calls one runtime.
+ */
+function adopt(own: NativeBinding): NativeBinding {
+  if (process.platform !== "win32") return own;
+  const file = customPath ?? loadedFile("sweetview.win32-x64-msvc", [import.meta.dir, "..", "prebuilt"].join("/"));
+  if (file === undefined) return own;
+  const owner = own.claimProcess(file);
+  if (owner.toLowerCase() === file.toLowerCase()) return own;
+  try {
+    return require(owner) as NativeBinding;
+  } catch (err) {
+    fail(`${owner} (the binding that owns this process)`, err);
+  }
 }
 
 /** Loads the binding from a given file, bypassing the cache. For the loader's own tests. */

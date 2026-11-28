@@ -5,7 +5,7 @@
 // moved to another frame, not reloaded), drop-on-strip, context menus, and
 // Tab / App tab events.
 
-import { WebView, tabAttachHooks, type Tab, type TabAttachHooks, type TabOptions, type TabsDriver, type WebViewOptions } from "../app";
+import { WebView, afterNextDraw, revealWhenDrawn, tabAttachHooks, type Tab, type TabAttachHooks, type TabOptions, type TabsDriver, type WebViewOptions } from "../app";
 import { indexHtml } from "../html";
 import type { EventMap, MethodMap } from "@n1h/sweetview-ipc";
 import { LAST_TAB, shortcutFor, type Key, type Shortcut } from "@n1h/sweetview-native/win32/shortcuts";
@@ -26,6 +26,7 @@ import {
   emitWindowTabClose,
   emitWindowTabSelect,
   forwardWindowTabEvents,
+  getWindowBackend,
   getWindowMeta,
   holdWindowNativeDispose,
   isWindowDisposed,
@@ -34,7 +35,7 @@ import {
 import { STRIP_BODY, STRIP_CSS, STRIP_JS } from "./win-strip-assets";
 import { loadFailedPage } from "./load-failed";
 import { controllerOf, moveFocus, notifyMoved, onAcceleratorKey, onNavigationFailed, onNewWindowRequested, setVisible, type Controller } from "./win-webview2";
-import type { RawWebview } from "@n1h/sweetview-native";
+import type { RawWebview } from "../raw-webview";
 
 const FOLLOW_TITLE = `(() => {
   const report = () => {
@@ -227,6 +228,18 @@ function unlistTab(record: WinTabRecord): WinTabHost {
  * when one intercepts it (closeToTrayOnLastWindow hiding the window, say) the tab stays.
  * `force` (`tab.dispose()`) tears the tab down regardless.
  */
+/**
+ * Hides the window when `record`, its last tab, is going and its default close will destroy
+ * it (no `onClose` listener can keep it): the window leaves the screen before the page goes,
+ * not after (D49, R2 of its first review).
+ */
+function concealBeforeLastTabGoes(record: WinTabRecord): void {
+  const host = record.window;
+  if (host.closed || host.tabs.length !== 1 || host.tabs[0] !== record) return;
+  if (getWindowBackend(host.window).hasCloseListeners?.() ?? true) return;
+  if (!isWindowDisposed(host.window) && host.window.isVisible()) host.window.hide();
+}
+
 function closeTab(record: WinTabRecord, force = false): void {
   if (record.closed) return;
   const owner = record.window;
@@ -237,6 +250,7 @@ function closeTab(record: WinTabRecord, force = false): void {
     requestClose(owner);
     return;
   }
+  concealBeforeLastTabGoes(record);
   record.closed = true;
   const host = unlistTab(record);
   if (host.tabs.length > 0) present(host);
@@ -262,6 +276,7 @@ function closeTab(record: WinTabRecord, force = false): void {
  */
 function releaseDisposedTab(record: WinTabRecord): void {
   if (record.closed) return;
+  concealBeforeLastTabGoes(record);
   record.closed = true;
   if (!record.window.closed) hideTab(record);
   record.controller = undefined;
@@ -474,6 +489,8 @@ function showContextMenu(host: WinTabHost, record: WinTabRecord | undefined): vo
 function disposeHost(host: WinTabHost): void {
   if (host.closed) return;
   host.closed = true;
+  // Off the screen before its tabs' webviews and its strip go, then destroyed with them (D49).
+  if (!isWindowDisposed(host.window) && host.window.isVisible()) host.window.hide();
   hosts.delete(host.window);
   const idx = hostOrder.indexOf(host);
   if (idx !== -1) hostOrder.splice(idx, 1);
@@ -746,9 +763,22 @@ export const winTabsDriver: TabsDriver = {
       // Hidden until present() shows it as the selected tab.
       // A tab is a page of the frame: it starts with the tabbed window's backgroundColor, as the frame's page area shows.
       mountChild: () => ({ window: host.frame.hwnd, bounds: host.frame.pageRect(), visible: false, pageBackground: true }),
-      revealWindow: () => {
+      // The ready signal's reveal waits for the tab's page and the strip to draw (D49).
+      revealWindow: (drawn, fallbackMs) => {
         const h = logicalHost();
-        if (!h.closed && !isWindowDisposed(h.window) && !h.window.isVisible()) h.window.show();
+        if (h.closed || isWindowDisposed(h.window) || h.window.isVisible()) return;
+        if (!drawn) h.window.show();
+        else
+          revealWhenDrawn(
+            h.window,
+            (done) => {
+              let left = h.strip ? 2 : 1;
+              const one = () => void (--left === 0 && done());
+              drawn(one);
+              if (h.strip) afterNextDraw(h.strip.raw, one);
+            },
+            fallbackMs,
+          );
       },
       // A disposed window abandons the attach before it touches the frame again.
       isCancelled: () => host.closed,

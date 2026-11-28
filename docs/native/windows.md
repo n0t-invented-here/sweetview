@@ -98,12 +98,12 @@ display. Multiply page coordinates by `win.scale()` to get window units.
 | `minWidth`, `minHeight` | `number` | none | Minimum outer size, enforced by OS resizing and by `startResize`. |
 | `frame` | `boolean` | `true` | OS title bar and borders (`true`) or frameless (`false`). |
 | `resizable` | `boolean` | same as `frame` | Whether the OS frame resizes. |
-| `appearance` | `"system" \| "light" \| "dark"` | `"system"` | Theme of a framed window's title bar. |
+| `appearance` | `"system" \| "light" \| "dark"` | `"system"` | Theme of a framed window's title bar, and, with no `backgroundColor`, of what the window shows where nothing has painted (see `backgroundColor`). |
 | `icon` | `Icon` | from `identity`, else the stock icon | Windows title bar, taskbar and Alt+Tab icon. Ignored on macOS. |
 | `tabs` | `boolean` | `false` | A native tabbed container; see [Tabbed](#tabbed). |
 | `transparent` | `boolean` | `false` | Per-pixel alpha; see [Transparent](#transparent). |
 | `colorKey` | `string` | none | Windows-only 1-bit color key; see [overlays](overlays-and-hit-regions.md#colorkey-vs-transparent). |
-| `backgroundColor` | `string` | the system's, or `appearance`'s | `"#rrggbb"` (the `#` optional, either case): what the window shows where nothing has painted: before its page paints, behind a page that leaves its background transparent, and after its webview has gone. The webview `WebView.attach` mounts takes it as the browser's background too, and a tabbed window's page area and its tabs' webviews (the tab strip keeps its own). On Windows it is set as WebView2's default background as soon as the controller exists, before the webview's container window is first shown, so no white shows while it starts. When `WEBVIEW2_DEFAULT_BACKGROUND_COLOR` is set (an `AARRGGBB` hex value, as Microsoft documents), a webview in a window with no `backgroundColor` starts with that colour; a window's `backgroundColor` wins over it. A page's own canvas, before its stylesheet applies, follows the page's colour scheme (#121212 in a dark one), a tab moved into a window that has a colour takes that colour, a tab moved into a window with no colour keeps its own background, and a window a tab is torn off into has the colour of the window it came from. Not applied to a `transparent` window (it shows what is behind it). Anything else throws `sweetview: background color must be #rrggbb, got <text>`. macOS: accepted and ignored until the macOS goal. |
+| `backgroundColor` | `string` | on Windows `WEBVIEW2_DEFAULT_BACKGROUND_COLOR` when it is set, else `appearance`'s (what the developer set wins over a default nobody set: this option, then the variable, then the appearance): `#15161a` dark, `#f9f9fb` light, the colours a tabbed window's page area shows (`"system"` takes the system's theme when the window is made); none for a `colorKey` window | `"#rrggbb"` (the `#` optional, either case): what the window shows where nothing has painted: before its page paints, behind a page that leaves its background transparent, and after its webview has gone. The webview `WebView.attach` mounts takes it as the browser's background too, and a tabbed window's page area and its tabs' webviews (the tab strip keeps its own). On Windows it is set as WebView2's default background as soon as the controller exists, before the webview's container window is first shown, so no white shows while it starts. When `WEBVIEW2_DEFAULT_BACKGROUND_COLOR` is set (an `AARRGGBB` hex value, as Microsoft documents), what shows behind a painted page that leaves its background transparent is the variable's colour in a window with no `backgroundColor`, and the window's colour in a window with one. A page's own canvas, before its stylesheet applies, follows the page's colour scheme (#121212 in a dark one), a tab moved into a window that has a colour takes that colour, a tab moved into a window with no colour keeps its own background, and a window a tab is torn off into has the colour of the window it came from. Not applied to a `transparent` window (it shows what is behind it). Anything else throws `sweetview: background color must be #rrggbb, got <text>`. macOS: accepted and ignored until the macOS goal. |
 | `opacity` | `number` | none | Whole-window opacity, clamped to `0..1`. |
 | `topmost` | `boolean` | `false` | Above normal windows. |
 | `hideFromTaskbar` | `boolean` | `false` | Omitted from the taskbar and app switcher. |
@@ -212,7 +212,7 @@ the menu bar. See [`setActivationPolicy`](menus-and-tray.md#setactivationpolicy)
 | `onResize(fn)`, `onMove(fn)` | Called with the new outer `Rect`. A window has one list of each, as before 1.0, whichever `Window` of it added a listener: they are called in the order they were added, with the bounds read once, and the same function added again, through any `Window` of the window, is one listener, which either unsubscribe takes out. A tab frame's `onMove` is called while it is minimized too. For a window Sweetview did not make, they run before the window's own procedure sees the message. |
 | `onClose(fn)`, `onFileDrop(fn)` | See [Closing](#closing) and [File drops](#file-drops). |
 | `onNewTab(fn: (origin: Window) => void)`, `onTabSelect(fn)`, `onTabClose(fn)` | Tab events; see [Tabbed](#tabbed). |
-| `dispose()` | Destroys an owned window, or detaches a wrapper's hooks. Releases timers, subclass hooks, observers and icons. A webview attached to an owned window is torn down with it ([lifecycle](../app.md#lifecycle)). On Windows every window is disposed when the application ends ([the end of the application](../app.md#the-end-of-the-application)); call it for one that should go before that. Safe to call twice. |
+| `dispose()` | Destroys an owned window, or detaches a wrapper's hooks. Releases timers, subclass hooks, observers and icons. A webview attached to an owned window is torn down with it ([lifecycle](../app.md#lifecycle)), in this order: the window is hidden, its webviews are destroyed, then the window is destroyed, so it is never on the screen with its page gone. On Windows every window is disposed when the application ends ([the end of the application](../app.md#the-end-of-the-application)); call it for one that should go before that. Safe to call twice. |
 
 Every `on*` method accepts any number of listeners and returns a function
 that removes that one subscription. A listener that throws is logged with
@@ -272,11 +272,13 @@ left mouse button is down (a `pointerdown` handler in the page).
   `WM_NCLBUTTONDOWN` with `HTCAPTION` on Windows,
   `performWindowDragWithEvent:` on macOS. Snap layouts and multi-monitor
   moves behave as with a real title bar.
-- `startResize(edge)` runs a 10 ms cursor-tracking loop (an interval of the
-  native loop on Windows, the kind `scheduleInterval` makes; an `NSTimer`
-  reading `NSEvent.pressedMouseButtons` on macOS) that
+- `startResize(edge)` on an ordinary window runs a 10 ms cursor-tracking loop
+  (an interval of the native loop on Windows, the kind `scheduleInterval`
+  makes; an `NSTimer` reading `NSEvent.pressedMouseButtons` on macOS) that
   resizes from `edge` until the left button is released. It enforces
-  `minWidth` / `minHeight`, or a 160 x 120 floor when neither is set.
+  `minWidth` / `minHeight`, or a 160 x 120 floor when neither is set. A
+  tabbed window on Windows hands the press to the OS size loop instead, as a
+  real frame edge does, with the OS's limits and `minWidth` / `minHeight`.
 
 Both act on the left button only. Native frame resizing of a framed window
 and macOS zoom do not use the 160 x 120 floor; they use the OS limits and
@@ -288,7 +290,8 @@ and macOS zoom do not use the 160 x 120 floor; they use the OS limits and
 Alt+F4 or Cmd+W, and `performClose:` on macOS. Once at least one listener is
 registered, the window stays open and the listener decides what happens:
 `hide()`, `dispose()`, or quitting the app. With no listener, closing an
-owned window destroys and disposes it. Closing a window never ends the event
+owned window destroys and disposes it: what it held (its webview, timers,
+hooks, icons) is given back at once, not kept in a hidden window. Closing a window never ends the event
 loop by itself; `createApp` adds that behaviour for its main window.
 
 ```ts

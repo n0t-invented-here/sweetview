@@ -3,7 +3,7 @@
 // src/webview.test.ts in a child process with its own WebView2 profile.
 
 import { Window } from "../../src/window";
-import { engineOf, SizeHint, unload, Webview, WebviewError } from "../../src/webview";
+import { engineOf, SizeHint, unload, Webview, WebviewError } from "../../../sweetview/src/raw-webview";
 import { codeOf, finish, native, report, watchdog } from "./kit";
 import * as probe from "./win32-probe";
 
