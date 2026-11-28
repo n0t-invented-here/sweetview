@@ -22,8 +22,7 @@ use windows::Win32::UI::Shell::{RemoveWindowSubclass, SetWindowSubclass};
 use windows::Win32::UI::WindowsAndMessaging::{
   AppendMenuW, CreatePopupMenu, DestroyMenu, EnableMenuItem, GetForegroundWindow, GetSystemMenu, SendMessageW, SetMenuDefaultItem, TrackPopupMenu, HMENU, MENU_ITEM_FLAGS, MF_ENABLED,
   MF_GRAYED, MF_SEPARATOR, MF_STRING, SC_CLOSE, SC_MAXIMIZE, SC_MINIMIZE, SC_MOVE, SC_RESTORE, SC_SIZE, SWP_NOACTIVATE, SWP_NOZORDER,
-  TPM_RETURNCMD, TPM_RIGHTBUTTON, WM_CLOSE, WM_DPICHANGED, WM_ERASEBKGND, WM_NCDESTROY, WM_SYSCOMMAND, WS_CLIPCHILDREN, WS_MAXIMIZEBOX,
-  WS_THICKFRAME,
+  TPM_RETURNCMD, TPM_RIGHTBUTTON, WM_CLOSE, WM_DPICHANGED, WM_ERASEBKGND, WM_NCDESTROY, WM_SYSCOMMAND, WS_CLIPCHILDREN,
 };
 
 use crate::platform::{after_popup_menu, client_size, dpi_of, forward as forward_frame, post_message, set_foreground, set_window_pos};
@@ -179,17 +178,12 @@ pub fn post_system_command(window: &impl NativeWindow, command: SystemCommand) {
   post_message(window.hwnd(), WM_SYSCOMMAND, command.id() as usize);
 }
 
-/// Shows the system menu of a window Sweetview did not make, its items enabled
-/// for the state the OS knows (`IsZoomed`, `IsIconic`, and the
-/// `WS_THICKFRAME` and `WS_MAXIMIZEBOX` styles), and carries out the chosen command.
+/// Shows the system menu of a window Sweetview did not make and carries out
+/// the chosen command, as the tag's `windowMenu(hwnd)` did: Restore enabled
+/// when `IsZoomed`, Move, Size and Maximize when not, Minimize always, Close
+/// left as it is and made the default item, the command posted.
 pub fn show_system_menu(window: &impl NativeWindow, at: Point) {
-  let style = crate::style(window);
-  let state = SystemMenuState {
-    maximized: is_zoomed(window),
-    minimized: crate::is_minimized(window),
-    can_size: style & WS_THICKFRAME.0 != 0,
-    can_maximize: style & WS_MAXIMIZEBOX.0 != 0,
-  };
+  let state = SystemMenuState { maximized: is_zoomed(window), minimized: false, can_size: true, can_maximize: true };
   if let Some(command) = track_system_menu(window, at, state) {
     post_system_command(window, command);
   }

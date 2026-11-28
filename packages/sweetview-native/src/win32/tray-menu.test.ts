@@ -518,10 +518,12 @@ describe.if(onWindows)("Menu.popup (binding: muda)", () => {
 });
 
 describe.if(onWindows)("Window#showSystemMenu", () => {
-  test("a window Sweetview did not make keeps the OS's own system menu: one of another process shows none, one of this thread offers Size and Maximize as its styles say and keeps its own disabled Close", async () => {
-    // Review round 2, findings 1 and 4. Class: every window kind Window#showSystemMenu can be
-    // given that Sweetview did not make (another process's, this thread's own with each of
-    // WS_THICKFRAME and WS_MAXIMIZEBOX), each adopted by Window.fromHandle, which registers it.
+  test("a window Sweetview did not make gets the system menu the tag's windowMenu(hwnd) gave it: one of another process shows none; one of this thread, whatever its styles, has its items from IsZoomed and keeps its own disabled Close", async () => {
+    // Review round 3, measure A. The tag's windowMenu(hwnd) (win32/tab-window.ts, lines 589 to 608)
+    // enabled Restore when IsZoomed, Move, Size and Maximize when not, Minimize always, left Close
+    // alone, made Close the default item and posted the chosen command. Every window Sweetview did not
+    // make (another process's; this thread's own with WS_THICKFRAME, with WS_MAXIMIZEBOX, with both
+    // and a disabled Close), each wrapped by Window.fromHandle, gets exactly that.
     const states = (win: Window): string[] => {
       let read: string[] = [];
       whenMenuOpens((menuWindow) => {
@@ -579,9 +581,12 @@ describe.if(onWindows)("Window#showSystemMenu", () => {
     const wrapped = [sizable, maximisable, noClose].map((h) => Window.fromHandle(h));
     try {
       // Restore, Move, Size, Minimize, Maximize, a separator, Close.
-      expect(states(wrapped[0]!)).toEqual(["off", "on", "on", "on", "off", "-", "on"]);
-      expect(states(wrapped[1]!)).toEqual(["off", "on", "off", "on", "on", "-", "on"]);
+      expect(states(wrapped[0]!)).toEqual(["off", "on", "on", "on", "on", "-", "on"]);
+      expect(states(wrapped[1]!)).toEqual(["off", "on", "on", "on", "on", "-", "on"]);
       expect(states(wrapped[2]!)).toEqual(["off", "on", "on", "on", "on", "-", "off"]);
+      // Maximised: Restore only, as IsZoomed says.
+      user32.SendMessageW(sizable, 0x0112, 0xf030n, 0n); // WM_SYSCOMMAND, SC_MAXIMIZE
+      expect(states(wrapped[0]!)).toEqual(["on", "off", "off", "on", "off", "-", "on"]);
     } finally {
       for (const w of wrapped) w.dispose();
       for (const h of [sizable, maximisable, noClose]) user32.DestroyWindow(h);
