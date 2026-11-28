@@ -74,7 +74,10 @@ thread_local! {
     /// handle value the system may have given to another window since.
     static WIDGETS: RefCell<HashMap<isize, (u64, Option<ICoreWebView2Controller>)>> = RefCell::new(HashMap::new());
     static NEXT_WIDGET: Cell<u64> = const { Cell::new(1) };
-    /// The watch on this thread's windows' moves, while any widget of it exists.
+    /// The watch on this thread's windows' moves, from the thread's first widget
+    /// on: unhooking it when the last widget went and hooking again with the
+    /// next cost a kernel handle each time (measured: 9 over 8 lives, against
+    /// WebView2's own 8 with the hook kept).
     static MOVE_WATCH: RefCell<Option<MoveWatch>> = const { RefCell::new(None) };
     /// The widgets that fill their parent's client area (`Layout::Fill`, or
     /// `fill_parent` since their last `set_bounds`), by handle value.
@@ -207,11 +210,6 @@ extern "system" fn widget_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPA
         if msg == WM_NCDESTROY {
             let _ = WIDGETS.try_with(|widgets| widgets.borrow_mut().remove(&key(hwnd)));
             let _ = FILLING.try_with(|filling| filling.borrow_mut().remove(&key(hwnd)));
-            // The last widget of the thread gone, the watch goes.
-            if WIDGETS.try_with(|widgets| widgets.borrow().is_empty()).unwrap_or(false) {
-                let watch = MOVE_WATCH.try_with(|watch| watch.borrow_mut().take()).ok().flatten();
-                drop(watch);
-            }
             #[cfg(any(test, feature = "test-support"))]
             let _ = FIRST_SHOWN.try_with(|shown| shown.borrow_mut().remove(&key(hwnd)));
         }
