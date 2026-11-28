@@ -240,11 +240,29 @@ thread_local! {
 /// `WEBVIEW2_DEFAULT_BACKGROUND_COLOR` as WebView2 reads it (`AARRGGBB` hex), when it names a
 /// colour that is not transparent: red, green, blue.
 fn webview2_default_background() -> Option<(u8, u8, u8)> {
-  let text = std::env::var("WEBVIEW2_DEFAULT_BACKGROUND_COLOR").ok()?;
+  #[cfg(test)]
+  if let Some(text) = tests::VARIABLE_FOR_TESTS.with(|v| v.borrow().clone()) {
+    return parse_webview2_colour(&text);
+  }
+  parse_webview2_colour(&std::env::var("WEBVIEW2_DEFAULT_BACKGROUND_COLOR").ok()?)
+}
+
+fn parse_webview2_colour(text: &str) -> Option<(u8, u8, u8)> {
   let text = text.trim();
   let value = u32::from_str_radix(text.strip_prefix("0x").or_else(|| text.strip_prefix("0X")).unwrap_or(text), 16).ok()?;
   let [alpha, red, green, blue] = value.to_be_bytes();
   (alpha != 0).then_some((red, green, blue))
+}
+
+/// Whether `WEBVIEW2_DEFAULT_BACKGROUND_COLOR` is set at all, transparent (alpha 0) included: then
+/// WebView2 starts each webview with it, and Sweetview gives the webview no start colour of its
+/// own (D49, T10 of its second review). Only an opaque one colours a window's own fill.
+fn webview2_variable_set() -> bool {
+  #[cfg(test)]
+  if let Some(text) = tests::VARIABLE_FOR_TESTS.with(|v| v.borrow().clone()) {
+    return !text.trim().is_empty();
+  }
+  std::env::var_os("WEBVIEW2_DEFAULT_BACKGROUND_COLOR").is_some_and(|v| !v.is_empty())
 }
 
 /// The `backgroundColor` of the Sweetview window `handle` names (a wrapper of
@@ -258,7 +276,7 @@ pub fn background_of(handle: isize) -> Option<(u8, u8, u8)> {
   // What the developer set wins over a default nobody set (D49): the window's `backgroundColor`,
   // then `WEBVIEW2_DEFAULT_BACKGROUND_COLOR` (`None` here: WebView2 starts the webview with it
   // itself), then the appearance's page colour.
-  if !core.background_given.get() && webview2_default_background().is_some() {
+  if !core.background_given.get() && webview2_variable_set() {
     return None;
   }
   match &core.tab {
@@ -773,7 +791,9 @@ impl Window {
     let frame = init.frame || tabbed;
     let resizable = frame && init.resizable;
     let color_key = if tabbed { None } else { color_key };
-    let tab = init.tab_strip_height.map(|strip| TabState::new(strip, init.appearance, background));
+    // A tabbed frame's page area follows the order its pages follow (D49, T8 of its second
+    // review): its `backgroundColor`, then `WEBVIEW2_DEFAULT_BACKGROUND_COLOR`, then its appearance's.
+    let tab = init.tab_strip_height.map(|strip| TabState::new(strip, init.appearance, background.or_else(webview2_default_background)));
     let theme = match init.appearance {
       Appearance::System => None,
       Appearance::Light => Some(Theme::Light),

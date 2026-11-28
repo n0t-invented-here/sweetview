@@ -5,6 +5,40 @@ use sweetview_window_logic::style::{WS_EX_ACCEPTFILES, WS_EX_APPWINDOW, WS_EX_LA
 use super::*;
 use crate::runtime::testing::on_ui_thread;
 
+thread_local! {
+  /// What `webview2_default_background` reads instead of the process's environment, on this
+  /// test thread only: setting the variable itself would reach every webview the other tests make.
+  pub(super) static VARIABLE_FOR_TESTS: RefCell<Option<String>> = const { RefCell::new(None) };
+}
+
+/// T8 of D49's second review: with `WEBVIEW2_DEFAULT_BACKGROUND_COLOR` set and no
+/// `backgroundColor`, a tabbed frame's page area takes the variable's colour, as its pages do;
+/// a `backgroundColor` wins over it.
+#[test]
+fn a_tab_frames_page_area_follows_the_colour_order_its_pages_follow() {
+  on_ui_thread(|_runtime| {
+    VARIABLE_FOR_TESTS.with(|v| *v.borrow_mut() = Some("FF20A040".into()));
+    let plain = Window::create(WindowInit { tab_strip_height: Some(40), appearance: Appearance::Dark, no_activate: true, ..init("rt t8 plain") }).expect("frame");
+    let coloured = Window::create(WindowInit { tab_strip_height: Some(40), appearance: Appearance::Dark, no_activate: true, background_color: Some("#304050".into()), ..init("rt t8 coloured") }).expect("frame");
+    // T10: a transparent variable (alpha 0) is set too: the webview gets no start colour from
+    // Sweetview, and the frame's page area keeps its appearance's colour.
+    VARIABLE_FOR_TESTS.with(|v| *v.borrow_mut() = Some("0020A040".into()));
+    let transparent = Window::create(WindowInit { tab_strip_height: Some(40), appearance: Appearance::Dark, no_activate: true, ..init("rt t10 transparent") }).expect("frame");
+    let window = Window::create(WindowInit { appearance: Appearance::Dark, no_activate: true, ..init("rt t10 window") }).expect("window");
+    let window_start = background_of(window.handle());
+    VARIABLE_FOR_TESTS.with(|v| *v.borrow_mut() = None);
+    let page = |w: &Window| core_of(w.handle()).and_then(|core| core.tab.as_ref().map(|tab| tab.backdrop()));
+    assert_eq!(page(&plain), Some((0x20, 0xa0, 0x40, 0xff)), "the variable's colour");
+    assert_eq!(page(&coloured), Some((0x30, 0x40, 0x50, 0xff)), "the window's backgroundColor");
+    assert_eq!(page(&transparent), Some((0x15, 0x16, 0x1a, 0xff)), "a transparent variable leaves the appearance's colour");
+    assert_eq!(window_start, None, "and gives the webview no start colour of Sweetview's");
+    plain.dispose();
+    coloured.dispose();
+    transparent.dispose();
+    window.dispose();
+  });
+}
+
 const WS_EX_TOPMOST: u32 = 0x0000_0008;
 
 fn init(title: &str) -> WindowInit {
