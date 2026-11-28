@@ -70,12 +70,30 @@ const contextMenu = (): MenuTemplate => [
 export const showContextMenu = (win: Window): boolean => Menu.popup(win, contextMenu);
 ```
 
-`Menu.popup(owner, menu: MenuSource, at?: Point): boolean`, where `owner` is
-a `Window`, any object with a `handle`, or a raw `WindowHandle`, opens a
-context menu at screen point `at`, or at the cursor when `at` is
-omitted, blocks until it closes, runs the chosen item's `click`, and returns
-`true` if an item was chosen. An empty template returns `false` without
-showing anything.
+`Menu.popup(owner, menu: MenuSource, at?: Point, options?: MenuPopupOptions): boolean`,
+where `owner` is a `Window`, any object with a `handle`, or a raw
+`WindowHandle`, opens a context menu at screen point `at`, or at the cursor
+when `at` is omitted, blocks until it closes, runs the chosen item's `click`,
+and returns `true` if an item was chosen. An empty template returns `false`
+without showing anything.
+
+The menu opens downward: its top-left corner is at the point. With
+`{ above: true }` it opens upward instead, its bottom-left corner at the
+point, as the [tray's menu](#clicks-why-macos-differs) does, so a menu shown
+near the bottom of the screen (over the taskbar) sits above the point:
+
+```ts
+import { Menu, Screen, type MenuTemplate, type Window } from "@n1h/sweetview/native";
+
+const statusMenu: MenuTemplate = [{ label: "Open" }, { label: "Quit" }];
+
+// At the cursor, upward; `at` may be given too.
+export const showStatusMenu = (win: Window): boolean => Menu.popup(win, statusMenu, Screen.cursor(), { above: true });
+```
+
+| `MenuPopupOptions` | Meaning |
+|---|---|
+| `above` | `true`: the menu's bottom-left corner at the point, so it opens upward. Default `false`: its top-left corner there. Near a screen edge the OS moves the menu to fit either way. macOS: accepted and has no effect until the macOS goal of the Rust rewrite; the menu opens downward. |
 
 `owner` is structural: a `Window`, any object with a `handle` (a wrapper from
 another library), or a raw handle. The platforms use it differently:

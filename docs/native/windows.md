@@ -182,13 +182,14 @@ the menu bar. See [`setActivationPolicy`](menus-and-tray.md#setactivationpolicy)
 |---|---|
 | `handle` | `HWND` on Windows, `NSWindow*` on macOS, `null` for a macOS tabbed window. |
 | `Window.visibleWindows()` | Visible windows this process created with `new Window`, minimized ones included. Wrappers from `fromHandle` are not listed. |
-| `isVisible()`, `show()`, `hide()`, `toggle()` | Visibility. `show()` restores a minimized Windows window and activates the app on macOS, unless `noActivate`. |
+| `isVisible()`, `show()`, `hide()`, `toggle()` | Visibility. `isVisible()` is true for a minimized window too; see `isMinimized()`. `show()` restores a minimized Windows window and activates the app on macOS, unless `noActivate`. |
 | `bounds()`, `setBounds(rect)` | Outer frame rectangle. |
 | `moveTo(x, y)`, `resize(width, height)` | Moves the outer top-left corner keeping the size; resizes keeping the top-left corner. |
 | `scale()` | Window units per CSS pixel; see [Coordinates](#coordinates). |
 | `setTitle(title)` | Title bar text. |
 | `setIcon(icon)` | Windows: title bar, taskbar and Alt+Tab icon from `icon.windows.ico`; `undefined` restores the stock icon. macOS: no-op. [Why](event-loop-and-icons.md#app-icon-vs-window-icon). |
 | `minimize()` | Minimizes. |
+| `isMinimized()` | Whether the window is minimized: `IsIconic` on Windows (created, frameless, tabbed and `fromHandle` windows alike), `isMiniaturized` on macOS (a tabbed window: its active tab). `isVisible()` is also true for a minimized window, so "on screen" is `isVisible() && !isMinimized()`. A window made hidden, or restored by `show()`, reads `false`. |
 | `toggleMaximize()`, `isMaximized()` | Framed Windows: `SW_MAXIMIZE` / `SW_RESTORE` and `IsZoomed`. Frameless Windows: work area vs saved bounds. macOS: `zoom:` and `isZoomed`. |
 | `setTopmost(on)` | Changes `topmost` after creation. |
 | `startDrag()`, `startResize(edge)` | Page-driven move and resize; see [below](#moving-and-resizing-from-the-page). |

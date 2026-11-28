@@ -117,14 +117,14 @@ this page: it imports each new form and checks that it is what the row says.
 - **Menus, the tray and the folder dialog.** A popup menu chooses an item
   on a left or right click or from the keyboard, as before. The tray menu
   opens upward from the cursor, as before. `Menu.popup` opens a menu
-  downward from its point and has no option to open upward; a menu of your
-  own that opens upward from the cursor, as the tray's does, is
-  `popupMenuAtCursor` of `@n1h/sweetview-native/win32/menu`, as it was in
-  0.x. Menu item icons are drawn at 16 px. Tray
+  downward from its point, and upward with `{ above: true }`
+  (`Menu.popup(owner, menu, at, { above: true })`), which is the public form
+  of 0.x's `popupMenuAtCursor`. Menu item icons are drawn at 16 px. Tray
   click handlers run one loop turn after the click. A tray icon that is not a
   valid `.ico` throws `sweetview: the tray icon could not be decoded: …`.
   `pickFolder` returns `null` for a virtual folder such as "This PC" and when
   the dialog fails, where before it disabled OK or threw.
+- **Two additions.** `Menu.popup(owner, menu, at, { above: true })` opens a menu upward from the point or the cursor, as the tray's does, and `Window#isMinimized()` says whether a window is minimised (`isVisible()` is true for a minimised window too), so neither needs an internal import or an `IsIconic` call of your own.
 - **Notifications on Windows.** A `Notifier` shows a WinRT toast and needs
   no `Tray`. 0.x showed the balloon of the application's tray icon (and threw
   without a tray), which Windows shows under the name of the running
@@ -1233,7 +1233,7 @@ in it, so an import of either by file path follows these rows too.
 | `shcore` | `import { dlopen } from "bun:ffi"`; `dlopen("shcore.dll", { … })` | declare your own table; DPI and scale come from `Screen` and `Window.scale()` |
 | `shell32` | `import { dlopen } from "bun:ffi"`; `dlopen("shell32.dll", { … })` | declare your own table; file drops are `Window.onFileDrop` |
 | `toPointer` | `import { Window } from "@n1h/sweetview-native"`; `Window.fromHandle(handle)` | a `WindowHandle` (number, bigint or `bun:ffi` pointer) is accepted as it is |
-| `user32` | `import { dlopen } from "bun:ffi"`; `dlopen("user32.dll", { … })` | declare your own table for your own calls; Sweetview's window, screen, menu and clipboard calls are `Window`, `Screen`, `Menu`, `Clipboard` |
+| `user32` | `import { dlopen } from "bun:ffi"`; `dlopen("user32.dll", { … })` | declare your own table for your own calls; Sweetview's window, screen, menu and clipboard calls are `Window`, `Screen`, `Menu`, `Clipboard` (`IsIconic` is `Window#isMinimized()`, `IsZoomed` is `Window#isMaximized()`, a menu with `TPM_BOTTOMALIGN` is `Menu.popup(owner, menu, at, { above: true })`) |
 | `wstr` | `import { Window } from "@n1h/sweetview-native"`; `Window#setTitle(title)` | public calls take JavaScript strings; for your own calls encode with `Buffer.from(text + "\0", "utf16le")` |
 
 ### `@n1h/sweetview-native/win32/shortcuts`
@@ -1332,7 +1332,7 @@ engine of the webview moves, shows, hides and re-parents it.
 | `destroyMenu` | `import { destroyMenu } from "@n1h/sweetview-native/win32/menu"`; `destroyMenu(built)` | unchanged: frees the menu, its submenus and its item bitmaps; safe to call twice |
 | `escapeLabel` | `import { Menu } from "@n1h/sweetview-native"`; `Menu.popup(owner, menu, at)` | nothing to call: the native layer doubles `&` in a label itself |
 | `popupMenu` | `import { popupMenu } from "@n1h/sweetview-native/win32/menu"`; `popupMenu(owner, template, at)` | unchanged (internal): the menu's top-left corner at `at`, or at the cursor without it, so it opens downward; `Menu.popup(owner, menu, at)` is the public call that does the same |
-| `popupMenuAtCursor` | `import { popupMenuAtCursor } from "@n1h/sweetview-native/win32/menu"`; `popupMenuAtCursor(owner, template)` | unchanged (internal): the menu's bottom-left corner at the cursor, so it opens upward, as the tray's menu does; no public call does this: `Menu.popup(owner, menu)` opens the menu downward from the cursor and takes no alignment, so an application that wants the upward menu keeps this call, with `@n1h/sweetview-native` in its own dependencies |
+| `popupMenuAtCursor` | `import { Menu } from "@n1h/sweetview-native"`; `Menu.popup(owner, menu, at, { above: true })` | `{ above: true }` puts the menu's bottom-left corner at the cursor (`at` omitted) or at `at`, so it opens upward, as the tray's menu does; `popupMenuAtCursor` stays an internal call of the tray |
 
 ### `@n1h/sweetview-native/win32/message-window`
 
