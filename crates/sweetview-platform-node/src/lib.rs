@@ -13,6 +13,7 @@
 #![allow(clippy::type_complexity)]
 
 pub mod diagnostics;
+#[cfg(feature = "webview")]
 pub mod engine;
 pub mod event_loop;
 pub mod input;

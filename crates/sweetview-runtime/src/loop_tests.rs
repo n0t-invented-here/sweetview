@@ -426,6 +426,7 @@ const DRAIN_TOKEN: u64 = 7801;
 /// tracked with the OS's own calls; a native interval inside each closes it (`WM_CLOSE` posted to
 /// the box, `EndMenu` for the menu) once all of that has happened, or after 6 s.
 #[test]
+#[cfg(feature = "webview")]
 fn page_calls_wakes_and_timeouts_are_served_inside_the_applications_own_modal_loops_in_both_loop_modes() {
   use crate::engine::{Engine, Host, SizeHint};
   use_test_webview_profile();

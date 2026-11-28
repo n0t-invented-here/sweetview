@@ -200,6 +200,7 @@ mod tests {
   /// The same, with the window of a webview of its own in front: WebView2's own windows inside
   /// it must not keep the key from the hook either.
   #[test]
+  #[cfg(feature = "webview")]
   fn a_key_typed_while_the_applications_own_webview_window_is_in_front_reaches_the_keyboard_hook() {
     use crate::engine::{Engine, Host, SizeHint};
     crate::loop_tests::use_test_webview_profile();
