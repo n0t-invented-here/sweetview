@@ -1163,7 +1163,7 @@ describe.if(onWindows)("onCallbackError's sink in the binding", () => {
 
   // What the binding's own catch does with each kind of thrown value (review 3, item 2 and Q1): it
   // reads nothing of the value, leaves nothing pending, and follows no cause.
-  const VALUES = ["string", "number", "null", "undefined", "symbol", "no prototype", "toString throws", "plain object", "error", "error whose cause is itself", "error whose message throws"];
+  const VALUES = ["string", "number", "null", "undefined", "symbol", "no prototype", "toString throws", "plain object", "error", "error whose cause is itself", "error whose message throws", "error with an unpaired surrogate"];
   test("every kind of value thrown past the TypeScript catches reaches a listener as it is, and the next call into the binding works", async () => {
     const { r, exitCode, stderr } = await spawnSink("values-listen");
     expect(exitCode).toBe(0);
@@ -1182,6 +1182,7 @@ describe.if(onWindows)("onCallbackError's sink in the binding", () => {
       { name: "a native timeout", kind: "internal", message: "loop", isThrown: true, causeIsThrown: true },
       // The thrown object itself, its unreadable message left to the listener (review 4, C3).
       { name: "a native timeout", kind: "internal", message: "(its message throws)", isThrown: true, causeIsThrown: false },
+      { name: "a native timeout", kind: "internal", message: "bad \ud800 tail", isThrown: true, causeIsThrown: false },
     ]);
     expect(stderr).toBe("");
   });
@@ -1208,6 +1209,8 @@ describe.if(onWindows)("onCallbackError's sink in the binding", () => {
       line("Error: loop"),
       // Its String() reads the message, which throws: no text, as napi's coercion gave none.
       line(""),
+      // An unpaired surrogate is U+FFFD in the line, and the rest of it is kept (review 5, E5).
+      line("Error: bad � tail"),
     ]);
   });
 

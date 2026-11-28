@@ -114,6 +114,7 @@ if (mode === "values" || mode === "values-listen") {
     ["error", () => new Error("boom")],
     ["error whose cause is itself", () => { const e = new Error("loop") as Error & { cause?: unknown }; e.cause = e; return e; }],
     ["error whose message throws", () => Object.defineProperty(new Error("hidden"), "message", { get() { throw new Error("message getter"); } })],
+    ["error with an unpaired surrogate", () => new Error("bad \ud800 tail")],
   ];
   const told: { name?: string; kind: string; message: string; isThrown: boolean; causeIsThrown: boolean }[] = [];
   let off = () => {};
