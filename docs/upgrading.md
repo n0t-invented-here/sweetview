@@ -63,14 +63,16 @@ after them give every export its row.
    (`identity: defineAppIdentity({ appId, appName })`), or toasts show as
    "Sweetview"; no tray is needed first.
 10. **Menus and the window's own state.** `Menu.popup(owner, menu, at)` opens
-    downward and, with `{ above: true }`, upward as a tray menu does;
+    downward and, with `{ above: true }`, upward as a tray menu does (on
+    Windows; macOS ignores it);
     `Window#isMinimized()`, `Window#onMaximizeChange(fn)` and
     `Window#showSystemMenu()` replace an application's own `IsIconic`, a
     polling timer and the system menu's internal call.
-11. **Threads and handles.** `Clipboard`, `singleInstance` and the other
-    UI-thread calls throw from a `Worker`; `Window.fromHandle` throws for a
-    handle that names no window. `Webview.unsafeHandle` is an opaque number,
-    not a pointer. A worker of your own written against the init message gets
+11. **Threads and handles.** On Windows, `Clipboard`, `singleInstance` and
+    the other UI-thread calls throw from a `Worker`, and `Window.fromHandle`
+    throws for a handle that names no window (on macOS only nil is refused).
+    On Windows, `Webview.unsafeHandle` is an opaque number, not a pointer
+    (on macOS it is still the library's pointer). A worker of your own written against the init message gets
     `wake` in place of its four old fields.
 12. **The loop.** `app.run()`, or `runEventLoop()` to keep Bun's event loop
     on the UI thread. On Windows, `pumpEvents()` inside a running loop does
