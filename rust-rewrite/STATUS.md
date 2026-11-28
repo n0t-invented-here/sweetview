@@ -59,6 +59,12 @@ Two real applications are being upgraded in place, each on a branch of its own r
 - Both are linked to this checkout and need the public calls of `rust-rewrite-api-gaps` on the main branch before they build against it.
 - The `dependents` check of `verify.ts` still passes with "nothing to verify", because `rust-rewrite/local/dependents.txt` was never written. `OWNER-ACTIONS.md` section 3 and decision D19 still describe upgrading a copy in the temp directory, which the owner has since ruled out: the applications are upgraded in place on branches and no copy is made.
 
+## Found: the rewrite put the webview inside the native package
+
+The packages are organised so that an application takes only what it uses: a tray application takes the native package and no webview. The rewrite broke that. At tag `pre-rust-rewrite` the native package's index exported no webview and the package depended on the settings package only; the webview was reached by the facade through the separate bindings package. Now the native package's index exports the webview class, the input hooks and `permissions`, and the one Rust binding it ships contains the webview engine. A tray-only application (`demos/menubar-only`), run on Windows, starts no WebView2 process and loads no WebView2 module, but its package, its bundle and its binary carry the webview code; on macOS, importing the native package evaluates the old bindings package when it is installed. The rewrite followed the proposal's "Packaging" section in this; the owner's organisation of the packages outranks it.
+
+To do: the webview leaves the native package, so that an application importing only the native package installs, bundles, loads and ships no webview code, with the eight packages exactly as organised. A read-only design for it is being written (which package holds the webview, how two bindings share one UI thread and loop, what moves in TypeScript); implementation follows the design.
+
 ## Not started
 
 | Audit finding | What |
