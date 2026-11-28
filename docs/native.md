@@ -53,19 +53,19 @@ initialized when the shared `NSApplication` is first touched.
 
 ## Exceptions thrown by your callbacks
 
-The functions an application hands Sweetview to call later (a tray's
-`onClick`, a menu item's `click`, a `Window` listener, a page's UI-thread
-method, ...) run on the UI thread, called from inside the event loop. An
-exception one of them throws is caught there: it never ends the loop, and
-it never reaches `process.on("uncaughtException")` by itself. To see these
-faults, set one listener:
+The functions an application hands the native module to call later (a
+tray's `onClick`, a menu item's `click`, a `Window` listener, a hook, ...)
+run on the UI thread, called from inside the event loop. An exception one of
+them throws is caught there: it never ends the loop, and it never reaches
+`process.on("uncaughtException")` by itself. To see these faults, set one
+listener:
 
 ```ts
 import { onCallbackError } from "@n1h/sweetview/native";
 
 onCallbackError((error, { kind, name }) => {
   // error: the Error the handler threw (a thrown non-error is wrapped, with the value as its cause)
-  // kind: where it came from, such as "tray.onClick" or "uiMethods"; name: the method, for a page call
+  // kind: where it came from, such as "tray.onClick"; name: the binding's own name, when it caught it
 });
 ```
 
@@ -80,14 +80,10 @@ It returns the function that removes the listener; any number can be set,
 and each is called in the order it was added, on the UI thread.
 
 - With no listener set, Sweetview does what it always did: the
-  `console.error` line in the table below, or nothing where the table says
-  so.
-- With a listener set, the listener is called in place of that line, and
-  the faults that printed nothing (a page's call, a request, a worker's
-  method) are reported too. The callback's fallback still applies: the
-  page's call is rejected, the request answers 500, a hook lets the event
-  through, a menu function that throws opens no menu, a close request is
-  still taken.
+  `console.error` line in the table below.
+- With a listener set, the listener is called in place of that line. The
+  callback's fallback still applies: a hook lets the event through, a menu
+  function that throws opens no menu, a close request is still taken.
 - A listener that throws never takes the application down: Sweetview
   catches it, prints its own line for the original error and
   `sweetview: an onCallbackError handler threw:` for the listener's, and
@@ -108,23 +104,21 @@ and each is called in the order it was added, on the UI thread.
 | `hitRegions.refine` | the refiner of `setHitRegions(polygons, refine)` | `sweetview: hit region poll threw:` | the polygon's answer stands |
 | `mouseHook`, `keyboardHook` | `installMouseHook`, `installKeyboardHook` handlers | `sweetview: mouse hook handler threw:` (`keyboard hook`) | the event is not swallowed |
 | `singleInstance.onSecondInstance`, `onOpenUrl` | those listeners | `sweetview: onSecondInstance handler threw:`, `sweetview: onOpenUrl handler threw:` | the other listeners still run |
-| `uiMethods`, `deferredUiMethods` | a page's UI-thread method (`name` is the method) | nothing | the page's call is rejected with the error's message |
-| `onRequest` | a synchronous `onRequest` function | nothing | the request is answered `500 Internal Server Error` |
-| `onReady`, `onReadyTimeout` | those `createApp` hooks | `sweetview: onReady handler threw:` (`onReadyTimeout`) | none |
-| `worker` | the worker, as the UI thread learns of its faults: a method that rejected a page's call (`name` is the method; the error has the message only), the worker's crash, a message it sent that could not be read, the delivery of its replies and events (the application's `onEvent` listeners included) | nothing for a rejected call; `sweetview: the worker failed:` for a crash; `sweetview: UI dispatch failed:` for the delivery | the page's call is rejected; after a crash every call waiting on the worker is rejected |
+| `worker` | the delivery of the worker's replies and events on the UI thread, the application's `onEvent` listeners included | `sweetview: UI dispatch failed:` | the next delivery still runs |
 | `timeout`, `interval`, `deferred` | a native timeout, interval or deferred job | `sweetview: message window handler threw:`, the binding's line, `sweetview: UI dispatch failed:` | an interval keeps its schedule |
-| `internal` | Sweetview's own code at a callback boundary (the tab machinery, its webview handlers, a window's dispose hooks); a fault here is a defect of Sweetview's | its own line | that boundary's |
+| `internal` | the native module's own code at a callback boundary (the tab frame's callbacks, a window's dispose hooks); a fault here is a defect of Sweetview's | its own line | that boundary's |
 
-What a listener does not see: a fault inside the worker that the UI thread
-never learns of (a call sent with `notify`, which the worker logs as
-`<method> failed:`, and a worker route handler's exception, which the worker
-answers with `500`); and a `Menu.popup` item's `click` on Windows, which
-runs after the menu has closed, inside `Menu.popup`, so its exception comes
-out of `Menu.popup` to the code that called it. On Windows, a fault the
-binding itself catches past these (its `sweetview: <kind> threw:` line on
-stderr) reaches the listener too, with the binding's name for the callback as
-`name` and the binding's text of the exception (such as `Error: boom`) as the
-message.
+What a listener is not told about: the faults `@n1h/sweetview` catches (a
+page's UI-thread method, a request handler, the ready hooks, the worker's
+crash and its rejected calls, the tab machinery), which are handled as with
+no listener ([app](app.md#exceptions-in-page-calls-requests-and-the-worker));
+a fault inside the worker; and a `Menu.popup` item's `click` on Windows,
+which runs after the menu has closed, inside `Menu.popup`, so its exception
+comes out of `Menu.popup` to the code that called it. On Windows, a fault
+the binding itself catches past these (its `sweetview: <kind> threw:` line
+on stderr) reaches the listener too, with the binding's name for the
+callback as `name` and the binding's text of the exception (such as
+`Error: boom`) as the message.
 
 A shipped application has no console: an executable compiled with
 `--windows-hide-console` has no stderr, so without a listener these lines

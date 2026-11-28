@@ -292,7 +292,7 @@ describe.skipIf(!onWindows)("Windows behaviour an application notices", () => {
   // onCallbackError listener it is logged as before (a page call, a request and a worker method's
   // rejection print nothing); with one, every kind reaches it with its kind and nothing is printed,
   // the fallbacks still apply; one listener line hands it to uncaughtException, or exits.
-  test("onCallbackError: without it, faults are logged as before and never reach uncaughtException; with it, every kind arrives, nothing is printed, and one line hands them on", async () => {
+  test("onCallbackError: without it, faults are logged as before and never reach uncaughtException; with it, the native module's kinds arrive and print nothing, and one line hands them on", async () => {
     const run = async (args: string[]) => {
       const child = Bun.spawn([process.execPath, fixture("callback-faults.ts"), ...args], {
         cwd: root,
@@ -319,36 +319,26 @@ describe.skipIf(!onWindows)("Windows behaviour an application notices", () => {
     expect(report.withListener.ran).toEqual(ranAll);
     expect(report.withListener.page).toEqual(page("with"));
     expect(report.withListener.reachedUncaught).toEqual([]);
-    const arrivals = report.withListener.arrivals as string[];
-    const crash = arrivals.filter((a) => a.startsWith("worker: ") && a.includes("with: worker crash"));
-    // A crash can reach the UI thread twice, through the worker's crash frame and through Worker.onerror; each was logged before too.
-    expect(crash.length).toBeGreaterThanOrEqual(1);
-    expect(arrivals.filter((a) => !crash.includes(a)).sort()).toEqual(
-      [
-        "tray.onClick: with: tray click",
-        "menu.click: with: tray menu item",
-        "window.onClose: with: window onClose",
-        "uiMethods (fault.ui): with: uiMethods",
-        "deferredUiMethods (fault.deferred): with: deferredUiMethods",
-        "onRequest: with: onRequest",
-        "onReady: with: onReady",
-        "worker (fault.reject): with: worker method",
-      ].sort(),
-    );
+    // The native module's kinds, each once. The faults of @n1h/sweetview (page calls, the request, the ready
+    // hook, the worker) are not reported: that package has no way to the reporter that is not an entry point.
+    expect([...(report.withListener.arrivals as string[])].sort()).toEqual(["menu.click: with: tray menu item", "tray.onClick: with: tray click", "window.onClose: with: window onClose"]);
     expect(report.menuPopup).toEqual({ thrownFromPopup: "popup item", arrivals: [] });
     expect(report.emitted).toEqual({ reachedUncaught: ["emit: tray click"] });
 
-    // stderr: the lines Sweetview logs with no listener, and none of the listener's phase.
+    // stderr: with no listener, the lines Sweetview logged before; with one, none of the native module's.
     const errorsOf = (label: string) => [...stderr.matchAll(new RegExp(`^error: ${label}: (.+)$`, "gm"))].map((m) => m[1]!.trim());
-    // The worker crash's own text appears when its crash frame wins the race (see above); the line below checks the crash.
-    expect(errorsOf("without").filter((e) => e !== "worker crash")).toEqual(["tray click", "tray menu item", "window onClose", "onReady"]);
+    // A worker crash is printed by @n1h/sweetview as on the main branch, with or without a listener.
+    const notCrash = (e: string) => e !== "worker crash";
+    expect(errorsOf("without").filter(notCrash)).toEqual(["tray click", "tray menu item", "window onClose", "onReady"]);
+    expect(errorsOf("with").filter(notCrash)).toEqual(["onReady"]);
     expect(stderr.match(/^sweetview: message window handler threw:/gm)?.length).toBe(2);
     expect(stderr.match(/^sweetview: onClose handler threw:/gm)?.length).toBe(1);
-    expect(stderr.match(/^sweetview: onReady handler threw:/gm)?.length).toBe(1);
-    expect(stderr.match(/^sweetview: the worker failed:.*without: worker crash/gm)?.length).toBeGreaterThanOrEqual(1);
-    expect(stderr).not.toContain("with: ");
+    expect(stderr.match(/^sweetview: onReady handler threw:/gm)?.length).toBe(2);
     expect(stderr).not.toContain("emit: ");
-    for (const silent of ["uiMethods", "deferredUiMethods", "worker method", "onRequest"]) expect(stderr).not.toContain(`without: ${silent}`);
+    for (const silent of ["uiMethods", "deferredUiMethods", "worker method", "onRequest"]) {
+      expect(stderr).not.toContain(`without: ${silent}`);
+      expect(stderr).not.toContain(`with: ${silent}`);
+    }
 
     // A listener that exits ends the process from inside Sweetview's call.
     expect((await run(["exit"])).exit).toBe(3);
@@ -358,6 +348,8 @@ describe.skipIf(!onWindows)("Windows behaviour an application notices", () => {
     expect(native).toContain("onCallbackError(");
     expect(native).not.toContain("function reported");
   }, 420_000);
+
+  test.todo("onCallbackError is told about the faults of @n1h/sweetview (uiMethods, deferredUiMethods, onRequest, the ready hooks, the worker): it needs a way to the reporter that is no entry point, which rust-rewrite-no-win32-subpaths is to provide");
 });
 
 // Part A, "Scripts run by path" and the subpaths of `@n1h/sweetview-native`: what an installed

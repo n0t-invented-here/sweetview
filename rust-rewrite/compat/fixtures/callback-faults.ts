@@ -2,8 +2,10 @@
 // of docs/upgrading.md, run for real: an exception an application's handler throws on the UI
 // thread never reaches `process.on("uncaughtException")` by itself; with no `onCallbackError`
 // listener Sweetview logs it as before (and a page call, a request and a worker method's rejection
-// stay silent); with one, every one of them reaches the listener with its kind, nothing is printed,
-// and the fallbacks still apply. A listener that hands the error to the process's own
+// stay silent); with one, each of the native module's (the tray, the menu item, the window) reaches
+// the listener with its kind and prints nothing, and the fallbacks still apply, while the faults of
+// @n1h/sweetview (the page calls, the request, the ready hook, the worker) are handled as without a
+// listener: that package has no way to the reporter that is not an entry point (D44). A listener that hands the error to the process's own
 // `uncaughtException` listeners, or exits, is the whole of what an application writes.
 //
 // The callbacks are driven by what the OS or the page would deliver: the shell's tray messages and

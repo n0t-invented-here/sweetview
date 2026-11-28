@@ -25,7 +25,7 @@ describe("reportCallbackError", () => {
     const thrown = { not: "an error" };
     try {
       reportCallbackError("tray.onClick", thrown, "sweetview: message window handler threw:");
-      reportCallbackError("uiMethods", new Error("silent"), null, "settings.save");
+      reportCallbackError("internal", new Error("silent"), null, "a binding");
       reportCallbackError("worker", new Error("x"), () => console.error("sweetview: the worker sent a message that could not be deserialized"));
     } finally {
       log.restore();
@@ -40,7 +40,7 @@ describe("reportCallbackError", () => {
     const original = new TypeError("original");
     try {
       reportCallbackError("window.onClose", original, "sweetview: onClose handler threw:");
-      reportCallbackError("deferredUiMethods", "a string", null, "folder.pick");
+      reportCallbackError("deferred", "a string", null, "a deferred job");
     } finally {
       log.restore();
     }
@@ -50,7 +50,7 @@ describe("reportCallbackError", () => {
     expect(told[1]!.error).toBeInstanceOf(Error);
     expect(told[1]!.error.message).toBe("a string");
     expect(told[1]!.error.cause).toBe("a string");
-    expect(told[1]!.source).toEqual({ kind: "deferredUiMethods", name: "folder.pick" });
+    expect(told[1]!.source).toEqual({ kind: "deferred", name: "a deferred job" });
   });
 
   test("a listener that throws is caught: Sweetview prints its own line and the listener's error, and the next listener still hears", () => {
@@ -63,15 +63,15 @@ describe("reportCallbackError", () => {
     const original = new Error("handler boom");
     try {
       expect(() => reportCallbackError("timeout", original, "sweetview: message window handler threw:")).not.toThrow();
-      expect(() => reportCallbackError("onRequest", new Error("silent one"), null)).not.toThrow();
+      expect(() => reportCallbackError("internal", new Error("silent one"), null)).not.toThrow();
     } finally {
       log.restore();
     }
-    expect(next).toEqual(["timeout: handler boom", "onRequest: silent one"]);
+    expect(next).toEqual(["timeout: handler boom", "internal: silent one"]);
     expect(log.calls.map((args) => args.map((a) => (a instanceof Error ? a.message : a)))).toEqual([
       ["sweetview: message window handler threw:", "handler boom"],
       ["sweetview: an onCallbackError handler threw:", "listener boom"],
-      ["sweetview: onRequest threw:", "silent one"],
+      ["sweetview: internal threw:", "silent one"],
       ["sweetview: an onCallbackError handler threw:", "listener boom"],
     ]);
   });
@@ -99,5 +99,18 @@ describe("reportCallbackError", () => {
     expect(kindOfBindingCallback("a tray menu handler")).toBe("menu.click");
     expect(kindOfBindingCallback("a drain function")).toBe("worker");
     expect(kindOfBindingCallback("a tab frame's activation listener")).toBe("internal");
+  });
+});
+
+describe("the reporter is not an entry point", () => {
+  test("no entry point of the package lets an application fabricate a fault: ./internal does not export reportCallbackError", async () => {
+    const pkg = JSON.parse(await Bun.file(new URL("../package.json", import.meta.url)).text()) as { exports: Record<string, string> };
+    const offering: string[] = [];
+    for (const [subpath, target] of Object.entries(pkg.exports)) {
+      if (typeof target !== "string" || subpath.includes("darwin")) continue;
+      const mod = (await import(new URL(`../${target}`, import.meta.url).href)) as Record<string, unknown>;
+      for (const name of ["reportCallbackError", "hasCallbackErrorListener", "kindOfBindingCallback"]) if (name in mod) offering.push(`${subpath}: ${name}`);
+    }
+    expect(offering).toEqual([]);
   });
 });

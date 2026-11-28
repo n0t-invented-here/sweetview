@@ -705,41 +705,24 @@ page). [WebView2 Feedback #3519](https://github.com/MicrosoftEdge/WebView2Feedba
 ## Exceptions in page calls, requests and the worker
 
 An exception thrown by one of these handlers never reaches
-`process.on("uncaughtException")` by itself, and with no
-[`onCallbackError`](native.md#exceptions-thrown-by-your-callbacks) listener
-most of them print nothing: the page or the request gets the failure
-instead. With a listener set, each is reported to it, with the `kind` below,
-and the page or the request still gets its failure.
+`process.on("uncaughtException")`, and most of them print nothing: the page
+or the request gets the failure instead. They are not reported to an
+[`onCallbackError`](native.md#exceptions-thrown-by-your-callbacks)
+listener, which hears of the native module's callbacks only.
 
-| Handler | `kind` | What the page or the request gets | Printed with no listener |
-|---|---|---|---|
-| A `uiMethods` method | `uiMethods`, `name` the method | the call is rejected with the error's message | nothing |
-| A `deferredUiMethods` method | `deferredUiMethods`, `name` the method | the call is rejected with the error's message, on the later tick the method ran in | nothing |
-| An `onRequest` function | `onRequest` | `500 Internal Server Error` | nothing |
-| `onReady`, `onReadyTimeout` | `onReady`, `onReadyTimeout` | (no effect on the page) | `sweetview: onReady handler threw:` (`onReadyTimeout`) |
-| A method of the worker's service (`hostService`) | `worker`, `name` the method; the error carries the message only, as the reply does | the call is rejected with the error's message | nothing |
-| The worker's own uncaught exception | `worker` | the worker ends, and every call waiting on it is rejected | `sweetview: the worker failed:` |
-
-What the UI thread never learns of is not reported: a worker method called
-with `notify` (no reply), which the worker logs as `<method> failed:`, and a
-worker route handler (`onRequest: "worker"`), which the worker answers with
-`500` ([worker](worker.md)). An `onCallbackError` listener set inside the
-worker is told only about callbacks Sweetview calls on that thread.
-
-```ts
-import { createApp } from "@n1h/sweetview";
-import { onCallbackError } from "@n1h/sweetview/native";
-
-onCallbackError((error, { kind, name }) => reportFault(`${kind}${name ? ` ${name}` : ""}`, error));
-const app = await createApp({ page, uiMethods: { "settings.save": (params) => saveSettings(params) } });
-```
+| Handler | What the page or the request gets | Printed |
+|---|---|---|
+| A `uiMethods` method | the call is rejected with the error's message | nothing |
+| A `deferredUiMethods` method | the call is rejected with the error's message, on the later tick the method ran in | nothing |
+| An `onRequest` function | `500 Internal Server Error` | nothing |
+| `onReady`, `onReadyTimeout` | (no effect on the page) | `sweetview: onReady handler threw:` (`onReadyTimeout`) |
+| A method of the worker's service (`hostService`) | the call is rejected with the error's message | nothing |
+| The worker's own uncaught exception | the worker ends, and every call waiting on it is rejected | `sweetview: the worker failed:` |
+| A worker method called with `notify` (no reply) | nothing | `<method> failed:`, in the worker |
+| A worker route handler (`onRequest: "worker"`) | `500` ([worker](worker.md)) | nothing |
 
 In the page, `await` each call (or attach a `catch`): a call the page never
 awaits is rejected unseen there.
-
-The callbacks of the native module (trays, menus, window listeners,
-notifications, hooks) have their table in
-[the native module](native.md#exceptions-thrown-by-your-callbacks).
 
 ## Transport
 

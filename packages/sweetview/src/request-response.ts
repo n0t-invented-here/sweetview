@@ -42,8 +42,6 @@ function responseFrameWriter(ring: Ring, wake: () => void) {
 export function runNativeRequest(
   handler: (request: NativeRequest) => NativeResponse,
   request: NativeRequest,
-  /** Told about an exception the handler threw (or a response it returned that cannot be sent), before the 500. */
-  onError?: (error: unknown) => void,
 ): NativeRequestResponse {
   let response: NativeResponse;
   try {
@@ -63,8 +61,7 @@ export function runNativeRequest(
       ? encoder.encode(response.body)
       : response.body instanceof Uint8Array ? response.body : new Uint8Array(response.body ?? 0);
     return { id: String(request.id), status, headers, body };
-  } catch (err) {
-    onError?.(err);
+  } catch {
     return requestError(request.id, 500, "Internal Server Error");
   }
 }

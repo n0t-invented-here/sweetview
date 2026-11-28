@@ -119,15 +119,16 @@ this page: it imports each new form and checks that it is what the row says.
   (`sweetview: message window handler threw: …`,
   `sweetview: onClose handler threw: …`), and a page's UI-thread method or a
   request handler that throws only rejects the call or answers `500`. One
-  listener, set once, is told about all of them, with the kind of callback
-  each came from:
+  listener, set once, is told about the native module's, with the kind of
+  callback each came from:
   [`onCallbackError`](native.md#exceptions-thrown-by-your-callbacks). One kind
-  changed from 0.x: the input hooks. 0.x's were the bindings package's
-  (`@n1h/sweetview-webview-bun` 2.x), which does not catch a handler's
-  exception: Bun throws it at the JavaScript that called into the native loop
-  (`run()` or `pumpEvents()`), which passes it on unless something there
-  catches it. Now a hook handler's exception is caught and reported like the
-  others, and the event is not swallowed.
+  changed from 0.x on Windows: the input hooks. 0.x's were the bindings
+  package's (`@n1h/sweetview-webview-bun` 2.x), which does not catch a
+  handler's exception: Bun throws it at the JavaScript that called into the
+  native loop (`run()` or `pumpEvents()`), which passes it on unless
+  something there catches it. On Windows a hook handler's exception is now
+  caught, logged and reported like the others, and the event is not
+  swallowed.
 - **Window styles.** A frameless `Window` (`frame: false`) no longer has
   `WS_POPUP` in `GWL_STYLE`: it is an undecorated top-level window. An
   application that reads the style itself sees the difference;
@@ -231,9 +232,10 @@ this page: it imports each new form and checks that it is what the row says.
     listener for faults in its callbacks, set
     [`onCallbackError`](native.md#exceptions-thrown-by-your-callbacks) once,
     beside it: `onCallbackError((error) => void process.emit("uncaughtException", error, "uncaughtException"))`
-    hands every such fault to that listener, or call the application's own
-    reporter there. A shipped executable has no console, so without it these
-    faults reach nobody.
+    hands the native module's faults to that listener, or call the
+    application's own reporter there. A shipped executable has no console, so
+    without it these faults reach nobody. A page's own calls fail in the page:
+    `await` them there.
 13. Check what an overlay application notices, in [What changed for every
     application](#what-changed-for-every-application): the opaque
     `unsafeHandle`, the error messages, the UI-thread checks, the frameless

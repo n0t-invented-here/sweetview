@@ -1,11 +1,14 @@
-// Exceptions thrown by an application's callbacks. Sweetview calls an application's handlers (a
-// tray click, a menu item, a window listener, a page's UI-thread method, ...) on the UI thread, from
-// inside the event loop, and catches what they throw there: an exception never unwinds into the OS
-// and never ends the loop (W1.3). Every such catch, in the TypeScript and in the binding, hands the
-// exception to `reportCallbackError`. With no listener set it does exactly what that catch did
-// before: the same `console.error` line, or nothing for a page call and a request. With one set,
-// the listener is told instead, and the callback's own fallback (the page's call rejected, a 500,
-// the event let through) still applies.
+// Exceptions thrown by an application's callbacks. The native module calls an application's
+// handlers (a tray click, a menu item, a window listener, a hook, ...) on the UI thread, from inside
+// the event loop, and catches what they throw there: an exception never unwinds into the OS and
+// never ends the loop (W1.3). Every such catch of this package, in the TypeScript and in the
+// binding, hands the exception to `reportCallbackError`. With no listener set it does exactly what
+// that catch did before: the same `console.error` line. With one set, the listener is told
+// instead, and the callback's own fallback (the event let through, no menu opened) still applies.
+//
+// The catches of `@n1h/sweetview` (a page's UI-thread methods, a request handler, the ready hooks,
+// the worker's faults) do not reach this module: it is no entry point of the package, and an
+// application must not be able to call it to fabricate a fault (D44).
 
 import { binding } from "./binding";
 
@@ -34,11 +37,6 @@ export type CallbackKind =
   | "keyboardHook"
   | "singleInstance.onSecondInstance"
   | "onOpenUrl"
-  | "uiMethods"
-  | "deferredUiMethods"
-  | "onRequest"
-  | "onReady"
-  | "onReadyTimeout"
   | "timeout"
   | "interval"
   | "deferred"
@@ -49,7 +47,7 @@ export type CallbackKind =
 export type CallbackErrorSource = {
   /** The kind of callback that threw. */
   readonly kind: CallbackKind;
-  /** The method name for `uiMethods`, `deferredUiMethods` and `worker` calls; the binding's own name for its callback otherwise, when it reported it. */
+  /** The binding's own name for the callback, when the binding caught the exception itself. */
   readonly name?: string;
 };
 
@@ -130,7 +128,6 @@ const BINDING_KINDS: Record<string, CallbackKind> = {
   "a mouse hook handler": "mouseHook",
   "a keyboard hook handler": "keyboardHook",
   "a singleInstance onSecondInstance": "singleInstance.onSecondInstance",
-  "a request handler": "onRequest",
   "a native timeout": "timeout",
   "a native interval": "interval",
   "a deferred job": "deferred",

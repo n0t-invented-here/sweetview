@@ -30,7 +30,6 @@ import {
   holdWindowNativeDispose,
   isWindowDisposed,
   onWindowDispose,
-  reportCallbackError,
 } from "@n1h/sweetview-native/internal";
 import { STRIP_BODY, STRIP_CSS, STRIP_JS } from "./win-strip-assets";
 import { loadFailedPage } from "./load-failed";
@@ -57,7 +56,7 @@ const later = (work: () => void) =>
     try {
       work();
     } catch (err) {
-      reportCallbackError("internal", err, "sweetview: tab action threw:");
+      console.error("sweetview: tab action threw:", err);
     }
   }, 0);
 
@@ -78,7 +77,7 @@ function cleanupList() {
         try {
           stop();
         } catch (err) {
-          reportCallbackError("internal", err, "sweetview: removing a WebView2 handler threw:");
+          console.error("sweetview: removing a WebView2 handler threw:", err);
         }
       }
     },
@@ -775,7 +774,7 @@ export const winTabsDriver: TabsDriver = {
             try {
               raw.setHTML(loadFailedPage(failedAt, reason));
             } catch (err) {
-              reportCallbackError("internal", err, "sweetview: tab action threw:");
+              console.error("sweetview: tab action threw:", err);
             }
           }, () => navEpoch));
         }

@@ -5,7 +5,6 @@
 
 import { CString, FFIType, JSCallback, toArrayBuffer, type Pointer } from "bun:ffi";
 import type { RawWebview } from "@n1h/sweetview-native";
-import { reportCallbackError } from "@n1h/sweetview-native/internal";
 import {
   allowExternalDropCall,
   backgroundColorCall,
@@ -30,13 +29,12 @@ let nativeDispatch: JSCallback | undefined;
 function nativeDispatchPointer(): Pointer {
   nativeDispatch ??= new JSCallback(
     (_webview, id: bigint) => {
-      const dispatch = pendingUiDispatches.get(id);
-      const run = dispatch ?? workerDrains.get(id);
+      const run = pendingUiDispatches.get(id) ?? workerDrains.get(id);
       pendingUiDispatches.delete(id);
       try {
         run?.();
       } catch (err) {
-        reportCallbackError(dispatch ? "deferred" : "worker", err, "sweetview: UI dispatch failed:");
+        console.error("sweetview: UI dispatch failed:", err);
       }
     },
     { args: [FFIType.ptr, FFIType.u64], returns: FFIType.void },
