@@ -13,34 +13,9 @@ import type { HttpRequestMessage, InitMessage, NativeRequest, NativeResponse, Wo
 import { RawWebview, SizeHint, Window, quitEventLoop, runEventLoop, signalReady, type Rect, type TabHandle, type WindowOptions } from "@n1h/sweetview-native";
 import { createChildWebview, discardQuit, emitWindowFileDrop, engineOf, getWindowMeta, holdWindowNativeDispose, isWindowDisposed, macosKeepsTagPath, onWindowDispose, onWindowFileDropListenersChange, preserveWindowGeometry, releaseAtEnd, scheduleNativeTimeout, windowFileDropCount } from "@n1h/sweetview-native/internal";
 import { Ring } from "./ring";
+import { messageOfThrown } from "./thrown-text";
 import { webviewEngine, type WebviewHost, type WorkerWake } from "./webview-host";
 import { ASSET_ORIGIN } from "./webview-lib";
-
-/**
- * The page's text for a value a handler threw: an `Error`'s message, else its `String()` form. It
- * never throws: a value whose prototype, message or `String()` cannot be read (a Proxy whose traps
- * throw, an object with no prototype) is described by its `Object.prototype.toString` tag, else
- * its type. The native package's own reader of such values is not one of its entry points.
- */
-function messageOfThrown(error: unknown): string {
-  try {
-    if (error instanceof Error) {
-      const message = error.message;
-      if (typeof message === "string") return message;
-    }
-  } catch {
-    // An unreadable prototype or message: described below.
-  }
-  try {
-    return String(error);
-  } catch {
-    try {
-      return Object.prototype.toString.call(error);
-    } catch {
-      return `a thrown ${typeof error}`;
-    }
-  }
-}
 
 /** Methods that return synchronously on the UI thread. */
 export type UiMethods<M extends MethodMap> = { [K in keyof M & string]?: (params: M[K][0]) => M[K][1] };

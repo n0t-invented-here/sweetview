@@ -765,6 +765,18 @@ describe.if(onWindows)("a fault in one callback of createApp stays in that callb
     });
   }, LIVE_TEST_MS * 3);
 
+  test("a worker method that throws a value that cannot be read sends its error reply: the page's call is rejected and the worker lives on", async () => {
+    const { seen, stderr } = await faults();
+    expect({ workerUnreadable: seen?.workerUnreadable, workerNoPrototype: seen?.workerNoPrototype, ticks: seen?.ticks }).toEqual({
+      workerUnreadable: "rejected: [object Object]",
+      workerNoPrototype: "rejected: [object Object]",
+      ticks: "resolved: ticked",
+    });
+    // The worker ends once, by the crash the page asks for last, not by these calls.
+    expect(stderr.match(/^sweetview: the worker failed:/gm)?.length).toBe(1);
+    expect(stderr).not.toContain("getPrototypeOf trap");
+  }, LIVE_TEST_MS * 3);
+
   test("an onEvent listener that throws: the other listeners and the page still get each event, the reply behind them arrives, and the error is printed as before", async () => {
     const { seen, tapped, stderr } = await faults();
     expect(tapped).toEqual(["tick 1", "tick 2"]);

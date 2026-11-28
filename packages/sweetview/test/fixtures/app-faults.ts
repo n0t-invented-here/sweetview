@@ -42,6 +42,8 @@ const page = `<!doctype html><title>app faults</title><script>
   note("deferredOk", rpc("deferred.ok", null));
   note("deferredNoPrototype", rpc("deferred.noPrototype", null));
   note("uiUnreadable", rpc("ui.unreadable", null));
+  note("workerUnreadable", rpc("throws.unreadable", null));
+  note("workerNoPrototype", rpc("throws.noPrototype", null));
   const sent = () => {
     rpc("seen", seen);
     // Then the crash: the worker's own crash frame and Worker.onerror both see it.
