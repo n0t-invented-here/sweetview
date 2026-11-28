@@ -141,10 +141,54 @@ pub fn window_titled(title: &str) -> isize {
   unsafe { FindWindowW(PCWSTR::null(), &title) }.map_or(0, |hwnd| hwnd.0 as isize)
 }
 
-/// The handle value of the window at a point of the screen; 0 when there is none.
+/// The handle value of the top-level window at a point of the screen (`WindowFromPoint`, then
+/// its root, as a child window such as the taskbar's buttons belongs to it); 0 when there is none.
 pub fn window_at(x: i32, y: i32) -> isize {
+  use windows::Win32::UI::WindowsAndMessaging::{GetAncestor, GA_ROOT};
   // SAFETY: the point is passed by value.
-  unsafe { WindowFromPoint(POINT { x, y }) }.0 as isize
+  let hit = unsafe { WindowFromPoint(POINT { x, y }) };
+  if hit.is_invalid() {
+    return 0;
+  }
+  // SAFETY: `hit` is a handle value the OS just returned and validates again.
+  unsafe { GetAncestor(hit, GA_ROOT) }.0 as isize
+}
+
+/// This process's top-level windows, by handle value, in z-order, without its console window (a
+/// console program has one, which `GetWindowThreadProcessId` reports as the process's).
+pub fn own_top_level_windows() -> Vec<isize> {
+  // SAFETY: takes nothing and reads no memory; a null handle when the process has no console.
+  let console = unsafe { windows::Win32::System::Console::GetConsoleWindow() }.0 as isize;
+  // SAFETY: takes nothing and reads no memory.
+  let process = unsafe { GetCurrentProcessId() };
+  let mut found = Vec::new();
+  let mut after: Option<HWND> = None;
+  loop {
+    // SAFETY: no class or window name is passed; `after` is none or a handle value the previous
+    // call returned, which the OS validates.
+    let next = unsafe { FindWindowExW(None, after, PCWSTR::null(), PCWSTR::null()) };
+    let Ok(window) = next else { break };
+    let mut owner = 0u32;
+    // SAFETY: `window` is a handle value the OS just returned and validates again; `owner` is a
+    // u32 owned by this frame for the call to fill.
+    let _thread = unsafe { GetWindowThreadProcessId(window, Some(&mut owner)) };
+    if owner == process && window.0 as isize != console {
+      found.push(window.0 as isize);
+    }
+    after = Some(window);
+  }
+  found
+}
+
+/// A layered window's colour key (a COLORREF, `0x00bbggrr`), alpha and `LWA_*` flags, as
+/// `GetLayeredWindowAttributes` reads them; `None` for a window that is not layered.
+pub fn layered_attributes(window: isize) -> Option<(u32, u8, u32)> {
+  use windows::Win32::Foundation::COLORREF;
+  use windows::Win32::UI::WindowsAndMessaging::{GetLayeredWindowAttributes, LAYERED_WINDOW_ATTRIBUTES_FLAGS};
+  let (mut key, mut alpha, mut flags) = (COLORREF(0), 0u8, LAYERED_WINDOW_ATTRIBUTES_FLAGS(0));
+  // SAFETY: the three out-values are locals of this frame, written for the call.
+  unsafe { GetLayeredWindowAttributes(hwnd_of(window), Some(&mut key), Some(&mut alpha), Some(&mut flags)) }.ok()?;
+  Some((key.0, alpha, flags.0))
 }
 
 // ---- input ---------------------------------------------------------------------------
