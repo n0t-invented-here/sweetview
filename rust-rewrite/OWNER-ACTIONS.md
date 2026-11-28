@@ -31,15 +31,15 @@ Before publishing:
 
 ## 3. Run the upgrade against the real applications
 
+Note, 2026-11-28: the owner has ruled out copies. No copy of an application is made anywhere: each is upgraded in place, on a branch of its own repository, and its own typecheck, tests and build run there (`STATUS.md`, "The owner's rulings that bind all remaining work"). The steps below that copy an application to the temp directory are withdrawn. Two more things changed since this section was written: a row that says `no public call in 1.0` is checked by name, not run (its list is pinned, no public entry may export what it names, and each public call its Change column names must exist), and a macOS row names its public call or says `no public call in 1.0` like any other (D45).
+
 Requirement R2 asks for each real application to be upgraded in a temp copy and its own checks run, when `rust-rewrite/local/dependents.txt` lists them. That file did not exist on this machine and this work did not make one (decision D19, requirement R6). To run it:
 
 1. Write `rust-rewrite/local/dependents.txt`: one local path of an application per line. The folder is ignored by git.
-2. For each: copy it to the system temp directory, apply `docs/upgrading.md` to the copy, run its typecheck, tests and build, and write a section ending in a line `RESULT: PASS` or `RESULT: FAIL` to `rust-rewrite/local/dependents-result.md`.
+2. Withdrawn (no copies): for each, copy it to the system temp directory, apply `docs/upgrading.md` to the copy, run its typecheck, tests and build, and write a section ending in a line `RESULT: PASS` or `RESULT: FAIL` to `rust-rewrite/local/dependents-result.md`.
 3. `bun rust-rewrite/verify.ts windows` then counts them in its `dependents` check.
 
 What stands in for it until then: `rust-rewrite/compat/upgrade-guide.test.ts` reads every table of `docs/upgrading.md` and imports each row's new form. On Windows its test "every row's new form runs" calls each class, constant, function and method or member row once in its new form, with real arguments, through the runners in `rust-rewrite/compat/fixtures/row-runners.ts` (the ones that need a window, a webview, the tray, the clipboard, a hook, a dialog or the loop in `fixtures/rows-desktop.ts`, a process of its own), and checks what comes back; the rows of an application's own `bun:ffi` table are opened and called by `fixtures/own-ffi.ts`. A row whose target has no runner fails "every row's new form has a runner". Type rows are not run: tsc checks them through `rust-rewrite/compat/upgrade-types.ts`. Rows of a `/darwin/` module are macOS-only and are not run on Windows. `behaviour.test.ts` and `own-modal-loops.test.ts` run the rows whose behaviour changed.
-
-Note, 2026-11-28: the owner has ruled out copies. No copy of an application is made anywhere: each is upgraded in place, on a branch of its own repository, and its own typecheck, tests and build run there (`STATUS.md`, "The owner's rulings that bind all remaining work"). Step 2 above, which copies each application to the temp directory, is not done. Two more things changed since this section was written: a row that says `no public call in 1.0` is checked by name, not run (its list is pinned, no public entry may export what it names, and each public call its Change column names must exist), and a macOS row names its public call or says `no public call in 1.0` like any other (D45).
 
 ## 4. Things only a person at the desk can do
 
