@@ -232,7 +232,7 @@ view.run();
 
 `WebView.attach(window, options: WebViewOptions<M>): Promise<WebView<M, E>>`
 
-Mounts a webview inside an existing `Window` created by `new Window(...)` or `Window.fromHandle(...)`. Geometry (the window's own: its client area, in physical pixels on Windows and points on macOS), DPI scale, `resizable`, `transparent`, `backgroundColor`, and default `title` are read directly from `window`, so callers never duplicate window options. The window stays hidden; call `win.show()`, or set `showOnReady`.
+Mounts a webview inside an existing `Window` created by `new Window(...)` or `Window.fromHandle(...)`. Geometry (the window's own: its client area, in physical pixels on Windows and points on macOS), DPI scale, `resizable`, `transparent`, `backgroundColor`, and default `title` are read directly from `window`, so callers never duplicate window options. The window stays hidden until the page calls `signalReady()` with `showOnReady` set (or the ready watchdog fires); without `showOnReady`, call `win.show()` when it is to appear.
 
 What `WebView.attach` does, in order:
 
@@ -403,7 +403,7 @@ frame in physical pixels instead; give one or the other
 
 Layer 2 declarative helper that combines `new Window(options)` with `WebView.attach` (or native tab setup when `options.tabs` is `true`). `options` is both `WindowOptions` and `WebViewOptions`.
 
-- The window is created hidden. Call `app.window.show()` once it is wired, or set `showOnReady: true`. In a tabbed app, opening a tab does not show the window either, unless that tab sets `showOnReady`.
+- The window is created hidden. Set `showOnReady: true` and call `signalReady()` from `@n1h/sweetview/page` once the page has rendered: the window appears then, or when the ready watchdog fires. Call `app.window.show()` yourself only for a window that is to appear later (from a tray click, say). In a tabbed app, opening a tab does not show the window either, unless that tab sets `showOnReady`.
 - When the app quits on its own is under [Closing and quitting](#closing-and-quitting).
 - If `WebView.attach` throws during `createApp`, the newly created `Window` is disposed before rethrowing.
 - On a non-tabbed app, `app.openTab` throws `sweetview: openTab() requires createApp({ tabs: true })`.
