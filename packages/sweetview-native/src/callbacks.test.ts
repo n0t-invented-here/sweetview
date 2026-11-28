@@ -1394,6 +1394,12 @@ describe.if(onWindows)("onCallbackError's sink in the binding", () => {
     ]);
   });
 
+  test("the binding's guard holds Reflect.apply, Object.create and String as they were when the binding loaded, not as the application patched them before its first callback", async () => {
+    const { r, exitCode, stderr } = await spawnSink("patched-globals");
+    expect({ exitCode, ran: r.ran, told: r.told }).toEqual({ exitCode: 0, ran: 2, told: ["a native timeout: second"] });
+    expect(stderr.split(/\r?\n/).filter(Boolean)).toEqual(["sweetview: a native timeout threw: Error: first"]);
+  });
+
   test("a Worker that calls onCallbackError first is refused, loads nothing, and the main thread stays the UI thread", async () => {
     const { r, exitCode } = await spawnSink("worker-first");
     expect({ exitCode, worker: r.worker, windowOnThisThread: r.windowOnThisThread }).toEqual({ exitCode: 0, worker: UI_THREAD, windowOnThisThread: null });

@@ -175,7 +175,12 @@ thread_local! {
   static GUARD: GuardSlot = const { GuardSlot(RefCell::new(None)) };
 }
 
-/// This thread's guard state, made on first use.
+/// Makes this thread's guard state, when the binding loads (`prepare_environment`).
+pub(crate) fn prepare_guard(env: &Env) -> napi::Result<()> {
+  env.run_in_scope(|| state(env).map(|_| ()))
+}
+
+/// This thread's guard state: made when the binding loads, else on first use.
 fn state(env: &Env) -> napi::Result<Object<'_>> {
   if let Some(state) = GUARD.with(|slot| slot.0.borrow().as_ref().map(|guard| guard.state.get_value(env))) {
     return state;
