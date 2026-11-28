@@ -51,8 +51,9 @@ after them give every export its row.
    the last line is `app.run()`, and Sweetview releases what it made (on
    macOS, until its goal, keep them).
 8. **Faults in your callbacks.** On Windows, an exception Sweetview catches
-   at a callback boundary (a UI-thread callback, an input hook) is printed
-   and no longer reaches `uncaughtException`
+   at a callback boundary (a UI-thread callback, an input hook) follows the
+   reporting and fallback rules of the linked section and no longer reaches
+   `uncaughtException`
    ([exceptions](#what-changed-for-every-application)); a `Menu.popup`
    item's `click`, which runs after the menu has closed, throws to the
    caller of `Menu.popup` instead. `onCallbackError`
@@ -164,7 +165,9 @@ after them give every export its row.
   first, which is Bun's main thread. `Clipboard.*` and `singleInstance`
   called from a `Worker` throw `sweetview: this call must be made on the UI thread`.
   `Window.fromHandle(h)` with an `h` that names no window throws
-  `sweetview: not a window: 0x…` (it used to wrap it silently), and
+  `sweetview: not a window: 0x…` (it used to wrap it silently), a window
+  that was destroyed included, even while an older wrapper of it is still
+  held, and
   subscribing to events (`onClose`, `onResize`, `onMaximizeChange`, `onMove`,
   `onFileDrop`) on a wrapper of a window that belongs to another thread throws
   `sweetview: a window of another thread cannot be observed`.
