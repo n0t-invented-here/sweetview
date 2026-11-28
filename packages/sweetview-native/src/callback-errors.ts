@@ -182,8 +182,10 @@ function setBindingSink(on: boolean): void {
   // SWEETVIEW_NATIVE_PATH), throws here, as any call of the package does in that case.
   binding().setCallbackErrorSink(
     on
-      ? (bindingKind: string, reason: string) =>
-          reportCallbackError(kindOfBindingCallback(bindingKind), new Error(reason), () => console.error(`sweetview: ${bindingKind} threw: ${reason}`), bindingKind)
+      ? (bindingKind: string, label: string | undefined | null, reason: string, thrown: unknown) =>
+          // `thrown` is the value the callback threw itself; `label` the application's name for the
+          // callback (a binding's), else the binding's own name for it is the source's name.
+          reportCallbackError(kindOfBindingCallback(bindingKind), thrown, () => console.error(`sweetview: ${bindingKind} threw: ${reason}`), label ?? bindingKind)
       : null,
   );
   sinkRegistered = on;

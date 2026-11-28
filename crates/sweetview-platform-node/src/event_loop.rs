@@ -42,7 +42,7 @@ pub fn is_loop_blocking() -> napi::Result<bool> {
 /// `(kind, message)`, in place of the `sweetview: <kind> threw:` line on stderr; `null` puts the
 /// line back. `onCallbackError` sets it while it has a listener.
 #[napi(catch_unwind)]
-pub fn set_callback_error_sink(env: Env, sink: Option<Function<'_, FnArgs<(String, String)>, ()>>) -> napi::Result<()> {
+pub fn set_callback_error_sink(env: Env, sink: Option<Function<'_, FnArgs<(String, Option<String>, String, napi::Error)>, ()>>) -> napi::Result<()> {
   imp::set_callback_error_sink(env, sink)
 }
 

@@ -538,7 +538,7 @@ export declare function setAppIcon(icon: IconBytes): void
  * `(kind, message)`, in place of the `sweetview: <kind> threw:` line on stderr; `null` puts the
  * line back. `onCallbackError` sets it while it has a listener.
  */
-export declare function setCallbackErrorSink(sink?: ((arg0: string, arg1: string) => void) | undefined | null): void
+export declare function setCallbackErrorSink(sink?: ((arg0: string, arg1: string | undefined | null, arg2: string, arg3: Error) => void) | undefined | null): void
 
 /** Sets the function that `wake(token)` runs on the UI thread. `null` removes it. */
 export declare function setDrain(token: number, drain?: (() => void) | undefined | null): void

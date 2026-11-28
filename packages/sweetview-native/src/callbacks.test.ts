@@ -1251,7 +1251,7 @@ describe.if(onWindows)("onCallbackError", () => {
         "internal: deferred boom",
         "internal: timeout boom",
         // The binding caught this one itself: its reason, the exception as a string, is the message.
-        "internal (a native interval): Error: interval boom",
+        "internal (a native interval): interval boom",
         "worker: drain boom",
         "window.onMove: onMove boom",
         "window.onResize: onResize boom",
@@ -1363,7 +1363,7 @@ describe.if(onWindows)("onCallbackError's sink in the binding", () => {
 
   test("after releaseAll() a listener still hears of the binding's own catches", async () => {
     const { r, exitCode } = await spawnSink("after-release");
-    expect({ exitCode, told: r.told }).toEqual({ exitCode: 0, told: ["internal (a native interval): Error: interval after release"] });
+    expect({ exitCode, told: r.told }).toEqual({ exitCode: 0, told: ["internal (a native interval): interval after release"] });
   });
 
   test("a sink set by an application that makes nothing else is released when its environment ends, and nothing is printed", async () => {
@@ -1385,7 +1385,9 @@ describe.if(onWindows)("onCallbackError and the raw webview class", () => {
         "webview.bind (bindRejects): bind rejects",
         "webview.bind (bindProxy): [object Object]",
         "webview.bind (bindBadMessage): (its message throws)",
-        "webview.bindRaw (a binding): Error: raw throws",
+        "webview.bindRaw (rawThrows): raw throws",
+        "webview.bindRaw (save): shared [the thrown object]",
+        "webview.bindRaw (load): shared [the thrown object]",
         "webview.setRequestHandler: request throws",
         "webview.setRequestHandler: request rejects",
         "webview.setFileDropHandler: drop throws",

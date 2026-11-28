@@ -19,7 +19,9 @@ const messageOf = (error: Error) => {
     return "(its message throws)";
   }
 };
-onCallbackError((error, source) => void told.push(`${source.kind}${source.name ? ` (${source.name})` : ""}: ${messageOf(error)}`));
+// Two raw bindings throw the same error (review 2, item 5): each arrives with its own name, as that object.
+const shared = new Error("shared");
+onCallbackError((error, source) => void told.push(`${source.kind}${source.name ? ` (${source.name})` : ""}: ${messageOf(error)}${error === shared ? " [the thrown object]" : ""}`));
 
 const webview = new Webview(false, { width: 360, height: 240, hint: SizeHint.NONE });
 webview.title = `sweetview webview-errors ${process.pid}`;
@@ -47,6 +49,12 @@ Object.defineProperty(badMessage, "message", {
 webview.bind("bindBadMessage", () => Promise.reject(badMessage));
 webview.bindRaw("rawThrows", () => {
   throw new Error("raw throws");
+});
+webview.bindRaw("save", () => {
+  throw shared;
+});
+webview.bindRaw("load", () => {
+  throw shared;
 });
 webview.setRequestHandler((request) => {
   if (request.url.endsWith("/throws")) throw new Error("request throws");
@@ -82,6 +90,8 @@ webview.setAsset(
       try { await bindProxy(); seen.bindProxy = "resolved"; } catch (e) { seen.bindProxy = "rejected"; }
       try { await bindBadMessage(); seen.bindBadMessage = "resolved"; } catch (e) { seen.bindBadMessage = "rejected"; }
       rawThrows();
+      save();
+      load();
       seen.throws = (await fetch("/throws")).status;
       seen.rejects = (await fetch("/rejects")).status;
       seen.proxy = (await fetch("/proxy")).status;

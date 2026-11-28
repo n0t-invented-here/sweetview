@@ -30,11 +30,19 @@ pub(crate) struct JsCallback<Args: JsValuesTupleIntoVec, Return: FromNapiValue> 
   function: FunctionRef<Args, Return>,
   /// What the function is, for the log line of a thrown exception.
   kind: &'static str,
+  /// The application's own name for it, when it gave one (a binding's name).
+  label: Option<String>,
 }
 
 impl<Args: JsValuesTupleIntoVec, Return: FromNapiValue> JsCallback<Args, Return> {
   pub(crate) fn new(env: Env, function: &Function<'_, Args, Return>, kind: &'static str) -> napi::Result<Rc<Self>> {
-    Ok(Rc::new(Self { env, function: function.create_ref()?, kind }))
+    Ok(Rc::new(Self { env, function: function.create_ref()?, kind, label: None }))
+  }
+
+  /// The same, with the name the application gave the function (a binding's name), which the
+  /// sink is handed with an exception it throws.
+  pub(crate) fn named(env: Env, function: &Function<'_, Args, Return>, kind: &'static str, label: &str) -> napi::Result<Rc<Self>> {
+    Ok(Rc::new(Self { env, function: function.create_ref()?, kind, label: Some(label.to_owned()) }))
   }
 
   /// Calls the function. `None` when it threw, or returned a value of the wrong type.
@@ -46,7 +54,7 @@ impl<Args: JsValuesTupleIntoVec, Return: FromNapiValue> JsCallback<Args, Return>
         // The TypeScript layer wraps every application handler and reports
         // its exception with that handler's own kind; this is the backstop
         // for anything that gets past it.
-        report(self.kind, &error.reason);
+        report(self.kind, self.label.as_deref(), error);
         None
       }
     }
@@ -58,7 +66,7 @@ impl<Args: JsValuesTupleIntoVec, Return: FromNapiValue> JsCallback<Args, Return>
 /// only (`set_callback_error_sink` checks it).
 struct ErrorSink {
   env: Env,
-  function: Rc<FunctionRef<FnArgs<(String, String)>, ()>>,
+  function: Rc<FunctionRef<SinkArgs, ()>>,
 }
 
 /// The thread's sink. The reference is released by the environment's cleanup hook
@@ -86,7 +94,7 @@ thread_local! {
 /// stderr line, or puts the stderr line back with `None`. The first sink a thread sets adds the
 /// environment cleanup hook that releases it when the environment ends, whatever else the
 /// application made.
-pub(crate) fn set_error_sink(env: Env, sink: Option<&Function<'_, FnArgs<(String, String)>, ()>>) -> napi::Result<()> {
+pub(crate) fn set_error_sink(env: Env, sink: Option<&Function<'_, SinkArgs, ()>>) -> napi::Result<()> {
   let sink = match sink {
     Some(function) => Some(ErrorSink { env, function: Rc::new(function.create_ref()?) }),
     None => None,
@@ -106,16 +114,24 @@ fn clear_error_sink() {
   drop(sink);
 }
 
+/// What the sink is called with: the callback's kind, the application's name for it (or
+/// `undefined`), the exception's text (for the line printed when the sink fails), and the exception
+/// itself. napi's `Error` keeps a reference to the exception the function threw, so on the
+/// JavaScript side it is that value, not a copy.
+pub type SinkArgs = FnArgs<(String, Option<String>, String, napi::Error)>;
+
 /// Hands a caught exception to the sink, or prints the line when there is none. When the sink
 /// itself throws, both lines are printed.
-fn report(kind: &'static str, reason: &str) {
+fn report(kind: &'static str, label: Option<&str>, error: napi::Error) {
+  let reason = error.reason.clone();
+  let reason = reason.as_str();
   // Cloned out of the slot, so the sink may replace or remove itself from inside its own call.
   let sink = ERROR_SINK.with(|slot| slot.0.borrow().as_ref().map(|sink| (sink.env, Rc::clone(&sink.function))));
   let Some((env, function)) = sink else {
     eprintln!("sweetview: {kind} threw: {reason}");
     return;
   };
-  let outcome = env.run_in_scope(|| function.borrow_back(&env)?.call((kind.to_owned(), reason.to_owned()).into()));
+  let outcome = env.run_in_scope(|| function.borrow_back(&env)?.call((kind.to_owned(), label.map(str::to_owned), reason.to_owned(), error).into()));
   if let Err(sink_error) = outcome {
     eprintln!("sweetview: {kind} threw: {reason}");
     eprintln!("sweetview: the callback error sink threw: {}", sink_error.reason);

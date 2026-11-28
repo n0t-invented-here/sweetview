@@ -1,6 +1,6 @@
 //! Both loop modes, deferred jobs, native timeouts, and the wake a `Worker` calls.
 
-use napi::bindgen_prelude::{FnArgs, Function};
+use napi::bindgen_prelude::Function;
 use napi::Env;
 use sweetview_runtime::{Runtime, TimeoutId};
 
@@ -40,7 +40,7 @@ pub fn is_loop_blocking() -> napi::Result<bool> {
 /// callback's kind and the exception's message, in place of the `sweetview: <kind> threw:` line on
 /// stderr; `null` puts the line back. `onCallbackError` sets it while it has a listener. On the UI
 /// thread only: no other thread runs the callbacks it would hear of.
-pub fn set_callback_error_sink(env: Env, sink: Option<Function<'_, FnArgs<(String, String)>, ()>>) -> napi::Result<()> {
+pub fn set_callback_error_sink(env: Env, sink: Option<Function<'_, crate::callback::SinkArgs, ()>>) -> napi::Result<()> {
   sweetview_runtime::threads::require_ui_thread().or_throw()?;
   crate::callback::set_error_sink(env, sink.as_ref())
 }
