@@ -331,10 +331,9 @@ fn a_maximise_listener_subscribed_while_minimised_hears_no_change_on_restore() {
 
 /// Review round 2, finding 3. Class: every order of listeners (the one that changes the state
 /// first or last), a listener that changes the state more than once from inside its call, and a
-/// resize listener that changes it: every transition is told once, in order, to every listener,
-/// and a resize listener never hears bounds older than bounds it already heard.
+/// resize listener that changes it: every transition is told once, in order, to every listener.
 #[test]
-fn every_maximise_transition_is_told_once_in_order_to_every_listener_and_resize_bounds_never_go_back() {
+fn every_maximise_transition_is_told_once_in_order_to_every_listener() {
   on_ui_thread(|_runtime| {
     for changer_first in [true, false] {
       let window = Window::create(WindowInit { frame: false, bounds: Some(Rect::new(140, 140, 320, 240)), ..init("rt every transition") }).expect("window");
@@ -377,27 +376,6 @@ fn every_maximise_transition_is_told_once_in_order_to_every_listener_and_resize_
       window.dispose();
     }
 
-    // A frameless window at the work area's origin, smaller than it; its maximise listener restores it.
-    let area = screen::primary().expect("primary").work_area;
-    let start = Rect::new(area.x, area.y, 300, 200);
-    let window = Window::create(WindowInit { frame: false, bounds: Some(start), ..init("rt resize order") }).expect("window");
-    let toggler = Rc::new(Window::adopt(window.handle()).expect("a wrapper to toggle with"));
-    let (toggle, once) = (toggler.clone(), Rc::new(Cell::new(false)));
-    window
-      .on_maximize_change(Some(Rc::new(move |maximized| {
-        if maximized && !once.replace(true) {
-          toggle.toggle_maximize().expect("restore from the maximise listener");
-        }
-      })))
-      .expect("maximise listener");
-    let heard = Rc::new(RefCell::new(Vec::new()));
-    let sink = heard.clone();
-    toggler.on_resize(Some(Rc::new(move |bounds| sink.borrow_mut().push(bounds)))).expect("resize listener");
-    window.toggle_maximize().expect("maximise");
-    assert_eq!(window.bounds(), start, "restored by the listener");
-    assert_eq!(heard.borrow().last(), Some(&start), "the last bounds heard are the window's: {:?}", heard.borrow());
-    toggler.dispose();
-    window.dispose();
   });
 }
 

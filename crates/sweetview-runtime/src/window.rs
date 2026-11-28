@@ -177,10 +177,6 @@ struct Core {
   background: Cell<Option<(u8, u8, u8)>>,
   /// Changes of the maximised state not told yet, in the order they happened.
   maximize_queue: RefCell<std::collections::VecDeque<bool>>,
-  /// How many resizes and moves have begun to be told: one told later supersedes an older one
-  /// still being told, so no listener hears bounds older than bounds it heard.
-  resizes_told: Cell<u64>,
-  moves_told: Cell<u64>,
   icons: RefCell<Option<WindowIcons>>,
   /// Live wrappers of this window.
   wrappers: Cell<usize>,
@@ -249,8 +245,6 @@ impl Core {
       noting_maximized: Cell::new(false),
       background: Cell::new(None),
       maximize_queue: RefCell::new(std::collections::VecDeque::new()),
-      resizes_told: Cell::new(0),
-      moves_told: Cell::new(0),
       icons: RefCell::new(None),
       wrappers: Cell::new(0),
       tab,
@@ -636,33 +630,19 @@ fn on_event(weak: &Weak<Core>, event: &WindowEvent) -> bool {
     WindowEvent::Resized(bounds) => {
       // The maximised state is looked at before a resize listener can change it (restore the
       // window, say), so the change this resize made is told, and then the one the listener made.
-      let told = core.resizes_told.get() + 1;
-      core.resizes_told.set(told);
       core.leave_frameless_maximize_if_moved();
       core.note_maximized();
+      // As at the tag: the bounds of this resize, to every listener there was when it came; one a
+      // listener raises is delivered in full from inside that call, and this one then goes on.
       let listeners: Vec<RectListener> = core.listeners.borrow().resize.iter().map(|(_, l)| l.clone()).collect();
-      for listener in &listeners {
-        // A resize a listener (of this kind or a maximise one) made has told newer bounds already.
-        if core.resizes_told.get() != told {
-          break;
-        }
-        listener(*bounds);
-      }
+      listeners.iter().for_each(|l| l(*bounds));
       false
     }
     WindowEvent::Moved(bounds) => {
-      let told = core.moves_told.get() + 1;
-      core.moves_told.set(told);
       core.leave_frameless_maximize_if_moved();
       core.note_maximized();
       let listeners: Vec<RectListener> = core.listeners.borrow().moved.iter().map(|(_, l)| l.clone()).collect();
-      for listener in &listeners {
-        // A move a listener made has told newer bounds already.
-        if core.moves_told.get() != told {
-          break;
-        }
-        listener(*bounds);
-      }
+      listeners.iter().for_each(|l| l(*bounds));
       false
     }
     WindowEvent::CloseRequested => {

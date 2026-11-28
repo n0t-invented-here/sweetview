@@ -453,6 +453,50 @@ describe.if(onWindows)("win32 Window", () => {
     expect(() => screenPixel(far.x - 10_000, far.y - 10_000)).toThrow("GetPixel");
   });
 
+  test("a resize or move raised inside a listener is delivered as at the tag: at once to every listener, then the outer delivery goes on with its bounds, for two listeners of one Window and for two wrappers", async () => {
+    // Review round 3, measure A. At tag pre-rust-rewrite (win32/window.ts, fireResize and fireMove,
+    // lines 173 to 197) a resize or move read its bounds once and went to a snapshot of the window's
+    // listeners in order; one raised inside a listener was delivered there, in full, and the outer
+    // delivery then carried on with the older bounds.
+    const start = { x: 180, y: 180, width: 320, height: 240 };
+    const size = (b: { width: number; height: number }) => `${b.width}x${b.height}`;
+    const at = (b: { x: number; y: number }) => `${b.x},${b.y}`;
+    for (const wrappers of [false, true]) {
+      const win = new Window({ title: `nested resize ${wrappers}`, noActivate: true, bounds: start });
+      const other = wrappers ? Window.fromHandle(win.handle) : win;
+      try {
+        const heard: string[] = [];
+        let once = false;
+        win.onResize((b) => {
+          heard.push(`1 ${size(b)}`);
+          if (!once) {
+            once = true;
+            win.resize(400, 300);
+          }
+        });
+        other.onResize((b) => heard.push(`2 ${size(b)}`));
+        win.resize(360, 260);
+        expect({ wrappers, heard }).toEqual({ wrappers, heard: ["1 360x260", "1 400x300", "2 400x300", "2 360x260"] });
+
+        const moved: string[] = [];
+        let first = false;
+        win.onMove((b) => {
+          moved.push(`1 ${at(b)}`);
+          if (!first) {
+            first = true;
+            win.moveTo(240, 240);
+          }
+        });
+        other.onMove((b) => moved.push(`2 ${at(b)}`));
+        win.moveTo(200, 200);
+        expect({ wrappers, moved }).toEqual({ wrappers, moved: ["1 200,200", "1 240,240", "2 240,240", "2 200,200"] });
+      } finally {
+        if (wrappers) other.dispose();
+        win.dispose();
+      }
+    }
+  });
+
   test("Window.fromHandle intercepts events non-mutatingly and dispose does not destroy the external HWND", async () => {
     const { ownWindow, user32, WM_CLOSE } = await import("../../test/win32-os");
     const msg = ownWindow();
