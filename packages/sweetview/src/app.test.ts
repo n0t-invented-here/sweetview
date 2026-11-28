@@ -306,13 +306,16 @@ describe.if(onWindows)("WebView & createApp (win32)", () => {
     const { clientSize, clientToScreen, screenPixel } = await import("../../sweetview-native/test/win32-os");
     const { getWindowMeta } = await import("@n1h/sweetview-native/internal");
     const { STRIP_HEIGHT } = await import("@n1h/sweetview-native/win32/strip-shared");
-    const MARK = "#00ff00";
+    // Each page draws a stripe of its own colour (round 2's finding 9: the tab sampled is the one meant).
+    const STRIPES = { wrapped: "#00ff00", home: "#0000ff", moved: "#ff00ff", second: "#00ffff" } as const;
+    let MARK = "";
     const loaded = new Set<string>();
     const page = (name: string) => ({
-      assets: { "index.html": htmlBytes(`<style>html,body{background:transparent;margin:0}#m{height:16px;background:${MARK}}</style><div id="m"></div><script>window.__sweetview_rpc("loaded", "${name}")</script>`) },
+      assets: { "index.html": htmlBytes(`<style>html,body{background:transparent;margin:0}#m{height:16px;background:${STRIPES[name as keyof typeof STRIPES]}}</style><div id="m"></div><script>window.__sweetview_rpc("loaded", "${name}")</script>`) },
       uiMethods: { loaded: (n: unknown) => void loaded.add(String(n)) },
     });
-    const painted = (win: Window, top: number, want: string) => {
+    const painted = (win: Window, top: number, want: string, name: keyof typeof STRIPES) => {
+      MARK = STRIPES[name];
       const hwnd = BigInt(win.handle!);
       let seen = { mark: "", below: "" };
       const deadline = performance.now() + 8000;
@@ -338,7 +341,7 @@ describe.if(onWindows)("WebView & createApp (win32)", () => {
       view = await WebView.attach(wrapper, page("wrapped"));
       own.show();
       pumpUntil(() => loaded.has("wrapped"), 15_000);
-      expect(painted(own, 0, "#305070")).toEqual({ mark: MARK, below: "#305070" });
+      expect(painted(own, 0, "#305070", "wrapped")).toEqual({ mark: STRIPES.wrapped, below: "#305070" });
     } finally {
       view?.dispose();
       wrapper.dispose();
@@ -356,20 +359,20 @@ describe.if(onWindows)("WebView & createApp (win32)", () => {
       const tab = await WebView.openTab(red, { title: "moved", ...page("moved") });
       red.show();
       pumpUntil(() => loaded.has("moved"), 15_000);
-      expect(painted(red, strip(red), "#a02020")).toEqual({ mark: MARK, below: "#a02020" });
+      expect(painted(red, strip(red), "#a02020", "moved")).toEqual({ mark: STRIPES.moved, below: "#a02020" });
       // Into the blue window, through the public merge.
       app.mergeAllWindows();
       app.window.show();
       expect(tab.window).toBe(app.window);
       tab.select(); // the merge keeps the window's own tab shown
-      expect(painted(app.window, strip(app.window), "#203080")).toEqual({ mark: MARK, below: "#203080" });
+      expect(painted(app.window, strip(app.window), "#203080", "moved")).toEqual({ mark: STRIPES.moved, below: "#203080" });
       // Torn off into a window of its own, which is the window it came from in every option, its colour included.
       tornOff = await tab.moveToNewWindow();
       expect(getWindowMeta(tornOff).backgroundColor).toBe("#203080");
       tornOff.setTopmost(true);
       await WebView.openTab(tornOff, { title: "second", ...page("second") });
       pumpUntil(() => loaded.has("second"), 15_000);
-      expect(painted(tornOff, strip(tornOff), "#203080")).toEqual({ mark: MARK, below: "#203080" });
+      expect(painted(tornOff, strip(tornOff), "#203080", "second")).toEqual({ mark: STRIPES.second, below: "#203080" });
     } finally {
       tornOff?.dispose();
       red.dispose();
@@ -377,28 +380,36 @@ describe.if(onWindows)("WebView & createApp (win32)", () => {
     }
   }, 120_000);
 
-  test("the documented window chrome on a real frameless window and page: window.maximize maximises, windowChromeEvents tells the page, and window.systemMenu opens the system menu while the page's calls keep arriving", async () => {
+  test("the documented window chrome on a real frameless window and page: window.maximize maximises, windowChromeEvents tells the page, and while window.systemMenu's menu is open a call the page starts is answered and the page acknowledges the answer", async () => {
     // Review N7 (the chrome only ever ran against stand-ins) and finding 1 (the system menu from
     // uiMethods, inside WebView2's message callback: the page's calls still arrive and are answered).
     const { openPopupMenu, pressKeys, VK } = await import("../../sweetview-native/test/win32-os");
     const { scheduleNativeTimeout } = await import("@n1h/sweetview-native/internal");
     const { windowChromeEvents, windowChromeMethods } = await import("./window-chrome");
     const win = new Window({ title: "app.test chrome", frame: false, transparent: true, noActivate: true, contentSize: { width: 420, height: 300 } });
-    let pings = 0;
+    // The page's calls by number, and the answers it acknowledges having received.
+    let lastPing = 0;
+    const acks: number[] = [];
     const told: unknown[] = [];
-    let menu: { atOpen: number; later: number } | undefined;
+    let menu: { openedAfter: number; acksWhileOpen: number[] } | undefined;
     let view: WebView | undefined;
     try {
       view = await WebView.attach(win, {
         // As docs/window-chrome.md attaches it: the chrome's methods in uiMethods.
-        uiMethods: { ...windowChromeMethods(win), ping: () => void pings++, told: (payload: unknown) => void told.push(payload) } as never,
+        uiMethods: {
+          ...windowChromeMethods(win),
+          ping: (n: unknown) => ((lastPing = Number(n)), Number(n)),
+          ack: (n: unknown) => void acks.push(Number(n)),
+          told: (payload: unknown) => void told.push(payload),
+        } as never,
         assets: {
           "index.html": htmlBytes(`<script>
             window.__sweetview_emit = (name, payload) => { if (name === "window.maximized") window.__sweetview_rpc("told", payload); };
             let n = 0;
             setInterval(() => {
               n++;
-              window.__sweetview_rpc("ping", n);
+              // Each answer, once it reaches the page, is acknowledged with the number it answered.
+              window.__sweetview_rpc("ping", n).then((answer) => window.__sweetview_rpc("ack", answer));
               if (n === 3) window.__sweetview_rpc("window.maximize", null); // the maximise button
               if (n === 8) window.__sweetview_rpc("window.systemMenu", null); // the title bar's right click
             }, 25);
@@ -409,12 +420,13 @@ describe.if(onWindows)("WebView & createApp (win32)", () => {
       win.show();
       pumpUntil(() => told.length > 0, 15_000);
       expect({ maximized: win.isMaximized(), told }).toEqual({ maximized: true, told: [{ maximized: true }] });
-      // From inside the menu's modal loop: count the page's calls for 400 ms, then close it.
+      // From inside the menu's modal loop: for 400 ms, then the menu is closed. The acknowledgements
+      // read then are of calls the page started after the menu opened, answered and received before it closes.
       const watch = (end: number) => {
         if (openPopupMenu() !== 0n && menu === undefined) {
-          const atOpen = pings;
+          const openedAfter = lastPing;
           scheduleNativeTimeout(400, () => {
-            menu = { atOpen, later: pings };
+            menu = { openedAfter, acksWhileOpen: acks.filter((n) => n > openedAfter) };
             const open = openPopupMenu();
             if (open !== 0n) pressKeys(open, VK.ESCAPE);
           });
@@ -425,95 +437,97 @@ describe.if(onWindows)("WebView & createApp (win32)", () => {
       watch(performance.now() + 15_000);
       pumpUntil(() => menu !== undefined && openPopupMenu() === 0n, 20_000);
       expect(menu).toBeDefined();
-      expect(menu!.later - menu!.atOpen).toBeGreaterThan(3);
+      expect(menu!.acksWhileOpen.length).toBeGreaterThan(3);
     } finally {
       view?.dispose();
       win.dispose();
     }
   }, 60_000);
 
-  test("a webview attached to a visible window with a backgroundColor never shows WebView2's white while it starts", async () => {
-    // Review N9: the colour was set once the webview existed, so WebView2's default white showed first.
+  test("a webview attached to a visible window with a backgroundColor, and a tab opened in a visible tabbed window, never show WebView2's white while they start, and the page paints during the interval sampled", async () => {
+    // Review N9, and round 2's findings 8 and 9 and M7. Sampled while the webview starts: no white
+    // (WebView2's own default background) anywhere, the target page's own stripe seen during the
+    // sampling (so the interval sampled is the one it started and painted in), and the page area
+    // settled on the window's colour once it has. A page's own canvas, before its stylesheet applies,
+    // follows its colour scheme (#121212 in a dark one): that is the page's, not the browser's
+    // background (docs/native/windows.md says so). This runtime has ICoreWebView2ControllerOptions3,
+    // which is when the colour is WebView2's from the moment it is made.
     const { clientSize, clientToScreen, screenPixel } = await import("../../sweetview-native/test/win32-os");
     const { scheduleNativeTimeout } = await import("@n1h/sweetview-native/internal");
+    const { STRIP_HEIGHT } = await import("@n1h/sweetview-native/win32/strip-shared");
     const colour = "#304050";
-    const seen = new Map<string, number>();
+    const STRIPE = "#ff00ff";
+    const stripePage = (loaded: () => void) => ({
+      assets: { "index.html": htmlBytes(`<style>html,body{background:transparent;margin:0}#m{height:16px;background:${STRIPE}}</style><div id="m"></div><script>window.__sweetview_rpc("loaded", null)</script>`) },
+      uiMethods: { loaded },
+    });
+    // Samples the stripe's place and the middle of the page area of `win` (below `top`), from native
+    // timers, which fire inside the loops WebView2 pumps while it starts.
+    const sampler = (win: Window, top: () => number) => {
+      const hwnd = BigInt(win.handle!);
+      const stripe = new Set<string>();
+      const middle = new Set<string>();
+      let lastMiddle = "";
+      let on = true;
+      const tick = () => {
+        if (!on) return;
+        const size = clientSize(hwnd);
+        const t = top();
+        const a = clientToScreen(hwnd, size.width >> 1, t + 8);
+        const b = clientToScreen(hwnd, size.width >> 1, t + ((size.height - t) >> 1));
+        stripe.add(screenPixel(a.x, a.y));
+        lastMiddle = screenPixel(b.x, b.y);
+        middle.add(lastMiddle);
+        scheduleNativeTimeout(2, tick);
+      };
+      return { start: tick, stop: () => void (on = false), stripe, middle, lastMiddle: () => lastMiddle };
+    };
+    const settle = (ms: number) => {
+      const until = performance.now() + ms;
+      pumpUntil(() => performance.now() > until, ms + 500);
+    };
     for (let round = 0; round < 3; round++) {
       // Each round in a place of its own: a window closed at the same place fades out over the next one.
       const win = new Window({ title: `app.test start colour ${round}`, backgroundColor: colour, topmost: true, noActivate: true, bounds: { x: 120 + round * 400, y: 160, width: 360, height: 260 } });
-      const hwnd = BigInt(win.handle!);
-      let sampling = true;
-      // From native timers, which fire inside the loop WebView2's creation pumps: the screen as it starts.
-      const sample = () => {
-        if (!sampling) return;
-        const size = clientSize(hwnd);
-        const at = clientToScreen(hwnd, size.width >> 1, size.height >> 1);
-        const pixel = screenPixel(at.x, at.y);
-        seen.set(pixel, (seen.get(pixel) ?? 0) + 1);
-        scheduleNativeTimeout(2, sample);
-      };
+      const s = sampler(win, () => 0);
       let view: WebView | undefined;
       try {
         win.show();
-        pumpUntil(() => screenPixel(...Object.values(clientToScreen(hwnd, clientSize(hwnd).width >> 1, clientSize(hwnd).height >> 1)) as [number, number]) === colour, 5000);
-        sample();
+        settle(400); // the window's own fade-in, before the webview starts
+        s.start();
         let loaded = false;
-        view = await WebView.attach(win, {
-          assets: { "index.html": htmlBytes(`<style>html,body{background:transparent}</style><script>window.__sweetview_rpc("loaded", null)</script>`) },
-          uiMethods: { loaded: () => { loaded = true; } },
-        });
-        pumpUntil(() => loaded, 15_000);
-        const settled = performance.now() + 300;
-        pumpUntil(() => performance.now() > settled, 1000);
+        view = await WebView.attach(win, stripePage(() => { loaded = true; }));
+        pumpUntil(() => loaded && s.stripe.has(STRIPE), 15_000);
+        settle(200);
       } finally {
-        sampling = false;
+        s.stop();
         view?.dispose();
         win.dispose();
       }
+      const last = s.lastMiddle();
+      expect({ round, white: s.middle.has("#ffffff") || s.stripe.has("#ffffff"), stripeSeen: s.stripe.has(STRIPE), settled: last }).toEqual({ round, white: false, stripeSeen: true, settled: colour });
     }
-    expect([...seen.keys()]).toEqual([colour]);
 
     // A tab opened in a visible tabbed window: its page area, below the strip, as the tab starts.
-    const { STRIP_HEIGHT } = await import("@n1h/sweetview-native/win32/strip-shared");
     const tabbed = new Window({ tabs: true, title: "app.test start colour tab", backgroundColor: colour, topmost: true, noActivate: true, bounds: { x: 140, y: 480, width: 560, height: 380 } });
-    const frame = BigInt(tabbed.handle!);
-    const tabSeen = new Map<string, number>();
-    let sampling = true;
-    const pageMiddle = () => {
-      const size = clientSize(frame);
-      const strip = Math.round(STRIP_HEIGHT * tabbed.scale());
-      return clientToScreen(frame, size.width >> 1, strip + ((size.height - strip) >> 1));
-    };
-    const sample = () => {
-      if (!sampling) return;
-      const at = pageMiddle();
-      const pixel = screenPixel(at.x, at.y);
-      tabSeen.set(pixel, (tabSeen.get(pixel) ?? 0) + 1);
-      scheduleNativeTimeout(2, sample);
-    };
+    const s = sampler(tabbed, () => Math.round(STRIP_HEIGHT * tabbed.scale()));
     try {
-      // The first tab makes the strip; the second is the one sampled as it starts.
-      await WebView.openTab(tabbed, { title: "first", url: "about:blank" });
+      // The first tab makes the strip and paints nothing (no stripe): the stripe seen is the second tab's.
+      let firstLoaded = false;
+      await WebView.openTab(tabbed, { title: "first", assets: { "index.html": htmlBytes(`<style>html,body{background:transparent;margin:0}</style><script>window.__sweetview_rpc("loaded", null)</script>`) }, uiMethods: { loaded: () => { firstLoaded = true; } } });
       tabbed.show();
+      pumpUntil(() => firstLoaded, 15_000);
+      settle(400);
+      s.start();
       let loaded = false;
-      const opening = WebView.openTab(tabbed, {
-        title: "second",
-        assets: { "index.html": htmlBytes(`<style>html,body{background:transparent}</style><script>window.__sweetview_rpc("loaded", null)</script>`) },
-        uiMethods: { loaded: () => { loaded = true; } },
-      });
-      const settledFirst = performance.now() + 500;
-      pumpUntil(() => performance.now() > settledFirst, 1000);
-      tabSeen.clear();
-      sample();
-      await opening;
-      pumpUntil(() => loaded, 15_000);
-      const settled = performance.now() + 300;
-      pumpUntil(() => performance.now() > settled, 1000);
+      await WebView.openTab(tabbed, { title: "second", ...stripePage(() => { loaded = true; }) });
+      pumpUntil(() => loaded && s.stripe.has(STRIPE), 15_000);
+      settle(200);
     } finally {
-      sampling = false;
+      s.stop();
       tabbed.dispose();
     }
-    expect(tabSeen.has("#ffffff")).toBe(false);
+    expect({ white: s.middle.has("#ffffff") || s.stripe.has("#ffffff"), stripeSeen: s.stripe.has(STRIPE), settled: s.lastMiddle() }).toEqual({ white: false, stripeSeen: true, settled: colour });
   }, 90_000);
 
   test("a webview made while another is being made takes nothing of it: the colour belongs to the window each is made in", async () => {
