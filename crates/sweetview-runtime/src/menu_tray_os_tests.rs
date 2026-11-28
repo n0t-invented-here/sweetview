@@ -513,7 +513,7 @@ fn a_tray_menu_items_handler_that_shows_a_window_gets_it_to_the_foreground() {
       menu_chosen: Rc::new(move |_| {
         seen.set(os::foreground());
         // As a handler's `window.show()` does.
-        BorrowedWindow::with_handle_value(target, |window| platform::show(window, false, false));
+        BorrowedWindow::with_handle_value(target, |window| platform::show(window, false, false, false));
         done.set(true);
       }),
       ..tray_init(&unique("tray menu foreground"))
