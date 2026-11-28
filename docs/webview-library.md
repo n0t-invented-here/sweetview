@@ -299,7 +299,10 @@ Windows) after teardown starts do nothing.
 
 On Windows, `@n1h/sweetview-native` loads its binding on first use with a
 literal `require` of `prebuilt/sweetview.win32-x64-msvc.node`, the form
-`bun build --compile` embeds in the executable. `SWEETVIEW_NATIVE_PATH`
+`bun build --compile` embeds in the executable. A `bun build --compile` for
+Windows made without that file fails at build time with
+`Could not resolve: "../prebuilt/sweetview.win32-x64-msvc.node"`; a build for
+macOS does not need it. `SWEETVIEW_NATIVE_PATH`
 names a binding you built yourself instead; it is read once, when the
 binding first loads, and a file that cannot be loaded throws
 `sweetview: the native binding could not be loaded from <path> (SWEETVIEW_NATIVE_PATH): <reason>`.
