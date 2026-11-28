@@ -321,6 +321,16 @@ describe.if(onWindows)("native binding: threads (W1.5, W1.7)", () => {
     return { worker, next };
   }
 
+  test("a Worker that loads the binding before the main thread is refused, and the main thread, loading after it, is the UI thread and runs the loop", () => {
+    const run = Bun.spawnSync([process.execPath, fileURLToPath(new URL("../test/fixtures/worker-first.ts", import.meta.url))], { stdout: "pipe", stderr: "pipe", timeout: 30_000 });
+    const line = run.stdout.toString().split(/\r?\n/).find((l) => l.startsWith("RESULT "));
+    expect(line === undefined ? run.stdout.toString() + run.stderr.toString() : JSON.parse(line.slice(7))).toEqual({
+      worker: { isUiThread: false, refused: UI_THREAD_ERROR },
+      mainIsUiThread: true,
+      loopRan: true,
+    });
+  }, 40_000);
+
   test("a UI-thread function called from a Worker throws, and the worker is not the UI thread", async () => {
     const { worker, next } = openWorker();
     try {

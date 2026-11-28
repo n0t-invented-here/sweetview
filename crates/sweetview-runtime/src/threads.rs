@@ -1,9 +1,9 @@
 //! Which thread is the UI thread.
 //!
-//! The UI thread is the thread that first claims it: the thread that loads the
-//! binding first, which is the Bun main thread. Every other thread (a Bun
-//! `Worker` that loads the binding again) may call only the functions
-//! documented as callable from any thread.
+//! The UI thread is the thread that first claims it: Bun's main thread, when it
+//! loads the binding, whether or not a `Worker` loaded it before (D50). Every
+//! other thread may call only the functions documented as callable from any
+//! thread.
 
 use std::sync::{Mutex, PoisonError};
 use std::thread::{self, ThreadId};

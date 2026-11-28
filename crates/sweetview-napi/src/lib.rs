@@ -30,10 +30,24 @@ pub use sweetview_runtime::window::{Appearance, Chrome, WindowInit};
 pub use sweetview_runtime::{Point, Rect};
 pub mod menus;
 
-/// Runs when the binding is loaded, once per JavaScript thread that loads it.
-/// The first thread to load it is the UI thread.
-pub fn on_load() {
-  sweetview_runtime::threads::claim_ui_thread();
+/// Runs when the binding is loaded, once per JavaScript thread that loads it. The UI thread is
+/// Bun's main thread, whichever thread loads the binding first: a `Worker` that loads it before
+/// the main thread claims nothing, and its UI-thread calls are refused.
+pub fn on_load(main_thread: bool) {
+  if main_thread {
+    sweetview_runtime::threads::claim_ui_thread();
+  }
+}
+
+/// Whether `env` is Bun's main JavaScript thread (`Bun.isMainThread`); true where Bun does not say.
+pub fn is_main_js_thread(env: &napi::Env) -> bool {
+  use napi::bindgen_prelude::JsObjectValue;
+  let said = || -> napi::Result<Option<bool>> {
+    let global = env.get_global()?;
+    let Some(bun) = global.get_named_property::<Option<napi::bindgen_prelude::Object>>("Bun")? else { return Ok(None) };
+    bun.get_named_property::<Option<bool>>("isMainThread")
+  };
+  said().ok().flatten().unwrap_or(true)
 }
 
 /// Also when the binding is loaded, with that thread's environment: makes the guard every callback

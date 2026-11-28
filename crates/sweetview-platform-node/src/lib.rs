@@ -31,7 +31,8 @@ use napi_derive::napi;
 /// takes no `catch_unwind` attribute, so the panic is caught here and the load fails with an error.
 #[napi(module_exports)]
 pub fn on_load(_exports: napi::bindgen_prelude::Object, env: napi::Env) -> napi::Result<()> {
-  std::panic::catch_unwind(sweetview_napi::on_load).map_err(|_| napi::Error::from_reason("sweetview: the binding panicked while it was loading"))?;
+  let main_thread = sweetview_napi::is_main_js_thread(&env);
+  std::panic::catch_unwind(move || sweetview_napi::on_load(main_thread)).map_err(|_| napi::Error::from_reason("sweetview: the binding panicked while it was loading"))?;
   sweetview_napi::prepare_environment(env)
 }
 
