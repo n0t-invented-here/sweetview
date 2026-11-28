@@ -1,3 +1,32 @@
+# [APMM Managed] - DO NOT EDIT below
+# Microsoft's Agent Package Manager (apm) is a compositional system for
+# management of instruction files, skills, hooks, and more.
+#
+# In this project, all Claude Code and Codex files/folders are managed by apm
+# and should never be edited manually.
+.claude/
+.codex/
+.agents/
+CLAUDE.md
+AGENTS.md
+.mcp.json
+apm_modules/
+apm.lock.yaml
+.apmm/packages/
+# [APMM Managed] - DO NOT EDIT above
+
+node_modules/
+dist/
+
+build/
+.*.bun-build
+
+# bun writes cross-compile targets here when compiling for another OS
+.bun-cache/
+
+# Rust: cargo's build directory, and the binding `just native build` builds into the native package
+target/
+packages/sweetview-native/prebuilt/*.node
 
 # Run output and reports of the rewrite: kept on the machine, not in git.
 rust-rewrite/evidence/
