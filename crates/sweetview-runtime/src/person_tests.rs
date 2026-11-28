@@ -116,8 +116,9 @@ fn a_person_closes_a_framed_window_with_its_close_button_and_with_alt_f4() {
         }
         os::set_cursor(x, y);
         pump_until(runtime.as_ref(), 50, || false);
+        // Down and up as one click, as a person's is: the press on the close button starts the
+        // window's own tracking loop, which waits for the release.
         os::send_left_button(true);
-        pump_until(runtime.as_ref(), 50, || false);
         os::send_left_button(false);
       }
       pump_until(runtime.as_ref(), 2000, || !alive(handle) || heard.get() > 0);
