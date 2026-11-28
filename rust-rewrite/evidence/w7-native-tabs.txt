@@ -153,7 +153,7 @@ ran, passed, failed and were skipped.
     e. not for an aborted one ................. F "failed load: not shown for an aborted navigation (a 204 response): the page stays"
     f. not for an HTTP error status ........... F "failed load: not shown for an HTTP error status (404, 500): the server's page stays"
     g. not for data: .......................... F "failed load: not shown for a data: address the engine refuses"
-    h. not for about: ......................... F "failed load: not shown for an about: address the engine refuses": FAILS (a product defect, below)
+    h. not for about: ......................... F "failed load: not shown for an about: address the engine refuses": failed in the first run of these checks (a product defect, below), fixed in merge 718f1a3; passes in the run recorded here
     i. not for a navigation superseded by a newer one
                                                 F "failed load: not shown for a navigation a newer one superseded"
     j. not for one superseded by the host's navigate or setHTML

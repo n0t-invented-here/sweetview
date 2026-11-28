@@ -103,8 +103,10 @@ fn is_webview2_available() -> bool {
 /// creation fails for good.
 pub fn create_environment(user_data_folder: Option<&Path>) -> Result<ICoreWebView2Environment, ErrorCode> {
     // Entered once per thread (or counted once more when the thread already is
-    // an STA) and kept for the thread's life, so no COM object of the thread
-    // outlives it.
+    // an STA) and kept until the thread's storage is torn down. On the UI thread
+    // the runtime's own apartment, entered before any window and left last, is
+    // what outlives every COM object of the thread; this one keeps a thread
+    // without a runtime from entering on every call.
     enter_apartment_once();
     if !is_webview2_available() {
         return Err(ErrorCode::MissingDependency);

@@ -134,14 +134,14 @@ Items name today's API members to say which behaviour is meant. The API may chan
 
 - [x] W1.3 A JavaScript exception thrown from such a callback is caught at the boundary, logged with the message today's code logs, and does not unwind into the OS. A test throws from each callback kind.
 
-    `rust-rewrite/evidence/w1-callbacks.txt`: a table of every function-typed parameter of the generated `packages/sweetview-native/prebuilt/binding.d.ts` (27 kinds, with `TabFrame.onActivate`, and `onOpenUrl`, which on Windows is called from the single-instance handoff), each with the test that throws from it, followed by the per-test output: 123 pass, 0 skip, 0 fail across the seven files it cites. Each test asserts the message logged for that kind, which is the message today's TypeScript logs, except for the two hooks, whose handlers were the bindings package's at the tag and whose messages are this package's own (`UI dispatch failed:`, `onResize handler threw:`, `hit region poll threw:`, `keyboard hook handler threw:`, `onSecondInstance handler threw:` and the rest), that the loop goes on delivering, and the fallback where there is one: a hook does not swallow (read back from the OS: the key state and the cursor position), a request handler answers 500, a throwing menu function opens no menu. One test, "W1.3 an exception from every non-webview kind, with no TypeScript wrapper in between, is logged by the binding with its kind; each fallback applies and the loop goes on", throws straight through the raw binding in a process of its own and reads the binding's own `sweetview: <kind> threw:` line, so the backstop of D7 is proven apart from the wrappers.
+    `rust-rewrite/evidence/w1-callbacks.txt`: a table of every function-typed parameter of the generated `packages/sweetview-native/prebuilt/binding.d.ts` (27 kinds, with `TabFrame.onActivate`, and `onOpenUrl`, which on Windows is called from the single-instance handoff), each with the test that throws from it, followed by the per-test output: 123 pass, 0 fail across the seven files it cites (bun prints no skip line when nothing was skipped). Each test asserts the message logged for that kind, which is the message today's TypeScript logs, except for the two hooks, whose handlers were the bindings package's at the tag and whose messages are this package's own (`UI dispatch failed:`, `onResize handler threw:`, `hit region poll threw:`, `keyboard hook handler threw:`, `onSecondInstance handler threw:` and the rest), that the loop goes on delivering, and the fallback where there is one: a hook does not swallow (read back from the OS: the key state and the cursor position), a request handler answers 500, a throwing menu function opens no menu. One test, "W1.3 an exception from every non-webview kind, with no TypeScript wrapper in between, is logged by the binding with its kind; each fallback applies and the loop goes on", throws straight through the raw binding in a process of its own and reads the binding's own `sweetview: <kind> threw:` line, so the backstop of D7 is proven apart from the wrappers.
 
     ```
     $ bun test <the seven files>   (the run in the evidence file)
      123 pass
-     0 skip
      0 fail
-    Ran 123 tests across 7 files.
+     851 expect() calls
+    Ran 123 tests across 7 files. [87.69s]
     ```
 
 - [x] W1.4 A callback that removes itself or destroys its owner from inside its own call works. A test does both.
@@ -252,7 +252,7 @@ Source of truth for behaviour: the bindings repository's `docs/` and `test/`, an
 
 - [x] W3.5 The bindings' `examples/input-hooks.ts` runs against the new package, edited only for API changes that `docs/upgrading.md` records.
 
-    `rust-rewrite/evidence/w3-input-hooks-example.txt`: the bindings' `examples/input-hooks.ts` is at `packages/sweetview-native/examples/input-hooks.ts` with no edit at all (its import, `../src/index`, names this package's index); it starts, installs both hooks and shows its window; with F24 pressed and one wheel notch turned over its window (injected with `SendInput`), its page's log reads `key Down F24 (raw 135)`, `key Up F24 (raw 135)` and `mouse Wheel at x,y wheel 1`; it exits with code 0 when the window is closed. The page reports its own text through a preload (`packages/sweetview-native/test/fixtures/page-reader-preload.ts`), so the example's source is untouched.
+    `rust-rewrite/evidence/w3-input-hooks-example.txt`: the bindings' `examples/input-hooks.ts` is at `packages/sweetview-native/examples/input-hooks.ts` with no edit at all (its import, `../src/index`, names this package's index); it starts, installs both hooks and shows its window; with F24 pressed and one wheel notch turned over its window (injected with `SendInput`), the test asserts that its page's log reads `key Down F24 (raw 135)`, `key Up F24 (raw 135)` and `mouse Wheel at x,y wheel 1` (`packages/sweetview-native/src/input-hooks-example.test.ts`; the evidence file holds the test's pass line, not the page's text); it exits with code 0 when the window is closed. The page reports its own text through a preload (`packages/sweetview-native/test/fixtures/page-reader-preload.ts`), so the example's source is untouched.
 
 - [x] W3.6 The hooks, `permissions` and every other name in `rust-rewrite/reference/bindings-exports.txt` are exported by a Sweetview package. Today an application imports them from `@n1h/sweetview-webview-bun`, which Sweetview does not re-export; `docs/upgrading.md` gives the new import for each.
 
@@ -310,7 +310,8 @@ Source of truth for behaviour: the bindings repository's `docs/` and `test/`, an
     $ bun test packages/sweetview-native/src/win32/window.test.ts packages/sweetview-native/src/win32/win32.test.ts
      25 pass
      0 fail
-    Ran 25 tests across 2 files.
+     149 expect() calls
+    Ran 25 tests across 2 files. [408.00ms]
     ```
 
     `demos/desktop-pet` and `demos/web-app` compile (`rust-rewrite/evidence/w8-compile-pack.txt`) and run, compiled and from source. The pet, driven by its own `scripts/probe.ps1` with real input: the OS hands a click on its body to the pet's window and a click on its transparent corners to the desktop behind it, and a press-and-drag moves it:
@@ -340,7 +341,7 @@ Source of truth for behaviour: the bindings repository's `docs/` and `test/`, an
 
 - [x] W5.2 Menus: check marks, icons, submenus, separators, disabled items, the function form rebuilt on each open, `Menu.popup` at a point and at the cursor.
 
-    `rust-rewrite/evidence/w5-tray-menus.txt`, "Menu.popup (binding: muda)" and "win32 icons": check marks, icons, submenus, separators and disabled items read back from the real OS menu; an item chosen inside a submenu; a dismissed menu chooses nothing; the function form called on each open; at a point (the menu's corner reads back at the point given) and at the cursor; `&` doubled; every showing frees what it made (GDI and USER counts). Letting go of the right button over an item chooses it (real input over the menu's own window); the menu at the cursor opens above it, as the tray's does; `buildMenu` hands an application a menu for its own `TrackPopupMenu` and `destroyMenu` frees it; `windowMenu` shows the system menu of an ordinary framed `Window` (decision D26).
+    `rust-rewrite/evidence/w5-tray-menus.txt`, "Menu.popup (binding: muda)", and `rust-rewrite/evidence/w4-windows.txt`, "win32 icons": check marks, icons, submenus, separators and disabled items read back from the real OS menu; an item chosen inside a submenu; a dismissed menu chooses nothing; the function form called on each open; at a point (the menu's corner reads back at the point given) and at the cursor; `&` doubled; every showing frees what it made (GDI and USER counts). Letting go of the right button over an item chooses it (real input over the menu's own window); the menu at the cursor opens above it, as the tray's does; `buildMenu` hands an application a menu for its own `TrackPopupMenu` and `destroyMenu` frees it; `windowMenu` shows the system menu of an ordinary framed `Window` (decision D26).
 
 - [x] W5.3 `Notifier`: WinRT toasts with click, `appId` and identity registration, per `docs/native/notifications.md`. The fallback when WinRT is unavailable or a toast fails is a balloon on a hidden notification icon of the notifier's own, with or without a `Tray`, as `win32/notifier.ts` does today. The C shim that `winrt-toast.ts` compiles at run time with Bun's `cc` is gone.
 
@@ -410,9 +411,9 @@ Source of truth for behaviour: the bindings repository's `docs/` and `test/`, an
     win-tabs.ts: 100 checks: 100 ran, 100 passed, 0 failed, 0 skipped, 0 missing
     win-tabs-input.ts: 10 checks: 10 ran, 10 passed, 0 failed, 0 skipped, 0 missing
      121 pass
-     0 skip
      0 fail
-    Ran 121 tests across 3 files.
+     282 expect() calls
+    Ran 121 tests across 3 files. [69.45s]
     ```
 
     Nothing was skipped in that run (each fixture's own count line says 0 skipped). The defect these checks found (a refused `about:` address showed the failed-load page) is fixed, and its check passes. Not run, as the evidence file's last section says: a real change of display scale (one monitor at one scale; the suggested rectangle of `WM_DPICHANGED` is applied and tested).
@@ -454,7 +455,7 @@ Source of truth for behaviour: the bindings repository's `docs/` and `test/`, an
 
 - [x] W8.2 `just compile` builds every demo that has the recipe. `just pack` lists what would publish.
 
-    `rust-rewrite/evidence/w8-compile-pack.txt`: `just compile` exits 0 and builds the four demos that have the recipe (`web-app`, `desktop-pet`, `menubar-only`, `menubar-notify`), each as a Windows executable with the binding embedded, a macOS arm64 binary and its `.app` bundle; `demos/native-tabs` has no compile recipe.
+    `rust-rewrite/evidence/w8-compile-pack.txt`: `just compile` exits 0 and builds the four demos that have the recipe (`web-app`, `desktop-pet`, `menubar-only`, `menubar-notify`), each as a Windows executable, a macOS arm64 binary and its `.app` bundle. That the binding is inside each Windows executable is shown by `rust-rewrite/evidence/w1-compiled-alone.txt` (each runs copied alone into an empty folder), not by this file; that `demos/native-tabs` has no compile recipe is in the root `README.md`'s recipe table, not in this file.
 
     ```
     $ ls -la demos/*/dist/*.exe

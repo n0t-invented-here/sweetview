@@ -153,7 +153,9 @@ pub(crate) fn web_error_reason(status: i32) -> Option<&'static str> {
 
 /// Whether a failed navigation is reported, from what WebView2 says about it:
 /// only a failure with no HTTP response, a status other than cancelled or
-/// aborted, and an address that is not `about:` or `data:`.
+/// aborted, and an address that is not `about:` or `data:`, nor one of the
+/// browser's own pages (`edge:` and `chrome:`), which is how WebView2 reports
+/// an `about:` address it refuses.
 pub(crate) fn failure_reason(error_status: i32, http_status: Option<i32>, url: &str) -> Option<&'static str> {
     let reason = web_error_reason(error_status)?;
     if http_status.unwrap_or(0) > 0 {
@@ -229,6 +231,9 @@ mod tests {
         assert_eq!(failure_reason(13, None, "ABOUT:blank"), None);
         assert_eq!(failure_reason(13, None, "data:text/html,x"), None);
         assert_eq!(failure_reason(13, None, "edge://sweetview-nowhere/"), None, "how WebView2 reports a refused about: address");
+        assert_eq!(failure_reason(13, None, "chrome://sweetview-nowhere/"), None, "the same family of the browser's own pages");
+        assert_eq!(failure_reason(13, None, "CHROME://version/"), None);
+        assert_eq!(failure_reason(13, None, "chromium.invalid/"), Some("The server's host name could not be found."), "only the scheme counts");
         assert_eq!(failure_reason(13, None, "Data:text/html,x"), None);
     }
 

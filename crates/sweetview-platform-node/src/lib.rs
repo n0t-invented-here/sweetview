@@ -26,11 +26,11 @@ pub mod menus;
 
 use napi_derive::napi;
 
-/// Runs when the binding is loaded, once per JavaScript thread that loads it.
+/// Runs when the binding is loaded, once per JavaScript thread that loads it. `module_exports`
+/// takes no `catch_unwind` attribute, so the panic is caught here and the load fails with an error.
 #[napi(module_exports)]
 pub fn on_load(_exports: napi::bindgen_prelude::Object) -> napi::Result<()> {
-  sweetview_napi::on_load();
-  Ok(())
+  std::panic::catch_unwind(sweetview_napi::on_load).map_err(|_| napi::Error::from_reason("sweetview: the binding panicked while it was loading"))
 }
 
 /// True on the thread that loaded the binding first.
