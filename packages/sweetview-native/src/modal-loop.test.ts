@@ -65,10 +65,10 @@ async function runTrayMenuTimers(mode: "blocking" | "pumped", rounds: number) {
   return JSON.parse(line.slice("RESULT ".length)) as { mode: string; rounds: number; ticked: number[]; rescued: number; timedOut?: boolean };
 }
 
-// Decision D37 (the second review's G1): with the loop's native timers on WM_TIMER, a tray menu
+// Decision D38 (the second review's G1): with the loop's native timers on WM_TIMER, a tray menu
 // opened from a deferred job, with every timer already due when its loop first looked at the
 // queue, delivered no timer at all, and only a watchdog's Escape closed it.
-describe.if(onWindows)("native timers inside a tray menu opened from a deferred job (D37)", () => {
+describe.if(onWindows)("native timers inside a tray menu opened from a deferred job (D38)", () => {
   for (const mode of ["blocking", "pumped"] as const) {
     test(`${mode} loop: an interval set just before the right click ticks inside every menu`, async () => {
       const rounds = 8;

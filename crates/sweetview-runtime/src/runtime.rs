@@ -371,7 +371,7 @@ impl Runtime {
     let drains = std::mem::take(&mut *self.drains.borrow_mut());
     let listeners = std::mem::take(&mut *self.listeners.borrow_mut());
     drop((deferred, timers, drains, listeners));
-    // The thread that posts the timers' ticks (D37) ends with them; a pump in progress keeps
+    // The thread that posts the timers' ticks (D38) ends with them; a pump in progress keeps
     // it for its guard, and a timer set afterwards starts it again.
     self.signals.stop_ticker_if_idle();
   }
@@ -673,7 +673,7 @@ mod tests {
     MenuRound { ticks, closed, interval }
   }
 
-  /// D37: native timers keep firing inside a popup menu's loop in both loop modes. The menu opens
+  /// D38: native timers keep firing inside a popup menu's loop in both loop modes. The menu opens
   /// from a deferred job, its owner is a hidden `tao` window as the tray menu's is, and every
   /// timer is due when the menu's loop first looks at the queue. With timers on `WM_TIMER`, which
   /// the OS makes only when no paint request is pending, the loop waited with them due and
@@ -849,7 +849,7 @@ mod tests {
   }
 
   /// The release at the end of the application (D36) ends the thread that posts the timers'
-  /// ticks (D37) with the timers, and a timer set afterwards starts it again and fires.
+  /// ticks (D38) with the timers, and a timer set afterwards starts it again and fires.
   #[test]
   fn the_release_at_the_end_ends_the_tick_thread_and_a_later_timer_starts_it_again() {
     on_ui_thread(|runtime| {

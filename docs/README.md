@@ -7,6 +7,8 @@ install and quickstart are in the [package README](../README.md).
 
 Moving an application from an earlier version: [Upgrading to Sweetview 1.0](upgrading.md) maps every earlier export to what you write now.
 
+Running an application in its own repository against a Sweetview checkout, before 1.0.0 is on npm: [Running an application against a local Sweetview checkout](local-checkout.md).
+
 | Module | Contents |
 |---|---|
 | [`@n1h/sweetview`](app.md) | `createApp`, `WebView` (`WebView.attach`, `WebView.openTab`), native tabs (`Tab`, `TabOptions`), dynamic requests, the ready handshake, `windowChromeMethods`, `indexHtml`, `assetMime`, `Ring`, `RawWebview` (re-exported from `@n1h/sweetview-native`), and re-exports of the event loop, activation and app identity |

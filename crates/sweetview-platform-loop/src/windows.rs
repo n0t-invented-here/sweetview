@@ -546,7 +546,7 @@ impl QueuedMessage {
   pub fn dispatch(self) {
     // The parameters are whatever the poster chose, and any process of the session may post:
     // the window procedure reads them as the message defines, and the OS calls a `WM_TIMER`'s
-    // timer procedure only when this thread registered it with `SetTimer` (measured, D38).
+    // timer procedure only when this thread registered it with `SetTimer` (measured, D39).
     // SAFETY: `self.0` was filled by the OS from this thread's queue (see the type), so its
     // window is one the OS queued it for and validates again here (parameters: above); `self`
     // is consumed, so this message is not dispatched again.
@@ -768,7 +768,7 @@ fn post_ticks(ticks: &Ticks, poster: &Poster) {
 /// Its timers do not use `SetTimer`. A `WM_TIMER` is made only when the
 /// thread's queue holds nothing else, after every paint request, and a modal
 /// loop such as a popup menu's can wait with one already due and never take it
-/// (D37). Each tick is instead a message posted to the window by a thread of
+/// (D38). Each tick is instead a message posted to the window by a thread of
 /// this value's own; posted messages come before input, paint and `WM_TIMER`,
 /// and wake any loop that waits for new messages.
 pub struct SignalWindow {
