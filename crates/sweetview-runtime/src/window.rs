@@ -530,10 +530,6 @@ impl Window {
       Appearance::Light => Some(Theme::Light),
       Appearance::Dark => Some(Theme::Dark),
     };
-    // Where no webview covers it (before its page paints, or once its webview is gone) a window
-    // shows its appearance's page colour, not the white of a client area nothing paints (D42).
-    // A transparent or colour-keyed window shows through there instead, as it always has.
-    let backdrop = (!tabbed && !init.transparent && color_key.is_none()).then(|| backdrop_for(init.appearance));
     let builder = platform_builder(
       WindowBuilder::new()
         .with_visible(false)
@@ -549,9 +545,15 @@ impl Window {
         .with_position(PhysicalPosition::new(bounds.x, bounds.y))
         .with_inner_size(PhysicalSize::new(bounds.width.max(1) as u32, bounds.height.max(1) as u32)),
       tab.as_ref(),
-      backdrop,
     );
     let tao = runtime.with_target(|target| builder.build(target))?.map_err(|e| Error::os("the window could not be made", e))?;
+    // Where no webview covers it (before its page paints, or once its webview is gone) a window
+    // shows its appearance's page colour, not the white of a client area nothing paints (D42).
+    // A transparent or colour-keyed window shows through there instead, as it always has.
+    let backdrop = (!tabbed && !init.transparent && color_key.is_none()).then(|| backdrop_for(init.appearance, &tao));
+    if let Some((red, green, blue)) = backdrop {
+      tao.set_background_color(Some((red, green, blue, 0xff)));
+    }
     let handle = platform::handle_value(&tao);
     let min = MinSize::from_options(init.min_width, init.min_height);
     let min_options = (init.min_width, init.min_height);
@@ -1007,9 +1009,15 @@ impl Drop for Window {
   }
 }
 
-/// The page colour of a window of this appearance, the same a tab frame paints.
-fn backdrop_for(appearance: Appearance) -> (u8, u8, u8) {
-  if tab_frame::is_dark(appearance) {
+/// The page colour of a window of this appearance, the same a tab frame paints. For `System`,
+/// the theme `tao` gave the window: `tao` follows the system's for a window with no theme of its own.
+fn backdrop_for(appearance: Appearance, tao: &tao::window::Window) -> (u8, u8, u8) {
+  let dark = match appearance {
+    Appearance::System => tao.theme() == Theme::Dark,
+    Appearance::Light => false,
+    Appearance::Dark => true,
+  };
+  if dark {
     tab_frame::PAGE_DARK
   } else {
     tab_frame::PAGE_LIGHT
@@ -1034,22 +1042,21 @@ pub fn backdrop_of(handle: isize) -> Option<(u8, u8, u8)> {
 }
 
 #[cfg(windows)]
-fn platform_builder(builder: WindowBuilder, tab: Option<&TabState>, backdrop: Option<(u8, u8, u8)>) -> WindowBuilder {
+fn platform_builder(builder: WindowBuilder, tab: Option<&TabState>) -> WindowBuilder {
   use tao::platform::windows::WindowBuilderExtWindows;
   // Drops arrive through the subclass, as `WM_DROPFILES`; `tao`'s OLE drop
   // target would take them first. A frameless window has no shadow, as before;
   // a tab frame keeps the system's border and shadow with its caption removed,
   // and paints the page's colour wherever no webview covers it.
   let builder = builder.with_drag_and_drop(false).with_undecorated_shadow(tab.is_some());
-  match (tab, backdrop) {
-    (Some(tab), _) => builder.with_background_color(tab.backdrop()),
-    (None, Some((red, green, blue))) => builder.with_background_color((red, green, blue, 0xff)),
-    (None, None) => builder,
+  match tab {
+    Some(tab) => builder.with_background_color(tab.backdrop()),
+    None => builder,
   }
 }
 
 #[cfg(not(windows))]
-fn platform_builder(builder: WindowBuilder, _tab: Option<&TabState>, _backdrop: Option<(u8, u8, u8)>) -> WindowBuilder {
+fn platform_builder(builder: WindowBuilder, _tab: Option<&TabState>) -> WindowBuilder {
   builder
 }
 

@@ -37,14 +37,6 @@ const STRIP_DARK: (u8, u8, u8) = (0x29, 0x2a, 0x30);
 pub(super) const PAGE_LIGHT: (u8, u8, u8) = (0xf9, 0xf9, 0xfb);
 pub(super) const PAGE_DARK: (u8, u8, u8) = (0x15, 0x16, 0x1a);
 
-/// Whether a window of this appearance is dark now: its own choice, or the system's.
-pub(super) fn is_dark(appearance: Appearance) -> bool {
-  match appearance {
-    Appearance::System => platform::system_is_dark(),
-    Appearance::Light => false,
-    Appearance::Dark => true,
-  }
-}
 
 /// Called with `true` when the frame becomes the active window, `false` when it stops being it.
 pub type ActivateListener = Rc<dyn Fn(bool)>;
@@ -64,7 +56,11 @@ pub(super) struct TabState {
 
 impl TabState {
   pub(super) fn new(strip_height: u32, appearance: Appearance) -> Self {
-    let dark = is_dark(appearance);
+    let dark = match appearance {
+      Appearance::System => platform::system_is_dark(),
+      Appearance::Light => false,
+      Appearance::Dark => true,
+    };
     Self { strip_height, appearance, dark: Cell::new(dark), activate: RefCell::new(None), messages: RefCell::new(None) }
   }
 
