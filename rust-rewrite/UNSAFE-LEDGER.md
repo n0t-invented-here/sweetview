@@ -1,6 +1,6 @@
 # Unsafe ledger
 
-Rewritten by `bun rust-rewrite/verify.ts <platform> --ledger`. 312 uses in 23 files.
+Rewritten by `bun rust-rewrite/verify.ts <platform> --ledger`. 317 uses in 23 files.
 
 | File | Uses of `unsafe` |
 |---|---|
@@ -17,7 +17,7 @@ Rewritten by `bun rust-rewrite/verify.ts <platform> --ledger`. 312 uses in 23 fi
 | `crates/sweetview-platform-webview/src/windows/handlers.rs` | 18 |
 | `crates/sweetview-platform-webview/src/windows/istream.rs` | 13 |
 | `crates/sweetview-platform-webview/src/windows/mod.rs` | 45 |
-| `crates/sweetview-platform-webview/src/windows/test_support.rs` | 34 |
+| `crates/sweetview-platform-webview/src/windows/test_support.rs` | 39 |
 | `crates/sweetview-platform-webview/tests/settings.rs` | 17 |
 | `crates/sweetview-platform-window/src/metrics.rs` | 1 |
 | `crates/sweetview-platform-window/src/popup.rs` | 9 |
@@ -135,9 +135,9 @@ All of it reaches WebView2 through the objects `wry` 0.58.2 hands out (`WebViewE
 - **Reading a stream** (1: `Read` in `read_into`), used for the request body. The buffer is lent for the call and its length bounds the read.
 - Tests (8): `Seek`, `Write`, `Clone`, `Stat`, two `Read`s with a null buffer, and a `Read` into uninitialised storage with the slice over the bytes it reports, called through the COM interface so the vtable is what is tested.
 
-### `crates/sweetview-platform-webview/src/windows/test_support.rs` (34)
+### `crates/sweetview-platform-webview/src/windows/test_support.rs` (39)
 
-- **Reading back what a person would see**, compiled only for tests and the `test-support` feature, which only dev-dependencies enable (the runtime's), so none of it is in the binding: `Settings` and the sixteen boolean getters (17), `SetIsGeneralAutofillEnabled` (1), `ParentWindow`, `IsWindow`, `GetFocus` twice, `IsChild`, `SetFocus` (6), the download watch's `Handled`, `ResultFilePath`, `SetResultFilePath` (3), `IsDefaultDownloadDialogOpen`, `CloseDefaultDownloadDialog` (2), `ZoomFactor`, `ClientToScreen`, `GetAncestor`, `GetWindowRect`, `GetSystemMetrics` (5). `wry` has a getter for none of them. Each reads WebView2's or the OS's own state, so a test asserts what WebView2 has; out-values are locals for the call to fill.
+- **Reading back what a person would see**, compiled only for tests and the `test-support` feature, which only dev-dependencies enable (the runtime's), so none of it is in the binding: `Settings` and the sixteen boolean getters (17), `SetIsGeneralAutofillEnabled` (1), `ParentWindow`, `IsWindow`, `GetFocus` twice, `IsChild`, `SetFocus` (6), the download watch's `Handled`, `ResultFilePath`, `SetResultFilePath` (3), `IsDefaultDownloadDialogOpen`, `CloseDefaultDownloadDialog` (2), `ZoomFactor`, `ClientToScreen`, `GetAncestor`, `GetWindowRect`, `GetSystemMetrics` (5), and for keeping a real-input test's window clear of other programs' windows `GetAncestor`, `SetWindowPos` (topmost), `WindowFromPoint`, `GetAncestor`, `GetWindowTextW` (5). `wry` has a getter for none of them. Each reads WebView2's or the OS's own state, so a test asserts what WebView2 has; out-values are locals for the call to fill.
 
 ### `crates/sweetview-platform-webview/tests/settings.rs` (17)
 

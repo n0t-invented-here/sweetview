@@ -258,4 +258,16 @@ One predicate, `macosKeepsTagPath()` in `packages/sweetview-native/src/platform.
 
 ### 13, the Explorer drop (this branch's part)
 
-See the real-input run below (`engine_tests::real_input`).
+Driven for real, with the shared desktop's input lock held: `cargo test -p sweetview-runtime --lib engine::tests::real_input -- --ignored`, through `Engine::create` for a window of the engine's own, a given window and a child, the mouse and keyboard injected with `SendInput` by `rust-rewrite/checks/webview-real-input.ps1` (which reports the window under each point it acts on). An Explorer window was opened on a scratch folder holding one file, the file's item found through UI Automation, the left button pressed on it, the cursor moved in 40 steps onto the webview (a window of another process), and released: OLE drag and drop ran between the two processes, and the engine's file drop handler received exactly the file's real path, once, for each host. The Explorer window was closed after each.
+
+Every step of the run, for each of the three hosts (WebView2 Runtime 158.0.4370.45):
+
+| Step | Seen |
+|---|---|
+| A press on a `-webkit-app-region: drag` area, moved 80 px | the page got the `mousedown`; the window did not move |
+| An HTML drag of a `draggable` element onto a drop zone, with the file drop handler set | the page got the `drop` with its data |
+| A file dragged out of Explorer onto the page | the file drop handler got the file's real path |
+| A real click on a download link | the download is not marked handled, and WebView2's own download interface opened |
+| Ctrl+wheel one notch, Ctrl+0, Ctrl+plus, Ctrl+0 | `ZoomFactor` 1, 1.1, 1, 1.1, 1 |
+
+Not driven: a drop on a part of a native window that the webview does not cover (`Window.onFileDrop` through `WM_DROPFILES`); touch pinch and swipe (no touch input here; read back from the settings only). Earlier runs on the same desktop had steps land on other programs' windows (their titles are in the injector's output); the test now keeps its window topmost, and a step whose points were on another window counts as not run, never as passed. In the run above no step was covered.

@@ -39,6 +39,19 @@ public static class RI {
   [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT p);
   [DllImport("user32.dll")] public static extern short GetAsyncKeyState(int vk);
   [DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(IntPtr value);
+  [DllImport("user32.dll")] public static extern IntPtr WindowFromPoint(POINT p);
+  [DllImport("user32.dll")] public static extern IntPtr GetAncestor(IntPtr h, uint flags);
+  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetClassNameW(IntPtr h, System.Text.StringBuilder s, int n);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetWindowTextW(IntPtr h, System.Text.StringBuilder s, int n);
+  public static string Under(int x, int y) {
+    POINT p; p.X = x; p.Y = y;
+    IntPtr h = WindowFromPoint(p); IntPtr root = GetAncestor(h, 2);
+    var cls = new System.Text.StringBuilder(128); GetClassNameW(root, cls, 128);
+    var title = new System.Text.StringBuilder(128); GetWindowTextW(root, title, 128);
+    uint pid; GetWindowThreadProcessId(root, out pid);
+    return "'" + title + "' (" + cls + ", pid " + pid + ")";
+  }
   static void Send(INPUT i) { SendInput(1, new INPUT[] { i }, Marshal.SizeOf(typeof(INPUT))); }
   public static void Mouse(uint flags, uint data) { var i = new INPUT(); i.type = 0; i.u.mi.dwFlags = flags; i.u.mi.mouseData = data; Send(i); }
   public static void Move(int dx, int dy) { var i = new INPUT(); i.type = 0; i.u.mi.dx = dx; i.u.mi.dy = dy; i.u.mi.dwFlags = 0x0001; Send(i); }
@@ -81,7 +94,7 @@ function Drag([int]$fromX, [int]$fromY, [int]$toX, [int]$toY) {
   Move-To ($toX + 2) ($toY + 2) 2
   Start-Sleep -Milliseconds 300
   [RI]::Mouse($LEFTUP, 0)
-  "pressed at $fromX,$fromY, moved in steps to $toX,$toY, released"
+  "pressed at $fromX,$fromY (on $([RI]::Under($fromX, $fromY))), moved in steps to $toX,$toY (on $([RI]::Under($toX, $toY))), released"
 }
 
 $saved = New-Object RI+POINT
@@ -97,7 +110,7 @@ try {
       Start-Sleep -Milliseconds 80
       for ($n = 0; $n -lt $Notches; $n++) { [RI]::Mouse($WHEEL, 120); Start-Sleep -Milliseconds 120 }
       [RI]::KeyUp($VK_CONTROL)
-      "Ctrl held, the wheel turned $Notches notch(es) up at $X,$Y"
+      "Ctrl held, the wheel turned $Notches notch(es) up at $X,$Y (on $([RI]::Under($X, $Y)))"
     }
     "ctrlkey" {
       [RI]::SetCursorPos($X - 2, $Y) | Out-Null
@@ -109,14 +122,14 @@ try {
       [RI]::KeyDown([uint16]$keys[$Key]); Start-Sleep -Milliseconds 60
       [RI]::KeyUp([uint16]$keys[$Key]); Start-Sleep -Milliseconds 60
       [RI]::KeyUp($VK_CONTROL)
-      "clicked at $X,$Y, then Ctrl+$Key"
+      "clicked at $X,$Y (on $([RI]::Under($X, $Y))), then Ctrl+$Key"
     }
     "click" {
       [RI]::SetCursorPos($X - 2, $Y) | Out-Null
       Move-To $X $Y 2
       Start-Sleep -Milliseconds 200
       [RI]::Mouse($LEFTDOWN, 0); Start-Sleep -Milliseconds 60; [RI]::Mouse($LEFTUP, 0)
-      "clicked at $X,$Y"
+      "clicked at $X,$Y (on $([RI]::Under($X, $Y)))"
     }
     "drag" { Drag $X $Y $ToX $ToY }
     "explorer" {

@@ -291,7 +291,7 @@ const INPUT_PAGE: &str = r#"<!doctype html>
 /// Runs the injector, `rust-rewrite/checks/webview-real-input.ps1`, with `args`
 /// while pumping, until it has exited and `done` holds, or `timeout`; prints its
 /// output. Ends it by its id if it is still running then.
-fn inject(runtime: &Runtime, args: &[String], timeout: Duration, mut done: impl FnMut() -> bool) -> bool {
+fn inject(runtime: &Runtime, args: &[String], timeout: Duration, mut done: impl FnMut() -> bool) -> (bool, String) {
   let script = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../rust-rewrite/checks/webview-real-input.ps1");
   let mut child = std::process::Command::new("pwsh")
     .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"])
@@ -311,10 +311,32 @@ fn inject(runtime: &Runtime, args: &[String], timeout: Duration, mut done: impl 
     let _ = child.kill();
   }
   let output = child.wait_with_output().expect("the injector's output");
-  for line in String::from_utf8_lossy(&output.stdout).lines().chain(String::from_utf8_lossy(&output.stderr).lines()) {
+  let text = format!("{}{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+  for line in text.lines() {
     eprintln!("   injector: {line}");
   }
-  reached
+  (reached, text)
+}
+
+/// The windows the injector found under the points it pressed, moved to or
+/// clicked that belong to another process than this test's (its lines say
+/// "on '<title>' (<class>, pid <n>)"). For the Explorer drag the press point
+/// is Explorer's own, so only the points after the first count.
+fn foreign_windows(output: &str, skip_first: bool) -> Vec<String> {
+  let ours = format!("pid {})", std::process::id());
+  let mut found = Vec::new();
+  for line in output.lines() {
+    let mut parts: Vec<&str> = line.split("(on '").skip(1).collect();
+    if skip_first && !parts.is_empty() {
+      parts.remove(0);
+    }
+    for part in parts {
+      if !part.contains(&ours) {
+        found.push(part.split('\'').next().unwrap_or_default().to_string());
+      }
+    }
+  }
+  found
 }
 
 /// Where element `id` of the input page is on the screen (physical pixels).
@@ -338,6 +360,11 @@ fn real_input() {
     let file = folder.join("sweetview real drop.txt");
     std::fs::write(&file, "a file dragged from Explorer").unwrap();
     let mut failures = Vec::new();
+    // On a shared desktop other programs open windows at any time: the test window is kept
+    // topmost, and a step whose points are on another window, before or after it, is "not
+    // run" rather than passed or failed.
+    let mut not_run = Vec::new();
+    eprintln!("-- this test is process {}", std::process::id());
     for host in HOSTS {
       eprintln!("== {host}");
       let (engine, _window) = make(host, |_| ());
@@ -358,18 +385,33 @@ fn real_input() {
       assert!(pump_until(&runtime, Duration::from_secs(5), || centres.borrow().is_some()), "{host}: the page's layout");
       let centres = centres.borrow().clone().unwrap();
       let said = |what: &str| reports.borrow().iter().any(|r| r.contains(what));
+      wry_of(&engine, test_support::keep_on_top);
+      let covered = |points: &[(i32, i32)]| points.iter().find_map(|&(x, y)| wry_of(&engine, |w| test_support::covered_at(w, x, y)));
+      // Records the step's outcome. A success counts (no other window can make the page do
+      // it). A failure counts as "not run" when another window was on its points before the
+      // step, after it, or as the injector acted (`injected`, its output).
+      let mut outcome = |step: &str, points: &[(i32, i32)], before: Option<String>, injected: &(bool, String), skip_first: bool, ok: bool| {
+        if ok {
+          return;
+        }
+        let by = before.or_else(|| covered(points)).or_else(|| foreign_windows(&injected.1, skip_first).into_iter().next());
+        match by {
+          Some(by) => not_run.push(format!("{host}: {step} (covered by '{by}')")),
+          None => failures.push(format!("{host}: {step}")),
+        }
+      };
 
       // A press on the app-region area, moved 80 px: the page gets it, the window stays.
       let before = wry_of(&engine, test_support::top_level_rect);
       let (x, y) = point(&engine, &centres, "bar");
       let (x2, ys) = ((x + 80).to_string(), y.to_string());
-      inject(&runtime, &args(&["-Action", "drag", "-X", &x.to_string(), "-Y", &ys, "-ToX", &x2, "-ToY", &ys]), Duration::from_secs(8), || said("bar-down"));
+      let region_points = [(x, y), (x + 80, y)];
+      let cover = covered(&region_points);
+      let injected = inject(&runtime, &args(&["-Action", "drag", "-X", &x.to_string(), "-Y", &ys, "-ToX", &x2, "-ToY", &ys]), Duration::from_secs(8), || said("bar-down"));
       settle(&runtime, Duration::from_millis(300));
       let after = wry_of(&engine, test_support::top_level_rect);
       eprintln!("-- {host}: app-region press reached the page {}; the window moved by ({}, {})", said("bar-down"), after.0 - before.0, after.1 - before.1);
-      if !said("bar-down") || after != before {
-        failures.push(format!("{host}: app-region"));
-      }
+      outcome("app-region", &region_points, cover, &injected, false, said("bar-down") && after == before);
 
       // An HTML drag inside the page, with a file drop handler set.
       let dropped: Rc<RefCell<Vec<Vec<String>>>> = Rc::default();
@@ -380,11 +422,11 @@ fn real_input() {
       let (sx, sy) = point(&engine, &centres, "src");
       let (dx, dy) = point(&engine, &centres, "dst");
       let drag = args(&["-Action", "drag", "-X", &sx.to_string(), "-Y", &sy.to_string(), "-ToX", &dx.to_string(), "-ToY", &dy.to_string()]);
-      inject(&runtime, &drag, Duration::from_secs(10), || said("page-drop:from-src"));
+      let drag_points = [(sx, sy), (dx, dy)];
+      let cover = covered(&drag_points);
+      let injected = inject(&runtime, &drag, Duration::from_secs(10), || said("page-drop:from-src"));
       eprintln!("-- {host}: the in-page HTML drag reached the page's drop {}", said("page-drop:from-src"));
-      if !said("page-drop:from-src") {
-        failures.push(format!("{host}: in-page drag"));
-      }
+      outcome("in-page drag", &drag_points, cover, &injected, false, said("page-drop:from-src"));
 
       // A file dragged from a real Explorer window onto the page.
       let rect = wry_of(&engine, test_support::top_level_rect);
@@ -406,46 +448,48 @@ fn real_input() {
         "-ExplorerAt",
         &explorer_at,
       ]);
-      inject(&runtime, &explorer, Duration::from_secs(40), || !dropped.borrow().is_empty());
+      let cover = covered(&[(fx, fy)]);
+      let injected = inject(&runtime, &explorer, Duration::from_secs(40), || !dropped.borrow().is_empty());
       settle(&runtime, Duration::from_millis(300));
       eprintln!("-- {host}: the file drop handler received {:?}", dropped.borrow());
-      if *dropped.borrow() != vec![vec![file.to_string_lossy().into_owned()]] {
-        failures.push(format!("{host}: Explorer drop"));
-      }
+      let delivered = *dropped.borrow() == vec![vec![file.to_string_lossy().into_owned()]];
+      outcome("Explorer drop", &[(fx, fy)], cover, &injected, true, delivered);
 
       // A real click on a download link: WebView2's own download interface opens.
       let watch = wry_of(&engine, |webview| DownloadWatch::attach(webview, folder.clone()));
       let (lx, ly) = point(&engine, &centres, "dl");
-      inject(&runtime, &args(&["-Action", "click", "-X", &lx.to_string(), "-Y", &ly.to_string()]), Duration::from_secs(8), || !watch.handled().is_empty());
+      let cover = covered(&[(lx, ly)]);
+      let injected = inject(&runtime, &args(&["-Action", "click", "-X", &lx.to_string(), "-Y", &ly.to_string()]), Duration::from_secs(8), || !watch.handled().is_empty());
       let opened = pump_until(&runtime, Duration::from_secs(5), || wry_of(&engine, test_support::download_dialog_open) == Some(true));
       wry_of(&engine, test_support::close_download_dialog);
       eprintln!("-- {host}: download marked handled {:?}; WebView2's download interface opened {opened}", watch.handled());
-      if watch.handled() != vec![false] || !opened {
-        failures.push(format!("{host}: download"));
-      }
+      outcome("download", &[(lx, ly)], cover, &injected, false, watch.handled() == vec![false] && opened);
       drop(watch);
 
       // Ctrl+wheel, Ctrl+0, Ctrl+plus, Ctrl+0 over the page.
       let (zx, zy) = point(&engine, &centres, "files");
       let (zxs, zys) = (zx.to_string(), zy.to_string());
+      let cover = covered(&[(zx, zy)]);
       let mut zooms = vec![wry_of(&engine, test_support::zoom_factor)];
       reports.borrow_mut().clear();
-      inject(&runtime, &args(&["-Action", "ctrlwheel", "-X", &zxs, "-Y", &zys]), Duration::from_secs(8), || said("resize:"));
+      let mut injected = inject(&runtime, &args(&["-Action", "ctrlwheel", "-X", &zxs, "-Y", &zys]), Duration::from_secs(8), || said("resize:"));
       zooms.push(wry_of(&engine, test_support::zoom_factor));
       for key in ["zero", "plus", "zero"] {
         reports.borrow_mut().clear();
-        inject(&runtime, &args(&["-Action", "ctrlkey", "-Key", key, "-X", &zxs, "-Y", &zys]), Duration::from_secs(8), || said("resize:"));
+        let step = inject(&runtime, &args(&["-Action", "ctrlkey", "-Key", key, "-X", &zxs, "-Y", &zys]), Duration::from_secs(8), || said("resize:"));
+        injected.1.push_str(&step.1);
         zooms.push(wry_of(&engine, test_support::zoom_factor));
       }
       eprintln!("-- {host}: ZoomFactor before, after Ctrl+wheel, Ctrl+0, Ctrl+plus, Ctrl+0: {zooms:?}");
       let near = |a: f64, b: f64| (a - b).abs() < 1e-6;
-      if !(near(zooms[0], 1.0) && zooms[1] > 1.0 && near(zooms[2], 1.0) && zooms[3] > 1.0 && near(zooms[4], 1.0)) {
-        failures.push(format!("{host}: zoom"));
-      }
+      let zoomed = near(zooms[0], 1.0) && zooms[1] > 1.0 && near(zooms[2], 1.0) && zooms[3] > 1.0 && near(zooms[4], 1.0);
+      outcome("zoom", &[(zx, zy)], cover, &injected, false, zoomed);
       engine.destroy();
       settle(&runtime, Duration::from_millis(200));
     }
     let _ = std::fs::remove_dir_all(&folder);
+    eprintln!("-- not run: {not_run:?}");
+    eprintln!("-- failed: {failures:?}");
     assert!(failures.is_empty(), "failed: {failures:?}");
   });
 }

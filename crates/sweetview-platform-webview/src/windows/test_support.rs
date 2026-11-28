@@ -270,3 +270,37 @@ pub fn screen_width() -> i32 {
     // SAFETY: `GetSystemMetrics` takes a plain index and reads no memory of ours.
     unsafe { windows::Win32::UI::WindowsAndMessaging::GetSystemMetrics(windows::Win32::UI::WindowsAndMessaging::SM_CXSCREEN) }
 }
+
+fn root_of(webview: &wry::WebView) -> HWND {
+    let window = container(webview).expect("a live webview");
+    // SAFETY: `GetAncestor` takes a handle value and a flag, and reads no memory of ours.
+    unsafe { windows::Win32::UI::WindowsAndMessaging::GetAncestor(window, windows::Win32::UI::WindowsAndMessaging::GA_ROOT) }
+}
+
+/// Keeps the top-level window `webview` is in above every window that is not
+/// topmost itself, so other programs' windows on a shared desktop do not cover
+/// it during a test with real input.
+pub fn keep_on_top(webview: &wry::WebView) {
+    use windows::Win32::UI::WindowsAndMessaging::{SetWindowPos, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE};
+    let root = root_of(webview);
+    // SAFETY: `root` is a top-level window of this thread; the flags keep its position and size.
+    let _ = unsafe { SetWindowPos(root, Some(HWND_TOPMOST), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE) };
+}
+
+/// `None` when the screen point `(x, y)` is on the top-level window `webview`
+/// is in; otherwise the title of the top-level window that is there.
+pub fn covered_at(webview: &wry::WebView, x: i32, y: i32) -> Option<String> {
+    use windows::Win32::UI::WindowsAndMessaging::{GetAncestor, GetWindowTextW, WindowFromPoint, GA_ROOT};
+    let ours = root_of(webview);
+    // SAFETY: `WindowFromPoint` takes a point by value and reads no memory of ours.
+    let there = unsafe { WindowFromPoint(windows::Win32::Foundation::POINT { x, y }) };
+    // SAFETY: `GetAncestor` takes a handle value and a flag, and reads no memory of ours.
+    let root = unsafe { GetAncestor(there, GA_ROOT) };
+    if root == ours {
+        return None;
+    }
+    let mut title = [0u16; 128];
+    // SAFETY: `title` is a local buffer the call fills, its length taken from the slice.
+    let n = unsafe { GetWindowTextW(root, &mut title) };
+    Some(String::from_utf16_lossy(&title[..n.max(0) as usize]))
+}
