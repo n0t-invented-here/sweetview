@@ -210,7 +210,10 @@ struct Core {
   background: Cell<Option<(u8, u8, u8)>>,
   /// Set while the window is shown and kept off the screen until its page has drawn
   /// (`show_cloaked`, D49); `uncloak`, `show()` and `hide()` let it go.
-  cloak: RefCell<Option<platform::Cloak>>,
+  cloak: RefCell<Option<(u32, platform::Cloak)>>,
+  /// The number of the last cloaked show: a reveal uncloaks only the show it made, not a later
+  /// one another reveal made after a hide or a show (D49, T3 of its second review).
+  cloak_generation: Cell<u32>,
   /// Whether the application gave the window a `backgroundColor`, which wins over
   /// `WEBVIEW2_DEFAULT_BACKGROUND_COLOR`; without one the variable wins over the appearance's
   /// page colour (D49).
@@ -311,6 +314,7 @@ impl Core {
       maximize_telling: Cell::new(0),
       background: Cell::new(None),
       cloak: RefCell::new(None),
+      cloak_generation: Cell::new(0),
       background_given: Cell::new(false),
       icons: RefCell::new(None),
       page_focus: RefCell::new(None),
@@ -625,7 +629,7 @@ impl Core {
     }
     // A window going stays cloaked: uncloaking it would put it on the screen for the moment
     // before it goes. A cloak holds nothing but the window's state, so nothing is kept.
-    if let Some(cloak) = self.cloak.borrow_mut().take() {
+    if let Some((_, cloak)) = self.cloak.borrow_mut().take() {
       std::mem::forget(cloak);
     }
     // Dropped after the window: `WindowIcons` destroys icons no window shows
@@ -939,33 +943,55 @@ impl Window {
     }
     // On the screen at once, as at the tag: a cloak a reveal left is let go.
     self.core.cloak.borrow_mut().take();
-    self.show_now()
+    self.show_now(self.core.no_activate)
   }
 
   /// Shows a hidden window cloaked (`platform::Cloak`): visible to the webviews in it, so they
   /// draw, and off the screen until `uncloak`. Sweetview's reveal of a window whose page has to
-  /// draw first (D49). True when it is cloaked; false when it was shown at once (DWM refused the
-  /// cloak) or was already visible, which it leaves as it is.
-  pub fn show_cloaked(&self) -> Result<bool> {
+  /// draw first (D49). It is shown without taking the activation, which `uncloak` gives it by
+  /// the rule `show()` follows: nothing takes the focus with nothing on the screen. The number of
+  /// this cloaked show, which `uncloak` takes; 0 when it was shown at once (DWM refused the
+  /// cloak), and when it was already visible, which it leaves as it is.
+  pub fn show_cloaked(&self) -> Result<u32> {
     if !self.live() || self.core.is_visible() {
-      return Ok(false);
+      return Ok(0);
     }
-    let cloak = self.core.with_native(|window| platform::Cloak::new(window)).flatten();
-    let cloaked = cloak.is_some();
-    *self.core.cloak.borrow_mut() = cloak;
-    self.show_now()?;
-    Ok(cloaked)
+    let Some(cloak) = self.core.with_native(|window| platform::Cloak::new(window)).flatten() else {
+      self.show_now(self.core.no_activate)?;
+      return Ok(0);
+    };
+    let generation = self.core.cloak_generation.get().wrapping_add(1).max(1);
+    self.core.cloak_generation.set(generation);
+    *self.core.cloak.borrow_mut() = Some((generation, cloak));
+    self.show_now(true)?;
+    Ok(generation)
   }
 
-  /// Puts a window `show_cloaked` cloaked on the screen. Nothing for one that is not cloaked.
-  pub fn uncloak(&self) {
-    self.core.cloak.borrow_mut().take();
+  /// Puts the window on the screen if it is still cloaked by the show numbered `generation`, and
+  /// gives it the activation `show()` would have. Nothing for any other show: a hide, a show of
+  /// the application's own or a later reveal let that cloak go.
+  pub fn uncloak(&self, generation: u32) {
+    let taken = {
+      let mut cloak = self.core.cloak.borrow_mut();
+      match cloak.as_ref() {
+        Some((number, _)) if *number == generation => cloak.take(),
+        _ => None,
+      }
+    };
+    if taken.is_none() {
+      return;
+    }
+    drop(taken);
+    let core = &self.core;
+    if !core.no_activate && self.live() {
+      core.with_native(|window| platform::show(window, false, core.topmost.get(), core.tab.is_some()));
+    }
   }
 
-  fn show_now(&self) -> Result<()> {
+  fn show_now(&self, no_activate: bool) -> Result<()> {
     let core = &self.core;
     // Shown the way `show()` always has: `tao`'s own show activates the window (D9).
-    core.with_native(|window| platform::show(window, core.no_activate, core.topmost.get(), core.tab.is_some()));
+    core.with_native(|window| platform::show(window, no_activate, core.topmost.get(), core.tab.is_some()));
     core.with_tao(|tao| {
       // `tao` learns the window is visible and not minimised, so its later
       // style rewrites agree; the subclass keeps those from touching `WS_VISIBLE`.

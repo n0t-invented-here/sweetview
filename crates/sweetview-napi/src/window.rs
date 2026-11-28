@@ -102,13 +102,13 @@ impl Window {
     self.inner.hide();
   }
 
-  /// Shows a hidden window off the screen until `uncloak` (D49); true when it is cloaked.
-  pub fn show_cloaked(&self) -> napi::Result<bool> {
+  /// Shows a hidden window off the screen until `uncloak` (D49): the number of this cloaked show, 0 when it is not cloaked.
+  pub fn show_cloaked(&self) -> napi::Result<u32> {
     self.inner.show_cloaked().or_throw()
   }
 
-  pub fn uncloak(&self) {
-    self.inner.uncloak();
+  pub fn uncloak(&self, generation: u32) {
+    self.inner.uncloak(generation);
   }
 
   pub fn bounds(&self) -> Rect {

@@ -28,20 +28,40 @@ fn a_window_shown_cloaked_is_visible_and_off_the_screen_until_uncloaked() {
   on_ui_thread(|_runtime| {
     let window = Window::create(WindowInit { bounds: Some(Rect::new(100, 100, 300, 200)), no_activate: true, ..init("rt cloak") }).expect("window");
     let cloaked = |w: &Window| native(w, |n| sweetview_platform_window::test_support::is_cloaked(n));
-    assert!(window.show_cloaked().expect("shown"), "cloaked");
+    let first = window.show_cloaked().expect("shown");
+    assert!(first != 0, "cloaked");
     assert!(window.is_visible() && cloaked(&window), "visible, and off the screen");
-    window.uncloak();
+    window.uncloak(first);
     assert!(window.is_visible() && !cloaked(&window), "on the screen once uncloaked");
-    assert!(!window.show_cloaked().expect("shown"), "a visible window is left as it is");
+    assert_eq!(window.show_cloaked().expect("shown"), 0, "a visible window is left as it is");
     assert!(!cloaked(&window), "and is not cloaked");
     window.hide();
-    assert!(window.show_cloaked().expect("shown"));
+    assert!(window.show_cloaked().expect("shown") != 0);
     window.show().expect("shown");
     assert!(window.is_visible() && !cloaked(&window), "the application's own show() shows at once");
     window.hide();
-    assert!(window.show_cloaked().expect("shown"));
+    assert!(window.show_cloaked().expect("shown") != 0);
     window.hide();
     assert!(!window.is_visible() && !cloaked(&window), "hide() lets the cloak go");
+    // T3 of the second review: a reveal uncloaks only its own show. One cloaked show, a hide, and a
+    // second cloaked show: the first reveal's uncloak leaves the second cloaked.
+    let stale = window.show_cloaked().expect("shown");
+    window.hide();
+    let current = window.show_cloaked().expect("shown");
+    assert!(stale != 0 && current != 0 && stale != current, "two numbered shows");
+    window.uncloak(stale);
+    assert!(cloaked(&window), "the earlier reveal does not uncloak the later show");
+    window.uncloak(current);
+    assert!(!cloaked(&window), "its own reveal does");
+    // T6 of the second review: a window that may take the activation takes none while it is
+    // cloaked (nothing of it is on the screen), and takes it at the reveal, as show() does.
+    let active = |w: &Window| native(w, |n| sweetview_platform_window::is_active(n));
+    let activating = Window::create(WindowInit { bounds: Some(Rect::new(140, 140, 300, 200)), ..init("rt cloak activation") }).expect("window");
+    let number = activating.show_cloaked().expect("shown");
+    assert!(number != 0 && !active(&activating), "not active while cloaked");
+    activating.uncloak(number);
+    assert!(active(&activating), "active once on the screen");
+    activating.dispose();
     window.dispose();
   });
 }
