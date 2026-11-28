@@ -123,7 +123,9 @@ On the first signal from a webview, the host:
    which drains buffered activation URLs for the whole app (this happens
    once per process, on the first webview to become ready);
 3. calls that webview's `onReady`;
-4. shows the window when `showOnReady` is set.
+4. shows the window when `showOnReady` is set; on Windows it is put on the
+   screen once the page has drawn since the signal, so its first frame is
+   the one seen ([`showOnReady`](app.md#webviewoptions)).
 
 Later signals from the same page resolve without doing anything again.
 

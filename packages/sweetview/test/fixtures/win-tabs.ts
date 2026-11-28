@@ -565,6 +565,26 @@ try {
   await until(() => user32.IsWindow(BigInt(last.handle!)) === 0, 2000);
   check("last tab: with no listener the window closes with it", user32.IsWindow(BigInt(last.handle!)) === 0 && only.webview.raw.unsafeHandle === null);
 
+  // ---- forcing the last tab closed with no listener: the window goes from the screen first (D49, R2) -----
+  for (const how of ["tab.dispose()", "tab.webview.dispose()"] as const) {
+    const forced = make({ tabs: true });
+    const tab = await WebView.openTab(forced, page("forced"));
+    forced.show();
+    await until(() => forced.isVisible(), 2000);
+    // Whether the window is on the screen at the moment the tab's webview is destroyed.
+    let visibleAsItGoes: boolean | undefined;
+    const raw = tab.webview.raw;
+    const destroy = raw.destroy.bind(raw);
+    raw.destroy = () => {
+      visibleAsItGoes = forced.isVisible();
+      destroy();
+    };
+    if (how === "tab.dispose()") tab.dispose();
+    else tab.webview.dispose();
+    await until(() => user32.IsWindow(BigInt(forced.handle!)) === 0, 2000);
+    check(`forcing the last tab closed with no onClose listener (${how}): the window leaves the screen before the page goes`, visibleAsItGoes === false && user32.IsWindow(BigInt(forced.handle!)) === 0, { visibleAsItGoes });
+  }
+
   // ---- Alt+F4 closes every tab, then the window -------------------------------------------------
   const altWin = make({ tabs: true });
   const a1 = await WebView.openTab(altWin, page("a1"));

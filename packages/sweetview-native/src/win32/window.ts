@@ -97,6 +97,8 @@ function subscription<T>(register: (listener: ((value: T) => void) | null) => vo
 function wrap(native: NativeWindow, owned: boolean, tabbed = false): WindowBackend {
   let disposed = false;
   let ownerDispose: (() => void) | undefined;
+  // Set when the end of a blocking run() hid the window (D49); the application's own show(), hide() or toggle() clears it.
+  let hiddenAtRunEnd = false;
   const live = () => !disposed;
 
   const asRect = (x: number, y: number, width: number, height: number): Rect => ({ x, y, width, height });
@@ -112,10 +114,30 @@ function wrap(native: NativeWindow, owned: boolean, tabbed = false): WindowBacke
 
     isVisible: () => live() && native.isVisible(),
     show: () => {
+      hiddenAtRunEnd = false;
       if (live()) native.show();
     },
     hide: () => {
+      hiddenAtRunEnd = false;
       if (live()) native.hide();
+    },
+    hideAtRunEnd: () => {
+      if (!live() || !native.isVisible()) return;
+      native.hide();
+      hiddenAtRunEnd = true;
+    },
+    takeHiddenAtRunEnd: () => {
+      const was = hiddenAtRunEnd;
+      hiddenAtRunEnd = false;
+      return was;
+    },
+    showCloaked: () => {
+      if (!live()) return false;
+      hiddenAtRunEnd = false;
+      return native.showCloaked();
+    },
+    uncloak: () => {
+      if (live()) native.uncloak();
     },
     toggle: () => {
       if (self.isVisible()) self.hide();
@@ -192,6 +214,7 @@ function wrap(native: NativeWindow, owned: boolean, tabbed = false): WindowBacke
     onMaximizeChange: (handler: (maximized: boolean) => void) => maximize(handler, (maximized: boolean) => maximized),
     onMove: (handler: RectHandler) => move(handler, asRect),
     onClose: (handler: () => void) => (live() ? close.add(handler) : () => {}),
+    hasCloseListeners: () => close.handlers.size > 0,
     onFileDrop: (handler: (paths: string[]) => void) => (live() ? fileDrop.add(handler) : () => {}),
 
     setOwnerDispose(fn) {
