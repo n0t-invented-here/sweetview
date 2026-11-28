@@ -34,6 +34,13 @@ const tray = createTray({ tooltip: APP_NAME, icon: TRAY_ICON, menu });
 
 // A plain Bun timer on the UI thread: it runs because runEventLoop leaves Bun's event loop in charge.
 // unref(): the clock alone does not keep the process alive after Quit.
-setInterval(() => tray.setTooltip(clockInTooltip ? `${APP_NAME} · ${new Date().toLocaleTimeString()}` : APP_NAME), 1000).unref();
+const clock = setInterval(() => tray.setTooltip(clockInTooltip ? `${APP_NAME} · ${new Date().toLocaleTimeString()}` : APP_NAME), 1000).unref();
 
 await runEventLoop();
+// Until the macOS goal of the Rust rewrite, macOS runs the code it ran at the tag pre-rust-rewrite,
+// which releases nothing at exit: there the demo tears down and exits as it did then.
+if (process.platform === "darwin") {
+  clearInterval(clock);
+  tray.dispose();
+  process.exit(0);
+}

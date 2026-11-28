@@ -16,6 +16,7 @@ import {
   webviewLibPath,
 } from "./darwin-webview-lib";
 import type { NativeRequest } from "./messages";
+import { requestError } from "./request-response";
 import type { WebviewEngine, WebviewHost } from "./webview-host";
 
 let nextDispatchId = 0n;
@@ -83,7 +84,10 @@ function libraryHost(libPath: string, raw: RawWebview): WebviewHost {
               body: body && length > 0n ? new Uint8Array(toArrayBuffer(body, 0, Number(length))).slice() : new Uint8Array(),
             };
           } catch {
-            requestCalls.completeRequest(handle(), id, 500, "[]", new Uint8Array());
+            // Answered as `app.ts` answered it before the Windows goal: its 500, through the same call.
+            const answer = requestError(id, 500, "Internal Server Error");
+            const error = requestCalls.completeRequest(handle(), id, answer.status, JSON.stringify(answer.headers), answer.body);
+            if (error !== 0) console.error(`sweetview: webview_complete_request failed (${error})`);
             return;
           }
           handler(request);
