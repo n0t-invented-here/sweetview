@@ -100,10 +100,23 @@ fn show_activates_unless_no_activate() {
     quiet.show().expect("restore");
     runtime.pump();
     assert!(!native(&quiet, |w| platform::is_minimized(w)) && quiet.is_visible());
-    assert!(!native(&quiet, |w| platform::is_active(w)), "a minimised noActivate window is restored without activation");
+    // As at tag `pre-rust-rewrite`: a window restores with `SW_RESTORE`, `noActivate` or not (R5-4).
+    assert!(native(&quiet, |w| platform::is_active(w)), "a minimised noActivate window is restored as the tag restored it");
     quiet.hide();
     assert!(!quiet.is_visible());
     quiet.dispose();
+
+    // The tab frame restored a minimised `noActivate` frame without activating it (audit finding 15).
+    let frame = Window::create(WindowInit { tab_strip_height: Some(40), no_activate: true, bounds: Some(Rect::new(-2000, -2000, 400, 300)), ..init("rt quiet frame") }).expect("frame");
+    frame.show().expect("show");
+    runtime.pump();
+    frame.minimize();
+    assert!(native(&frame, |w| platform::is_minimized(w)));
+    frame.show().expect("restore");
+    runtime.pump();
+    assert!(!native(&frame, |w| platform::is_minimized(w)) && frame.is_visible());
+    assert!(!native(&frame, |w| platform::is_active(w)), "a minimised noActivate tab frame is restored without activation");
+    frame.dispose();
 
     let loud = Window::create(WindowInit { bounds: Some(Rect::new(-2000, -2000, 200, 200)), ..init("rt loud") }).expect("loud");
     loud.show().expect("show");
@@ -396,6 +409,27 @@ fn a_wrapped_window_is_subclassed_only_while_it_has_a_listener() {
     wrapped.dispose();
     assert!(!subclassed(), "let go when its wrapper is disposed");
     drop(own);
+  });
+}
+
+/// Review round 5, R5-2: a window Sweetview did not make that its application destroys while a
+/// wrapper with no listener (so no subclass) still holds it is not handed back by a later
+/// `adopt` of its handle: that throws, as for any value that names no window, and the stale
+/// record is let go.
+#[test]
+fn adopting_the_handle_of_a_destroyed_window_throws_even_while_an_old_wrapper_remains() {
+  on_ui_thread(|runtime| {
+    let own = runtime
+      .with_target(|target| tao::window::WindowBuilder::new().with_visible(false).with_title("rt destroyed under a wrapper").build(target))
+      .expect("target")
+      .expect("window");
+    let handle = platform::handle_value(&own);
+    let wrapped = Window::adopt(handle).expect("adopt");
+    platform::destroy_now(own);
+    let again = Window::adopt(handle);
+    assert!(matches!(&again, Err(e) if e.to_string().contains("not a window")), "{:?}", again.as_ref().err());
+    assert!(!wrapped.is_visible(), "the old wrapper reads the window as gone");
+    wrapped.dispose();
   });
 }
 

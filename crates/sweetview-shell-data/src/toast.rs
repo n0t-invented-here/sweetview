@@ -162,6 +162,8 @@ mod tests {
     assert_eq!(field, [u16::from(b'a'), u16::from(b'b'), 0, 0]);
     copy_wide(&mut field, "abcdef");
     assert_eq!(field, [u16::from(b'a'), u16::from(b'b'), u16::from(b'c'), 0], "the NUL still fits");
+    copy_wide(&mut field, "x");
+    assert_eq!(field, [u16::from(b'x'), 0, 0, 0], "a shorter value clears what a longer one left");
     let mut empty: [u16; 0] = [];
     copy_wide(&mut empty, "x");
   }
