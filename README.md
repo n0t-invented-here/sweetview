@@ -20,7 +20,7 @@ Rust rewrite). Apps are shipped as one executable.
 
 Requires Bun 1.4.2 or later.
 
-> **1.0.0 is not on npm yet.** It lives on the `v1-drafting` branch of this
+> **1.0.0 is not on npm yet.** It lives on the `v1-rust-rewrite` branch of this
 > repository. npm's `latest` for `@n1h/sweetview` is `0.2.1`, which has no
 > `createApp` and little of what these pages document, and the seven
 > standalone workspace packages (`@n1h/sweetview-ipc`, `-ipc-ws`,
@@ -31,12 +31,12 @@ Requires Bun 1.4.2 or later.
 
 ### From source
 
-Clone the repository on `v1-drafting` and install the workspace:
+Clone the repository on `v1-rust-rewrite` and install the workspace:
 
 ```bash
 git clone https://github.com/n0t-invented-here/sweetview.git
 cd sweetview
-git checkout v1-drafting
+git checkout v1-rust-rewrite
 bun install
 just native build        # Windows: builds the Rust binding (needs the Rust toolchain)
 just demos web-app app   # optional: a demo opens in a window

@@ -6,7 +6,7 @@ What the Windows goal left for the owner, because requirement R7 reserves it or 
 
 `v1-rust-rewrite` is pushed with every commit of the Windows goal. Tag `pre-rust-rewrite` marks the tree before the first of them and was not moved. Merging the branch, into `main` or anywhere else, is the owner's decision; this branch was merged nowhere and no pull request was opened.
 
-macOS still runs today's code on this branch (R8), so the branch is usable on both platforms as it stands. The root `README.md` still tells a reader to clone `v1-drafting` for 1.0.0; which branch it should name is decided by where this one is merged. `HANDOFF-macos.md` is the starting point of the macOS goal.
+macOS still runs today's code on this branch (R8), so the branch is usable on both platforms as it stands. The root `README.md`, `demos/web-app/README.md` and `docs/build.md` tell a reader to check out `v1-rust-rewrite` for 1.0.0, the branch whose steps they describe (`v1-drafting` is the code before the rewrite, where `just native build` and the demo recipes do not exist); when this branch is merged, the owner changes that name to the branch it is merged into. `HANDOFF-macos.md` is the starting point of the macOS goal.
 
 ## 2. Publish to npm
 

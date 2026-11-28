@@ -13,7 +13,7 @@ picker.
 | `just demos web-app compile` | The Windows exe, the macOS binary and `dist/Web App.app`, into `dist/`. |
 | `just demos web-app clean` | Removes `build/` and `dist/`. |
 
-Run the recipes from the repository root, in a checkout of the `v1-drafting`
+Run the recipes from the repository root, in a checkout of the `v1-rust-rewrite`
 branch after `bun install` ([Install](../../README.md#install)). Each recipe
 first builds the page with
 `bun build packages/web-app-frontend/src/main.tsx --outdir build/frontend`.
