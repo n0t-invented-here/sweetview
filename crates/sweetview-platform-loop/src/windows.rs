@@ -446,13 +446,12 @@ impl HasWindowHandle for MessageWindow {
     let hwnd = self.live_hwnd().ok_or(HandleError::Unavailable)?;
     let value = NonZeroIsize::new(hwnd.0 as isize).ok_or(HandleError::Unavailable)?;
     let raw = RawWindowHandle::Win32(Win32WindowHandle::new(value));
-    // SAFETY: `borrow_raw` asks that the handle name a window for the whole borrow.
-    // `live_hwnd` just read it from the post target, which the window procedure marks
-    // `ending` on any `WM_NCDESTROY` of this thread and which `live_hwnd` then refuses, so
-    // it names this value's window now; this value destroys it only in `Drop`, which the
-    // borrow of `&self` excludes.
-    // Should other code of this thread destroy the lent handle during the borrow, the
-    // OS validates it on each later call and refuses it, and this value refuses the next.
+    // Should other code of this thread destroy the lent handle during the borrow, the OS
+    // validates it on each later call and refuses it, and this value refuses the next.
+    // SAFETY: `borrow_raw` asks that the handle name a window for the whole borrow. `live_hwnd`
+    // just read it from the post target, which the window procedure marks `ending` on any
+    // `WM_NCDESTROY` of this thread (and `live_hwnd` then refuses), so it names this value's
+    // window now; this value destroys it only in `Drop`, which the borrow of `&self` excludes.
     Ok(unsafe { WindowHandle::borrow_raw(raw) })
   }
 }
@@ -473,13 +472,12 @@ impl Drop for MessageWindow {
     let live = armed && (!ending || still_alive_queued(self.hwnd));
     let mut classes = classes();
     if live {
-      // SAFETY: `self.hwnd` was created by `new` on this thread (the type is not `Send`)
-      // and still exists: `live` was read from the post target, which the window procedure
-      // marks on any `WM_NCDESTROY` of this thread before `DestroyWindow` gives the handle
-      // value up (a marked one counts only when the window's own `WM_STILL_ALIVE` is still
-      // queued for it), and which a later window of this crate made under the same value
-      // disarms at its first creation message; so the value still names this window. Not used
-      // again after this call.
+      // `live` was read from the post target, which the window procedure marks on any
+      // `WM_NCDESTROY` of this thread before `DestroyWindow` gives the handle value up (a marked
+      // one counts only while the window's own `WM_STILL_ALIVE` is queued for it), and which a
+      // later window of this crate made under the same value disarms at its first creation message.
+      // SAFETY: `self.hwnd` was created by `new` on this thread (the type is not `Send`) and,
+      // by `live` (above), still names this window. It is not used again after this call.
       let destroyed = unsafe { DestroyWindow(self.hwnd) };
       // Nothing useful can be done with a failure while dropping.
       let _ = destroyed;

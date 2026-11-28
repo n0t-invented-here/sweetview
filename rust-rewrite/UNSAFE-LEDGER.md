@@ -1,13 +1,13 @@
 # Unsafe ledger
 
-Rewritten by `bun rust-rewrite/verify.ts <platform> --ledger`. 244 uses in 21 files.
+Rewritten by `bun rust-rewrite/verify.ts <platform> --ledger`. 252 uses in 21 files.
 
 | File | Uses of `unsafe` |
 |---|---|
 | `crates/sweetview-platform-input/src/windows.rs` | 8 |
 | `crates/sweetview-platform-input/tests/windows_hooks.rs` | 7 |
 | `crates/sweetview-platform-loop/src/com.rs` | 4 |
-| `crates/sweetview-platform-loop/src/windows.rs` | 30 |
+| `crates/sweetview-platform-loop/src/windows.rs` | 36 |
 | `crates/sweetview-platform-notify/src/windows.rs` | 11 |
 | `crates/sweetview-platform-shell/src/clipboard.rs` | 13 |
 | `crates/sweetview-platform-shell/src/icons.rs` | 1 |
@@ -24,7 +24,7 @@ Rewritten by `bun rust-rewrite/verify.ts <platform> --ledger`. 244 uses in 21 fi
 | `crates/sweetview-platform-window/src/tab_frame_tests.rs` | 12 |
 | `crates/sweetview-platform-window/src/test_support.rs` | 2 |
 | `crates/sweetview-platform-window/src/windows.rs` | 38 |
-| `crates/sweetview-platform-window/src/windows_tests.rs` | 12 |
+| `crates/sweetview-platform-window/src/windows_tests.rs` | 14 |
 
 ## Reasons
 
@@ -34,15 +34,16 @@ Shared types every platform crate uses, all in `sweetview-platform-loop`: `Messa
 
 ## sweetview-platform-loop
 
-### `crates/sweetview-platform-loop/src/windows.rs` (30: 23 source, 7 test)
+### `crates/sweetview-platform-loop/src/windows.rs` (36: 24 source, 12 test)
 
 - **Message-only windows** (8: `GetModuleHandleW` in `this_module`, `RegisterClassExW`, `GetClassInfoExW` in `class_procedure`, `UnregisterClassW` in `unregister_class`, `CreateWindowExW`, `WindowHandle::borrow_raw`, `DestroyWindow`, `DefWindowProcW`). Looked for: `tao` 0.38.0 `WindowBuilder` (https://docs.rs/tao/0.38.0/tao/window/struct.WindowBuilder.html) makes top-level windows only; its own message target is private (`tao-0.38.0/src/platform_impl/windows/event_loop.rs`, `create_event_target_window`). A message posted to a window is what every message loop dispatches, a modal one included (DECISIONS D3). `raw-window-handle` 0.6.2 `WindowHandle::borrow_raw` (https://docs.rs/raw-window-handle/0.6.2/raw_window_handle/struct.WindowHandle.html#method.borrow_raw) is `unsafe` by design. Contained by `MessageWindow`: it owns the window, is not `Send`, and destroys it in `Drop`. The window procedure answers `WM_CLOSE` itself (`DefWindowProcW` would destroy the window). On a `WM_NCDESTROY` of its own thread, which other code calling `DestroyWindow` on the lent handle sends and which anyone can also post to the live window, it holds posts and waits for the window's own confirmation (next bullet); once the window is known gone the owner refuses every call (`live_hwnd` is `None`: no post, timer, peek or lent handle) and its `Drop` destroys nothing. The handle is lent only borrowed for `&self` through `HasWindowHandle`, and only while the window exists. The procedure finds its closure in a thread-local table, so no pointer rides in the window. The class is registered with `message_window_proc`; a class of the same name another part of the process registered with another procedure is refused (`GetClassInfoExW`), and the last window of a class unregisters it, under a process-wide lock that every registration, creation and destruction holds.
 - **Posting from any thread** (1: `PostMessageW`). Looked for: `tao` `EventLoopProxy::send_event` (https://docs.rs/tao/0.38.0/tao/event_loop/struct.EventLoopProxy.html), which `tao` holds back while its handler runs (D3). Contained by `Poster`: it posts only the application's range (`WM_APP` to `0xBFFE`), the handle value is non-zero and not `ending` only while the window exists, and the lock is held across the post and every change of the target's state (D39).
-- **Telling a destruction from a posted `WM_NCDESTROY`** (5: `InSendMessageEx` in `answer`, `IsWindow` in `names_a_window`, `PostMessageW` in `PostTarget::begin_ending` and in `still_alive`, `PeekMessageW` in `still_alive_queued`). Nothing in a window procedure tells the two apart (measured, D39), so a `WM_NCDESTROY` sent from another thread is refused (`InSendMessageEx`), and one of this thread marks the target `ending`: posts are held, the window posts itself `WM_STILL_ALIVE` (the procedure's own window, alive for the call), and the next message it receives arms it again and posts what was held to it. A destroyed window takes its queued messages with it, which a test asserts; a poster that finds `IsWindow` false disarms the target, and `Drop` while `ending` destroys the window only when its own confirmation is still queued for it (`PeekMessageW` filtered to that window and message).
+- **Telling a destruction from a posted `WM_NCDESTROY`** (5: `InSendMessageEx` in `answer`, `IsWindow` in `names_a_window`, `PostMessageW` in `PostTarget::begin_ending` and in `Target::flush`, `PeekMessageW` in `still_alive_queued`). Nothing in a window procedure tells the two apart (measured, D39), so a `WM_NCDESTROY` sent from another thread is refused (`InSendMessageEx`), and one of this thread marks the target `ending`: posts are held, the window posts itself `WM_STILL_ALIVE` (the procedure's own window, alive for the call), and the next message it receives arms it again and posts what was held to it. A destroyed window takes its queued messages with it, which a test asserts; a poster that finds `IsWindow` false disarms the target, and `Drop` while `ending` destroys the window only when its own confirmation is still queued for it (`PeekMessageW` filtered to that window and message). Held posts go out in order through `Target::flush`, and one the queue refuses stays held for the next post or message (D39). A table entry found at a creation message while this crate makes a window was left by a destroyed window under the same handle value: its owner is disarmed and the entry forgotten first (`is_being_made`, `forget_stale`; no `unsafe`).
+- **Input waiting** (1: `GetInputState` in `input_waiting`). A timer's tick taken while key or mouse-button input waits gives way to it, for at most 100 ms (D38). Looked for: `tao` 0.38.0 reads nothing of the thread's queue; `GetQueueStatus` (https://docs.rs/windows/0.62.2/windows/Win32/UI/WindowsAndMessaging/fn.GetQueueStatus.html) also resets its record of what was added since the last look, which a loop that waits after a look depends on (D38). `GetInputState` takes nothing and reads the calling thread's queue state.
 - **The pump** (5: one `PeekMessageW` in `peek`, `GetMessageW`, `TranslateMessage`, `DispatchMessageW`, `PostQuitMessage`). Looked for: `tao` 0.38.0 `EventLoopExtRunReturn::run_return` (https://docs.rs/tao/0.38.0/tao/platform/run_return/trait.EventLoopExtRunReturn.html; `tao-0.38.0/src/platform/run_return.rs`) runs `tao`'s own loop and handler only, and `tao` 0.38.0 has no other pump; it has no call to take back a quit, to wait for one message of the thread's queue, or to take one window's due timers. `std` has no message queue. Contained by `QueuedMessage`: only `peek` and `wait_message` make one, from what the OS filled, so translate and dispatch see only OS-queued messages, and `dispatch(self)` consumes it, so a message (which can carry ownership, as `tao`'s boxed cross-thread closures do) is dispatched at most once.
 - Timers use no `unsafe` since D38: a `std` thread of the `SignalWindow`'s own posts each timer's tick through the window's `Poster`, so `SetTimer` and `KillTimer` (2 uses) are gone. `WM_TIMER` waited behind paint and could wait for good inside a popup menu's loop (D38); `tao` 0.38.0 `ControlFlow::WaitUntil` (https://docs.rs/tao/0.38.0/tao/event_loop/enum.ControlFlow.html) is delivered only through `tao`'s handler and not inside a modal loop (D3).
 - **Handle counts** (4: `GetCurrentProcess`, `GetGuiResources` twice, `GetProcessHandleCount`). Looked for: `std::process` (https://doc.rust-lang.org/std/process/index.html) has no handle count, and the `windows` 0.62.2 declarations of all three (`windows-0.62.2/src/Windows/Win32/System/Threading/mod.rs`) are `unsafe fn` with no safe wrapper; `sysinfo` and the other process-statistics crates are not in the policy's list. The pseudo-handle is a constant that needs no closing; the out-parameter is a local.
-- Tests (7): `IsWindow` (the window still exists after a posted `WM_CLOSE`), `DestroyWindow` (destroys a window out from under its owner), `RegisterClassExW` with a `DefWindowProcW` procedure (a class of the same name registered by other code), `PostMessageW` twice (a `WM_CLOSE` and a `WM_NCDESTROY` posted past the `Poster`'s range, as another process can) and `SendMessageW` (a `WM_NCDESTROY` sent from another thread).
+- Tests (12): `IsWindow` (the window still exists after a posted `WM_CLOSE`), `DestroyWindow` (destroys a window out from under its owner), `RegisterClassExW` with a `DefWindowProcW` procedure (a class of the same name registered by other code), `PostMessageW` twice (a `WM_CLOSE` and a `WM_NCDESTROY` posted past the `Poster`'s range, as another process can) and `SendMessageW` (a `WM_NCDESTROY` sent from another thread), `SetWindowsHookExW`, `CallNextHookEx`, `UnhookWindowsHookEx` and `GetCurrentThreadId` for the `WH_CBT` hook that plants a stale entry under a new window's handle value, and one `PostMessageW` that fills the thread's queue to its limit.
 
 ### `crates/sweetview-platform-loop/src/com.rs` (4: 2 source, 2 test)
 
@@ -162,9 +163,9 @@ The double-click time is the safe WinRT `UISettings::DoubleClickTime` of `window
 
 - **The frame for a client size at a DPI** (1: `AdjustWindowRectExForDpi`). `tao` computes frames only inside its own window creation. The rectangle is a local.
 
-### `crates/sweetview-platform-window/src/windows_tests.rs` (12, test)
+### `crates/sweetview-platform-window/src/windows_tests.rs` (14, test)
 
-`TestWindow`, a plain `STATIC` window an application would hand over (`CreateWindowExW`, `DestroyWindow`, `SendMessageW`), a second `DestroyWindow` that destroys a lent window from inside the call it is lent to, and a shell file drop built as the shell builds one (`GlobalAlloc`, `GlobalLock`, the `DROPFILES` write, the path copy, `GlobalUnlock`, and `GlobalSize` to see that `DragFinish` freed it), and a thread of the test's own that pumps its window and then stops answering (`PeekMessageW`, `DispatchMessageW`), for the parked icons' limit (D41).
+`TestWindow`, a plain `STATIC` window an application would hand over (`CreateWindowExW`, `DestroyWindow`, `SendMessageW`), a second `DestroyWindow` that destroys a lent window from inside the call it is lent to, and a shell file drop built as the shell builds one (`GlobalAlloc`, `GlobalLock`, the `DROPFILES` write, the path copy, `GlobalUnlock`, and `GlobalSize` to see that `DragFinish` freed it), and a thread of the test's own that pumps its window and then stops answering (`PeekMessageW`, `DispatchMessageW`), for the parked icons' limit (D41), and a second such thread with six windows, for the sweep's budget (D41).
 
 ### `crates/sweetview-platform-window/src/test_support.rs` (2, test)
 
