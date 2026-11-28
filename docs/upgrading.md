@@ -371,7 +371,7 @@ cover old types and classes whose members have new names.
 | `WindowChromeMethods` | `import type { WindowChromeMethods } from "@n1h/sweetview"` | unchanged |
 | `WindowChromeOptions` | `import type { WindowChromeOptions } from "@n1h/sweetview"` | the `close` option is `onClose` |
 | `assetMime` | `import { assetMime } from "@n1h/sweetview"`; `assetMime(…)` | unchanged |
-| `createWebviewApp` | `import { createApp } from "@n1h/sweetview"`; `createApp(options)` | renamed; it makes the window too, so window options (`bounds`, `frame`, `transparent`, …) go in the same object; the window is created hidden (`app.window.show()`, or `showOnReady: true`), and a close request with no `onClose` listener disposes it and ends `run()`; `width` and `height` are in the table below |
+| `createWebviewApp` | `import { createApp } from "@n1h/sweetview"`; `createApp(options)` | renamed; it makes the window too, so window options (`bounds`, `frame`, `transparent`, …) go in the same object; the window is created hidden and shown when the page is ready (`showOnReady: true`, the page's `signalReady()`, and `readyTimeoutMs` for a page that fails first; `app.window.show()` for a window that appears later), and a close request with no `onClose` listener disposes it and ends `run()`; `width` and `height` are in the table below |
 | `indexHtml` | `import { indexHtml } from "@n1h/sweetview"`; `indexHtml({ title, js = "main.js", css = "main.css", head = "", body = '<div id="root"></div>' })` | unchanged |
 | `indexHtmlText` | `import { indexHtmlText } from "@n1h/sweetview"`; `indexHtmlText({ title, js = "main.js", css = "main.css", head = "", body = '<div id="root"></div>' })` | unchanged |
 | `windowChromeMethods` | `import { windowChromeMethods } from "@n1h/sweetview"`; `windowChromeMethods(window, options)` | takes the `Window`; the `close` option is `onClose` |
@@ -380,7 +380,7 @@ cover old types and classes whose members have new names.
 | `pumpEvents` (0.2.x only) | `import { pumpEvents } from "@n1h/sweetview"`; `pumpEvents()` | unchanged for a loop of the application's own; called from inside a running loop (a handler under `app.run()` or `runEventLoop`) it does nothing, so a long handler no longer keeps its windows painting by pumping: run the work off the UI thread |
 | `quitEventLoop` (0.2.x only) | `import { quitEventLoop } from "@n1h/sweetview"`; `quitEventLoop()` | unchanged |
 | `runEventLoop` (0.2.x only) | `import { runEventLoop } from "@n1h/sweetview"`; `runEventLoop(options)` | unchanged |
-| `setActivationPolicy` (0.2.x only) | `import { setActivationPolicy } from "@n1h/sweetview"`; `setActivationPolicy(policy)` | unchanged |
+| `setActivationPolicy` (0.2.x only) | `import { setActivationPolicy } from "@n1h/sweetview"`; `setActivationPolicy(policy)` | does nothing on Windows, which has no process-wide policy: taskbar and Alt+Tab presence is per window (`WindowOptions#hideFromTaskbar`); on macOS it sets the policy as before |
 
 ### `@n1h/sweetview/worker`
 
@@ -545,7 +545,7 @@ cover old types and classes whose members have new names.
 | `pumpEvents` (0.2.x only) | `import { pumpEvents } from "@n1h/sweetview/native"`; `pumpEvents()` | unchanged for a loop of the application's own; called from inside a running loop (a handler under `app.run()` or `runEventLoop`) it does nothing, so a long handler no longer keeps its windows painting by pumping: run the work off the UI thread |
 | `quitEventLoop` (0.2.x only) | `import { quitEventLoop } from "@n1h/sweetview/native"`; `quitEventLoop()` | unchanged |
 | `runEventLoop` (0.2.x only) | `import { runEventLoop } from "@n1h/sweetview/native"`; `runEventLoop(options)` | unchanged |
-| `setActivationPolicy` (0.2.x only) | `import { setActivationPolicy } from "@n1h/sweetview/native"`; `setActivationPolicy(policy)` | unchanged |
+| `setActivationPolicy` (0.2.x only) | `import { setActivationPolicy } from "@n1h/sweetview/native"`; `setActivationPolicy(policy)` | does nothing on Windows, which has no process-wide policy: taskbar and Alt+Tab presence is per window (`WindowOptions#hideFromTaskbar`); on macOS it sets the policy as before |
 
 ### `@n1h/sweetview/native/hit-regions`
 

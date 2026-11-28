@@ -14,7 +14,8 @@ root module requires the native webview library from the optional peer
 `WebView.attach` and `createApp` support Windows and macOS.
 
 Most apps need one call and one loop: `createApp` with a `page` and a
-`worker`, then `app.window.show()` and `app.run()`, as in the
+`worker`, shown when the page signals ready (`showOnReady`, with `readyTimeoutMs`
+for a page that fails first), then `app.run()`, as in the
 [Quickstart](../README.md#quickstart) and the
 [single-window example](#single-window-with-createapp). Read
 [the event loop](#the-event-loop) first: which loop an app runs decides where
@@ -391,8 +392,14 @@ only.
 import { createApp } from "@n1h/sweetview";
 import index from "./index.html";
 
-const app = await createApp({ title: "Notes", page: index, worker: "./worker.ts", contentSize: { width: 1100, height: 720 } });
-app.window.show();
+const app = await createApp({
+  title: "Notes",
+  page: index,
+  worker: "./worker.ts",
+  contentSize: { width: 1100, height: 720 },
+  showOnReady: true, // shown when the page calls signalReady()
+  readyTimeoutMs: 15_000, // or with a start-up error page, if the page fails first
+});
 app.run();
 ```
 
@@ -824,13 +831,14 @@ const app = await createApp<Methods, Events>({
   bounds: { x: 120, y: 120, width: 1000, height: 720 },
   page: index,
   worker: "./app-worker.ts",
+  showOnReady: true,
+  readyTimeoutMs: 15_000,
   uiMethods: { "window.size": () => 800 },
 });
 
 app.onEvent((event) => console.log(event.name, event.payload.count));
 app.notify("notes.list");
-app.window.show();
-app.run();
+app.run(); // the window appears when the page calls signalReady()
 ```
 
 ### Multi-tab app

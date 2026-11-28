@@ -59,6 +59,23 @@ describe("the ready watchdog is opt-in, and every passage says so", () => {
 });
 
 describe("one recipe for each thing", () => {
+  test("a window with a page is shown by the ready signal: no createApp snippet shows it by hand, and the createWebviewApp row says so first", () => {
+    const byHand: string[] = [];
+    for (const path of ["README.md", "docs/app.md"]) {
+      for (const block of read(path).split("```").filter((_b, i) => i % 2 === 1)) {
+        if (/createApp(<[^>]*>)?\(/.test(block) && /\bpage\b/.test(block) && !/tabs: true/.test(block) && /^app\.window\.show\(\);/m.test(block)) byHand.push(`${path}: ${block.trim().split("\n")[0]}`);
+      }
+    }
+    const intro = read("docs/app.md").replace(/\s+/g, " ");
+    const createRow = row("`@n1h/sweetview`", "`createWebviewApp`");
+    expect({ byHand, introShowsByHand: /then `app\.window\.show\(\)` and `app\.run\(\)`/.test(intro), rowShowFirst: /\(`app\.window\.show\(\)`, or `showOnReady: true`\)/.test(createRow) }).toEqual({ byHand: [], introShowsByHand: false, rowShowFirst: false });
+  });
+
+  test("Part A's setActivationPolicy rows say what Part B's say: it does nothing on Windows", () => {
+    const rows = guideLines.filter((l) => l.startsWith("| `setActivationPolicy`"));
+    expect({ rows: rows.length, unchanged: rows.filter((l) => / \| unchanged \|$/.test(l)).length, nothing: rows.filter((l) => /does nothing on Windows/.test(l)).length }).toEqual({ rows: 5, unchanged: 0, nothing: 5 });
+  });
+
   test("a tray application is told closeToTrayOnLastWindow, and a plain onClose hide only for a window that must never close", () => {
     const overlay = row("`@n1h/sweetview/native`", "`OverlayWindowOptions`");
     const app = read("docs/app.md").replace(/\s+/g, " ");
