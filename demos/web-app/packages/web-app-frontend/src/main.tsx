@@ -20,4 +20,6 @@ createRoot(document.getElementById("root")!).render(
   </StrictMode>,
 );
 // The page has painted: a window made with showOnReady appears now (a no-op outside a sweetview window).
-requestAnimationFrame(() => void signalReady());
+// macOS (WKWebView) keeps the start it had at the tag pre-rust-rewrite until the macOS goal (D42).
+const macTagPath = /Macintosh|Mac OS X/.test(navigator.userAgent);
+if (!macTagPath) requestAnimationFrame(() => void signalReady());

@@ -17,6 +17,9 @@ import { IDENTITY } from "./identity";
 import { buildTrayMenu } from "./tray-menu";
 
 const APP_NAME = IDENTITY.appName;
+// Until the macOS goal of the Rust rewrite, macOS starts and closes the window as it did at the tag
+// pre-rust-rewrite (D42): shown at once, hidden by its own onClose. Elsewhere the 1.0 form below.
+const MAC_TAG_PATH = process.platform === "darwin";
 
 // State this thread mirrors so the tray menu can show it without asking anyone.
 let watch: WatchStatus = { watching: false, path: null };
@@ -62,7 +65,8 @@ const app: App<Methods, Events> = await createApp<Methods, Events>({
   worker: new URL("./app-worker.ts", import.meta.url),
   debug: process.env.WEBVIEW_DEBUG === "1",
   // Shown when the page calls signalReady() (or the ready watchdog fires): no blank frame first.
-  showOnReady: true,
+  showOnReady: !MAC_TAG_PATH,
+  ...(MAC_TAG_PATH ? { onClose: () => app.window.hide() } : {}),
   // A modal dialog runs its own message loop, so it runs after the RPC callback returns.
   deferredUiMethods: {
     "pick.folder": () => pickFolder(app.window, "Pick a folder to watch"),
@@ -123,7 +127,7 @@ const tray = createTray({
 });
 
 // A tray application: the X hides the window to the tray, and Quit lives in the tray menu.
-closeToTrayOnLastWindow(app.window);
+if (!MAC_TAG_PATH) closeToTrayOnLastWindow(app.window);
 
 // Clicking a notification brings the window back and the page marks that notification as clicked.
 // The toasts carry the demo's name, not Sweetview's.
@@ -146,6 +150,7 @@ setAppMenu({
   ].join("\n"),
 });
 
+if (MAC_TAG_PATH) app.window.show();
 app.run(); // blocks until Quit
 // Until the macOS goal of the Rust rewrite, macOS runs the code it ran at the tag pre-rust-rewrite,
 // which releases nothing at exit: there the demo tears down and exits as it did then.
