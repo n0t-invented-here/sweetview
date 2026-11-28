@@ -150,7 +150,7 @@ impl Runtime {
   /// Drops this thread's runtime. Tests only: a process keeps its runtime for life.
   #[doc(hidden)]
   pub fn shutdown_for_tests() {
-    crate::window::destroy_all_for_tests();
+    crate::window::destroy_all();
     *WAKER.lock().unwrap_or_else(PoisonError::into_inner) = None;
     RUNTIME.with(|slot| slot.borrow_mut().take());
   }
@@ -349,6 +349,25 @@ impl Runtime {
       self.signals.cancel_timer(native);
       job();
     }
+  }
+
+  // ---- the end of the application -------------------------------------------------
+
+  /// Lets go of every function the runtime would call: the jobs still deferred, the
+  /// timeouts and intervals (their native timers are cancelled), the drains and the loop's
+  /// listeners. What [`crate::lifetime::release_all`] does last, once everything that
+  /// registered them is gone. The runtime itself stays, so the application may go on.
+  pub(crate) fn release_callbacks(&self) {
+    // Each is taken out first and dropped after its borrow: a job's or a
+    // listener's drop may release the last reference to something that calls back in.
+    let deferred = std::mem::take(&mut *self.deferred.borrow_mut());
+    let timers = std::mem::take(&mut *self.timers.borrow_mut());
+    for timer in timers.values() {
+      self.signals.cancel_timer(timer.native);
+    }
+    let drains = std::mem::take(&mut *self.drains.borrow_mut());
+    let listeners = std::mem::take(&mut *self.listeners.borrow_mut());
+    drop((deferred, timers, drains, listeners));
   }
 
   // ---- wakes from other threads ---------------------------------------------------

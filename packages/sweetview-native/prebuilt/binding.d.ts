@@ -474,6 +474,15 @@ export declare function refreshShellIcons(): void
 /** Registers `scheme` for the current user with the given registry values. Any thread. */
 export declare function registerUrlScheme(scheme: string, appName: string, iconPath: string, command: string): void
 
+/**
+ * The end of the application: releases everything the binding made on the UI thread that is
+ * still alive, in a safe order: the input hooks, the webviews (each before its window), the
+ * tray icons, the notifiers, the single-instance locks, the menus handed out, the windows, then
+ * the timers and callbacks. The TypeScript layer calls it when the blocking loop has returned
+ * and when the process exits. Objects made afterwards work as usual. Does nothing on another thread.
+ */
+export declare function releaseAll(): void
+
 /** Removes the keyboard hook. Returns a `webview_error_t`; 2 when none is installed. */
 export declare function removeKeyboardHook(): number
 

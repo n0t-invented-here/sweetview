@@ -4,6 +4,9 @@
 //! and wire format, so an application built before the rewrite and one built
 //! after it hand off to each other. Its errors carry today's messages.
 
+use std::cell::RefCell;
+use std::rc::{Rc, Weak};
+
 use sweetview_platform_shell::{single_instance, url_scheme};
 
 pub use sweetview_platform_shell::url_scheme::Registration;
@@ -25,10 +28,18 @@ pub fn unregister_url_scheme(scheme: &str) -> Result<()> {
   url_scheme::unregister(scheme).map_err(|e| Error::Os(e.0))
 }
 
+/// The primary's lock, or nothing once it is released.
+type Lock = RefCell<Option<single_instance::SingleInstance>>;
+
+thread_local! {
+  /// Every primary's lock on this thread, so [`release_all`] can release the ones still held.
+  static LOCKS: RefCell<Vec<Weak<Lock>>> = const { RefCell::new(Vec::new()) };
+}
+
 /// The primary's hold on an application id, or a secondary's result.
 /// Not `Send`: the primary's window belongs to the UI thread.
 pub struct SingleInstance {
-  lock: Option<single_instance::SingleInstance>,
+  lock: Rc<Lock>,
   primary: bool,
   handed_off: bool,
 }
@@ -44,8 +55,16 @@ impl SingleInstance {
     // the primary makes its window, as `ensureWin32Init` did.
     Runtime::get()?;
     match single_instance::acquire(app_id, payload_json, on_second).map_err(|e| Error::Os(e.0))? {
-      single_instance::Acquired::Primary(lock) => Ok(SingleInstance { lock: Some(lock), primary: true, handed_off: false }),
-      single_instance::Acquired::Secondary { handed_off } => Ok(SingleInstance { lock: None, primary: false, handed_off }),
+      single_instance::Acquired::Primary(lock) => {
+        let lock = Rc::new(RefCell::new(Some(lock)));
+        LOCKS.with(|all| {
+          let mut all = all.borrow_mut();
+          all.retain(|weak| weak.strong_count() > 0);
+          all.push(Rc::downgrade(&lock));
+        });
+        Ok(SingleInstance { lock, primary: true, handed_off: false })
+      }
+      single_instance::Acquired::Secondary { handed_off } => Ok(SingleInstance { lock: Rc::new(RefCell::new(None)), primary: false, handed_off }),
     }
   }
 
@@ -62,7 +81,22 @@ impl SingleInstance {
   /// Primary: releases the lock and its window, so a later launch becomes the
   /// primary. Does nothing on a secondary or a second time.
   pub fn release(&mut self) {
-    self.lock.take();
+    release_lock(&self.lock);
+  }
+}
+
+fn release_lock(lock: &Lock) {
+  // Taken out first and dropped after the borrow: dropping it destroys its window.
+  let taken = lock.try_borrow_mut().ok().and_then(|mut held| held.take());
+  drop(taken);
+}
+
+/// Releases every single-instance lock this thread still holds, as
+/// [`SingleInstance::release`] does, so a later launch becomes the primary.
+pub(crate) fn release_all() {
+  let locks: Vec<Rc<Lock>> = LOCKS.try_with(|all| all.borrow_mut().drain(..).filter_map(|weak| weak.upgrade()).collect()).unwrap_or_default();
+  for lock in locks {
+    release_lock(&lock);
   }
 }
 

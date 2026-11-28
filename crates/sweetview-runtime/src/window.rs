@@ -1037,8 +1037,9 @@ pub fn with_mount_target<R>(handle: isize, f: impl FnOnce(&BorrowedWindow<'_>) -
   BorrowedWindow::with_handle_value(handle, |window| platform::is_on_this_thread(window).then(|| f(window))).flatten()
 }
 
-/// Destroys every window this thread made. Tests only: the runtime is dropped next.
-pub(crate) fn destroy_all_for_tests() {
+/// Destroys every window Sweetview knows on this thread, as each one's `dispose` does: the
+/// windows it made are destroyed, and an application's own window it wraps is let go of.
+pub(crate) fn destroy_all() {
   let cores: Vec<Rc<Core>> = WINDOWS.try_with(|w| w.borrow().values().cloned().collect()).unwrap_or_default();
   for core in cores {
     core.destroy();
