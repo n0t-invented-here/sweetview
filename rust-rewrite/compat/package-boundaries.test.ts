@@ -105,7 +105,8 @@ function internalMentions(text: string, ctx: MentionContext): string[] {
     } else if (!PUBLIC[pkg]!.includes(`.${sub}`)) found.push(`${pkg}${sub}`);
   }
   for (const m of text.matchAll(/(?:^|[\s`"'(\[])(\.?\/(?:internal|shell-icons|win32\/[\w*.-]+|darwin\/[\w*.-]+))(?![\w/-])/g)) found.push(m[1]!);
-  for (const m of text.matchAll(/(?:(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*)["'][^"']*?|\bbun\s+(?:run\s+)?)(packages\/[\w-]+\/src\/[\w/.-]*\w)/g)) {
+  // Named anywhere: in an import, a command, backticks or a link.
+  for (const m of text.matchAll(/(?<![\w-])(packages\/[\w-]+\/src\/[\w/.-]*\w)/g)) {
     if (internalSource(m[1]!, ctx)) found.push(m[1]!);
   }
   return found;
@@ -182,10 +183,15 @@ function scan(base: string): Scan {
   }
 
   // Imports across package boundaries.
+  // The package (or demo) a file belongs to: the nearest folder with a package.json, never above
+  // packages/<name> or demos/<name>; a file directly under packages/ or demos/ belongs to no package
+  // but its own folder, so every relative reach out of it is seen.
   const ownPackage = (file: string) => {
+    const [top, name] = posix(relative(base, file)).split("/");
+    const limit = name !== undefined && (top === "packages" || top === "demos") && posix(relative(base, dirname(file))) !== top ? join(base, top, name) : dirname(file);
     let d = dirname(file);
-    while (!existsSync(join(d, "package.json")) && d !== dirname(d)) d = dirname(d);
-    return d;
+    while (!existsSync(join(d, "package.json")) && d !== limit && d.startsWith(limit)) d = dirname(d);
+    return d.startsWith(limit) ? d : limit;
   };
   const isTest = (rel: string) => /\.test(\.worker)?\.tsx?$/.test(rel) || /^packages\/[^/]+\/test\//.test(rel);
   const pending = new Set(Object.entries(PENDING_ENTRIES).flatMap(([name, entries]) => Object.keys(entries).map((key) => `${name}${key.slice(1)}`)));
@@ -398,6 +404,26 @@ describe("internals are not public API (D45)", () => {
           "@n1h/sweetview exports inside from @n1h/sweetview-native/internal: packages/sweetview/src/index.ts -> packages/sweetview-native/src/helper.ts -> packages/sweetview-native/src/internal.ts",
           "@n1h/sweetview-native exports wakeNative from @n1h/sweetview-native/internal: packages/sweetview-native/src/index.ts -> packages/sweetview-native/src/internal.ts",
         ]);
+      },
+    );
+  });
+
+  test("counter-examples: a file directly under demos/ or in a demo folder with no package.json reaching into a package's source, and a page naming an internal source file in backticks or a link, are found", () => {
+    withTree(
+      {
+        "packages/sweetview-native/package.json": { name: "@n1h/sweetview-native", exports: { ".": "./src/index.ts" } },
+        "packages/sweetview-native/src/index.ts": "export const x = 1;\n",
+        "packages/sweetview-native/src/win32/menu.ts": "export const buildMenu = () => {};\n",
+        "demos/shared.ts": 'import { buildMenu } from "../packages/sweetview-native/src/win32/menu";\n',
+        "demos/loose/app.ts": 'import { buildMenu } from "../../packages/sweetview-native/src/win32/menu";\n',
+        "docs/page.md": "The menu handle is built in `packages/sweetview-native/src/win32/menu.ts`; see [the menu](../packages/sweetview-native/src/win32/menu.ts).\n",
+      },
+      (dir) => {
+        const found = scan(dir);
+        expect({ reach: found.demoReach, pages: found.pageLines }).toEqual({
+          reach: { "demos/shared.ts": ["../packages/sweetview-native/src/win32/menu"], "demos/loose/app.ts": ["../../packages/sweetview-native/src/win32/menu"] },
+          pages: ["docs/page.md: packages/sweetview-native/src/win32/menu.ts", "docs/page.md: packages/sweetview-native/src/win32/menu.ts"],
+        });
       },
     );
   });
