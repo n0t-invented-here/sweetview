@@ -1,4 +1,5 @@
 export { discardQuit, scheduleNativeTimeout } from "./event-loop";
+export { reportCallbackError, type DefaultReport } from "./callback-errors";
 export { emitActivationUrl } from "./activation";
 export { releaseAll, releaseAtEnd, type ReleaseKind } from "./lifetime";
 export { createChildWebview, engineOf } from "./webview";

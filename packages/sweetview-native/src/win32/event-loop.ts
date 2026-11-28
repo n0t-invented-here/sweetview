@@ -5,6 +5,7 @@
 // the thread is in, a modal dialog's included.
 
 import { binding } from "../binding";
+import { reportCallbackError } from "../callback-errors";
 
 /** Dispatches what is waiting. False when a `WM_QUIT` (`PostQuitMessage`) ended the pump. */
 export function pumpEvents(): boolean {
@@ -34,7 +35,7 @@ export function scheduleNativeTimeout(ms: number, fn: () => void): () => void {
     try {
       fn();
     } catch (err) {
-      console.error("sweetview: message window handler threw:", err);
+      reportCallbackError("timeout", err, "sweetview: message window handler threw:");
     }
   });
   return () => {

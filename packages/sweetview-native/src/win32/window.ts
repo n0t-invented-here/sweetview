@@ -8,6 +8,7 @@
 // the message Sweetview has always used for that handler.
 
 import { binding } from "../binding";
+import { reportCallbackError } from "../callback-errors";
 import type { Window as NativeWindow } from "../../prebuilt/binding";
 import { packRegions } from "../hit-regions";
 import type { Rect, WindowBackend, WindowHandle, WindowOptions } from "../window";
@@ -32,12 +33,14 @@ export function _debugTrackedCount(hwnd: bigint): number {
 
 type RectHandler = (bounds: Rect) => void;
 
-function callEach<T>(handlers: Set<(value: T) => void>, value: T, name: string): void {
+type ListenerName = "onResize" | "onMove" | "onClose" | "onFileDrop";
+
+function callEach<T>(handlers: Set<(value: T) => void>, value: T, name: ListenerName): void {
   for (const fn of [...handlers]) {
     try {
       fn(value);
     } catch (err) {
-      console.error(`sweetview: ${name} handler threw:`, err);
+      reportCallbackError(`window.${name}`, err, `sweetview: ${name} handler threw:`);
     }
   }
 }
@@ -46,7 +49,7 @@ function callEach<T>(handlers: Set<(value: T) => void>, value: T, name: string):
  * Keeps any number of handlers per event on the JavaScript side and one
  * listener per event in the binding, registered while there is a handler.
  */
-function subscription<T>(register: (listener: ((value: T) => void) | null) => void, name: string) {
+function subscription<T>(register: (listener: ((value: T) => void) | null) => void, name: ListenerName) {
   const handlers = new Set<(value: T) => void>();
   return {
     handlers,
@@ -148,7 +151,7 @@ function wrap(native: NativeWindow, owned: boolean, tabbed = false): WindowBacke
             try {
               refine({ x, y }, (solid) => native.answerHit(seq, solid));
             } catch (err) {
-              console.error("sweetview: hit region poll threw:", err);
+              reportCallbackError("hitRegions.refine", err, "sweetview: hit region poll threw:");
             }
           }
         : null;

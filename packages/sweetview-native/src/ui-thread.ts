@@ -5,6 +5,7 @@
 // run inside whichever message loop the UI thread is in, a handler's modal dialog included.
 
 import { binding } from "./binding";
+import { reportCallbackError } from "./callback-errors";
 
 /** Blocks in the OS loop until `quitNativeLoop()`. JavaScript runs only as callbacks from inside it. */
 export function runNativeLoop(): void {
@@ -25,7 +26,7 @@ export function deferNative(job: () => void): () => void {
     try {
       job();
     } catch (err) {
-      console.error("sweetview: UI dispatch failed:", err);
+      reportCallbackError("deferred", err, "sweetview: UI dispatch failed:");
     }
   });
   return () => {
@@ -42,7 +43,8 @@ export function openNativeDrain(drain: () => void): { token: number; close(): vo
     try {
       drain();
     } catch (err) {
-      console.error("sweetview: UI dispatch failed:", err);
+      // The worker's drain: its replies and events, and the application's onEvent listeners.
+      reportCallbackError("worker", err, "sweetview: UI dispatch failed:");
     }
   });
   return { token, close: () => binding().setDrain(token, null) };

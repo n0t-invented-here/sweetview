@@ -3,6 +3,7 @@
 // queued until signalReady() is called, then drained in FIFO order.
 
 import { validateUrlScheme, type AppIdentity } from "@n1h/sweetview-settings";
+import { reportCallbackError } from "./callback-errors";
 import { releaseAtEnd } from "./lifetime";
 import { backend } from "./platform";
 
@@ -103,7 +104,7 @@ function dispatchUrl(url: string): void {
     try {
       fn(url);
     } catch (err) {
-      console.error("sweetview: onOpenUrl handler threw:", err);
+      reportCallbackError("onOpenUrl", err, "sweetview: onOpenUrl handler threw:");
     }
   }
 }
@@ -214,7 +215,7 @@ export async function singleInstance(options: SingleInstanceOptions): Promise<Si
         try {
           options.onSecondInstance(event);
         } catch (err) {
-          console.error("sweetview: onSecondInstance handler threw:", err);
+          reportCallbackError("singleInstance.onSecondInstance", err, "sweetview: onSecondInstance handler threw:");
         }
       }
     },
