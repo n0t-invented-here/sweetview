@@ -41,7 +41,7 @@ after them give every export its row.
    (15 s, say) so a page that fails first still gets a window.
 6. **Closing it.** A close disposes the window. A tray application declares
    close-to-tray: `closeToTrayOnLastWindow(win, onHide)`.
-7. **The end.** Delete the teardown lines after the loop and any `unload()`:
+7. **The end.** Delete the teardown lines after the loop and, on Windows, any `unload()`:
    the last line is `app.run()`, and Sweetview releases what it made (on
    macOS, until its goal, keep them).
 8. **Notifications.** Pass the application's identity
@@ -316,8 +316,10 @@ after them give every export its row.
 4. The input-hook and permission enums are values now; code that inlined
    their numbers keeps working.
 5. If you set `WEBVIEW_PATH`, set `SWEETVIEW_NATIVE_PATH` instead.
-6. Delete the `unload()` call: the end of the application destroys every
-   live webview itself, and there is no library to close.
+6. Delete the `unload()` call on Windows: the end of the application
+   destroys every live webview itself, and there is no library to close.
+   On macOS, until the macOS goal, keep it: it still closes the webview
+   library there.
 
 ## Reading the tables
 
@@ -498,7 +500,7 @@ cover old types and classes whose members have new names.
 | `NotifierOptions` | `import type { NotifierOptions } from "@n1h/sweetview/native"` | new `identity` and `appId`, the Windows toast identity: pass `identity` for toasts under the application's own name; 0.1.x: `onClick` is called with `{ id, data }` of the clicked notification |
 | `Overlay` | `import { Window } from "@n1h/sweetview/native"`; `new Window(options)` | a `Window`; members in the table below; a close request disposes it unless an `onClose` listener keeps it; a tray application declares close-to-tray with `closeToTrayOnLastWindow(win, onHide)` |
 | `OverlayOptions` | `import type { WindowOptions } from "@n1h/sweetview/native"`; `WindowOptions#topmost`; `WindowOptions#hideFromTaskbar`; `WindowOptions#noActivate` | the same option names; `topmost`, `hideFromTaskbar` and `noActivate` default to `false` now, so name them |
-| `OverlayWindowOptions` | `import type { WindowOptions } from "@n1h/sweetview/native"`; `WindowOptions#frame`; `WindowOptions#appearance` | the same option names but `dark` (use `appearance`); members in the table below; a `frame: true` window's close button disposes it now, where it hid it: pass `onClose: () => win.hide()` |
+| `OverlayWindowOptions` | `import type { WindowOptions } from "@n1h/sweetview/native"`; `WindowOptions#frame`; `WindowOptions#appearance` | the same option names but `dark` (use `appearance`); members in the table below; a `frame: true` window's close button disposes it now, where it hid it; a tray application declares close-to-tray with `closeToTrayOnLastWindow(win, onHide)`, and only a window that must never close keeps an `onClose` listener of its own that hides it |
 | `Point` | `import type { Point } from "@n1h/sweetview/native"` | unchanged |
 | `Rect` | `import type { Rect } from "@n1h/sweetview/native"` | unchanged |
 | `ResizeEdge` | `import type { ResizeEdge } from "@n1h/sweetview/native"` | unchanged |
@@ -584,7 +586,7 @@ The same names come from `@n1h/sweetview/native` now. Part C has the details of 
 | `installMouseHook` | `import { installMouseHook } from "@n1h/sweetview/native"`; `installMouseHook(handler)` | unchanged |
 | `modifiersFrom` | `import { modifiersFrom } from "@n1h/sweetview/native"`; `modifiersFrom(bits)` | unchanged |
 | `permissions` | `import { permissions } from "@n1h/sweetview/native"` | unchanged |
-| `unload` | `import { unload } from "@n1h/sweetview/native"`; `unload()` | delete the call: the end of the application destroys every live webview itself, and there is no library to unload |
+| `unload` | `import type { App } from "@n1h/sweetview"`; `App#dispose` | On Windows delete the call: the end of the application destroys every live webview itself, and `app.dispose()` destroys one the application is done with earlier; there is no library to unload. On macOS, until the macOS goal, keep it: it still closes the webview library there |
 
 ### Members
 
@@ -1720,7 +1722,7 @@ for an application that depends on `@n1h/sweetview`.
 | `installMouseHook` | `import { installMouseHook } from "@n1h/sweetview-native"`; `installMouseHook(handler)` | unchanged; installed and disposed of on the UI thread |
 | `modifiersFrom` | `import { modifiersFrom } from "@n1h/sweetview-native"`; `modifiersFrom(bits)` | unchanged |
 | `permissions` | `import { permissions } from "@n1h/sweetview-native"` | unchanged |
-| `unload` | `import { unload } from "@n1h/sweetview-native"`; `unload()` | delete the call: the end of the application destroys every live webview itself, and there is no library to unload |
+| `unload` | `import type { App } from "@n1h/sweetview"`; `App#dispose` | On Windows delete the call: the end of the application destroys every live webview itself, and `app.dispose()` destroys one the application is done with earlier; there is no library to unload. On macOS, until the macOS goal, keep it: it still closes the webview library there |
 | `writeWebviewResponseChunk` | `import { writeWebviewResponseChunk } from "@n1h/sweetview-native"`; `writeWebviewResponseChunk(handle, id, chunk)` | `handle` is the opaque number of `Webview.unsafeHandle`, not a pointer; still callable from any thread |
 
 ### `Webview` members that changed

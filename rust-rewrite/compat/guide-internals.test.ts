@@ -42,6 +42,31 @@ describe("an internal the guide now says the true thing about", () => {
   });
 });
 
+describe("one recipe for each thing", () => {
+  test("a tray application is told closeToTrayOnLastWindow, and a plain onClose hide only for a window that must never close", () => {
+    const overlay = row("`@n1h/sweetview/native`", "`OverlayWindowOptions`");
+    const app = read("docs/app.md").replace(/\s+/g, " ");
+    const single = app.slice(app.indexOf("**Single-window app, blocking `app.run()`.**"), app.indexOf("**Single-window app, blocking `app.run()`.**") + 1200);
+    expect({
+      overlayHides: overlay.includes("onClose: () => win.hide()"),
+      overlayCloseToTray: overlay.includes("`closeToTrayOnLastWindow(win, onHide)`"),
+      appCloseToTray: single.includes("`closeToTrayOnLastWindow(app.window, onHide)`"),
+      appHideOnlyNeverClose: !/To keep the process running after the main window closes, pass `onClose`/.test(single) && /must never close/.test(single),
+    }).toEqual({ overlayHides: false, overlayCloseToTray: true, appCloseToTray: true, appHideOnlyNeverClose: true });
+  });
+
+  test("unload: on Windows the call is deleted, on macOS it is kept until its goal; no Write now tells a Windows reader to call it", () => {
+    const rows = guideLines.filter((l) => l.startsWith("| `unload` |"));
+    const partC = guideLines.slice(guideLines.indexOf("### C. The bindings package, imported directly")).join(" ");
+    expect({
+      rows: rows.length,
+      writeNowCalls: rows.filter((l) => l.split(" | ")[1]!.includes("unload()")).length,
+      saysBoth: rows.filter((l) => /On Windows delete the call/.test(l) && /on macOS, until the macOS goal, keep it/i.test(l)).length,
+      stepSaysBoth: /Delete the `unload\(\)` call on Windows/.test(partC) && /On macOS, until the macOS goal, keep it/.test(partC),
+    }).toEqual({ rows: 2, writeNowCalls: 0, saysBoth: 2, stepSaysBoth: true });
+  });
+});
+
 describe("internals named in passing", () => {
   test("docs/app.md's list of what the end of the application releases names no internal call", () => {
     const list = read("docs/app.md").replace(/\s+/g, " ");
