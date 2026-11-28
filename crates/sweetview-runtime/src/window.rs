@@ -169,6 +169,9 @@ struct Core {
   restore: Cell<Option<Rect>>,
   /// Whether the window was maximised when that was last looked at, for `on_maximize_change`.
   maximized: Cell<bool>,
+  /// True while the maximise listeners are being told of a change: a change
+  /// one of them makes is told after every listener has heard the first.
+  noting_maximized: Cell<bool>,
   icons: RefCell<Option<WindowIcons>>,
   /// Live wrappers of this window.
   wrappers: Cell<usize>,
@@ -219,6 +222,7 @@ impl Core {
       gesture_timer: Cell::new(None),
       restore: Cell::new(None),
       maximized: Cell::new(false),
+      noting_maximized: Cell::new(false),
       icons: RefCell::new(None),
       wrappers: Cell::new(0),
       tab,
@@ -247,16 +251,29 @@ impl Core {
   /// Tells the maximise listeners when the window's maximised state changed
   /// since it was last looked at. A minimised window is not looked at: it
   /// keeps the state it is restored to.
+  ///
+  /// A change a listener makes while being told (it toggles the window back,
+  /// say) is not told from inside that call, where the listeners after it
+  /// would hear the second change before the first: it is noticed once every
+  /// listener has heard the first, and told then, so each listener hears every
+  /// change in order and ends with the window's own state.
   fn note_maximized(&self) {
-    if !self.alive.get() || self.with_native(|window| platform::is_minimized(window)).unwrap_or(true) {
+    if self.noting_maximized.get() {
       return;
     }
-    let now = self.maximized_now();
-    if self.maximized.replace(now) == now {
-      return;
+    self.noting_maximized.set(true);
+    let _told = scopeguard_reset(&self.noting_maximized);
+    loop {
+      if !self.alive.get() || self.with_native(|window| platform::is_minimized(window)).unwrap_or(true) {
+        return;
+      }
+      let now = self.maximized_now();
+      if self.maximized.replace(now) == now {
+        return;
+      }
+      let listeners: Vec<BoolListener> = self.listeners.borrow().maximize.iter().map(|(_, l)| l.clone()).collect();
+      listeners.iter().for_each(|l| l(now));
     }
-    let listeners: Vec<BoolListener> = self.listeners.borrow().maximize.iter().map(|(_, l)| l.clone()).collect();
-    listeners.iter().for_each(|l| l(now));
   }
 
   /// Calls `f` with the `tao` window of an owned window. No borrow is held
@@ -478,6 +495,17 @@ fn cursor_position() -> Result<Point> {
   screen::cursor()
 }
 
+/// Sets `flag` back to false when dropped, an unwind included.
+fn scopeguard_reset(flag: &Cell<bool>) -> impl Drop + '_ {
+  struct Reset<'a>(&'a Cell<bool>);
+  impl Drop for Reset<'_> {
+    fn drop(&mut self) {
+      self.0.set(false);
+    }
+  }
+  Reset(flag)
+}
+
 /// The subclass procedure's handler: runs inside whichever message loop
 /// dispatched the message. Returns whether a close request was taken.
 fn on_event(weak: &Weak<Core>, event: &WindowEvent) -> bool {
@@ -486,9 +514,11 @@ fn on_event(weak: &Weak<Core>, event: &WindowEvent) -> bool {
   // or dispose the window, from inside its own call.
   match event {
     WindowEvent::Resized(bounds) => {
+      // The maximised state is looked at before a resize listener can change it (restore the
+      // window, say), so the change this resize made is told, and then the one the listener made.
+      core.note_maximized();
       let listeners: Vec<RectListener> = core.listeners.borrow().resize.iter().map(|(_, l)| l.clone()).collect();
       listeners.iter().for_each(|l| l(*bounds));
-      core.note_maximized();
       false
     }
     WindowEvent::Moved(bounds) => {

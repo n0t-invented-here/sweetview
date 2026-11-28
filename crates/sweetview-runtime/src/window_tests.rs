@@ -254,6 +254,58 @@ fn content_size_is_the_client_area_at_the_windows_scale_and_a_maximise_change_is
   });
 }
 
+/// Review finding 3: every maximise listener sees each change in order and ends with the window's
+/// own state, when a listener changes the state from inside its call, or a resize listener does.
+#[test]
+fn maximise_listeners_see_each_change_in_order_when_a_listener_changes_the_state() {
+  on_ui_thread(|_runtime| {
+    let window = Window::create(WindowInit { frame: false, bounds: Some(Rect::new(140, 140, 320, 240)), ..init("rt nested maximise") }).expect("window");
+    let other = Window::adopt(window.handle()).expect("a second wrapper");
+    let seen_a = Rc::new(RefCell::new(Vec::new()));
+    let seen_b = Rc::new(RefCell::new(Vec::new()));
+    let (sink_a, sink_b) = (seen_a.clone(), seen_b.clone());
+    let toggler = Rc::new(Window::adopt(window.handle()).expect("a wrapper to toggle with"));
+    let toggle = toggler.clone();
+    // A restores the window as soon as it hears it was maximised.
+    window
+      .on_maximize_change(Some(Rc::new(move |maximized| {
+        sink_a.borrow_mut().push(maximized);
+        if maximized {
+          toggle.toggle_maximize().expect("restore from inside");
+        }
+      })))
+      .expect("listener A");
+    other.on_maximize_change(Some(Rc::new(move |maximized| sink_b.borrow_mut().push(maximized)))).expect("listener B");
+    window.toggle_maximize().expect("maximise");
+    assert!(!window.is_maximized(), "restored by A");
+    assert_eq!(*seen_a.borrow(), vec![true, false]);
+    assert_eq!(*seen_b.borrow(), vec![true, false], "B ends with the window's state");
+    window.on_maximize_change(None).expect("A removed");
+    other.on_maximize_change(None).expect("B removed");
+
+    // A resize listener that restores the window while it is being maximised.
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    let sink = seen.clone();
+    window.on_maximize_change(Some(Rc::new(move |maximized| sink.borrow_mut().push(maximized)))).expect("listener");
+    let restorer = toggler.clone();
+    let restored = Rc::new(Cell::new(false));
+    let once = restored.clone();
+    other
+      .on_resize(Some(Rc::new(move |_bounds| {
+        if !once.replace(true) {
+          restorer.toggle_maximize().expect("restore from a resize listener");
+        }
+      })))
+      .expect("resize listener");
+    window.toggle_maximize().expect("maximise");
+    assert!(restored.get() && !window.is_maximized());
+    assert_eq!(*seen.borrow(), vec![true, false], "neither change is lost");
+    other.dispose();
+    toggler.dispose();
+    window.dispose();
+  });
+}
+
 #[test]
 fn adopting_a_handle_that_is_not_a_window_fails() {
   on_ui_thread(|_runtime| {
