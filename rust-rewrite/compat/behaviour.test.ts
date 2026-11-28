@@ -348,7 +348,9 @@ describe.skipIf(!onWindows)("Windows behaviour an application notices", () => {
     expect(native).not.toContain("function reported");
   }, 420_000);
 
-  test.todo("onCallbackError is told about the faults of @n1h/sweetview (uiMethods, deferredUiMethods, onRequest, the ready hooks, the worker): it needs a way to the reporter that is no entry point, which rust-rewrite-no-win32-subpaths is to provide");
+  // In 1.0 onCallbackError is not told about the faults @n1h/sweetview catches itself (uiMethods,
+  // deferredUiMethods, onRequest, the ready hooks, the worker): no code moves between the packages
+  // (D44, the owner's ruling). The test above pins that they print and answer as with no listener.
 });
 
 // Part A, "Scripts run by path" and the subpaths of `@n1h/sweetview-native`: what an installed
