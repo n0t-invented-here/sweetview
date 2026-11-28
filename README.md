@@ -354,10 +354,13 @@ run wherever Bun runs:
 | Window, asset serving, transparency, native tabs (`WebView.attach`, `createApp`) | yes | yes | no: throws before creating anything |
 | Native OS entry points in `native` (`Window`, `Screen`, `Menu.popup`, `Tray`, `Notifier`, `pickFolder`, `Clipboard`, `setAppMenu`, `setAppIcon`, `runEventLoop`, `singleInstance`, ...) | yes | yes | importing works; the first call throws |
 | Pure TypeScript: icon encoders and PNG decoder, hit-region geometry, menu templates, file-read helpers, IPC, WebSocket IPC, settings, app identity, build helpers | yes | yes | yes |
-| Build host that can embed the Windows exe file icon | yes | no, Bun's stock icon | no, Bun's stock icon |
+| Build host that can embed the Windows exe file icon and name | yes | no, Bun's stock icon and name | no, Bun's stock icon and name |
 
-- Bun accepts `--windows-icon` only on a Windows host; the demos pass it
-  only there.
+- Bun accepts `--windows-icon`, and writes the version information of
+  `--windows-title` and `--windows-description`, only on a Windows host; the
+  demos pass them only there, so a Windows executable built on a Mac has
+  Bun's stock icon and is named "Bun" where one built on Windows carries
+  the demo's name.
 - The macOS `.app` bundle is assembled on any OS by `makeMacApp` or
   the [`make-app` command](docs/build.md#make-app-command-line), and signed
   ad-hoc when assembled on macOS. macOS shows no notifications from an unsigned
