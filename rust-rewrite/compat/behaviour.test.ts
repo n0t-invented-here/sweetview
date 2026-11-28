@@ -283,6 +283,59 @@ describe.skipIf(!onWindows)("Windows behaviour an application notices", () => {
     expect(inputs("bun-windows-x64")).toEqual([]);
     expect(inputs("bun-darwin-arm64")).toEqual(["build/libwebview.dylib", "src/ffi.ts", "src/index.ts", "src/input-hooks.ts", "src/keyboard-hook.ts", "src/mouse-hook.ts", "src/permissions.ts", "src/webview.ts"]);
   }, 300_000);
+
+  // "Exceptions thrown by your callbacks" (docs/native.md, docs/app.md) and its bullet and step in
+  // docs/upgrading.md: a handler that throws never reaches uncaughtException; the logged ones are on
+  // stderr with the stated messages, a deferredUiMethods method's is not printed at all; a replaced
+  // console.error receives the logged ones; the documented `reported` wrapper delivers every one.
+  test("an exception from a handler Sweetview calls never reaches uncaughtException; it is logged as the docs say, and the documented wrapper delivers it", async () => {
+    const run = async (args: string[]) => {
+      const child = Bun.spawn([process.execPath, fixture("callback-faults.ts"), ...args], {
+        cwd: root,
+        env: { ...process.env, WEBVIEW2_USER_DATA_FOLDER: tempDir("profile") },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const timer = setTimeout(() => child.kill(), 150_000);
+      const [stdout, stderr, exit] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+      clearTimeout(timer);
+      return { stdout, stderr, exit };
+    };
+    const ranAll = { trayClick: true, menuItem: true, onClose: true, deferredUiMethod: true };
+    const { stdout, stderr, exit } = await run([]);
+    expect({ exit, last: stdout.trim().split(/\r?\n/).at(-1)?.startsWith("{") }).toEqual({ exit: 0, last: true });
+    const report = JSON.parse(stdout.trim().split(/\r?\n/).at(-1)!);
+    expect(report).toEqual({
+      unwrapped: { ran: ranAll, reached: [] },
+      menuPopup: { thrownFromPopup: "popup item", reached: [] },
+      consoleError: {
+        ran: ranAll,
+        logged: [
+          "sweetview: message window handler threw: [Error] console: tray click",
+          "sweetview: message window handler threw: [Error] console: tray menu item",
+          "sweetview: onClose handler threw: [Error] console: window onClose",
+        ],
+        reached: [],
+      },
+      reported: { ran: ranAll, reached: ["reported: tray click", "reported: tray menu item", "reported: window onClose", "reported: deferredUiMethods"] },
+    });
+    // What the unwrapped handlers left on stderr: each logged line with its message and error; nothing for the page's method.
+    const errorsOf = (label: string) => [...stderr.matchAll(new RegExp(`^error: ${label}: (.+)$`, "gm"))].map((m) => m[1]!.trim());
+    expect(errorsOf("unwrapped")).toEqual(["tray click", "tray menu item", "window onClose"]);
+    expect(stderr.match(/^sweetview: message window handler threw:/gm)?.length).toBe(4); // two unwrapped, two rethrown by `reported`
+    expect(stderr.match(/^sweetview: onClose handler threw:/gm)?.length).toBe(2);
+    expect(stderr).not.toContain("deferredUiMethods");
+
+    // An application whose listener exits ends the process from inside Sweetview's call.
+    expect((await run(["exit"])).exit).toBe(3);
+
+    // The fixture's wrapper is the one docs/native.md shows, character for character.
+    const fixtureText = readFileSync(fixture("callback-faults.ts"), "utf8").replace(/\r\n/g, "\n");
+    const block = /\/\/ --- reported: begin ---\n([\s\S]*?)\/\/ --- reported: end ---/.exec(fixtureText)?.[1];
+    const documented = readFileSync(join(root, "docs", "native.md"), "utf8").replace(/\r\n/g, "\n").replace(/^ {2}/gm, "");
+    expect(block).toBeDefined();
+    expect(documented).toContain(block!);
+  }, 320_000);
 });
 
 // Part A, "Scripts run by path" and the subpaths of `@n1h/sweetview-native`: what an installed
