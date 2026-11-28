@@ -213,7 +213,7 @@ fn a_held_button_freezes_click_through_across_a_hit_regions_edge_until_it_is_let
     assert!(!passing(), "held outside the region: still solid");
     // Let go: the next poll lets clicks through where there is no region.
     os::send_left_button(false);
-    assert!(pump_until(runtime.as_ref(), 1000, || passing()), "let go outside the region: clicks fall through");
+    assert!(pump_until(runtime.as_ref(), 1000, passing), "let go outside the region: clicks fall through");
     window.dispose();
   });
 }
