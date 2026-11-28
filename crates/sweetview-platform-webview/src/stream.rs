@@ -29,6 +29,9 @@ struct Inner {
     aborted: bool,
     consumer_released: bool,
     on_abandoned: Option<OnAbandoned>,
+    /// Tests only: how many reads are waiting for bytes now.
+    #[cfg(test)]
+    waiting: usize,
 }
 
 impl Inner {
@@ -133,6 +136,16 @@ impl StreamState {
         inner.buffer.len() - inner.read_pos
     }
 
+    /// Tests only: waits (on the condition variable, up to `limit`) until a read
+    /// is waiting for bytes, so a test can supply them only once it is; true
+    /// when one is.
+    #[cfg(test)]
+    pub(crate) fn wait_for_waiting_reader(&self, limit: std::time::Duration) -> bool {
+        let (inner, timeout) = self.cv.wait_timeout_while(self.lock(), limit, |i| i.waiting == 0).unwrap_or_else(|e| e.into_inner());
+        drop(inner);
+        !timeout.timed_out()
+    }
+
     /// True once the consumer has been released for good, so nobody will read
     /// what is pushed.
     pub(crate) fn is_abandoned(&self) -> bool {
@@ -164,10 +177,19 @@ impl StreamState {
                 if inner.eof {
                     break;
                 }
+                #[cfg(test)]
+                {
+                    inner.waiting += 1;
+                    self.cv.notify_all();
+                }
                 inner = self
                     .cv
                     .wait_while(inner, |i| !(i.aborted || i.eof || i.read_pos < i.buffer.len()))
                     .unwrap_or_else(|e| e.into_inner());
+                #[cfg(test)]
+                {
+                    inner.waiting -= 1;
+                }
                 continue;
             }
             let available = inner.buffer.len() - inner.read_pos;

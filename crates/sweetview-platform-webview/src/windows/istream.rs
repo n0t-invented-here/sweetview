@@ -220,10 +220,12 @@ mod tests {
     // hanging: `S_OK` means every byte asked for, as `ISequentialStream::Read` is documented.
     #[test]
     fn every_read_result_at_the_com_surface() {
+        // Each supplier pushes only once the read is waiting for bytes (no sleep stages it), so
+        // a read that returned early with what it had is seen.
         let later = |state: &Arc<StreamState>, bytes: &'static [u8], end: bool| {
             let state = state.clone();
             std::thread::spawn(move || {
-                std::thread::sleep(std::time::Duration::from_millis(50));
+                assert!(state.wait_for_waiting_reader(std::time::Duration::from_secs(10)), "the read waits for the rest");
                 assert!(state.push(bytes));
                 if end {
                     state.finish();
@@ -256,7 +258,7 @@ mod tests {
         let aborter = {
             let cut = cut.clone();
             std::thread::spawn(move || {
-                std::thread::sleep(std::time::Duration::from_millis(50));
+                assert!(cut.wait_for_waiting_reader(std::time::Duration::from_secs(10)), "the read waits for the rest");
                 cut.abort();
             })
         };
@@ -282,6 +284,21 @@ mod tests {
         // SAFETY: `Read` reported 3 bytes written, so the first 3 are initialised.
         let read = unsafe { std::slice::from_raw_parts(storage.as_ptr().cast::<u8>(), 3) };
         assert_eq!(read, b"abc");
+    }
+
+    // `Read` writes the bytes it reports and nothing after them: the caller's buffer past them
+    // is as it was (here a pattern, where `a_read_into_uninitialised_storage...` has storage
+    // that may not be read).
+    #[test]
+    fn a_read_leaves_the_rest_of_the_buffer_untouched() {
+        let state = Arc::new(StreamState::new());
+        let stream = StreamingIStream::create(state.clone());
+        assert!(state.push(b"abc"));
+        state.finish();
+        let mut buf = [0xA5u8; 8];
+        assert_eq!(read(&stream, &mut buf), (S_FALSE, 3));
+        assert_eq!(&buf[..3], b"abc");
+        assert_eq!(&buf[3..], &[0xA5; 5], "nothing written past the bytes read");
     }
 
     // Nothing unwinds out of the last `Release`: a panic in what the stream's release runs

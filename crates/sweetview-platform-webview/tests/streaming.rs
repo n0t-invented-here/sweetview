@@ -1,7 +1,8 @@
 //! What a streamed response does on a real WebView2 (DECISIONS D45): the page
 //! reads the body with a `ReadableStream` reader while the response is open,
-//! written from the UI thread and from another thread, small chunks (text) and
-//! a large fast body (24 MiB of bytes). Every byte arrives, in order, and no
+//! written from the UI thread and from another thread, small chunks (as
+//! `text/plain`, `text/event-stream`, with `Transfer-Encoding: chunked` and
+//! with a `Content-Length`) and a large fast body (24 MiB of bytes). Every byte arrives, in order, and no
 //! write waits for the page, on any thread.
 //!
 //! And what the page gets before the end, measured on the runtime the test
@@ -156,6 +157,32 @@ fn a_streamed_body_arrives_whole_and_in_order_and_webview2_gives_it_to_the_page_
     eprintln!("   after the end: {done}");
     assert_eq!(done["text"], "chunk one;chunk two;", "every byte, in order: {done}");
 
+    eprintln!("-- the same two chunks from the UI thread, as other kinds of response");
+    let kinds: [(&str, &str); 3] = [
+        ("event-stream", r#"{"Content-Type":"text/event-stream","Cache-Control":"no-cache"}"#),
+        ("chunked", r#"[["Content-Type","text/plain; charset=utf-8"],["Transfer-Encoding","chunked"]]"#),
+        ("content-length", r#"{"Content-Type":"text/plain; charset=utf-8","Content-Length":"20"}"#),
+    ];
+    let mut kinds_seen = Vec::new();
+    for (kind, head) in kinds {
+        let path: &'static str = Box::leak(format!("/live-{kind}").into_boxed_str());
+        let held = hold_request(&view, path);
+        view.eval(&reader_js(kind, path));
+        assert!(ctx.pump(Some(&view), Duration::from_secs(10), || held.get().is_some()), "{kind}: the request reached the handler");
+        let id = held.get().unwrap();
+        assert_eq!(responder.begin(id, 200, Some(head)), ErrorCode::Ok, "{kind}");
+        assert_eq!(responder.write_chunk(id, b"chunk one;"), ErrorCode::Ok);
+        let one = wait_for_text(&mut ctx, &view, kind, "chunk one;");
+        let head_seen = view.take(&format!("{kind}-head")).is_some();
+        assert_eq!(responder.write_chunk(id, b"chunk two;"), ErrorCode::Ok);
+        let two = wait_for_text(&mut ctx, &view, kind, "chunk two;");
+        assert_eq!(responder.end(id), ErrorCode::Ok);
+        let done = ctx.wait(&view, &format!("{kind}-done"));
+        eprintln!("   {kind}: chunk 1 {one:?}, chunk 2 {two:?}, fetch() resolved {head_seen} before the end; at the end {done}");
+        assert_eq!(done["text"], "chunk one;chunk two;", "{kind}: every byte, in order: {done}");
+        kinds_seen.push((kind, one.is_some() || two.is_some() || head_seen));
+    }
+
     eprintln!("-- written from another thread, each chunk after the page has the one before");
     let held = hold_request(&view, "/live-thread");
     view.eval(&reader_js("th", "/live-thread"));
@@ -279,4 +306,7 @@ fn a_streamed_body_arrives_whole_and_in_order_and_webview2_gives_it_to_the_page_
     assert_eq!((first, second, head_before_end), (None, None, false), "{flipped}");
     assert_eq!(acked, vec![false, false, false], "{flipped}");
     assert_eq!(bulk_first_before_end, Some(false), "{flipped}");
+    for (kind, early) in kinds_seen {
+        assert!(!early, "{kind}: {flipped}");
+    }
 }

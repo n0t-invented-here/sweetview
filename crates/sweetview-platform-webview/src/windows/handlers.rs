@@ -472,8 +472,9 @@ mod tests {
         assert!(accelerator.cast::<windows_core::imp::IAgileObject>().is_err());
         let script = ScriptAdded::create(|_| {});
         assert!(script.cast::<windows_core::imp::IAgileObject>().is_err());
-        // All seven, by name (the second review's G11 found three checked).
-        let all: [(&str, windows_core::IUnknown); 7] = [
+        // Every handler type this crate makes, by name (the second review's G11 found three
+        // checked; the webview review found the later ones missing).
+        let all: [(&str, windows_core::IUnknown); 10] = [
             ("ResourceRequested", ResourceRequested::create(|_| {}).cast().expect("IUnknown")),
             ("MessageReceived", MessageReceived::create(|_| {}).cast().expect("IUnknown")),
             ("ContentLoading", ContentLoading::create(|_| {}).cast().expect("IUnknown")),
@@ -481,6 +482,9 @@ mod tests {
             ("NavigationCompleted", NavigationCompleted::create(|_| {}).cast().expect("IUnknown")),
             ("AcceleratorKeyPressed", AcceleratorKeyPressed::create(|_| {}).cast().expect("IUnknown")),
             ("ScriptAdded", ScriptAdded::create(|_| {}).cast().expect("IUnknown")),
+            ("PermissionRequested", PermissionRequested::create(|_| {}).cast().expect("IUnknown")),
+            ("NewWindowRequested", NewWindowRequested::create(|_| {}).cast().expect("IUnknown")),
+            ("DownloadStarting", DownloadStarting::create(|_| {}).cast().expect("IUnknown")),
         ];
         for (name, handler) in &all {
             assert!(handler.cast::<windows_core::imp::IAgileObject>().is_err(), "{name} answers IAgileObject");
