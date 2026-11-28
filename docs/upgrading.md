@@ -134,12 +134,10 @@ after them give every export its row.
   close request and disposes the others, and the application quits from its
   tray menu (`app.quit()`, `quitEventLoop()`). Any other `onClose` listener
   keeps the window open and decides what a close request means.
-- **The window's background.** On Windows a window with no
-  `backgroundColor`, neither `transparent` nor colour-keyed (`colorKey`),
-  paints the page colour of its `appearance` where nothing covers it
-  (`#15161a` dark, `#f9f9fb` light): before its page paints, and where its
-  webview was once it has gone. It painted white before. Pass
-  `backgroundColor` for another colour
+- **The window's background.** On Windows what a window shows where
+  nothing covers it (before its page paints, and where its webview was once
+  it has gone) is the window's `backgroundColor`; without one, `WEBVIEW2_DEFAULT_BACKGROUND_COLOR` when it is set (WebView2 starts the webview with it, and the window's own fill is it when it is opaque); without either, the page colour of its `appearance`, `#15161a` dark and `#f9f9fb` light. It was white before. A `transparent` or
+  colour-keyed (`colorKey`) window takes none of them
   ([`WindowOptions`](native/windows.md#windowoptions)).
 - **The window after `run()`.** As `run()` returns, the window is hidden
   before its webview goes, and it stays a window: `isVisible()` is `false`

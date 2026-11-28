@@ -268,7 +268,7 @@ A webview lives until one of these happens, each of which runs the same teardown
 - `webview.dispose()` (or `app.dispose()`) is called. Inside `run()`, this stops the worker and watchdogs and calls `quit()`; the webview is destroyed when the loop returns.
 - The `Window` it is attached to is disposed directly, with `win.dispose()` or by closing a window that has no `onClose` listener. Inside `run()`, disposing the window ends the loop, and `run()` finishes the teardown when the loop returns.
 
-When its window goes too (`run()` returning, the window disposed, the application ending), the window is hidden first, so it is never on the screen with its page gone; when the window stays (`webview.dispose()` alone), it shows the backdrop of its `appearance` where the page was ([what a person sees at Quit](#closing-and-quitting)).
+When its window goes too (`run()` returning, the window disposed, the application ending), the window is hidden first, so it is never on the screen with its page gone; when the window stays (`webview.dispose()` alone), it shows its backdrop where the page was: the window's `backgroundColor`; without one, `WEBVIEW2_DEFAULT_BACKGROUND_COLOR` when it is set (WebView2 starts the webview with it, and the window's own fill is it when it is opaque); without either, the page colour of its `appearance`, `#15161a` dark and `#f9f9fb` light ([`WindowOptions`](native/windows.md#windowoptions), [what a person sees at Quit](#closing-and-quitting)).
 
 A webview on a borrowed window (a tab's child window, or a `Window.fromHandle` wrapper) is torn down by its owner instead: disposing that window stops the webview's watchdog, deferred calls and file drops, and the tab driver (or your code) disposes the webview. After teardown, `emit` and RPC replies are dropped silently.
 
@@ -352,7 +352,7 @@ trusted ([the RPC trust boundary](#the-rpc-trust-boundary)).
 | `debug` | `boolean` | `false` | Enables devtools and the context menu. |
 | `uiMethods` | `UiMethods<M>` | `{}` | Synchronous handlers answered on the UI thread before consulting the worker. |
 | `deferredUiMethods` | `UiMethods<M>` | `{}` | Synchronous handlers invoked on a later native UI tick. |
-| `showOnReady` | `boolean` | `false` | Reveals the window when the page signals readiness, or when the watchdog fires, which it does only with `readyTimeoutMs`. On Windows the ready signal's reveal shows the window off the screen (DWM's cloak) and puts it on the screen once a frame of the page has been presented (its first paint, which the browser records when that frame is presented; for a page that has painted before, two animation frames), so the browser's own surface is never seen before its first frame; with `readyTimeoutMs` set, the window is put on the screen after that long if the page never draws. The watchdog's reveal shows it at once. On macOS it is shown on the signal. |
+| `showOnReady` | `boolean` | `false` | Reveals the window when the page signals readiness, or when the watchdog fires, which it does only with `readyTimeoutMs`. On Windows the ready signal's reveal shows the window off the screen (DWM's cloak) and puts it on the screen once a frame of the page has been presented: the page's first paint entry, which the browser records when that frame is presented, or, for a page that had painted before, two animation frames. So the browser's own surface is never seen before its first frame. If the page never says so (no paint, a document gone first), the window is put on the screen after `readyTimeoutMs` when it is positive, and after 3 s otherwise. Meanwhile `isVisible()` is true and the window is in `Window.visibleWindows()`, but nothing of it is on the screen: it has not taken the activation (it takes it, as `show()` gives it, when it is put on the screen), and a click on where it is reaches it. `show()` and `toggle()` put it on the screen at once, `hide()` hides it. The watchdog's reveal shows it at once. On macOS it is shown on the signal. |
 | `readyTimeoutMs` | `number` | disabled | A positive value up to 2147483647 arms a native startup watchdog; zero, a negative value or `NaN` leaves it off. |
 | `onReady`, `onReadyTimeout` | `() => void` | none | UI-thread hooks for the first ready handshake and for watchdog expiry. |
 | `readyFallbackHtml` | `string` | built-in error page | HTML shown on watchdog expiry. |
@@ -451,9 +451,8 @@ tabbed window closed with its tabs): the window is hidden, its webviews are
 destroyed, then the window is destroyed, and what it held is given back. A
 window that stays while its webview goes (`view.dispose()` on a window kept
 for a new webview, the last tab of a tabbed window disposed while an
-`onClose` listener keeps the window) shows its backdrop, the colour of its
-`appearance` ([`WindowOptions`](native/windows.md#windowoptions)), until a
-page covers it again, never white.
+`onClose` listener keeps the window) shows its backdrop until a page covers
+it again, never white: the window's `backgroundColor`; without one, `WEBVIEW2_DEFAULT_BACKGROUND_COLOR` when it is set (WebView2 starts the webview with it, and the window's own fill is it when it is opaque); without either, the page colour of its `appearance`, `#15161a` dark and `#f9f9fb` light ([`WindowOptions`](native/windows.md#windowoptions)).
 
 ### App and AppOptions
 
