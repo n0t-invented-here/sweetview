@@ -168,10 +168,13 @@ onCallbackError((error, { kind, name }) => {
 
 On Windows, a fault caught at a callback boundary never reaches
 `process.on("uncaughtException")`, and the application goes on: one whose
-`uncaughtException` listener writes its fault log writes these faults from
-its `onCallbackError` listener, as above. On macOS, until its goal, no
-listener is called; the faults are printed as the paragraph on macOS above
-says.
+`uncaughtException` listener writes its fault log writes, from its
+`onCallbackError` listener as above, the faults of the callback kinds that
+listener is told of. A page's failing `uiMethods` call is not one of them: it
+is the page's call that fails (its promise is rejected), not a report. On
+macOS, until its goal, each boundary keeps the behaviour it had at the tag:
+no listener is called, and the faults are printed as the paragraph on macOS
+above says.
 
 In the page, `await` each call (or `catch` it): a call a page never awaits
 is rejected unseen there, whatever the UI thread does with the fault.
