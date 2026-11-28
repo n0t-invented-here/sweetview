@@ -9,6 +9,7 @@ import { appendFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { createHitRelay, createNotifier, createTray, Screen, setAppIcon, unpackRegions, Window, type MenuTemplate, type Notifier } from "@n1h/sweetview/native";
 import { indexHtml, WebView, windowChromeEvents, windowChromeMethods, type Asset } from "@n1h/sweetview";
+import type { WindowChromeMethodTable } from "@n1h/sweetview/window-chrome";
 import { demoWindowSize } from "../window-size";
 import { SettingsStore } from "@n1h/sweetview/settings-store";
 import petCss from "./build/frontend/main.css" with { type: "file" };
@@ -148,7 +149,8 @@ const changeSettings = (patch: Partial<Settings>): Settings => {
   return settings;
 };
 
-const uiMethods: { [K in keyof UiMethods]: (params: UiMethods[K][0]) => UiMethods[K][1] } = {
+// The chrome's methods are its table (no window.systemMenu on macOS); the pet's own are all required.
+const uiMethods: WindowChromeMethodTable & { [K in Exclude<keyof UiMethods, keyof WindowChromeMethodTable | "window.systemMenu">]: (params: UiMethods[K][0]) => UiMethods[K][1] } = {
   "pet.move": ({ x, y }) => overlay.moveTo(x, y),
   "pet.resize": ({ width, height }) => overlay.resize(width, height),
   "hit.regions": (flat) => hits.setRegions(unpackRegions(flat)),

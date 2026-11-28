@@ -49,7 +49,9 @@ export type WindowChromeEvents = {
   "window.maximized": { maximized: boolean };
 };
 
-export type WindowChromeMethodTable = { [K in keyof WindowChromeMethods]: (params: WindowChromeMethods[K][0]) => WindowChromeMethods[K][1] };
+type Method<K extends keyof WindowChromeMethods> = (params: WindowChromeMethods[K][0]) => WindowChromeMethods[K][1];
+/** `window.systemMenu` is absent on macOS, whose table is the tag's. */
+export type WindowChromeMethodTable = { [K in Exclude<keyof WindowChromeMethods, "window.systemMenu">]: Method<K> } & { "window.systemMenu"?: Method<"window.systemMenu"> };
 
 export type WindowChromeOptions = {
   /** What `window.info` reports; the page renders bare when it says "os". Default "page". */
