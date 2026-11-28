@@ -24,5 +24,10 @@ pub mod window;
 pub mod tray;
 
 pub use error::{Error, Result};
+
+/// Webviews made through the public API, read back from the OS and the screen, with real keys.
+#[cfg(all(test, windows))]
+#[path = "engine_os_tests.rs"]
+mod engine_os_tests;
 pub use sweetview_window_logic::{Point, Rect, ResizeEdge};
 pub use runtime::{wake, Runtime, TimeoutId};

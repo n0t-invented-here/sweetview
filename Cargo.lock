@@ -1747,6 +1747,7 @@ dependencies = [
  "sweetview-window-logic",
  "tao",
  "windows",
+ "windows-registry",
 ]
 
 [[package]]

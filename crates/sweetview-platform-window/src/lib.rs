@@ -143,5 +143,11 @@ mod popup;
 #[path = "test_support.rs"]
 pub mod test_support;
 
+/// The foreground, real keys, screen pixels and a window read back by handle value, for the
+/// runtime's webview tests (enabled as a dev-dependency only, as `test_support` is).
+#[cfg(all(windows, any(test, feature = "test-support")))]
+#[path = "test_support_desktop.rs"]
+pub mod test_support_desktop;
+
 pub use metrics::{double_click_time_ms, small_icon_size};
 pub use popup::{check_item, end_menu_for_tests, escape_menus_of_this_process_for_tests, menu_handle_value, set_command_id, show_popup, PopupAt, PopupCorner};

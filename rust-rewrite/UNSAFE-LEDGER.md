@@ -1,6 +1,6 @@
 # Unsafe ledger
 
-Rewritten by `bun rust-rewrite/verify.ts <platform> --ledger`. 360 uses in 23 files.
+Rewritten by `bun rust-rewrite/verify.ts <platform> --ledger`. 381 uses in 24 files.
 
 | File | Uses of `unsafe` |
 |---|---|
@@ -25,6 +25,7 @@ Rewritten by `bun rust-rewrite/verify.ts <platform> --ledger`. 360 uses in 23 fi
 | `crates/sweetview-platform-window/src/tab_frame.rs` | 16 |
 | `crates/sweetview-platform-window/src/tab_frame_tests.rs` | 12 |
 | `crates/sweetview-platform-window/src/test_support.rs` | 2 |
+| `crates/sweetview-platform-window/src/test_support_desktop.rs` | 21 |
 | `crates/sweetview-platform-window/src/windows.rs` | 39 |
 | `crates/sweetview-platform-window/src/windows_tests.rs` | 14 |
 
@@ -193,6 +194,10 @@ The double-click time is the safe WinRT `UISettings::DoubleClickTime` of `window
 ### `crates/sweetview-platform-window/src/test_support.rs` (2, test)
 
 Compiled only for tests (this crate's, and the runtime's through the `test-support` feature of a dev-dependency). `shows_valid_icons` reads a window's icons with `WM_GETICON` and asks `GetIconInfo` whether each is an icon (`GetIconInfo`, and `DeleteObject` for the bitmaps it hands back), to prove a released window still shows icons that exist.
+
+### `crates/sweetview-platform-window/src/test_support_desktop.rs` (21, test)
+
+Compiled only for tests (the runtime's, through the `test-support` feature of a dev-dependency): what a person does on the desktop and what the OS shows them, by window handle value, for the webview tests that moved out of TypeScript (`engine_os_tests.rs`). The foreground (7: `GetForegroundWindow`; `SetForegroundWindow`, `GetWindowThreadProcessId`, `GetCurrentThreadId`, `AttachThreadInput` twice, `BringWindowToTop` and `SetForegroundWindow` again in `take_foreground`), a posted message (`PostMessageW`), the window at a screen point (`WindowFromPoint`, `GetAncestor`), a real key (`SendInput` with a press and a release in one array owned for the call), a window's title, client size and outer rectangle (`GetWindowTextW`, `GetClientRect`, `GetWindowRect`, each into a buffer or struct owned by the frame), its tracking bounds (`SendMessageW` of `WM_GETMINMAXINFO` with the address of a `MINMAXINFO` owned for the call, as the OS sends it), its title bar's dark mode (`DwmGetWindowAttribute` into an `i32` of the size passed), a screen pixel (`GetDC`, `GetPixel`, `ReleaseDC`), and the top-level windows walked with `FindWindowExW`, so no callback is lent to the OS. Looked for: `tao` 0.38.0 reads none of these for a window it did not make, and has no input injection (https://docs.rs/tao/0.38.0/tao/window/struct.Window.html); the user's app theme is read with the safe `windows-registry` 0.6.1 instead (https://docs.rs/windows-registry/0.6.1/windows_registry/).
 
 ### `crates/sweetview-platform-window/src/tab_frame.rs` (16)
 
