@@ -41,10 +41,14 @@ const options = (onReady: () => void) => ({
 const windowOptions = { title: "quit-flash", bounds, topmost: true, noActivate: true, appearance: "dark" as const };
 
 let watched = 0n;
-process.on("exit", (code) => {
-  console.log("RESULT " + JSON.stringify({ mode, code, windowExists: watched !== 0n && isWindow(watched) }));
-});
 const ready = (hwnd: unknown) => {
+  if (watched === 0n) {
+    // Registered after the window was made, so after Sweetview's own `exit` listener: it reads
+    // what Sweetview's release left.
+    process.on("exit", (code) => {
+      console.log("RESULT " + JSON.stringify({ mode, code, windowExists: isWindow(watched) }));
+    });
+  }
   watched = BigInt(hwnd as bigint | number);
   console.log(`READY ${watched}`);
 };

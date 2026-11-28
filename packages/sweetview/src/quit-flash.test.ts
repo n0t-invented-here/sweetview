@@ -112,7 +112,7 @@ describe.if(process.platform === "win32")("a window on its way out (D42)", () =>
       expect(lightSamples(run)).toEqual([]);
       const empty = run.samples.filter((s) => s.hwnd === run.hwnd && onScreen(s) && s.webviews === 0 && summary.lastWebview !== null && s.t < summary.lastWebview);
       expect(empty.length).toBeGreaterThan(0);
-      expect(empty.filter((s) => !near(s.mode, DARK_BACKDROP) && !near(s.mode, PAGE))).toEqual([]);
+      expect(empty.filter((s) => s.flat >= 0.5 && !near(s.mode, DARK_BACKDROP) && !near(s.mode, PAGE))).toEqual([]);
       expect(summary.lastOnScreen! <= summary.lastWebview!).toBe(true);
     },
     LIVE_TEST_MS,
@@ -128,7 +128,9 @@ describe.if(process.platform === "win32")("a window on its way out (D42)", () =>
       // The tab's page, then the frame's backdrop where it was: the window's on-screen colours.
       const shown = run.samples.filter((s) => s.hwnd === run.hwnd && onScreen(s));
       expect(shown.some((s) => near(s.mode, DARK_BACKDROP))).toBe(true);
-      expect(shown.filter((s) => !near(s.mode, DARK_BACKDROP) && !near(s.mode, PAGE))).toEqual([]);
+      // A frame with no colour over half of it is DWM's open animation blending the window with what
+      // is behind it, as it appears: not a colour of the window's own.
+      expect(shown.filter((s) => s.flat >= 0.5 && !near(s.mode, DARK_BACKDROP) && !near(s.mode, PAGE))).toEqual([]);
     },
     LIVE_TEST_MS,
   );

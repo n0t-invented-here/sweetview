@@ -206,7 +206,6 @@ if (import.meta.main) {
   const infoView = new DataView(info.buffer);
   const histogram = new Uint32Array(1 << 15);
   const SRCCOPY = 0x00cc0020;
-  const CAPTUREBLT = 0x40000000;
 
   /** The client area on the screen: its most common colour and the share of it. */
   const capture = (hwnd: bigint, rect: Int32Array): { width: number; height: number; mode: [number, number, number]; flat: number } => {
@@ -223,7 +222,7 @@ if (import.meta.main) {
       pixels = new Uint8Array(width * height * 4);
     }
     const old = gdi32.SelectObject(memory, bitmap);
-    gdi32.BitBlt(memory, 0, 0, width, height, screen, origin[0]!, origin[1]!, SRCCOPY | CAPTUREBLT);
+    gdi32.BitBlt(memory, 0, 0, width, height, screen, origin[0]!, origin[1]!, SRCCOPY);
     gdi32.SelectObject(memory, old);
     info.fill(0);
     infoView.setUint32(0, 40, true);
@@ -234,8 +233,8 @@ if (import.meta.main) {
     gdi32.GetDIBits(memory, bitmap, 0, height, ptr(pixels), ptr(info), 0);
     histogram.fill(0);
     let total = 0;
-    for (let y = 0; y < height; y += 2) {
-      for (let x = 0; x < width; x += 2) {
+    for (let y = 1; y < height; y += 4) {
+      for (let x = 1; x < width; x += 4) {
         const i = (y * width + x) * 4;
         histogram[((pixels[i + 2]! >> 3) << 10) | ((pixels[i + 1]! >> 3) << 5) | (pixels[i]! >> 3)]!++;
         total++;
@@ -247,6 +246,7 @@ if (import.meta.main) {
     return { width, height, mode, flat: histogram[best]! / total };
   };
 
+  // The last state written for each window: a window off the screen is written only when it changes.
   const known = new Map<bigint, string>();
   const lines: string[] = [];
   const started = performance.now();
@@ -277,6 +277,9 @@ if (import.meta.main) {
         sample.webviews = webviewCount;
         if (sample.visible && !sample.cloaked && !sample.iconic) Object.assign(sample, capture(hwnd, rect));
       }
+      const state = `${sample.exists} ${sample.visible} ${sample.cloaked} ${sample.iconic} ${sample.webviews}`;
+      if (!onScreen(sample) && known.get(hwnd) === state) continue;
+      known.set(hwnd, state);
       lines.push(JSON.stringify(sample));
     }
     if (exited() || t > maxMs) break;

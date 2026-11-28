@@ -37,7 +37,7 @@ const kernel32 = dlopen("kernel32.dll", {
 }).symbols;
 
 const ROUNDS = Number(process.env.SWEETVIEW_RECLAIM_ROUNDS ?? 30);
-const WARM_UP = 5;
+const WARM_UP = 10;
 const PATHS = (process.env.SWEETVIEW_RECLAIM_PATHS ?? "close,dispose,app-dispose,tab").split(",");
 const DARK = "#1f2a33";
 
