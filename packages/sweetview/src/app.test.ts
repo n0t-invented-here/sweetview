@@ -1209,6 +1209,14 @@ describe.if(onWindows)("a fault in one callback of createApp stays in that callb
     });
   }, LIVE_TEST_MS * 3);
 
+  // With no listener, the main branch printed `sweetview: UI dispatch failed:` for the first value
+  // of a deferred batch whose reading threw (review 4, C1): it still does, once the batch is answered.
+  test("a deferred batch with a value whose reading throws prints the main branch's line for what the reading threw", async () => {
+    const { stderr } = await faults();
+    expect(stderr).toMatch(/^sweetview: UI dispatch failed:/m);
+    expect(stderr).toContain("error: getPrototypeOf trap");
+  }, LIVE_TEST_MS * 3);
+
   test("a worker method that throws a value that cannot be read sends its error reply: the page's call is rejected and the worker lives on", async () => {
     const { seen, stderr } = await faults();
     expect({ workerUnreadable: seen?.workerUnreadable, workerNoPrototype: seen?.workerNoPrototype, ticks: seen?.ticks }).toEqual({
@@ -1218,7 +1226,6 @@ describe.if(onWindows)("a fault in one callback of createApp stays in that callb
     });
     // The worker ends once, by the crash the page asks for last, not by these calls.
     expect(stderr.match(/^sweetview: the worker failed:/gm)?.length).toBe(1);
-    expect(stderr).not.toContain("getPrototypeOf trap");
   }, LIVE_TEST_MS * 3);
 
   test("an onEvent listener that throws: the other listeners and the page still get each event, the reply behind them arrives, and the error is printed as before", async () => {
@@ -1234,7 +1241,8 @@ describe.if(onWindows)("a fault in one callback of createApp stays in that callb
   // each, printed once with no listener and told once with one.
   test("two onEvent listeners that throw on one event: both errors, together, printed once with no onCallbackError listener and told once with one", async () => {
     const without = await faults();
-    expect(without.stderr.match(/^sweetview: UI dispatch failed:/gm)?.length).toBe(2);
+    // Each listener's error once: the first tick's alone, tock's two together.
+    for (const message of ["onEvent listener 1", "onEvent listener 7", "another onEvent listener 7"]) expect(without.stderr.split(`error: ${message}`).length - 1).toBe(1);
     expect(without.stderr).toContain("error: onEvent listener 7");
     expect(without.stderr).toContain("error: another onEvent listener 7");
     const withListener = await faults("listen");
@@ -1254,7 +1262,7 @@ describe.if(onWindows)("a fault in one callback of createApp stays in that callb
     const { exitCode, seen, tapped, told, stderr } = await faults("listen");
     expect(exitCode).toBe(0);
     expect(told).toEqual(["worker: onEvent listener 1", "worker: sweetview: 2 onEvent listeners threw [onEvent listener 7, another onEvent listener 7]"]);
-    expect(stderr).not.toMatch(/^sweetview: UI dispatch failed:/m);
+    expect(stderr).not.toContain("error: onEvent listener");
     expect(tapped).toEqual(["tick 1", "tick 2", "tick 7"]);
     expect(seen?.deferredUnreadable).toBe("rejected: [object Object]");
     expect(stderr.match(/^sweetview: the worker failed:/gm)?.length).toBe(1);

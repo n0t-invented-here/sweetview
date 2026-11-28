@@ -674,8 +674,8 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
       const respond =(seq: string, status: number, value: unknown) => {
         if (isLive()) raw.return(seq, status, JSON.stringify(value ?? null));
       };
-      const replyError = (seq: string, error: unknown) => {
-        respond(seq, 1, { message: messageOfThrown(error) });
+      const replyError = (seq: string, error: unknown, readFailed?: (failure: unknown) => void) => {
+        respond(seq, 1, { message: messageOfThrown(error, readFailed) });
       };
       // The worker is gone (an uncaught error, or a message it sent could not be read): fail
       // everything waiting on it, then refuse new work for it instead of letting it hang.
@@ -710,7 +710,7 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
         assembler.clear();
         requestResponses.clear();
       };
-      const invoke = ({ seq, method, fn, params }: UiJob) => {
+      const invoke = ({ seq, method, fn, params }: UiJob, readFailed?: (failure: unknown) => void) => {
         try {
           const result = fn(params);
           if ((typeof result === "object" && result !== null || typeof result === "function")
@@ -721,7 +721,7 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
           }
           respond(seq, 0, result);
         } catch (err) {
-          replyError(seq, err);
+          replyError(seq, err, readFailed);
         }
       };
       const scheduleDeferred = () => {
@@ -733,10 +733,16 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
             try {
               // Keep the scheduled flag set during handlers. A modal loop may
               // pump more RPC messages while the current dialog is open.
+              // On the main branch the first value of a batch whose read threw ended the batch, and
+              // the native dispatch's catch printed `sweetview: UI dispatch failed:` for what the
+              // read threw: every call is answered now, and that line is printed once the batch is
+              // done, with a listener too (a fault of this package's, not told: D44).
+              let readFailure: { error: unknown } | undefined;
               for (const job of queue.splice(0)) {
                 if (!isLive()) break;
-                invoke(job);
+                invoke(job, (error) => void (readFailure ??= { error }));
               }
+              if (readFailure) console.error("sweetview: UI dispatch failed:", readFailure.error);
             } finally {
               deferScheduled = false;
               scheduleDeferred();
