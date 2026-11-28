@@ -1192,3 +1192,35 @@ fn a_webviews_widget_paints_its_start_colour_and_follows_its_frames_theme() {
     window.dispose();
   });
 }
+
+/// T4 of D49's second review: inside a webview's callback (where `process.exit()` can end the
+/// process before any deferred drop runs) a standalone webview's own window leaves the screen at
+/// once, and the release of the windows leaves a window alive whose webview's drop still waits.
+#[test]
+fn inside_a_callback_a_webview_going_hides_its_own_window_and_keeps_the_window_it_fills() {
+  on_ui_thread(|runtime| {
+    let _finish = Finish(&runtime);
+    let own = Engine::create(false, Host::Own, None).expect("a standalone webview");
+    own.show_own_window();
+    let own_window = own.inner.with_live(|live| match &live.window {
+      HostWindow::Own { window, .. } => window_value_of(window),
+      _ => panic!("its own window"),
+    }).expect("live");
+    let window = Window::create(WindowInit { title: "rt t4".into(), frame: true, resizable: true, no_activate: true, ..Default::default() }).expect("window");
+    let handle = window.handle();
+    let filled = Engine::create(false, Host::Fill(handle), crate::window::background_of(handle)).expect("webview");
+    let exists = |value: isize| BorrowedWindow::with_handle_value(value, |_| ()).is_some();
+    let visible = |value: isize| BorrowedWindow::with_handle_value(value, |w| sweetview_platform_window::is_visible(w)).unwrap_or(false);
+    {
+      let _in_a_callback = CallbackScope::enter();
+      own.destroy();
+      assert!(!visible(own_window), "the standalone webview's window is off the screen at once");
+      filled.destroy();
+      window.dispose();
+      crate::window::destroy_all();
+      assert!(exists(handle), "the window its webview's drop waits on is still a window");
+    }
+    settle(&runtime, Duration::from_millis(300));
+    assert!(!exists(handle), "and goes once the callback has returned");
+  });
+}

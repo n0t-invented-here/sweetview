@@ -892,6 +892,14 @@ impl Inner {
         }
       }
       None if self.live.try_borrow().map(|live| live.is_some()).unwrap_or(true) => {
+        // A standalone webview's own window leaves the screen now, not when the deferred drop
+        // runs: with a callback on the stack that drop may never run (`process.exit()` from
+        // inside it), and the window would stay on the screen with its page going (D49, T4).
+        if let Ok(live) = self.live.try_borrow() {
+          if let Some(Live { window: HostWindow::Own { window, .. }, .. }) = live.as_ref() {
+            window.set_visible(false);
+          }
+        }
         let _ = UNDROPPED.try_with(|all| {
           let mut all = all.borrow_mut();
           all.retain(|weak| weak.strong_count() > 0);

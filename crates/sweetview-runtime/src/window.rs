@@ -1489,10 +1489,21 @@ pub fn with_mount_target<R>(handle: isize, f: impl FnOnce(&BorrowedWindow<'_>) -
 /// let go of, and `tao` destroys it when its loop next runs, as a dropped window always was.
 fn destroy_undestroyed() {
   let pending: Vec<Rc<tao::window::Window>> = UNDESTROYED.try_with(|pending| std::mem::take(&mut *pending.borrow_mut())).unwrap_or_default();
+  let mut kept = Vec::new();
   for shared in pending {
+    // A window a webview's drop still waits on stays (hidden) while that webview's callback is
+    // on the stack: destroying it would take the webview's window from under its controller
+    // (D49, T4). It goes with the next turn, or with the process.
+    if crate::engine::drop_waits_in(platform::handle_value(shared.as_ref())) {
+      kept.push(shared);
+      continue;
+    }
     if let Ok(tao) = Rc::try_unwrap(shared) {
       platform::destroy_now(tao);
     }
+  }
+  if !kept.is_empty() {
+    let _ = UNDESTROYED.try_with(|pending| pending.borrow_mut().extend(kept));
   }
 }
 
