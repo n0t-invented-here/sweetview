@@ -7,7 +7,7 @@
 
 import type { ColorScheme, Events, FsChange, Methods, NotifyStatus, WatchStatus } from "web-app-backend/protocol";
 import { basename } from "node:path";
-import { createNotifier, createTray, pickFolder, setAppIcon, setAppMenu, type Notifier } from "@n1h/sweetview/native";
+import { closeToTrayOnLastWindow, createNotifier, createTray, pickFolder, setAppIcon, setAppMenu, type Notifier } from "@n1h/sweetview/native";
 import { createApp, indexHtml, WEBVIEW_VERSION, type App } from "@n1h/sweetview";
 import appCss from "./build/frontend/main.css" with { type: "file" };
 import appJs from "./build/frontend/main.js" with { type: "file" };
@@ -54,7 +54,8 @@ const app: App<Methods, Events> = await createApp<Methods, Events>({
   assets: { "index.html": indexHtml({ title: APP_NAME }), "main.js": appJs, "main.css": appCss },
   worker: new URL("./app-worker.ts", import.meta.url),
   debug: process.env.WEBVIEW_DEBUG === "1",
-  onClose: () => app.window.hide(), // the X hides to the tray; Quit lives in the tray menu
+  // Shown when the page calls signalReady() (or the ready watchdog fires): no blank frame first.
+  showOnReady: true,
   // A modal dialog runs its own message loop, so it runs after the RPC callback returns.
   deferredUiMethods: {
     "pick.folder": () => pickFolder(app.window, "Pick a folder to watch"),
@@ -114,6 +115,9 @@ const tray = createTray({
     }),
 });
 
+// A tray application: the X hides the window to the tray, and Quit lives in the tray menu.
+closeToTrayOnLastWindow(app.window);
+
 // Clicking a notification brings the window back and the page marks that notification as clicked.
 // The toasts carry the demo's name, not Sweetview's.
 notifier = createNotifier({
@@ -135,7 +139,6 @@ setAppMenu({
   ].join("\n"),
 });
 
-app.window.show();
 app.run(); // blocks until Quit
 // Until the macOS goal of the Rust rewrite, macOS runs the code it ran at the tag pre-rust-rewrite,
 // which releases nothing at exit: there the demo tears down and exits as it did then.

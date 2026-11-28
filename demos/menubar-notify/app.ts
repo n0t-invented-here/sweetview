@@ -11,7 +11,7 @@
 import { appendFileSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { createNotifier, createTray, setActivationPolicy, type MenuTemplate } from "@n1h/sweetview/native";
+import { closeToTrayOnLastWindow, createNotifier, createTray, setActivationPolicy, type MenuTemplate } from "@n1h/sweetview/native";
 import { createApp, indexHtml, type App } from "@n1h/sweetview";
 import pageCss from "./build/frontend/main.css" with { type: "file" };
 import pageJs from "./build/frontend/main.js" with { type: "file" };
@@ -61,7 +61,6 @@ const app: App<Methods, Events> = await createApp<Methods, Events>({
   // The page's size in CSS pixels, centred on the primary screen at its scale.
   contentSize: WINDOW_SIZE,
   icon: TRAY_ICON,
-  onClose: () => app.window.hide(),
   assets: {
     "index.html": indexHtml({
       title: APP_NAME,
@@ -76,12 +75,15 @@ const app: App<Methods, Events> = await createApp<Methods, Events>({
   debug: process.env.WEBVIEW_DEBUG === "1",
   uiMethods: {
     "notify.now": () => send(`Sent from the window at ${now()}`),
-    "page.ready": () => {
-      logLine("page ready");
+    "log.history": () => {
+      logLine("page loaded");
       return history;
     },
   },
 });
+
+// A menu-bar application: the X hides the window, and Quit lives in the menu.
+closeToTrayOnLastWindow(app.window);
 
 const tray = createTray({ tooltip: APP_NAME, icon: TRAY_ICON, menu: () => menu() });
 // The toasts carry the demo's name, not Sweetview's.

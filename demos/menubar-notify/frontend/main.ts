@@ -4,7 +4,7 @@
 import "./main.css";
 
 import { createBridge } from "@n1h/sweetview/ipc";
-import { webviewTransport } from "@n1h/sweetview/page";
+import { signalReady, webviewTransport } from "@n1h/sweetview/page";
 import type { Events, LogEntry, Methods } from "../service";
 
 const bridge = createBridge<Methods, Events>(webviewTransport());
@@ -30,5 +30,6 @@ bridge.on("log", add);
 now.addEventListener("click", () => bridge.notify("notify.now"));
 later.addEventListener("click", () => bridge.notify("notify.later", { seconds: 5 }));
 
-const history = await bridge.rpc("page.ready");
+const history = await bridge.rpc("log.history");
 for (const entry of history) add(entry);
+void signalReady(); // the page is ready: Sweetview's own signal, for its ready watchdog and showOnReady
