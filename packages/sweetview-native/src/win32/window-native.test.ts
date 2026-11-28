@@ -498,6 +498,33 @@ describe.if(onWindows)("startDrag on a maximised frameless window", () => {
 });
 
 describe.if(onWindows)("Window.fromHandle on an application's own window (made here through bun:ffi)", () => {
+  test("a popup window the application made reads as not maximised when wrapped, as at the tag, and reports nothing when it is restored", async () => {
+    // Review round 3: at tag pre-rust-rewrite a wrapper of a frameless (WS_POPUP) window answered
+    // isMaximized() from Sweetview's own saved rectangle (win32/window.ts, line 830), which a wrapper
+    // starts without; adoption read the placement flag for it too, which disagreed.
+    const { hInstance, user32, wide } = await api();
+    const WS_POPUP = 0x80000000;
+    const WS_VISIBLE = 0x10000000;
+    const WM_SYSCOMMAND = 0x0112;
+    const [SC_MINIMIZE, SC_MAXIMIZE, SC_RESTORE] = [0xf020n, 0xf030n, 0xf120n];
+    const hwnd = user32.CreateWindowExW(0, wide("STATIC"), wide(unique("own popup")), WS_POPUP | WS_VISIBLE, 80, 80, 300, 200, 0n, 0n, hInstance(), null);
+    expect(hwnd).not.toBe(0n);
+    const command = (sc: bigint) => user32.SendMessageW(hwnd, WM_SYSCOMMAND, sc, 0n);
+    command(SC_MAXIMIZE);
+    command(SC_MINIMIZE);
+    const wrapped = Window.fromHandle(hwnd);
+    try {
+      expect(wrapped.isMaximized()).toBe(false);
+      const seen: boolean[] = [];
+      wrapped.onMaximizeChange((m) => seen.push(m));
+      command(SC_RESTORE);
+      expect({ maximized: wrapped.isMaximized(), seen }).toEqual({ maximized: false, seen: [] });
+    } finally {
+      wrapped.dispose();
+      if (user32.IsWindow(hwnd)) user32.DestroyWindow(hwnd);
+    }
+  });
+
   test("a window the application made, maximised and minimised before Window.fromHandle wraps it, reports nothing when restored to maximised", async () => {
     // Review round 2, finding 5: the state was read only when the window was not minimised.
     const { WS_OVERLAPPEDWINDOW, hInstance, user32, wide } = await api();

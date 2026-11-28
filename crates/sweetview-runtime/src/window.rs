@@ -812,9 +812,17 @@ impl Window {
       .ok_or_else(|| Error::state(format!("sweetview: not a window: {handle:#x}")))?;
     let core = Core::new(handle, None, chrome, false, logic::DEFAULT_MIN_SIZE, false, None);
     // The state a window Sweetview did not make is in when it is wrapped, kept from then on by its
-    // resizes: a minimised one's is the state it is restored to, which its placement keeps.
+    // resizes. A framed one's is the OS's: a minimised one's is the state it is restored to, which
+    // its placement keeps. A frameless one's is Sweetview's own toggle, which a wrapper starts
+    // without, as at the tag (its isMaximized read the saved rectangle).
     let minimized = core.with_native(|window| platform::is_minimized(window)).unwrap_or(false);
-    let maximized = if minimized { core.with_native(|window| platform::restores_maximized(window)).unwrap_or(false) } else { core.maximized_now() };
+    let maximized = if !core.chrome.frame {
+      false
+    } else if minimized {
+      core.with_native(|window| platform::restores_maximized(window)).unwrap_or(false)
+    } else {
+      core.maximized_now()
+    };
     core.maximized.set(maximized);
     if on_this_thread {
       core.subclass()?;
