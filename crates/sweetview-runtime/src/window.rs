@@ -232,6 +232,12 @@ pub fn background_of(handle: isize) -> Option<(u8, u8, u8)> {
   core_of(handle).and_then(|core| core.background.get())
 }
 
+/// True when `handle` names a window this thread's runtime made with `no_activate`: one that never
+/// takes the foreground (D9).
+pub(crate) fn is_no_activate(handle: isize) -> bool {
+  core_of(handle).is_some_and(|core| core.no_activate)
+}
+
 fn core_of(handle: isize) -> Option<Rc<Core>> {
   WINDOWS.try_with(|w| w.borrow().get(&handle).cloned()).ok().flatten()
 }
