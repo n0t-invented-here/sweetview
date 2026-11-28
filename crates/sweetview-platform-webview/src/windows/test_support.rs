@@ -378,6 +378,27 @@ pub fn covered_at(webview: &Webview, x: i32, y: i32) -> Option<String> {
     Some(String::from_utf16_lossy(&title[..n.max(0) as usize]))
 }
 
+/// Why `webview` is not in front of the person now, or `None` when it is: its
+/// top-level window is the foreground window and no other window covers the
+/// middle of the webview. WebView2's own download dialog opens for, and stays
+/// open in, a webview in front only (it closes when the webview loses the
+/// focus).
+pub fn not_in_front(webview: &Webview) -> Option<String> {
+    use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowTextW};
+    let ours = root_of(webview);
+    // SAFETY: no arguments; reads no memory of ours.
+    let front = unsafe { GetForegroundWindow() };
+    if front != ours {
+        let mut title = [0u16; 128];
+        // SAFETY: `title` is a local buffer the call fills, its length taken from the slice.
+        let n = unsafe { GetWindowTextW(front, &mut title) };
+        return Some(format!("another window is the foreground window: {:?}", String::from_utf16_lossy(&title[..n.max(0) as usize])));
+    }
+    let (x, y) = screen_origin(webview);
+    let sizes = fill_sizes(webview);
+    covered_at(webview, x + sizes.container.0 / 2, y + sizes.container.1 / 2).map(|by| format!("the webview is covered by {by:?}"))
+}
+
 /// A webview made on `environment` instead of the thread's shared one.
 pub fn webview_on(environment: &ICoreWebView2Environment, parent: &BorrowedWindow<'_>, layout: super::host::Layout) -> Result<Webview, sweetview_http::ErrorCode> {
     Webview::create_on(environment, parent, layout, false, None)
@@ -519,4 +540,14 @@ pub fn fill_sizes(webview: &Webview) -> FillSizes {
     // SAFETY: the controller is a COM reference this frame holds; `bounds` a local RECT.
     let _ = unsafe { webview.controller().Bounds(&mut bounds) };
     FillSizes { container: size(inner), parent: size(outer), controller: size(bounds) }
+}
+
+thread_local! {
+    pub(super) static FAIL_NEXT_ATTACH: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Makes this thread's next `WebviewExtras::attach` fail, as a webview whose
+/// request handling WebView2 refuses to set up.
+pub fn fail_next_attach() {
+    FAIL_NEXT_ATTACH.with(|fail| fail.set(true));
 }

@@ -272,10 +272,19 @@ impl Engine {
     };
 
     let token = drain_token(id);
-    let extras = WebviewExtras::attach(&webview, ExtrasOptions { wake_ui: Arc::new(move || {
+    let attached = WebviewExtras::attach(&webview, ExtrasOptions { wake_ui: Arc::new(move || {
       runtime::wake(token);
-    }) })
-    .map_err(|code| Error::os("the webview's request handling could not be set up", format!("webview_error_t {}", code.code())))?;
+    }) });
+    let extras = match attached {
+      Ok(extras) => extras,
+      Err(code) => {
+        // Nothing of this webview stays: its own window's listener goes with it.
+        if let HostWindow::Own { listener, .. } = &window {
+          runtime.remove_event_listener(*listener);
+        }
+        return Err(Error::os("the webview's request handling could not be set up", format!("webview_error_t {}", code.code())));
+      }
+    };
     let message_slot = slot.clone();
     extras.set_page_message_handler(Some(Rc::new(move |message: &str| {
       let inner = message_slot.borrow().upgrade();

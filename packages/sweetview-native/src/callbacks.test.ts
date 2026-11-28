@@ -1163,7 +1163,7 @@ describe.if(onWindows)("onCallbackError's sink in the binding", () => {
 
   // What the binding's own catch does with each kind of thrown value (review 3, item 2 and Q1): it
   // reads nothing of the value, leaves nothing pending, and follows no cause.
-  const VALUES = ["string", "number", "null", "undefined", "symbol", "no prototype", "toString throws", "plain object", "error", "error whose cause is itself", "error whose message throws"];
+  const VALUES = ["string", "number", "null", "undefined", "symbol", "no prototype", "toString throws", "plain object", "error", "error whose cause is itself", "error whose message throws", "error with an unpaired surrogate"];
   test("every kind of value thrown past the TypeScript catches reaches a listener as it is, and the next call into the binding works", async () => {
     const { r, exitCode, stderr } = await spawnSink("values-listen");
     expect(exitCode).toBe(0);
@@ -1182,6 +1182,7 @@ describe.if(onWindows)("onCallbackError's sink in the binding", () => {
       { name: "a native timeout", kind: "internal", message: "loop", isThrown: true, causeIsThrown: true },
       // The thrown object itself, its unreadable message left to the listener (review 4, C3).
       { name: "a native timeout", kind: "internal", message: "(its message throws)", isThrown: true, causeIsThrown: false },
+      { name: "a native timeout", kind: "internal", message: "bad \ud800 tail", isThrown: true, causeIsThrown: false },
     ]);
     expect(stderr).toBe("");
   });
@@ -1208,6 +1209,8 @@ describe.if(onWindows)("onCallbackError's sink in the binding", () => {
       line("Error: loop"),
       // Its String() reads the message, which throws: no text, as napi's coercion gave none.
       line(""),
+      // An unpaired surrogate is U+FFFD in the line, and the rest of it is kept (review 5, E5).
+      line("Error: bad � tail"),
     ]);
   });
 
@@ -1258,6 +1261,25 @@ describe.if(onWindows)("onCallbackError's sink in the binding", () => {
 // The raw webview class's callback boundaries with a listener set (review F6, N3), from
 // test/fixtures/webview-errors.ts. The drop is the DevTools protocol's; no input is injected.
 describe.if(onWindows)("onCallbackError and the raw webview class", () => {
+  // A listener that throws (review 5, E1): each fault is told once, with its own kind, and both
+  // lines are printed, the fault's and the listener's; the page and the request get their answer.
+  test("with a listener that throws, each raw webview fault is told once with its kind, and its line and the listener's are both printed", async () => {
+    const { r, exitCode, stderr } = await runFixture("webview-errors.ts", ["throwing"]);
+    expect({ exitCode, bindThrows: r.page?.bindThrows, bindProxy: r.page?.bindProxy, promiseThenGetter: r.page?.promiseThenGetter }).toEqual({ exitCode: 0, bindThrows: "rejected", bindProxy: "rejected", promiseThenGetter: 500 });
+    const told = r.told as string[];
+    const count = (pattern: RegExp) => stderr.match(pattern)?.length ?? 0;
+    const toldOf = (prefix: string) => told.filter((t) => t.startsWith(prefix)).length;
+    expect(told.filter((t) => t.includes("(bindProxy)"))).toEqual(["webview.bind (bindProxy): [object Object]"]);
+    expect(told.filter((t) => t.includes("request then getter"))).toEqual(["webview.setRequestHandler: request then getter"]);
+    expect(told.filter((t) => t.includes("bind throws"))).toEqual(["webview.bind (bindThrows): bind throws"]);
+    expect({
+      listener: count(/^sweetview: an onCallbackError handler threw:/gm),
+      bind: count(/^sweetview: webview[.]bind threw:/gm),
+      request: count(/^sweetview: webview[.]setRequestHandler threw:/gm),
+      raw: count(/^sweetview: a binding threw:/gm),
+    }).toEqual({ listener: told.length, bind: toldOf("webview.bind "), request: toldOf("webview.setRequestHandler"), raw: toldOf("webview.bindRaw") });
+  }, 90_000);
+
   // With no listener, each boundary prints what it printed on the main branch, as often (review 4,
   // C1): a value whose reading threw left the TypeScript catch for the binding's own there.
   test("with no listener, the raw webview's faults print the main branch's lines, once each", async () => {

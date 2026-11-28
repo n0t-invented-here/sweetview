@@ -208,7 +208,10 @@ extern "system" fn widget_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPA
             note_first_shown(hwnd);
         }
         if msg == WM_NCDESTROY {
-            let _ = WIDGETS.try_with(|widgets| widgets.borrow_mut().remove(&key(hwnd)));
+            // The entry (with its controller reference) is taken out, then released once the
+            // borrow has ended.
+            let gone = WIDGETS.try_with(|widgets| widgets.borrow_mut().remove(&key(hwnd))).ok().flatten();
+            drop(gone);
             let _ = FILLING.try_with(|filling| filling.borrow_mut().remove(&key(hwnd)));
             #[cfg(any(test, feature = "test-support"))]
             let _ = FIRST_SHOWN.try_with(|shown| shown.borrow_mut().remove(&key(hwnd)));
@@ -334,12 +337,11 @@ impl Drop for Widget {
         if !self.alive() {
             return;
         }
-        // Its controller is not sized again from here on.
-        let _ = WIDGETS.try_with(|widgets| {
-            if let Some(entry) = widgets.borrow_mut().get_mut(&key(self.hwnd)) {
-                entry.1 = None;
-            }
-        });
+        // Its controller is not sized again from here on. The reference is taken out of the
+        // table and released after the borrow ends: a release that sends the widget a message
+        // finds the table free.
+        let held = WIDGETS.try_with(|widgets| widgets.borrow_mut().get_mut(&key(self.hwnd)).and_then(|entry| entry.1.take())).ok().flatten();
+        drop(held);
         // SAFETY: `alive` says the window this value made still exists under this handle; it is
         // a window of this thread, and its `WM_NCDESTROY` removes the entry.
         let _ = unsafe { DestroyWindow(self.hwnd) };
@@ -372,8 +374,40 @@ fn guarded_completion(on_done: impl FnOnce(windows::core::Result<ICoreWebView2Co
 
 /// One webview: its widget and its WebView2 controller. Not `Send`, not `Sync`.
 /// Dropping it closes the controller and destroys the widget.
+/// A WebView2 controller this crate made, closed when dropped (the fork's
+/// `deinit`, 574): owned from the moment WebView2 hands it over, so a failure
+/// before the `Webview` exists still closes it before its widget goes.
+struct Controller(ICoreWebView2Controller);
+
+impl std::ops::Deref for Controller {
+    type Target = ICoreWebView2Controller;
+    fn deref(&self) -> &ICoreWebView2Controller {
+        &self.0
+    }
+}
+
+impl Drop for Controller {
+    fn drop(&mut self) {
+        // SAFETY: `self.0` is this value's COM reference until it drops, after this call;
+        // closing a controller already closed (as `WebviewExtras` does first) is a no-op.
+        let _ = unsafe { self.0.Close() };
+        #[cfg(test)]
+        CLOSED.with(|closed| closed.set(closed.get() + 1));
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Tests only: fail the creation right after the controller exists, and keep
+    /// a reference to that controller for the test to look at.
+    static FAIL_AFTER_CONTROLLER: RefCell<Option<Option<ICoreWebView2Controller>>> = const { RefCell::new(None) };
+    /// Tests only: how many controllers this thread has closed.
+    static CLOSED: Cell<u32> = const { Cell::new(0) };
+}
+
 pub struct Webview {
-    controller: ICoreWebView2Controller,
+    /// First, so it is closed before the widget, the last field, is destroyed.
+    controller: Controller,
     webview: ICoreWebView2,
     environment: ICoreWebView2Environment,
     /// Last, so it goes after the controller is closed.
@@ -422,7 +456,14 @@ impl Webview {
         let hwnd = widget.hwnd;
         let (environment, controller) =
             super::attempts::attempt(environment, |environment| create_controller_once(environment, hwnd), || std::thread::sleep(super::attempts::RETRY_WAIT))?;
+        // Owned at once: from here on any failure closes it, and then the widget goes.
+        let controller = Controller(controller);
         let environment = &environment;
+        #[cfg(test)]
+        if FAIL_AFTER_CONTROLLER.with(|fail| fail.borrow().is_some()) {
+            FAIL_AFTER_CONTROLLER.with(|fail| *fail.borrow_mut() = Some(Some(controller.0.clone())));
+            return Err(ErrorCode::Unspecified);
+        }
         // SAFETY: `controller` is the COM reference WebView2 just handed over; no arguments.
         let webview = unsafe { controller.CoreWebView2() }.map_err(|_| ErrorCode::InvalidState)?;
         // SAFETY: `webview` is the COM reference just returned; no arguments.
@@ -432,7 +473,7 @@ impl Webview {
         // SAFETY: as above.
         unsafe { settings.SetIsStatusBarEnabled(false) }.map_err(|_| ErrorCode::Unspecified)?;
         let made = Self { controller, webview, environment: environment.clone(), widget };
-        made.widget.set_controller(&made.controller);
+        made.widget.set_controller(&made.controller.0);
         // Before the widget is first shown (it is made without `WS_VISIBLE`), so nothing is
         // painted in WebView2's own white first.
         if let Some((r, g, b)) = background {
@@ -454,7 +495,7 @@ impl Webview {
     }
 
     pub(crate) fn controller(&self) -> &ICoreWebView2Controller {
-        &self.controller
+        &self.controller.0
     }
 
     pub(crate) fn core(&self) -> &ICoreWebView2 {
@@ -571,14 +612,6 @@ impl Webview {
     }
 }
 
-impl Drop for Webview {
-    fn drop(&mut self) {
-        // SAFETY: `self.controller` is this value's COM reference until it drops, after this call;
-        // closing a controller already closed (as `WebviewExtras` does first) is a no-op.
-        let _ = unsafe { self.controller.Close() };
-        // The widget, the last field, is destroyed after this.
-    }
-}
 
 /// One `CreateCoreWebView2Controller` on `widget`, pumping this thread's
 /// messages until it completes (the fork's `embed` wait loop).
@@ -650,6 +683,54 @@ mod tests {
         assert!(!orphan.alive(), "its WM_NCDESTROY came with its parent's destruction");
         // Does nothing: the handle value may name another window by now.
         drop(orphan);
+    }
+
+    // W3: a thread that made a webview and ends, with nothing let go of early, gives back its
+    // WebView2 environment in its thread's teardown without faulting (the process survives
+    // the join), three times over.
+    #[test]
+    fn a_thread_that_made_a_webview_ends_cleanly() {
+        for round in 0..3 {
+            let ended = std::thread::spawn(move || {
+                use tao::event_loop::EventLoopBuilder;
+                use tao::platform::windows::EventLoopBuilderExtWindows;
+                let event_loop = EventLoopBuilder::new().with_any_thread(true).build();
+                let parent = tao::window::WindowBuilder::new().with_visible(false).build(&event_loop).expect("parent");
+                let webview = Webview::create(&BorrowedWindow::of(&parent), Layout::Fill, false, None).expect("webview");
+                drop(webview);
+                drop(parent);
+                drop(event_loop);
+                round
+            })
+            .join();
+            assert_eq!(ended.ok(), Some(round), "round {round}: the thread ended");
+        }
+    }
+
+    // W3: a failure after WebView2 has handed the controller over and before the `Webview`
+    // exists (here forced right after it) closes that controller, and its widget goes after it.
+    #[test]
+    fn a_creation_that_fails_after_the_controller_exists_closes_it() {
+        use tao::event_loop::EventLoopBuilder;
+        use tao::platform::windows::EventLoopBuilderExtWindows;
+        use windows::Win32::UI::WindowsAndMessaging::FindWindowExW;
+        let event_loop = EventLoopBuilder::new().with_any_thread(true).build();
+        let parent = tao::window::WindowBuilder::new().with_visible(false).build(&event_loop).expect("parent");
+        let parent_hwnd = HWND(sweetview_platform_window::handle_value(&BorrowedWindow::of(&parent)) as *mut _);
+        FAIL_AFTER_CONTROLLER.with(|fail| *fail.borrow_mut() = Some(None));
+        let closed_before = CLOSED.with(Cell::get);
+        let failed = Webview::create(&BorrowedWindow::of(&parent), Layout::Fill, false, None);
+        let kept = FAIL_AFTER_CONTROLLER.with(|fail| fail.borrow_mut().take()).flatten();
+        assert_eq!(failed.err(), Some(ErrorCode::Unspecified), "the forced failure");
+        let controller = kept.expect("the controller existed when the creation failed");
+        // WebView2 answers a closed controller's calls as an open one's here, so what is counted
+        // is the close this crate's owning type made.
+        assert_eq!(CLOSED.with(Cell::get), closed_before + 1, "the controller was closed");
+        // SAFETY: `parent_hwnd` is the test's window; no class or name filters beyond the widget's.
+        let widget = unsafe { FindWindowExW(Some(parent_hwnd), None, WIDGET_CLASS, PCWSTR::null()) };
+        assert!(widget.map(|w| w.is_invalid()).unwrap_or(true), "the widget went with it");
+        drop(controller);
+        super::super::environment::release_shared();
     }
 
 }
