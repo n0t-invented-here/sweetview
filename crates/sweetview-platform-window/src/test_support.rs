@@ -323,7 +323,27 @@ pub struct OwnWindow {
 impl OwnWindow {
   /// Shows the window at `(x, y)`, `width` by `height` screen pixels, topmost and not
   /// activated; `on_message` is told each message its procedure is dispatched.
-  pub fn new(title: &str, (x, y, width, height): (i32, i32, i32, i32), on_message: impl Fn(u32) + 'static) -> Option<OwnWindow> {
+  pub fn new(title: &str, rect: (i32, i32, i32, i32), on_message: impl Fn(u32) + 'static) -> Option<OwnWindow> {
+    Self::make(title, rect, WS_EX_TOOLWINDOW, WS_POPUP, true, on_message)
+  }
+
+  /// A framed window of the application's own (`WS_OVERLAPPEDWINDOW`: a title bar, a sizing border,
+  /// the minimise and maximise buttons and the system menu), shown without activation and not
+  /// topmost, whose procedure reports every message it is dispatched.
+  pub fn framed(title: &str, rect: (i32, i32, i32, i32), on_message: impl Fn(u32) + 'static) -> Option<OwnWindow> {
+    use windows::Win32::UI::WindowsAndMessaging::{WINDOW_EX_STYLE, WS_OVERLAPPEDWINDOW};
+    Self::make(title, rect, WINDOW_EX_STYLE(0), WS_OVERLAPPEDWINDOW, false, on_message)
+  }
+
+  fn make(
+    title: &str,
+    (x, y, width, height): (i32, i32, i32, i32),
+    ex_style: windows::Win32::UI::WindowsAndMessaging::WINDOW_EX_STYLE,
+    style: windows::Win32::UI::WindowsAndMessaging::WINDOW_STYLE,
+    topmost: bool,
+    on_message: impl Fn(u32) + 'static,
+  ) -> Option<OwnWindow> {
+    use windows::Win32::UI::WindowsAndMessaging::HWND_NOTOPMOST;
     let class = w!("sweetview.test-own-window");
     let description = WNDCLASSW { lpfnWndProc: Some(own_window_procedure), lpszClassName: class, ..Default::default() };
     // SAFETY: `description` is a fully initialised WNDCLASSW on this frame; its class name is a
@@ -332,7 +352,7 @@ impl OwnWindow {
     let title = HSTRING::from(title);
     // SAFETY: the class is registered above; `title` is a wide string owned by this frame for the
     // call; no parent, menu, instance or creation parameter is passed.
-    let made = unsafe { CreateWindowExW(WS_EX_TOOLWINDOW, class, &title, WS_POPUP, x, y, width, height, None, None, None, None) };
+    let made = unsafe { CreateWindowExW(ex_style, class, &title, style, x, y, width, height, None, None, None, None) };
     let hwnd = made.ok()?;
     // Owned from here: a failure below still destroys the window.
     let destroyed = Rc::new(std::cell::Cell::new(false));
@@ -344,8 +364,9 @@ impl OwnWindow {
       }
     });
     OWN_HANDLERS.with(|all| all.borrow_mut().insert(window.handle_value(), handler));
+    let band = if topmost { HWND_TOPMOST } else { HWND_NOTOPMOST };
     // SAFETY: `window.hwnd` is the live window made above; the flags are constants.
-    unsafe { SetWindowPos(window.hwnd, Some(HWND_TOPMOST), x, y, width, height, SWP_SHOWWINDOW | SWP_NOACTIVATE) }.ok()?;
+    unsafe { SetWindowPos(window.hwnd, Some(band), x, y, width, height, SWP_SHOWWINDOW | SWP_NOACTIVATE) }.ok()?;
     Some(window)
   }
 
@@ -711,4 +732,31 @@ pub fn frame_edge(dpi: u32) -> i32 {
   // SAFETY: as above.
   let padded = unsafe { GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi) };
   frame + padded
+}
+
+// ---- notification icons, by the shell's own record -------------------------------------------
+
+fn notify_icon_data(window: isize, uid: u32, flags: windows::Win32::UI::Shell::NOTIFY_ICON_DATA_FLAGS) -> windows::Win32::UI::Shell::NOTIFYICONDATAW {
+  use windows::Win32::UI::Shell::NOTIFYICONDATAW;
+  // A state change with an empty mask: a modify of nothing.
+  NOTIFYICONDATAW { cbSize: size_of::<NOTIFYICONDATAW>() as u32, hWnd: hwnd_of(window), uID: uid, uFlags: flags, ..Default::default() }
+}
+
+/// Whether the shell holds a notification icon added under the window `window` with id `uid`: a
+/// modify that changes nothing, which the shell accepts only for an icon it holds.
+pub fn shell_holds_icon(window: isize, uid: u32) -> bool {
+  use windows::Win32::UI::Shell::{Shell_NotifyIconW, NIF_STATE, NIM_MODIFY};
+  let data = notify_icon_data(window, uid, NIF_STATE);
+  // SAFETY: `data` is a fully initialised NOTIFYICONDATAW on this frame for the call; it changes
+  // nothing of the icon it names.
+  unsafe { Shell_NotifyIconW(NIM_MODIFY, &data) }.as_bool()
+}
+
+/// Deletes the shell's notification icon `(window, uid)` behind its owner's back, as the shell
+/// loses every icon when Explorer restarts.
+pub fn delete_shell_icon(window: isize, uid: u32) -> bool {
+  use windows::Win32::UI::Shell::{Shell_NotifyIconW, NIM_DELETE, NOTIFY_ICON_DATA_FLAGS};
+  let data = notify_icon_data(window, uid, NOTIFY_ICON_DATA_FLAGS(0));
+  // SAFETY: `data` is a fully initialised NOTIFYICONDATAW on this frame for the call.
+  unsafe { Shell_NotifyIconW(NIM_DELETE, &data) }.as_bool()
 }

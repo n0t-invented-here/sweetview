@@ -503,3 +503,17 @@ Read and judged to run the tag's macOS code, so left on (D42 gives each reason):
 Found and not changed here, for the macOS goal or the owner: the root `justfile`'s `check`, `pack`, `link` and `publish` depend on `native::build`, so on a Mac they need `cargo` and build a darwin `.node` that nothing loads (D34; `rust-rewrite/CHECKLIST-windows.md` names `check: native::build`). At the tag `check` and `pack` needed only Bun. Publishing from a Mac ships no Windows binding. Features other branches add to shared code after this one (a ready-signal reveal, close and quit order) need the same check against this section when they merge.
 
 Nothing here was run on a Mac. `bun test` and each demo on a Mac settle it (audit finding 11).
+
+## 9. The webview is no longer built by `wry` (D48)
+
+On Windows `sweetview-platform-webview` now makes the webview itself, as the C++ library's `win32_edge.hh` makes it, and `wry` is a dependency of no crate. This supersedes what sections 2 and 3 say about the webview and `wry`: the `sweetview-platform-webview` row of the crate table, the paragraph on dependencies (`sweetview-runtime` no longer depends on `wry`; `sweetview-platform-webview` now depends on `sweetview-platform-window` on every platform), the rows on `WebviewExtras::attach(&wry::WebView, ...)` and the free `set_background_color`, the note on `move_focus` (it is back, as `Webview::move_focus`), and the engine row on `reparent(&WebView, ...)`. With `wry` gone, `mac-check` no longer compiles `objc2-exception-helper`.
+
+What the macOS goal inherits: the runtime's engine (`crates/sweetview-runtime/src/engine.rs`) calls the same types on every platform, so a macOS module of `sweetview-platform-webview` meets these signatures (the stand-in, `src/unported.rs`, has them now and returns `ErrorCode::Unspecified` or does nothing):
+
+| Item | Signature |
+|---|---|
+| the webview | `Webview::create(parent: &BorrowedWindow<'_>, layout: Layout, devtools: bool) -> Result<Webview, ErrorCode>`; `navigate(&str)`, `navigate_to_string(&str)`, `evaluate(&str)`, each `-> ErrorCode`; `set_bounds(x: i32, y: i32, width: u32, height: u32)`, `fill_parent()`, `set_visible(bool)`, `move_focus()`; `reparent(&BorrowedWindow<'_>) -> ErrorCode`; `set_background_color(r, g, b, a: u8) -> ErrorCode`. Dropping it removes the webview from its window |
+| where it sits | `enum Layout { Fill, Bounds { x: i32, y: i32, width: u32, height: u32 } }` |
+| the extras | `WebviewExtras::attach(&Webview, ExtrasOptions) -> Result<WebviewExtras, ErrorCode>`; `set_page_message_handler(Option<PageMessageHandler>)` where `PageMessageHandler = Rc<dyn Fn(&str)>` gets each string the page posts; `set_new_window_handler(Option<Rc<dyn Fn(String)>>) -> ErrorCode` (none set: the engine's own popup behaviour); the rest as before |
+
+Whether the macOS module builds on `wry` (re-added for macOS only), on `objc2-web-kit`, or on the C++ library's own behaviour as the measure, as Windows now does, is the macOS goal's choice; on Windows the measure was the C++ library's behaviour, step by step, and the engine tests in `engine_tests.rs` read it back for each kind of host.

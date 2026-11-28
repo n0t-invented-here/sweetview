@@ -1,4 +1,4 @@
-//! `create_environment`: an environment made the C++ fork's way serves `wry`
+//! `create_environment`: an environment made the C++ fork's way serves
 //! webviews, one environment is shared by several webviews, and the C++
 //! fork's default folder is `%APPDATA%\<exe file name>`. Passes with
 //! `WEBVIEW2_USER_DATA_FOLDER` set or unset: the variable is read, never set.
@@ -11,9 +11,10 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use common::{Ctx, View, INDEX_HTML};
-use sweetview_platform_webview::{create_environment, default_user_data_folder, ErrorCode, ExtrasOptions, WebviewExtras};
+use sweetview_platform_webview::test_support::webview_on;
+use sweetview_platform_webview::{create_environment, default_user_data_folder, ErrorCode, ExtrasOptions, Layout, WebviewExtras};
+use sweetview_platform_window::BorrowedWindow;
 use tao::window::WindowBuilder;
-use wry::{WebViewBuilder, WebViewBuilderExtWindows};
 
 /// The tests of this file one at a time: one counts the process's handles.
 fn serial() -> MutexGuard<'static, ()> {
@@ -25,12 +26,9 @@ fn view_in(ctx: &Ctx, environment: &webview2_com::Microsoft::Web::WebView2::Win3
     let window = WindowBuilder::new().with_title("environment test").build(&ctx.el).expect("window");
     let messages = Rc::new(RefCell::new(Vec::new()));
     let sink = messages.clone();
-    let webview = WebViewBuilder::new()
-        .with_environment(environment.clone())
-        .with_ipc_handler(move |request| sink.borrow_mut().push(request.into_body()))
-        .build(&window)
-        .expect("webview on the created environment");
+    let webview = webview_on(environment, &BorrowedWindow::of(&window), Layout::Fill).expect("webview on the created environment");
     let extras = WebviewExtras::attach(&webview, ExtrasOptions { wake_ui: Arc::new(|| {}) }).expect("attach");
+    extras.set_page_message_handler(Some(Rc::new(move |message: &str| sink.borrow_mut().push(message.to_owned()))));
     assert_eq!(extras.set_asset("index.html", "text/html", INDEX_HTML.as_bytes().to_vec()), ErrorCode::Ok);
     View { extras: Some(extras), webview: Some(webview), window: Some(window), messages, wakes: Arc::default() }
 }

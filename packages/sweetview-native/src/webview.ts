@@ -3,7 +3,7 @@
 // `@n1h/sweetview-webview-bun` exported as `Webview`; `@n1h/sweetview` builds
 // `WebView.attach` and `createApp` on it and re-exports it as `RawWebview`.
 //
-// Windows: the Rust binding (`wry` on WebView2, plus Sweetview's own request
+// Windows: the Rust binding (WebView2, made by Sweetview's own crates, with its own request
 // handler). macOS: the webview library of `@n1h/sweetview-webview-bun`, until
 // the macOS goal of the rewrite replaces it; `./darwin/webview` is that seam.
 
@@ -175,10 +175,11 @@ export function completeWebviewRequest(handle: WebviewHandle, id: bigint, respon
  * {@link completeWebviewRequest}, never both for one request. Safe to call
  * from any thread.
  *
- * Windows: the body is a stream WebView2 reads on its own thread, but
- * WebView2 hands the page the response only once the whole body is read (a
- * WebView2 limitation for intercepted requests), so an `EventSource` there
- * gets every event at {@link endWebviewResponse}, not one by one. macOS: the
+ * Windows: the body is a stream WebView2 reads on its own thread, but in
+ * every case measured WebView2 handed the page the response only once the
+ * whole body was read (a WebView2 limitation for intercepted requests), so
+ * an `EventSource` there gets every event at {@link endWebviewResponse}, not
+ * one by one. macOS: the
  * page reads the body as it arrives.
  *
  * @throws {WebviewError} Bad headers, a status outside 100-599, a response
@@ -195,7 +196,8 @@ export function beginWebviewResponse(handle: WebviewHandle, id: bigint, head: We
 /**
  * Appends a piece of the body to a response started with
  * {@link beginWebviewResponse}. Safe to call from any thread; the bytes are
- * copied before this returns. A chunk for a response that has ended, was
+ * copied before this returns, and it never waits for the page. A chunk for
+ * a response that has ended, was
  * never begun, or that the page abandoned is dropped; an empty chunk writes
  * nothing, but is still checked like any other (a destroyed webview throws).
  *
@@ -563,10 +565,9 @@ export class Webview {
           }
         } catch (err) {
           // The main branch let this escape to the binding's own catch, which printed
-          // `sweetview: a request handler threw:` and answered 500: with no listener it still does.
-          let asBefore = false;
-          reportCallbackError("webview.setRequestHandler", err, () => void (asBefore = true));
-          if (asBefore) throw err;
+          // `sweetview: a request handler threw:` and answered 500: with no listener told it still
+          // does. Told, it is not handed on: one report, of this kind.
+          if (!reportCallbackError("webview.setRequestHandler", err, null)) throw err;
           this.#completeQuietly(request.id, { status: 500 });
         }
       }),
@@ -790,10 +791,9 @@ export class Webview {
       // value that threw leaves it for the binding's own catch, after the page's call was
       // rejected: the main branch printed `sweetview: a binding threw:` for it there.
       const failed = (err: unknown, synchronous = false) => {
-        let asBefore = false;
-        reportCallbackError("webview.bind", err, () => void (asBefore = true), name);
+        const told = reportCallbackError("webview.bind", err, null, name);
         reject(err);
-        if (asBefore && synchronous && readFailure) throw readFailure.error;
+        if (!told && synchronous && readFailure) throw readFailure.error;
       };
       let args: unknown[];
       try {

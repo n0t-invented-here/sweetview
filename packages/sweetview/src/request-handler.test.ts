@@ -222,3 +222,25 @@ test.if(live)("returns clean errors for synchronous Promises and absent worker h
   expect((await runLive("no-handler")).report).toEqual({ status: 404, body: "Not Found" });
   expect((await runLive("request-only")).report).toEqual({ status: 200, body: "<!doctype html><p id=dynamic>worker HTML</p>" });
 }, 70_000);
+
+// D48. A worker's streamed body on a live WebView2: every byte reaches the page, in order.
+// WebView2 reads each chunk out of the binding as it is written but hands the page none of the
+// body before it ends (WebView2Feedback #3519; Microsoft's ICoreWebView2WebResourceResponse
+// reference requires all content by the time the deferral completes), as the C++ library's own
+// test asserted: the page cannot acknowledge a part before the next is written, and the whole
+// body waits in WebView2 until the end. Both are asserted as measured: if a WebView2 Runtime
+// starts handing the page bytes before the end, this fails, and D48, the docs and these
+// assertions change.
+test.if(live && process.platform === "win32")("a worker's streamed body arrives whole and in order, and WebView2 hands it to the page at its end", async () => {
+  const { report } = await runLive("pace");
+  expect(report.live).toBe("live one;live two;live three;");
+  const bulkBytes = 24 * 1024 * 1024 + 4321;
+  expect(report.bulk).toEqual({ total: bulkBytes, bad: null });
+  expect(report.pacing.produced).toBe(bulkBytes);
+  // No part reached the page before the next was written...
+  expect(report.pacing.liveAcks).toEqual([false, false, false]);
+  // ...and the page read nothing of the body before the worker ended it (the worker waited up to
+  // 3 s for the page's first read before ending), so all of it was ahead of the page.
+  expect(report.pacing.firstBeforeEnd).toBe(false);
+  expect(report.pacing.maxAhead).toBe(bulkBytes);
+}, 30_000);

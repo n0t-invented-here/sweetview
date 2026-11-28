@@ -122,7 +122,7 @@ impl HasWindowHandle for BorrowedWindow<'_> {
     // confirmed it just above, and the borrow is tied to `&self`, which is itself lent
     // for one call or for the borrow of a `tao` window. The OS validates the handle on
     // every call its borrowers make with it (`rfd` and `muda` pass it to user32 as an
-    // owner, `wry` as a parent), so a window destroyed during the borrow makes those
+    // owner, the webview crate as a parent), so a window destroyed during the borrow makes those
     // calls fail; it reads no memory through the handle.
     Ok(unsafe { WindowHandle::borrow_raw(raw) })
   }

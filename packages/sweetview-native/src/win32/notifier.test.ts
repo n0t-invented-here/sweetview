@@ -71,6 +71,11 @@ describe.if(process.platform === "win32")("Windows notifier", () => {
       expect(displayName(unused)).toBeNull();
 
       native.debugForcePath("balloonOnly");
+      // A click with no payload gives no data.
+      const plain = cookieOf(native.debugShow("plain", "Plain", "", true, null), "balloon");
+      expect(native.debugSimulateBalloonEvent(plain, "clicked")).toBe(true);
+      pumpUntil(() => clicks.length === 1);
+      expect(clicks.splice(0)).toEqual([{ id: "plain", data: undefined }]);
       // Balloon uIDs count up process-wide, so each notification's below is the next one.
       const uid = cookieOf(native.debugShow("probe", "Probe", "", true, null), "balloon");
       const data = { index: 1, list: ["different", 2] };
@@ -113,7 +118,8 @@ describe.if(process.platform === "win32")("Windows notifier", () => {
       expect(String(errors[0]?.[0])).toBe("sweetview: notifier icon:");
       setNotifierTrayIcon(undefined);
       expect(backend.notify({ title: "Stock icon", silent: true })).toBe(true);
-      expect(native.debugPendingBalloons()).toBe(2);
+      // How many balloons are pending is proven in Rust (sweetview-platform-notify, windows.rs):
+      // without_winrt_every_notification_is_a_balloon_with_or_without_an_icon.
     } finally {
       console.error = originalError;
       setNotifierTrayIcon(undefined);
