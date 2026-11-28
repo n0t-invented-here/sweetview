@@ -1132,7 +1132,9 @@ mod tests {
     // A real IToastNotifier.Show under this app id, on a notifier of its own: a toast, not a fallback.
     {
       let real = Notifier::new(options.clone(), |_, _| {}).expect("notifier");
-      let Some(Shown::Toast(_)) = real.show(&note("really shown")) else { panic!("WinRT toasts are unavailable on this machine") };
+      // Title and body with every character XML gives a meaning: WinRT accepts the document they make.
+      let marked = Notification { title: "<Title> & \"quotes\"".into(), body: "It’s <body> & 'more'".into(), ..note("really shown") };
+      let Some(Shown::Toast(_)) = real.show(&marked) else { panic!("WinRT toasts are unavailable on this machine, or refused the document") };
       assert!(real.toasts_available());
       assert_eq!(real.balloons_shown(), 0, "the real toast did not fall back");
     }
@@ -1204,7 +1206,7 @@ mod tests {
     let options = NotifierOptions { app_id: Some(app_id.clone()), app_name: Some("Sweetview fallback test".into()), icon_ico: None };
     let notifier = Notifier::new(options, on_click).expect("notifier");
     assert!(matches!(notifier.show(&note("winrt")), Some(Shown::Toast(_))));
-    assert!(display_name_of(&app_id).is_some(), "the explicit app id was registered");
+    assert_eq!(display_name_of(&app_id).as_deref(), Some("Sweetview fallback test"), "the explicit app id was registered under the app's name");
     notifier.force_path(ForcedPath::ToastShowFails);
     let fallback = Notification { data_json: Some("[1]".into()), ..note("fallback") };
     let Some(Shown::Balloon(uid)) = notifier.show(&fallback) else { panic!("the balloon did not take over") };
