@@ -845,3 +845,117 @@ fn a_maximised_frameless_window_dragged_by_start_drag_stays_maximised_and_its_ne
     window.dispose();
   });
 }
+
+// ---- a tab frame before its first tab (`win-tabs.ts`'s frame checks) ---------------------------------
+
+/// Whether the system's apps are dark (`AppsUseLightTheme` is 0), read from the registry with
+/// `reg.exe`, apart from the product's own reading.
+fn registry_says_dark() -> bool {
+  let out = std::process::Command::new("reg")
+    .args(["query", r"HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize", "/v", "AppsUseLightTheme"])
+    .output()
+    .expect("reg.exe");
+  let text = String::from_utf8_lossy(&out.stdout);
+  // A missing value means light, as the system reads it.
+  text.lines().find(|l| l.contains("AppsUseLightTheme")).is_some_and(|l| l.trim_end().ends_with("0x0"))
+}
+
+/// `win-tabs.ts` "backdrop: the strip and the page areas in their own colours (light, dark)": a
+/// frame with no tab has no webview, so what shows is what the frame paints, read from the screen.
+#[test]
+fn a_tab_frame_with_no_tab_paints_its_strip_and_page_in_the_appearances_colours() {
+  on_ui_thread(|runtime| {
+    let work = screen::primary().expect("primary").work_area;
+    for (appearance, strip_colour, page_colour) in [(Appearance::Light, 0xe9_ea_ee, 0xf9_f9_fb), (Appearance::Dark, 0x29_2a_30, 0x15_16_1a)] {
+      let bounds = Rect::new(work.x + 60, work.y + 60, 640.min(work.width - 120), 420.min(work.height - 120));
+      let frame = Window::create(WindowInit { appearance, topmost: true, no_activate: true, bounds: Some(bounds), ..tabbed("rt os tab backdrop") }).expect("tabbed");
+      frame.show().expect("show");
+      let handle = frame.handle();
+      let scale = f64::from(os::dpi_of(handle)) / 96.0;
+      let (_, height) = os::client_size(handle);
+      let strip_at = os::client_to_screen(handle, 30, ((f64::from(STRIP_HEIGHT) - 4.0) * scale).round() as i32);
+      let page_at = os::client_to_screen(handle, 30, height - 10);
+      let read = || (os::screen_pixel(strip_at.0, strip_at.1), os::screen_pixel(page_at.0, page_at.1));
+      let want = (Some(strip_colour), Some(page_colour));
+      pump_until(runtime.as_ref(), 2000, || read() == want);
+      let ours = os::window_at(strip_at.0, strip_at.1) == handle && os::window_at(page_at.0, page_at.1) == handle;
+      if read() != want && !ours {
+        panic!("refused to judge: another window covers the frame on the shared desktop; run again");
+      }
+      assert_eq!(read(), want, "{appearance:?}: the strip and the page in their own colours");
+      frame.dispose();
+    }
+  });
+}
+
+/// `win-tabs.ts` "a frame given bounds takes them as its outer rectangle", "a frame made with no
+/// bounds is centred on the primary work area" and "a "system" frame starts in the system's theme
+/// (AppsUseLightTheme)".
+#[test]
+fn a_tab_frame_takes_given_bounds_is_centred_without_them_and_starts_in_the_systems_theme() {
+  on_ui_thread(|_runtime| {
+    let area = screen::primary().expect("primary").work_area;
+    let given = Rect::new(area.x + 50, area.y + 40, 820.min(area.width - 100), 600.min(area.height - 80));
+    let placed = Window::create(WindowInit { bounds: Some(given), ..tabbed("rt os tab bounds") }).expect("tabbed");
+    assert_eq!(outer(placed.handle()), given);
+    placed.dispose();
+
+    let centred = Window::create(tabbed("rt os tab centred")).expect("tabbed");
+    let r = outer(centred.handle());
+    // A frame taller than the work area starts at its top, so the strip is on the screen.
+    let want = (area.x + (area.width - r.width) / 2, area.y + ((area.height - r.height) / 2).max(0));
+    assert!((r.x - want.0).abs() <= 1 && (r.y - want.1).abs() <= 1, "centred: {r:?} in {area:?}");
+    centred.dispose();
+
+    // No strip yet, so nothing has reported a theme: the frame's state is what it read from the system.
+    let fresh = Window::create(WindowInit { appearance: Appearance::System, ..tabbed("rt os tab system") }).expect("tabbed");
+    let dark = registry_says_dark();
+    let frame = TabFrame::of(fresh.handle()).expect("a tab frame");
+    assert_eq!((frame.is_dark(), os::uses_dark_title_bar(fresh.handle())), (dark, Some(dark)), "the registry says dark: {dark}");
+    fresh.dispose();
+  });
+}
+
+/// `win-tabs.ts` "before its first tab the frame shows the window's title", "frame styles", "frame
+/// metrics: ... the system border kept", "resize edges: left, right, bottom and the bottom
+/// corners" and "default minimum size: a 560 x 420 page plus the strip and the frame" (the page
+/// size and the caption's removal are `window_tests.rs`'s
+/// `a_tab_frame_keeps_the_system_frame_and_lays_out_a_strip_and_a_page`).
+#[test]
+fn a_tab_frame_keeps_its_title_system_styles_border_resize_edges_and_default_minimum() {
+  const WS_CAPTION: u32 = 0x00c0_0000;
+  const WS_SYSMENU: u32 = 0x0008_0000;
+  const WS_MINIMIZEBOX: u32 = 0x0002_0000;
+  const WS_CLIPCHILDREN: u32 = 0x0200_0000;
+  const WM_NCHITTEST: u32 = 0x0084;
+  on_ui_thread(|_runtime| {
+    let title = format!("rt os tab frame {}", std::process::id());
+    let frame = Window::create(WindowInit { appearance: Appearance::Dark, ..tabbed(&title) }).expect("tabbed");
+    let handle = frame.handle();
+    assert_eq!(os::title_of(handle), title);
+    let all = WS_CAPTION | WS_SYSMENU | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_CLIPCHILDREN;
+    assert_eq!(style(handle) & all, all, "frame styles: {:#x}", style(handle));
+
+    let dpi = os::dpi_of(handle);
+    let (outer, (client_w, client_h)) = (outer(handle), os::client_size(handle));
+    let origin = os::client_to_screen(handle, 0, 0);
+    let edge = os::frame_edge(dpi);
+    assert_eq!(origin.0 - outer.x, edge, "the left border is the system's");
+    assert_eq!(outer.x + outer.width - (origin.0 + client_w), edge, "the right border");
+    assert_eq!(outer.y + outer.height - (origin.1 + client_h), edge, "the bottom border");
+
+    let hit = |x: i32, y: i32| os::send(handle, WM_NCHITTEST, 0, (((y & 0xffff) << 16) | (x & 0xffff)) as isize);
+    let mid = (outer.x + outer.width / 2, outer.y + outer.height / 2);
+    let right = outer.x + outer.width - 3;
+    let bottom = outer.y + outer.height - 3;
+    // HTLEFT, HTRIGHT, HTBOTTOM, HTBOTTOMLEFT, HTBOTTOMRIGHT.
+    assert_eq!([hit(outer.x + 2, mid.1), hit(right, mid.1), hit(mid.0, bottom), hit(outer.x + 2, bottom), hit(right, bottom)], [10, 11, 15, 16, 17]);
+
+    let scale = f64::from(dpi) / 96.0;
+    let want = ((560.0 * scale).round() as i32 + (outer.width - client_w), ((420.0 + f64::from(STRIP_HEIGHT)) * scale).round() as i32 + (outer.height - client_h));
+    let track = os::min_track_size(handle);
+    assert!((track.0 - want.0).abs() <= 1 && (track.1 - want.1).abs() <= 1, "the default minimum: {track:?}, want {want:?}");
+    assert_eq!(os::uses_dark_title_bar(handle), Some(true), "dark appearance: dark title bar");
+    frame.dispose();
+  });
+}
