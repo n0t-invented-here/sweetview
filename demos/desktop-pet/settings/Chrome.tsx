@@ -58,10 +58,16 @@ export function Chrome({ children }: { children: ReactNode }) {
         style={{ flex: "none", background: "var(--mantine-color-dark-8)", borderBottom: "1px solid var(--mantine-color-dark-4)", cursor: "default", userSelect: "none" }}
         onPointerDown={chrome.onTitlePointerDown}
         onDoubleClick={maximize}
-        onContextMenu={(e) => {
-          e.preventDefault(); // the window's own system menu, as an OS title bar has
-          chrome.showSystemMenu();
-        }}
+        // The window's own system menu, as an OS title bar has (Windows). macOS, until its goal, keeps
+        // the tag's path, where the title bar had no context-menu handler.
+        onContextMenu={
+          MACOS
+            ? undefined
+            : (e) => {
+                e.preventDefault();
+                chrome.showSystemMenu();
+              }
+        }
       >
         <Box w={10} h={10} style={{ borderRadius: 5, background: "var(--mantine-color-violet-5)", flex: "none" }} />
         <Text size="sm" fw={600} style={{ flex: 1 }}>

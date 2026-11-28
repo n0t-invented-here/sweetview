@@ -104,6 +104,14 @@ if (native && internal) {
   // What the Windows goal added to the macOS window code: held back (review finding 8 and N2).
   const heldBack = await import("../../src/darwin/held-back");
   result.windowCode = { contentSize: heldBack.macosContentSize({ contentSize: { width: 1100, height: 800 } }) ?? null, maximizeEvents: heldBack.macosMaximizeEvents() };
+  // The entry point, not a helper: `new Window` on macOS checks nothing the tag did not, so options
+  // the tag did not have (contentSize with bounds, a backgroundColor it would not parse) reach the
+  // darwin backend as they did there (which here, with no AppKit, fails loading it).
+  const windowErrors = [
+    errorOf(() => new native.Window({ bounds: { x: 0, y: 0, width: 100, height: 100 }, contentSize: { width: 100, height: 100 } })),
+    errorOf(() => new native.Window({ backgroundColor: "red" })),
+  ];
+  result.windowValidation = windowErrors.filter((e) => e !== null && /contentSize|background color/.test(e));
   // The demos' windows: the outer frame each passed at the tag.
   const { demoWindowSize } = await import("../../../../demos/window-size");
   result.demoWindowSize = demoWindowSize({ width: 1100, height: 800 }, () => ({ x: 410, y: 140, width: 1100, height: 800 }));

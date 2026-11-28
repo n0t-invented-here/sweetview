@@ -180,7 +180,10 @@ this page: it imports each new form and checks that it is what the row says.
    0.x's default). `bounds` is the other way: the window's outer frame in
    physical pixels; give one or the other. Drop `width` and `height` when the
    window already has its bounds (an overlay made with
-   `createOverlayWindow`'s `bounds`).
+   `createOverlayWindow`'s `bounds`). On macOS, until the macOS goal of the
+   Rust rewrite, `contentSize` is not used: a macOS window is made from
+   `bounds` (its outer frame, in points) or the default, so an application
+   that also runs on macOS passes `bounds` there, as before.
 4. Showing: the window is created hidden. Call `app.window.show()` once it
    is wired, or pass `showOnReady: true`.
 5. Closing: a close request on a window with no `onClose` listener disposes
@@ -530,8 +533,8 @@ Every other option (`page`, `title`, `assets`, `index`, `worker`, `debug`, `uiMe
 
 | Old | Write now | Change |
 |---|---|---|
-| `width` | `import type { AppOptions } from "@n1h/sweetview"`; `AppOptions#contentSize` | the same quantity, in one option with `height`: `contentSize: { width, height }` is the page's size in DIPs (CSS pixels), the frame sized around it at the screen's scale and the window centred on the primary work area, as 0.x's was. 0.x defaulted to 1100 x 800; without `contentSize` or `bounds` a window is 320 x 240 outer, so pass `contentSize: { width: 1100, height: 800 }` to keep that size. `bounds` (the outer frame in physical pixels) is the other way to place a window; give one, not both. With `window`, drop it: the window already has its size |
-| `height` | `import type { AppOptions } from "@n1h/sweetview"`; `AppOptions#contentSize` | the same quantity: the `height` of `contentSize`, as for `width` |
+| `width` | `import type { AppOptions } from "@n1h/sweetview"`; `AppOptions#contentSize` | the same quantity, in one option with `height`: `contentSize: { width, height }` is the page's size in DIPs (CSS pixels), the frame sized around it at the screen's scale and the window centred on the primary work area, as 0.x's was. 0.x defaulted to 1100 x 800; without `contentSize` or `bounds` a window is 320 x 240 outer, so pass `contentSize: { width: 1100, height: 800 }` to keep that size. `bounds` (the outer frame in physical pixels) is the other way to place a window; give one, not both. With `window`, drop it: the window already has its size; on macOS, until its goal, `contentSize` is not used and the window is made from `bounds`, as step A.3 says |
+| `height` | `import type { AppOptions } from "@n1h/sweetview"`; `AppOptions#contentSize` | the same quantity: the `height` of `contentSize`, as for `width`; on macOS, until its goal, `contentSize` is not used and the window is made from `bounds`, as step A.3 says |
 | `window` | `import { WebView } from "@n1h/sweetview"`; `WebView.attach(window, options)` | mount the page in a window you made: `WebView.attach(win, options)`; it keeps the window's size (the library resized it to `width` x `height`), and showing the window and what a close request does are yours, as before |
 | `transparent` | `import type { AppOptions } from "@n1h/sweetview"`; `AppOptions#transparent` | a window option now; it makes the window and the page background transparent |
 | `resizable` | `import type { AppOptions } from "@n1h/sweetview"`; `AppOptions#resizable` | a window option; defaults to `true` for a framed window (with `window` it defaulted to `false`) |

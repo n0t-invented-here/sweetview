@@ -10,7 +10,7 @@ import type { HitPolygon } from "./hit-regions";
 import type { AppIdentity, AppIdentityIcon } from "@n1h/sweetview-settings";
 import { icoFromRgba, type Icon } from "./icon";
 import { releaseAtEnd } from "./lifetime";
-import { backend } from "./platform";
+import { backend, macosKeepsTagPath } from "./platform";
 import type { Point, Rect, WindowHandle } from "./types";
 
 export type { Point, Rect, WindowHandle } from "./types";
@@ -408,8 +408,11 @@ export class Window {
       const transparent = options.transparent ?? false;
       const tabs = options.tabs ?? false;
       const appearance = options.appearance ?? "system";
-      if (options.bounds !== undefined && options.contentSize !== undefined) throw new Error("sweetview: bounds and contentSize cannot both be given");
-      const backgroundColor = backgroundColorOf(options.backgroundColor);
+      // macOS keeps the tag's path until its goal (darwin/held-back.ts): it had neither option, so
+      // neither is checked there; the darwin backend uses neither.
+      const tagPath = macosKeepsTagPath();
+      if (!tagPath && options.bounds !== undefined && options.contentSize !== undefined) throw new Error("sweetview: bounds and contentSize cannot both be given");
+      const backgroundColor = tagPath ? undefined : backgroundColorOf(options.backgroundColor);
       this.#meta = {
         title: options.title ?? options.identity?.appName ?? "",
         topmost: options.topmost ?? false,
