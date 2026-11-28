@@ -7,6 +7,7 @@
 
 pub mod color;
 pub mod geometry;
+pub mod given_size;
 pub mod hit;
 pub mod ico;
 pub mod resize;
