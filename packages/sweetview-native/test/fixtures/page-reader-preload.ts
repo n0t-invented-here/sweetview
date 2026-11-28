@@ -5,7 +5,7 @@
 // the text of `#state` and `#log`, at load and on every change, through the binding. Each report
 // is one line on stdout: `PAGE {"id":"log","text":"..."}`.
 
-import { Webview } from "../../src/index";
+import { Webview } from "../../../sweetview/src/raw-webview";
 
 const BINDING = "__sweetviewTestPageText";
 

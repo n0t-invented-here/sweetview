@@ -5,7 +5,8 @@
 
 import { describe, expect, test } from "bun:test";
 import { createApp, WebView } from "./index";
-import { RawWebview, SizeHint, Window, closeToTrayOnLastWindow, onOpenUrl, pumpEvents } from "@n1h/sweetview-native";
+import { Window, closeToTrayOnLastWindow, onOpenUrl, pumpEvents } from "@n1h/sweetview-native";
+import { RawWebview, SizeHint } from "./raw-webview";
 import { emitActivationUrl } from "../../sweetview-native/src/internal";
 import { _resetActivationForTest } from "../../sweetview-native/src/activation";
 

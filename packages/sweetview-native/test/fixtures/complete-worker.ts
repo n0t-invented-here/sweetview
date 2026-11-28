@@ -9,7 +9,7 @@
 // it is. The raw call with a NULL chunk and a length has no counterpart: a
 // chunk is a Uint8Array, which always carries its own length.
 
-import { binding } from "../../src/binding";
+import { binding } from "../../../sweetview/src/binding";
 import {
   beginWebviewResponse,
   completeWebviewRequest,
@@ -17,7 +17,7 @@ import {
   WebviewError,
   writeWebviewResponseChunk,
   type WebviewRequest,
-} from "../../src/index";
+} from "../../../sweetview/src/raw-webview";
 
 declare var self: Worker;
 

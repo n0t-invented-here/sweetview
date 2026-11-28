@@ -13,7 +13,7 @@
 // holds a function by reference and releases it when nothing calls it.
 
 import { join } from "node:path";
-import { engineOf, Webview, WebviewError } from "../../src/webview";
+import { engineOf, Webview, WebviewError } from "../../../sweetview/src/raw-webview";
 import { native, report, watchdog } from "./kit";
 
 watchdog(40_000);
