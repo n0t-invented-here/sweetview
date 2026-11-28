@@ -690,21 +690,28 @@ export const RUNNERS: Record<string, Runner> = {
     // and disposing the wrapper leaves the window.
     const { Window } = await import("@n1h/sweetview-native");
     const { _debugTrackedCount } = await import("../../../packages/sweetview-native/src/win32/window");
-    const own = ctx.os.ownWindow();
+    // A top-level window on the screen with a title bar and a system menu, as an application's own is.
+    const WS_VISIBLE = 0x10000000;
+    const WS_CAPTION = 0x00c00000;
+    const WS_SYSMENU = 0x00080000;
+    const WS_THICKFRAME = 0x00040000;
+    const WS_MINIMIZEBOX = 0x00020000;
+    const WS_MAXIMIZEBOX = 0x00010000;
+    const own: bigint = ctx.os.user32.CreateWindowExW(0, ctx.os.wide("STATIC"), ctx.os.wide(`sweetview compat own window ${process.pid}`), WS_VISIBLE | WS_CAPTION | WS_SYSMENU | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX, 220, 220, 320, 200, 0n, 0n, ctx.os.hInstance(), null);
+    must(own !== 0n, "the application's own window was made");
     try {
-      const wrapped = Window.fromHandle(own.hwnd);
-      wrapped.show(); // on the screen, as a window whose title bar a user right-clicks is
-      const kept = _debugTrackedCount(own.hwnd);
+      const wrapped = Window.fromHandle(own);
+      const kept = _debugTrackedCount(own);
       const opens: { seen: boolean; result: unknown; kept: number }[] = [];
       for (let i = 0; i < 3; i++) {
         const { seen: opened, result: chose } = await popupRun(ctx, () => wrapped.showSystemMenu());
-        opens.push({ seen: opened, result: chose, kept: _debugTrackedCount(own.hwnd) });
+        opens.push({ seen: opened, result: chose, kept: _debugTrackedCount(own) });
       }
       must(kept >= 1 && opens.every((o) => o.seen && o.result === undefined && o.kept === kept), "each time, the system menu of the application's own window opened through the one wrapper, and nothing more was kept", { kept, opens });
       wrapped.dispose();
-      must(_debugTrackedCount(own.hwnd) === 0 && ctx.os.isWindow(own.hwnd), "disposing the wrapper keeps nothing for the window and leaves it", _debugTrackedCount(own.hwnd));
+      must(_debugTrackedCount(own) === 0 && ctx.os.isWindow(own), "disposing the wrapper keeps nothing for the window and leaves it", _debugTrackedCount(own));
     } finally {
-      own.destroy();
+      ctx.os.user32.DestroyWindow(own);
     }
   }),
   "Window#isMaximized": desktop(async (_value, ctx) => {
