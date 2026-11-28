@@ -838,10 +838,11 @@ impl Window {
     let (chrome, on_this_thread) = BorrowedWindow::with_handle_value(handle, |window| (platform::chrome(window), platform::is_on_this_thread(window)))
       .ok_or_else(|| Error::state(format!("sweetview: not a window: {handle:#x}")))?;
     let core = Core::new(handle, None, chrome, false, logic::DEFAULT_MIN_SIZE, false, None);
-    // The state a window Sweetview did not make is in when it is wrapped, kept from then on by its resizes.
-    if !core.with_native(|window| platform::is_minimized(window)).unwrap_or(true) {
-      core.maximized.set(core.maximized_now());
-    }
+    // The state a window Sweetview did not make is in when it is wrapped, kept from then on by its
+    // resizes: a minimised one's is the state it is restored to, which its placement keeps.
+    let minimized = core.with_native(|window| platform::is_minimized(window)).unwrap_or(false);
+    let maximized = if minimized { core.with_native(|window| platform::restores_maximized(window)).unwrap_or(false) } else { core.maximized_now() };
+    core.maximized.set(maximized);
     if on_this_thread {
       core.subclass()?;
     }

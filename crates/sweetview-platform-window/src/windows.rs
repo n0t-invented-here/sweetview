@@ -29,7 +29,7 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{GetActiveWindow, GetAsyncKeySt
 use windows::Win32::UI::Shell::{DefSubclassProc, DragFinish, DragQueryFileW, RemoveWindowSubclass, SetWindowSubclass, HDROP};
 use windows::Win32::UI::WindowsAndMessaging::{
   CreateIconFromResourceEx, DestroyIcon, DestroyWindow, GetClientRect, GetSystemMetrics, GetWindow, GetWindowLongPtrW,
-  GetWindowRect, GetWindowThreadProcessId, IsIconic, IsWindow, IsWindowVisible, IsZoomed, LoadIconW, MoveWindow,
+  GetWindowPlacement, GetWindowRect, WINDOWPLACEMENT, WPF_RESTORETOMAXIMIZED, GetWindowThreadProcessId, IsIconic, IsWindow, IsWindowVisible, IsZoomed, LoadIconW, MoveWindow,
   PostMessageW, SendMessageTimeoutW, SendMessageW, SetForegroundWindow, SetLayeredWindowAttributes, SetWindowLongPtrW, SetWindowPos,
   SetWindowTextW, SMTO_ABORTIFHUNG, SMTO_BLOCK,
   ShowWindow, GWL_EXSTYLE, GWL_STYLE, GW_CHILD, HICON, HTCAPTION, HWND_NOTOPMOST, HWND_TOPMOST, ICON_BIG, ICON_SMALL,
@@ -201,6 +201,18 @@ fn is_iconic(hwnd: HWND) -> bool {
   // SAFETY: `IsIconic` takes the handle by value and reads no memory of ours; the OS
   // validates the handle, and an invalid one reads as false.
   unsafe { IsIconic(hwnd) }.as_bool()
+}
+
+/// True when the window, minimised, goes back to maximised when it is
+/// restored: what its placement keeps, since `IsZoomed` reads false while it
+/// is minimised.
+pub fn restores_maximized(window: &impl NativeWindow) -> bool {
+  let mut placement = WINDOWPLACEMENT { length: std::mem::size_of::<WINDOWPLACEMENT>() as u32, ..Default::default() };
+  // SAFETY: `placement` is an owned, initialised `WINDOWPLACEMENT` whose `length` is its own size,
+  // as the call requires, alive for the whole call; the handle is named by `NativeWindow` and
+  // validated by the OS, and a stale one makes the call fail, which reads as false.
+  let read = unsafe { GetWindowPlacement(window.hwnd(), &mut placement) };
+  read.is_ok() && placement.flags.0 & WPF_RESTORETOMAXIMIZED.0 != 0
 }
 
 /// True while the OS has the window maximised (its own state, not `tao`'s flag).

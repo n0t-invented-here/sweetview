@@ -497,6 +497,30 @@ describe.if(onWindows)("startDrag on a maximised frameless window", () => {
 });
 
 describe.if(onWindows)("Window.fromHandle on an application's own window (made here through bun:ffi)", () => {
+  test("a window the application made, maximised and minimised before Window.fromHandle wraps it, reports nothing when restored to maximised", async () => {
+    // Review round 2, finding 5: the state was read only when the window was not minimised.
+    const { WS_OVERLAPPEDWINDOW, hInstance, user32, wide } = await api();
+    const WM_SYSCOMMAND = 0x0112;
+    const [SC_MINIMIZE, SC_MAXIMIZE, SC_RESTORE] = [0xf020n, 0xf030n, 0xf120n];
+    const hwnd = user32.CreateWindowExW(0, wide("STATIC"), wide(unique("own wrapped minimised")), WS_OVERLAPPEDWINDOW, 60, 60, 300, 200, 0n, 0n, hInstance(), null);
+    expect(hwnd).not.toBe(0n);
+    const command = (sc: bigint) => user32.SendMessageW(hwnd, WM_SYSCOMMAND, sc, 0n);
+    command(SC_MAXIMIZE);
+    command(SC_MINIMIZE);
+    const wrapped = Window.fromHandle(hwnd);
+    try {
+      const seen: boolean[] = [];
+      wrapped.onMaximizeChange((m) => seen.push(m));
+      command(SC_RESTORE); // back to maximised
+      expect({ maximized: wrapped.isMaximized(), seen }).toEqual({ maximized: true, seen: [] });
+      command(SC_RESTORE);
+      expect({ maximized: wrapped.isMaximized(), seen }).toEqual({ maximized: false, seen: [false] });
+    } finally {
+      wrapped.dispose();
+      if (user32.IsWindow(hwnd)) user32.DestroyWindow(hwnd);
+    }
+  });
+
   test("onMaximizeChange arrives for a window the application made: maximised, minimised and restored to maximised (nothing), restored", async () => {
     // Review N7: onMaximizeChange had been run only on wrappers of Sweetview's own windows.
     const { WS_OVERLAPPEDWINDOW, hInstance, user32, wide } = await api();

@@ -419,6 +419,37 @@ fn a_frameless_maximise_larger_than_the_work_area_is_still_a_maximise() {
   });
 }
 
+/// Review round 2, finding 5. Class: wrapping an application's own window in every state (normal,
+/// maximised, minimised from normal, minimised from maximised): restoring it to the state it was
+/// in reports nothing, and a real change after that reports once.
+#[test]
+fn a_window_wrapped_in_any_state_reports_only_real_maximise_changes() {
+  on_ui_thread(|runtime| {
+    for (maximised, minimised) in [(false, false), (true, false), (false, true), (true, true)] {
+      // The application's own window: made here with `tao`, not by `Window::create`.
+      let own = runtime
+        .with_target(|target| tao::window::WindowBuilder::new().with_title("rt own wrapped state").with_inner_size(tao::dpi::PhysicalSize::new(300, 200)).build(target))
+        .expect("target")
+        .expect("window");
+      own.set_maximized(maximised);
+      own.set_minimized(minimised);
+      runtime.pump();
+      let wrapped = Window::adopt(platform::handle_value(&own)).expect("adopt");
+      let seen = Rc::new(RefCell::new(Vec::new()));
+      let sink = seen.clone();
+      wrapped.on_maximize_change(Some(Rc::new(move |maximized| sink.borrow_mut().push(maximized)))).expect("listener");
+      own.set_minimized(false);
+      runtime.pump();
+      assert_eq!(*seen.borrow(), Vec::<bool>::new(), "maximised {maximised}, minimised {minimised}: restoring to its state is no change");
+      own.set_maximized(!maximised);
+      runtime.pump();
+      assert_eq!(*seen.borrow(), vec![!maximised], "maximised {maximised}, minimised {minimised}");
+      wrapped.dispose();
+      drop(own);
+    }
+  });
+}
+
 #[test]
 fn adopting_a_handle_that_is_not_a_window_fails() {
   on_ui_thread(|_runtime| {

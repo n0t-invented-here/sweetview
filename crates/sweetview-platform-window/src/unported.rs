@@ -74,6 +74,9 @@ pub fn is_active(_window: &impl NativeWindow) -> bool {
 pub fn is_minimized(_window: &impl NativeWindow) -> bool {
   false
 }
+pub fn restores_maximized(_window: &impl NativeWindow) -> bool {
+  false
+}
 pub fn is_zoomed(_window: &impl NativeWindow) -> bool {
   false
 }
