@@ -4,7 +4,7 @@ export { releaseAll, releaseAtEnd, type ReleaseKind } from "./lifetime";
 export { macosKeepsTagPath } from "./platform";
 export { createChildWebview, engineOf } from "./webview";
 export type { Engine as NativeEngine } from "../prebuilt/binding";
-export { deferNative, openNativeDrain, quitNativeLoop, runNativeLoop, wakeNative } from "./ui-thread";
+export { deferNative, inBlockingLoop, openNativeDrain, quitNativeLoop, runNativeLoop, wakeNative } from "./ui-thread";
 export {
   emitWindowFileDrop,
   emitWindowNewTab,

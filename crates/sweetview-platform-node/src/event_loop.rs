@@ -38,6 +38,13 @@ pub fn is_loop_blocking() -> napi::Result<bool> {
   imp::is_loop_blocking()
 }
 
+/// Makes `settle` run after each callback that returns to the blocking loop itself, while
+/// `runLoop()` runs (the drain of Bun's microtask queue); `null` removes it.
+#[napi(catch_unwind)]
+pub fn set_callback_settle(env: Env, settle: Option<Function<'_, (), ()>>) -> napi::Result<()> {
+  imp::set_callback_settle(env, settle)
+}
+
 /// Calls `job` on a later turn of whichever loop the UI thread is in, a modal one included.
 #[napi(catch_unwind)]
 pub fn defer(env: Env, job: Function<'_, (), ()>) -> napi::Result<()> {

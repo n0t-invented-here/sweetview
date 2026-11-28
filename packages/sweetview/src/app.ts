@@ -4,6 +4,7 @@
 // multi-window apps).
 
 import type { HTMLBundle } from "bun";
+import { readFileSync } from "node:fs";
 import { basename, extname } from "node:path";
 import { pathToFileURL } from "node:url";
 import { assetMime, indexHtml } from "./html";
@@ -11,7 +12,7 @@ import { createFrameAssembler, type AnyEvent, type EventMap, type MethodMap, typ
 import { RequestResponseAssembler, requestError, runNativeRequest, type NativeRequestResponse, type StreamingResponseFrame } from "./request-response";
 import type { HttpRequestMessage, InitMessage, NativeRequest, NativeResponse, WorkerCrashFrame } from "./messages";
 import { RawWebview, SizeHint, Window, quitEventLoop, runEventLoop, signalReady, type Rect, type TabHandle, type WindowOptions } from "@n1h/sweetview-native";
-import { createChildWebview, discardQuit, emitWindowFileDrop, engineOf, getWindowMeta, holdWindowNativeDispose, isWindowDisposed, macosKeepsTagPath, onWindowDispose, onWindowFileDropListenersChange, preserveWindowGeometry, releaseAtEnd, scheduleNativeTimeout, windowFileDropCount } from "@n1h/sweetview-native/internal";
+import { createChildWebview, discardQuit, emitWindowFileDrop, engineOf, getWindowMeta, holdWindowNativeDispose, inBlockingLoop, isWindowDisposed, macosKeepsTagPath, onWindowDispose, onWindowFileDropListenersChange, preserveWindowGeometry, releaseAtEnd, scheduleNativeTimeout, windowFileDropCount } from "@n1h/sweetview-native/internal";
 import { Ring } from "./ring";
 import { webviewEngine, type WebviewHost, type WorkerWake } from "./webview-host";
 import { ASSET_ORIGIN } from "./webview-lib";
@@ -213,6 +214,44 @@ const assetBytes = async (source: Asset): Promise<Uint8Array> =>
       ? source
       : new Uint8Array(await source.arrayBuffer());
 
+/** A `Bun.file(...)`: a Blob with a path behind it (a web `File` has a name but no `exists`). */
+const isBunFile = (source: Blob): source is Blob & { name: string } =>
+  typeof (source as { exists?: unknown }).exists === "function" && typeof (source as { name?: unknown }).name === "string";
+
+/**
+ * An asset's bytes with no wait on Bun's event loop where none is needed: a path or a
+ * `Bun.file` is read from disk, an in-memory Blob is taken as it already is. Under the blocking
+ * `run()` Bun's I/O does not complete, so `WebView.attach` reads its assets this way on Windows
+ * (macOS keeps the tag's reads until its goal, `macosKeepsTagPath`).
+ */
+const assetBytesNow = (source: Asset): Uint8Array | Promise<Uint8Array> => {
+  if (macosKeepsTagPath()) return assetBytes(source);
+  if (typeof source === "string") return new Uint8Array(readFileSync(source));
+  if (source instanceof Uint8Array) return source;
+  if (isBunFile(source)) return new Uint8Array(readFileSync(source.name));
+  const peeked = Bun.peek(source.arrayBuffer());
+  return peeked instanceof ArrayBuffer ? new Uint8Array(peeked) : (peeked as Promise<ArrayBuffer>).then((bytes) => new Uint8Array(bytes));
+};
+
+/** The page bundles built so far (by `Bun.build`, outside the blocking loop), so a window made again reuses them. */
+const builtPages = new WeakMap<HTMLBundle, Promise<{ assets: Record<string, Asset>; index: string }>>();
+
+function preparedPage(page: HTMLBundle): Promise<{ assets: Record<string, Asset>; index: string }> {
+  let built = builtPages.get(page);
+  if (built === undefined) {
+    if (!page.files && !macosKeepsTagPath() && inBlockingLoop()) {
+      // Bun.build completes through Bun's event loop, which the blocking loop holds.
+      throw new Error(
+        "sweetview: a page import is bundled with Bun.build, which cannot finish inside the blocking run(); prepare it before run() with await WebView.preparePage(page), or pass assets",
+      );
+    }
+    built = pageAssets(page);
+    builtPages.set(page, built);
+    built.catch(() => builtPages.delete(page));
+  }
+  return built;
+}
+
 // JSON is JS source except U+2028/2029 inside strings.
 const LS = String.fromCharCode(0x2028);
 const PS = String.fromCharCode(0x2029);
@@ -311,14 +350,24 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
 
     if (!useDirectUrl) {
       if (options.page) {
-        const page = await pageAssets(options.page);
+        const page = await preparedPage(options.page);
         ensureAttachable();
         Object.assign(assets, page.assets);
         index = options.index ?? page.index;
         const html = assets[index];
         if (title === undefined && html !== undefined) {
+          const text = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
+          const now = macosKeepsTagPath() ? undefined : assetBytesNow(html);
           title = htmlTitle(
-            typeof html === "string" ? await Bun.file(html).text() : html instanceof Uint8Array ? new TextDecoder().decode(html) : await html.text(),
+            now instanceof Uint8Array
+              ? text(now)
+              : now !== undefined
+                ? text(await now)
+                : typeof html === "string"
+                  ? await Bun.file(html).text()
+                  : html instanceof Uint8Array
+                    ? text(html)
+                    : await html.text(),
           );
           ensureAttachable();
         }
@@ -814,7 +863,8 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
           raw.navigate(options.url!);
         } else {
           for (const [path, source] of Object.entries(assets)) {
-            const bytes = await assetBytes(source);
+            const now = assetBytesNow(source);
+            const bytes = now instanceof Uint8Array ? now : await now;
             if (!isLive() || tabHooks?.isCancelled?.()) throw new Error("sweetview: the window was disposed during WebView.attach");
             const err = engineHost.setAsset(path, assetMime(path), bytes);
             if (err !== 0) throw new Error(`sweetview: webview_set_asset(${path}) failed (${err})`);
@@ -895,6 +945,16 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
   }
 
   /** Opens a new tab hosting a webview inside a tabbed Window (`tabs: true`). */
+  /**
+   * Bundles `page` now, so a window attached to it later needs no `Bun.build`: a page import
+   * opened on demand from inside the blocking `run()` (a settings window from a tray click),
+   * where `Bun.build` cannot finish. Resolves once it is built; later attaches reuse the build.
+   * A page from a compiled executable is built already and needs nothing.
+   */
+  static async preparePage(page: HTMLBundle): Promise<void> {
+    await preparedPage(page);
+  }
+
   static openTab<M extends MethodMap = MethodMap, E extends EventMap = EventMap>(
     window: Window,
     options: TabOptions<M>,

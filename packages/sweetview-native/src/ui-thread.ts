@@ -6,9 +6,30 @@
 
 import { binding } from "./binding";
 
-/** Blocks in the OS loop until `quitNativeLoop()`. JavaScript runs only as callbacks from inside it. */
+/** Drains Bun's microtask queue now: what runs a promise's continuation while Bun's event loop cannot. */
+const drainMicrotasks: () => void = (require("bun:jsc") as { drainMicrotasks(): void }).drainMicrotasks;
+
+let settleInstalled = false;
+
+/**
+ * Blocks in the OS loop until `quitNativeLoop()`. JavaScript runs only as callbacks from inside it.
+ * Bun's event loop does not turn meanwhile, so after each callback that returns to the loop the
+ * binding drains the microtask queue: a handler's `await` (of `WebView.attach`, say) continues
+ * there. Timers and I/O of Bun's own still wait for the loop to end.
+ */
 export function runNativeLoop(): void {
-  binding().runLoop();
+  const native = binding();
+  if (!settleInstalled) {
+    // It acts only while runLoop() is on the stack; under the pumped loop Bun settles by itself.
+    native.setCallbackSettle(drainMicrotasks);
+    settleInstalled = true;
+  }
+  native.runLoop();
+}
+
+/** True while the blocking loop (`runNativeLoop`) is on the stack. */
+export function inBlockingLoop(): boolean {
+  return binding().isLoopBlocking();
 }
 
 /** Ends the `runNativeLoop()` in progress. */

@@ -36,6 +36,19 @@ pub fn is_loop_blocking() -> napi::Result<bool> {
   Ok(Runtime::get().or_throw()?.is_blocking())
 }
 
+/// Makes `settle` run after each callback that returns to the blocking loop
+/// itself (none below it on the stack), while `runLoop()` runs: the
+/// TypeScript layer passes the drain of Bun's microtask queue, which nothing
+/// else runs while Bun's event loop is blocked. `null` removes it.
+pub fn set_callback_settle(env: Env, settle: Option<Function<'_, (), ()>>) -> napi::Result<()> {
+  let settle = match settle {
+    Some(settle) => Some(JsCallback::new(env, &settle, "the microtask drain")?),
+    None => None,
+  };
+  crate::callback::set_settle(settle);
+  Ok(())
+}
+
 /// Calls `job` on a later turn of whichever loop the UI thread is in, a modal one included.
 pub fn defer(env: Env, job: Function<'_, (), ()>) -> napi::Result<()> {
   let job = JsCallback::new(env, &job, "a deferred job")?;
