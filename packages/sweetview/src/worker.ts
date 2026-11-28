@@ -188,16 +188,6 @@ function createWorkerHost() {
     writeWorkerFrame(ring, frame, wake, encoder);
   }
 
-  // Streamed responses the UI thread has paused (the page is behind on them), by id: the
-  // response's next read waits for the promise, which a resume settles.
-  const pausedStreams = new Map<string, { promise: Promise<void>; resolve: () => void }>();
-  function resumeStream(id: string) {
-    const held = pausedStreams.get(id);
-    if (!held) return;
-    pausedStreams.delete(id);
-    held.resolve();
-  }
-
   async function handleRequest(msg: HttpRequestMessage, ring: Ring, wake: () => void) {
     const handler = host.onRequest;
     if (!handler) {
@@ -220,11 +210,7 @@ function createWorkerHost() {
       };
       if (response.body) {
         const reader = response.body.getReader();
-        try {
-          await writeStreamingResponse(ring, head, reader, wake, () => pausedStreams.get(head.id)?.promise);
-        } finally {
-          resumeStream(head.id);
-        }
+        await writeStreamingResponse(ring, head, reader, wake);
       } else {
         writeRequestResponse(ring, { ...head, body: new Uint8Array() }, wake);
       }
@@ -268,13 +254,6 @@ function createWorkerHost() {
     }
     if (msg.kind === "http-request") {
       if (ring && wake) void handleRequest(msg, ring, wake);
-    } else if (msg.kind === "stream-pace") {
-      if (!msg.paused) resumeStream(msg.id);
-      else if (!pausedStreams.has(msg.id)) {
-        let resolve!: () => void;
-        const promise = new Promise<void>((done) => (resolve = done));
-        pausedStreams.set(msg.id, { promise, resolve });
-      }
     } else if (host.onCall) {
       void host.onCall(msg);
     } else if (msg.seq !== null) {

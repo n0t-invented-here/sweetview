@@ -197,7 +197,8 @@ export function beginWebviewResponse(handle: WebviewHandle, id: bigint, head: We
  * {@link beginWebviewResponse}. Safe to call from any thread; the bytes are
  * copied before this returns. Windows: while the response has 1 MiB that
  * WebView2 has not taken yet (until it is down to 512 KiB), a call on any
- * thread but the UI thread waits for room; on the UI thread it never waits. A chunk for a response that has ended, was
+ * thread but the UI thread waits for room; on the UI thread it never waits.
+ * A chunk for a response that has ended, was
  * never begun, or that the page abandoned is dropped; an empty chunk writes
  * nothing, but is still checked like any other (a destroyed webview throws).
  *
@@ -208,30 +209,6 @@ export function beginWebviewResponse(handle: WebviewHandle, id: bigint, head: We
 export function writeWebviewResponseChunk(handle: WebviewHandle, id: bigint, chunk: Uint8Array | ArrayBuffer | string) {
   if (onDarwin) return darwin().writeWebviewResponseChunk(handle, id, chunk);
   check("webview_write_response_chunk", binding().writeResponseChunk(handle, id, responseBodyBytes(chunk)!));
-}
-
-/**
- * Internal (`@n1h/sweetview-native/internal`): whether a response started
- * with {@link beginWebviewResponse} has 1 MiB or more the page has not read
- * yet, until the page reads it down to half of that. A writer on the UI
- * thread, which {@link writeWebviewResponseChunk} never holds back, paces
- * itself with this; a writer on any other thread is held back by
- * `writeWebviewResponseChunk` itself. False for a response that is not open,
- * a destroyed webview, and on macOS.
- */
-export function isWebviewResponseBacklogged(handle: WebviewHandle, id: bigint): boolean {
-  if (onDarwin) return false;
-  return binding().responseBacklogged(handle, id) === 1;
-}
-
-/**
- * Internal (`@n1h/sweetview-native/internal`): the bytes of a response started
- * with {@link beginWebviewResponse} written and not yet read by the page; 0
- * for a response that is not open, a destroyed webview, and on macOS.
- */
-export function webviewResponseBacklog(handle: WebviewHandle, id: bigint): number {
-  if (onDarwin) return 0;
-  return binding().responseBacklog(handle, id);
 }
 
 /**

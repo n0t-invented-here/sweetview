@@ -234,7 +234,12 @@ webview_error_t webview_end_response(webview_t w, uint64_t request_id);
   to the page only once the stream has ended: the page's `fetch()` does not
   even resolve before that, and an `EventSource` gets every event at the end
   (measured on WebView2 Runtime 158; the tests fail if a later runtime hands
-  the page bytes sooner). So a streamed response arrives all at once, and a
+  the page bytes sooner). Microsoft documents this: the content of an
+  `ICoreWebView2WebResourceResponse` "must have all the content data
+  available by the time the `WebResourceRequested` event deferral of this
+  response is completed". The C++ library's `Read` waited for WebView2's
+  whole 32 KiB buffer instead, with the same result at the page, which its
+  own live test asserted. So a streamed response arrives all at once, and a
   large or endless one grows WebView2's memory until it ends. Use IPC events
   for real-time desktop push.
   [WebView2 Feedback #3519](https://github.com/MicrosoftEdge/WebView2Feedback/issues/3519).
@@ -243,9 +248,9 @@ webview_error_t webview_end_response(webview_t w, uint64_t request_id);
   `webview_write_response_chunk` (`writeResponseChunk`) on any thread but
   the UI thread waits for room, so that writer never has more than 1 MiB and
   one chunk unread, and nothing is dropped or reordered; one on the UI thread
-  never waits. For a worker's `ReadableStream` body, Sweetview pauses
-  reading that one body while the response is backlogged. With WebView2
-  reading every chunk at once, the limit is seldom reached.
+  never waits (Sweetview's own worker path writes there). With WebView2
+  taking every chunk at once, the limit is seldom reached: a 24 MiB body
+  written as fast as possible kept at most 1 MiB in the binding.
 
 ### External drops
 

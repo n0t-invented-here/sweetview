@@ -16,29 +16,6 @@ test("a synchronous handler that returns a rejected Promise gets an immediate 50
   expect(new TextDecoder().decode(answer.body)).toContain('onRequest: "worker"');
 });
 
-test("a streamed response waits before each read while the UI thread has it paused", async () => {
-  const ring = new Ring(Ring.create(1024));
-  let reads = 0;
-  let release!: () => void;
-  let hold: Promise<void> | undefined = new Promise<void>((resolve) => (release = resolve));
-  const reader = new ReadableStream<Uint8Array>({
-    pull(controller) {
-      reads += 1;
-      if (reads > 2) controller.close();
-      else controller.enqueue(Uint8Array.of(reads));
-    },
-  }, { highWaterMark: 0 }).getReader();
-  const writing = writeStreamingResponse(ring, { id: "5", status: 200, headers: [] }, reader, () => {}, () => hold);
-  await Bun.sleep(20);
-  expect(reads).toBe(0);
-  hold = undefined;
-  release();
-  await writing;
-  expect(reads).toBe(3);
-  const frames = [...ring.drain()].map((bytes) => bytes[0]);
-  expect(frames.length).toBe(4);
-});
-
 test("binary response frames preserve uint64 IDs, repeated headers and arbitrary bytes", () => {
   const ring = new Ring(Ring.create(128));
   const assembler = new RequestResponseAssembler();
@@ -246,23 +223,21 @@ test.if(live)("returns clean errors for synchronous Promises and absent worker h
   expect((await runLive("request-only")).report).toEqual({ status: 200, body: "<!doctype html><p id=dynamic>worker HTML</p>" });
 }, 70_000);
 
-// D45. A worker's streamed body on a live WebView2: every byte reaches the page in order, and the
-// binding holds at most its backlog limit plus what was in flight for the page. WebView2 reads
-// each chunk out of the binding as it is written but hands the page none of the body before it
-// ends (WebView2Feedback #3519), so the page cannot acknowledge a part before the next is written,
-// and the whole body waits in WebView2 until the end. Both are asserted as measured: if a WebView2
-// Runtime starts handing the page bytes before the end, this fails, streaming works, and D45, the
-// docs and these assertions are updated.
-test.if(live && process.platform === "win32")("a worker's streamed body arrives whole and in order, the binding's backlog stays bounded, and WebView2 hands the page the body at its end", async () => {
-  const { report, maxBacklog } = await runLive("pace");
+// D45. A worker's streamed body on a live WebView2: every byte reaches the page, in order.
+// WebView2 reads each chunk out of the binding as it is written but hands the page none of the
+// body before it ends (WebView2Feedback #3519; Microsoft's ICoreWebView2WebResourceResponse
+// reference requires all content by the time the deferral completes), as the C++ library's own
+// test asserted: the page cannot acknowledge a part before the next is written, and the whole
+// body waits in WebView2 until the end. Both are asserted as measured: if a WebView2 Runtime
+// starts handing the page bytes before the end, this fails, and D45, the docs and these
+// assertions change.
+test.if(live && process.platform === "win32")("a worker's streamed body arrives whole and in order, and WebView2 hands it to the page at its end", async () => {
+  const { report } = await runLive("pace");
   expect(report.live).toBe("live one;live two;live three;");
   const bulkBytes = 24 * 1024 * 1024 + 4321;
   expect(report.bulk).toEqual({ total: bulkBytes, bad: null });
   expect(report.pacing.produced).toBe(bulkBytes);
-  // The binding: its 1 MiB limit, plus what the 1 MiB ring held when the worker was paused, plus one 256 KiB part.
-  console.log(`request-handler.test: the binding held at most ${maxBacklog} bytes; the worker was at most ${report.pacing.maxAhead} bytes ahead of the page`);
-  expect(maxBacklog).toBeLessThanOrEqual(2 * 1024 * 1024 + 256 * 1024);
-  // WebView2 (measured, the canary): no part reached the page before the next was written...
+  // No part reached the page before the next was written...
   expect(report.pacing.liveAcks).toEqual([false, false, false]);
   // ...and the page read nothing of the body before the worker had produced all of it.
   expect(report.pacing.maxAhead).toBe(bulkBytes);

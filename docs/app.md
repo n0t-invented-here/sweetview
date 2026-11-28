@@ -691,15 +691,18 @@ before 2.8.0 is published, set `WEBVIEW_PATH` to a library rebuilt from the
 apps, set these options on each `openTab()` call.
 
 A worker can return a `Response` with a `ReadableStream<Uint8Array>` body.
-When the engine can stream (always on Windows; on macOS, a library with the
-streaming symbols), Sweetview forwards each chunk through the shared
-ring without collecting the whole body in the worker or UI thread. A macOS
-library with request interception but without streaming symbols buffers on
-the UI thread and completes the request once. WKWebView can deliver bytes
-incrementally. WebView2 takes each chunk as it is written but buffers an
-intercepted response until EOF and only then gives it to the page, as the
-live Windows tests measure; the UI thread pauses the worker's stream while
-the native response has 1 MiB that WebView2 has not taken. For real-time SSE-style updates and other desktop
+When the engine has streamed responses (always on Windows; on macOS, a
+library with the streaming symbols), Sweetview forwards each chunk through
+the shared ring to the native response without collecting the whole body in
+the worker or UI thread. A macOS library with request interception but
+without streaming symbols buffers on the UI thread and completes the request
+once. What the page then gets differs by engine. WKWebView hands it each
+chunk as it is written. On Windows the page gets the whole response at once,
+when the stream ends: WebView2 takes each chunk from Sweetview as it is
+written and keeps it, and the page's `fetch()` does not resolve before the
+end. The C++ library behaved the same, and Microsoft documents it
+(`ICoreWebView2WebResourceResponse` content must be complete when the
+request's deferral completes). For real-time SSE-style updates and other desktop
 push, use Sweetview IPC events (`emit` and `onEvent`, or `bridge.on` in the
 page). [WebView2 Feedback #3519](https://github.com/MicrosoftEdge/WebView2Feedback/issues/3519).
 

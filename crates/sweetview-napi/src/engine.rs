@@ -308,24 +308,6 @@ pub fn write_response_chunk(handle: u32, id: BigInt, chunk: Uint8Array) -> i32 {
   }
 }
 
-/// Whether streamed answer `id` of webview `handle` has as many unread bytes as
-/// the backlog limit, until the page reads it down to half: 1 when it has, 0
-/// when not (or no such stream is open), `INVALID_STATE` without the webview.
-/// Callable from any thread.
-pub fn response_backlogged(handle: u32, id: BigInt) -> i32 {
-  match runtime::responder(handle) {
-    Some(responder) => i32::from(responder.backlogged(request_id(&id))),
-    None => INVALID_STATE,
-  }
-}
-
-/// The bytes of streamed answer `id` of webview `handle` written and not yet
-/// read by the page; 0 without such a stream or webview. Callable from any thread.
-pub fn response_backlog(handle: u32, id: BigInt) -> f64 {
-  // A backlog is far below 2^53 bytes, so the conversion is exact.
-  runtime::responder(handle).map_or(0.0, |responder| responder.backlog(request_id(&id)) as f64)
-}
-
 /// Ends a streamed answer. Callable from any thread.
 pub fn end_response(handle: u32, id: BigInt) -> i32 {
   match runtime::responder(handle) {

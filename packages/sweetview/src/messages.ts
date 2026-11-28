@@ -34,12 +34,6 @@ export type NativeResponse = {
 export type WorkerCrashFrame = { kind: "workerError"; message: string };
 
 export type HttpRequestMessage = NativeRequest & { kind: "http-request" };
-/**
- * UI -> worker: the page is behind on streamed response `id` (`paused`), so
- * the worker stops reading that response's body until it is told otherwise.
- * Other responses and IPC go on.
- */
-export type StreamPaceMessage = { kind: "stream-pace"; id: string; paused: boolean };
-export type WorkerMessage = InitMessage | CallFrame | HttpRequestMessage | StreamPaceMessage;
+export type WorkerMessage = InitMessage | CallFrame | HttpRequestMessage;
 
 export const WEBVIEW_SESSION = { id: "webview", kind: "webview" } as const;

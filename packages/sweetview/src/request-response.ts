@@ -102,17 +102,12 @@ export function writeRequestResponse(ring: Ring, response: NativeRequestResponse
   }
 }
 
-/**
- * Owns the reader until EOF or failure. A failure after begin must terminate that stream.
- * Before each read it awaits `paused()` when that returns a promise: the UI thread has said
- * the page is behind on this response.
- */
+/** Owns the reader until EOF or failure. A failure after begin must terminate that stream. */
 export async function writeStreamingResponse(
   ring: Ring,
   head: ResponseMeta,
   reader: ReadableStreamDefaultReader<Uint8Array>,
   wake: () => void,
-  paused: () => Promise<void> | undefined = () => undefined,
 ): Promise<void> {
   const write = responseFrameWriter(ring, wake);
   const maxBytes = ring.capacity - 4 - PREFIX_BYTES;
@@ -125,8 +120,6 @@ export async function writeStreamingResponse(
     write(ResponseFrameKind.Begin, meta);
     started = true;
     for (;;) {
-      const hold = paused();
-      if (hold) await hold;
       const { done, value } = await reader.read();
       if (done) break;
       if (!(value instanceof Uint8Array)) throw new TypeError("Response stream must yield Uint8Array chunks");

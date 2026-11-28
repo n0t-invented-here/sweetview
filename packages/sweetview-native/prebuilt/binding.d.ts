@@ -509,12 +509,6 @@ export declare function removeKeyboardHook(): number
 /** Removes the mouse hook. Returns a `webview_error_t`; 2 when none is installed. */
 export declare function removeMouseHook(): number
 
-/** The bytes of a streamed answer written and not yet read by the page; 0 without the stream or the webview. Callable from any thread. */
-export declare function responseBacklog(handle: number, id: bigint): number
-
-/** 1 while a streamed answer has the backlog limit or more unread (until the page reads it down to half), 0 when not, -3 without the webview. Callable from any thread. */
-export declare function responseBacklogged(handle: number, id: bigint): number
-
 /** Stays inside the OS loop until `quitLoop()`. JavaScript runs only as callbacks from inside it. */
 export declare function runLoop(): void
 

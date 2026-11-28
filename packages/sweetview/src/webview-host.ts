@@ -9,7 +9,7 @@
 // that feature (an older webview library on macOS); the Rust binding has all.
 
 import { RawWebview, WebviewError } from "@n1h/sweetview-native";
-import { deferNative, isWebviewResponseBacklogged, openNativeDrain, quitNativeLoop, runNativeLoop } from "@n1h/sweetview-native/internal";
+import { deferNative, openNativeDrain, quitNativeLoop, runNativeLoop } from "@n1h/sweetview-native/internal";
 import type { NativeRequest } from "./messages";
 
 /** What a `Worker` needs to wake the UI thread; it travels in the worker's init message. */
@@ -32,12 +32,6 @@ export interface WebviewHost {
         begin(id: bigint, status: number, headersJson: string): number;
         write(id: bigint, chunk: Uint8Array): number;
         end(id: bigint): number;
-        /**
-         * Whether the page is behind on response `id` (1 MiB unread, until it is
-         * down to half). `undefined` when the engine keeps no count; the writer
-         * is then never paced.
-         */
-        backlogged?(id: bigint): boolean;
       }
     | undefined;
   /** `undefined` when the engine has no file drop handler. */
@@ -85,7 +79,6 @@ function bindingHost(raw: RawWebview): WebviewHost {
       begin: (id, status, headersJson) => codeOf(() => raw.beginResponse(id, { status, headers: JSON.parse(headersJson) })),
       write: (id, chunk) => codeOf(() => raw.writeResponseChunk(id, chunk)),
       end: (id) => codeOf(() => raw.endResponse(id)),
-      backlogged: (id) => raw.unsafeHandle !== null && isWebviewResponseBacklogged(raw.unsafeHandle, id),
     },
     setFileDropHandler: (handler) => codeOf(() => raw.setFileDropHandler(handler)),
     run: runNativeLoop,
