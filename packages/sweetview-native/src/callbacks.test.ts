@@ -823,6 +823,81 @@ describe.if(onWindows)("W1.3 / W1.4 the tray's click, menu function and menu ite
 
 // ---------------------------------------------------------------------------------------------
 
+// What the wrappers decide once a handler has disposed their owner from inside its own call. The
+// native side of each (the window, the tray, the notifier gone, nothing called again) is proven in
+// Rust: crates/sweetview-runtime/src/reentry_tests.rs and the notifier's tests.
+describe.if(onWindows)("W1.4 the wrappers, after a handler disposes its owner from inside its own call", () => {
+  test("a Window disposed from its onClose reads as disposed and its later calls do nothing", async () => {
+    const win = new Window({ title: unique("wrapper disposed"), frame: false, noActivate: true, hideFromTaskbar: true, bounds: { x: -3000, y: -3000, width: 300, height: 200 } });
+    const hwnd = BigInt(win.handle!);
+    let calls = 0;
+    win.onClose(() => {
+      calls++;
+      win.dispose();
+    });
+    try {
+      sendClose(hwnd);
+      await pumpFor(50);
+      expect(calls).toBe(1);
+      expect(isWindowDisposed(win)).toBe(true);
+      win.setBounds({ x: -3000, y: -3000, width: 320, height: 200 });
+      win.show();
+      expect(win.isVisible()).toBe(false);
+    } finally {
+      win.dispose();
+    }
+  });
+
+  test("a tray disposed from its click handler has no window handle and is not the current tray any more", async () => {
+    const { TRAY, doubleClickTime, postTrayMouse } = await import("../test/win32-os");
+    const { createTray, currentTray } = await import("./win32/tray");
+    let clicks = 0;
+    const tray = createTray({
+      tooltip: unique("tray"),
+      onClick: () => {
+        clicks++;
+        tray.dispose();
+      },
+    });
+    try {
+      expect(currentTray()).toBe(tray);
+      postTrayMouse(tray.windowHandle(), TRAY.LBUTTONDOWN, TRAY.LBUTTONUP);
+      await pumpUntil(() => clicks === 1, doubleClickTime() + 2000);
+      expect(clicks).toBe(1);
+      expect(tray.windowHandle()).toBe(0n);
+      expect(currentTray()).toBeUndefined();
+    } finally {
+      tray.dispose();
+    }
+  }, 20_000);
+
+  test("a notifier disposed from its onClick refuses a late call through the wrapper still held, and shows nothing more", async () => {
+    const { createNotifier, debugNativeNotifier } = await import("./win32/notifier");
+    const clicks: string[] = [];
+    const backend = createNotifier({
+      onClick: (click) => {
+        clicks.push(click.id);
+        backend.dispose();
+      },
+    });
+    const native = debugNativeNotifier(backend)!;
+    try {
+      native.debugForcePath("balloonOnly");
+      const uid = Number(native.debugShow("first", "First", "", true, null)!.slice("balloon:".length));
+      expect(native.debugSimulateBalloonEvent(uid, "clicked")).toBe(true);
+      await pumpUntil(() => clicks.length > 0);
+      expect(clicks).toEqual(["first"]);
+      expect(native.debugSimulateBalloonEvent(uid, "clicked")).toBe(false);
+      expect(native.debugPendingBalloons()).toBe(0);
+      expect(backend.notify({ title: "after dispose" })).toBe(false);
+    } finally {
+      backend.dispose();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+
 describe.if(onWindows)("W1.3 / W1.4 the single-instance handoff and onOpenUrl", () => {
   afterEach(() => _resetActivationForTest());
   const appIdOf = (what: string) => `dev.sweetview.test.callbacks-${what}-${process.pid}-${Date.now()}`;

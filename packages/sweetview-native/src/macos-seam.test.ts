@@ -31,6 +31,16 @@ describe("on macOS, until the macOS goal", () => {
     expect(r.chromeMethods).toEqual(["window.close", "window.drag", "window.info", "window.maximize", "window.minimize", "window.resize"]);
   });
 
+  test("a WebView's window is an own enumerable property after raw, as at the tag; on Windows it is the accessor a tab's window follows", async () => {
+    // Review round 5, R5-6.
+    const { r } = await runFixture("macos-seam.ts", ["fake"]);
+    expect(r.webviewWindowProperty).toEqual({ keys: ["raw", "window"], own: true, spread: true, isTheWindow: true });
+    if (process.platform === "win32") {
+      const { webviewWindowShape } = await import("../test/webview-window-shape");
+      expect(webviewWindowShape(await import("../../sweetview/src/app"))).toEqual({ keys: ["raw"], own: false, spread: false, isTheWindow: true });
+    }
+  });
+
   test("nothing is registered for release at exit, and no exit listener is added", async () => {
     const { r } = await runFixture("macos-seam.ts", ["fake"]);
     expect(r.lifetime).toEqual({ exitListenersAdded: 0, released: 0, macosKeepsTagPath: true });

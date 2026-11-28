@@ -21,12 +21,14 @@ use windows::Win32::Graphics::Gdi::{CreateSolidBrush, DeleteObject, FillRect, In
 use windows::Win32::UI::Shell::{RemoveWindowSubclass, SetWindowSubclass};
 use windows::Win32::UI::WindowsAndMessaging::{
   AppendMenuW, CreatePopupMenu, DestroyMenu, EnableMenuItem, GetForegroundWindow, GetSystemMenu, SendMessageW, SetMenuDefaultItem, TrackPopupMenu, HMENU, MENU_ITEM_FLAGS, MF_ENABLED,
-  MF_GRAYED, MF_SEPARATOR, MF_STRING, SC_CLOSE, SC_MAXIMIZE, SC_MINIMIZE, SC_MOVE, SC_RESTORE, SC_SIZE, SWP_NOACTIVATE, SWP_NOZORDER,
+  MF_GRAYED, MF_SEPARATOR, MF_STRING, SWP_NOACTIVATE, SWP_NOZORDER,
   TPM_RETURNCMD, TPM_RIGHTBUTTON, WM_CLOSE, WM_DPICHANGED, WM_ERASEBKGND, WM_NCDESTROY, WM_SYSCOMMAND, WS_CLIPCHILDREN,
 };
 
 use crate::platform::{after_popup_menu, client_size, dpi_of, forward as forward_frame, post_message, set_foreground, set_window_pos};
 use crate::{is_on_this_thread, is_zoomed, NativeWindow, Point, Rect};
+// What the system menu offers and the ids of its commands, decided without an OS call.
+use sweetview_window_logic::system_menu::{system_menu_items, SystemCommand, SystemMenuState};
 
 /// The style bit a frame keeps on, so painting its background never draws
 /// over the webviews that are its children.
@@ -100,14 +102,13 @@ fn track(menu: &impl TrackedMenu, window: &impl NativeWindow, at: Point) -> u32 
 /// the menu closes.
 pub fn show_system_menu(window: &impl NativeWindow, at: Point) {
   let Some(menu) = SystemMenu::of(window) else { return };
-  let zoomed = is_zoomed(window);
-  for (command, enabled) in [(SC_RESTORE, zoomed), (SC_MOVE, !zoomed), (SC_SIZE, !zoomed), (SC_MINIMIZE, true), (SC_MAXIMIZE, !zoomed)] {
+  for (command, enabled) in system_menu_items(SystemMenuState { maximized: is_zoomed(window) }) {
     let flag = if enabled { MF_ENABLED } else { MF_GRAYED };
     // SAFETY: `menu` is the window's own system menu, alive while the window is.
-    let _previous = unsafe { EnableMenuItem(menu.menu, command, flag) };
+    let _previous = unsafe { EnableMenuItem(menu.menu, command.id(), flag) };
   }
   // SAFETY: the same menu; `SC_CLOSE` is one of its commands (by command, not position).
-  let _set = unsafe { SetMenuDefaultItem(menu.menu, SC_CLOSE, 0) };
+  let _set = unsafe { SetMenuDefaultItem(menu.menu, SystemCommand::Close.id(), 0) };
   let chosen = track(&menu, window, at);
   if chosen != 0 {
     post_message(window.hwnd(), WM_SYSCOMMAND, chosen as usize);

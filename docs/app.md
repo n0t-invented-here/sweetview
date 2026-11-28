@@ -250,7 +250,7 @@ What `WebView.attach` does, in order:
 5. Refuses a disposed window, or one whose handle is null, and checks `ringBytes`.
 6. Creates the `RawWebview` inside `window.handle` using the window's bounds, scale and `resizable` hint, then restores the window's styles and outer bounds in case the engine changed them.
 7. Applies `title` (and mirrors it onto an untitled owned `window`).
-8. Clears the browser background when `window` was created with `transparent: true` (on Windows a window's `backgroundColor` is the browser's background from the moment WebView2 makes it, at step 6, on a WebView2 Runtime with `ICoreWebView2ControllerOptions3`; when that holds, and what shows otherwise, is under [`backgroundColor`](native/windows.md#windowoptions)), and applies `allowExternalDrop` when it is set.
+8. Clears the browser background when `window` was created with `transparent: true` (on Windows a window's `backgroundColor` is the browser's background before the webview is first shown, at step 6; see [`backgroundColor`](native/windows.md#windowoptions)), and applies `allowExternalDrop` when it is set.
 9. Allocates the shared `Ring`, subscribes webview file drops to the window's `onFileDrop` listeners, and starts `worker` if configured.
 10. Registers the request handler when `onRequest` is set.
 11. Binds `__sweetview_rpc`: the reserved ready method first, then `uiMethods`, then `deferredUiMethods`, then the worker. The binding exists before the first navigation and dispatches by method name only; see [the trust boundary](#the-rpc-trust-boundary). A direct-URL webview with no UI methods, no worker and no ready options gets no binding.
@@ -733,13 +733,16 @@ before 2.8.0 is published, set `WEBVIEW_PATH` to a library rebuilt from the
 apps, set these options on each `openTab()` call.
 
 A worker can return a `Response` with a `ReadableStream<Uint8Array>` body.
-When the engine can stream (always on Windows; on macOS, a library with the
-streaming symbols), Sweetview forwards each chunk through the shared
-ring without collecting the whole body in the worker or UI thread. A macOS
-library with request interception but without streaming symbols buffers on
-the UI thread and completes the request once. WKWebView can deliver bytes
-incrementally. WebView2 buffers intercepted responses until EOF, as observed
-in the live Windows test. For real-time SSE-style updates and other desktop
+When the engine has streamed responses (always on Windows; on macOS, a
+library with the streaming symbols), Sweetview forwards each chunk through
+the shared ring to the native response without collecting the whole body in
+the worker or UI thread. A macOS library with request interception but
+without streaming symbols buffers on the UI thread and completes the request
+once. What the page then gets differs by engine. WKWebView hands it each
+chunk as it is written. On Windows, in every case measured (WebView2 Runtime
+158, small text chunks and a 24 MiB body), the page got the whole response
+when the stream ended and nothing before, as under the C++ library
+([the webview](webview-library.md#streaming-responses)). For real-time SSE-style updates and other desktop
 push, use Sweetview IPC events (`emit` and `onEvent`, or `bridge.on` in the
 page). [WebView2 Feedback #3519](https://github.com/MicrosoftEdge/WebView2Feedback/issues/3519).
 
@@ -792,7 +795,7 @@ awaits is rejected unseen there.
 
 | Direction | Mechanism |
 |---|---|
-| page to UI thread | `__sweetview_rpc(method, params)` bound via `RawWebview#bindRaw` (`wry`'s IPC handler on Windows, `webview_bind` on macOS) |
+| page to UI thread | `__sweetview_rpc(method, params)` bound via `RawWebview#bindRaw` (the webview's `WebMessageReceived` on Windows, `webview_bind` on macOS) |
 | UI thread to worker | `worker.postMessage` (synchronous enqueue) |
 | worker to UI thread | Chunkable JSON IPC and binary HTTP response frames in shared `Ring` + a wakeup (the binding's signal window on Windows, `webview_dispatch` on macOS) |
 | UI thread to page (replies) | `RawWebview#return(seq, status, json)` (`webview_return` on macOS) |

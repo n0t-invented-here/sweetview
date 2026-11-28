@@ -36,7 +36,7 @@ import {
   windowRect,
   type MenuEntry,
 } from "../../test/win32-os";
-import { buildMenu, destroyMenu } from "./menu";
+import { buildMenu, destroyMenu, popupMenuAtCursor } from "./menu";
 import { windowMenu } from "./tab-window";
 import { createTray, currentTray } from "./tray";
 
@@ -105,26 +105,15 @@ function whenMenuOpens(step: (menuWindow: bigint) => void): void {
 const RED = { color: "#ff0000" };
 
 describe.if(onWindows)("icon decoding (binding)", () => {
-  const pixel = (rgba: Uint8Array, size: number) => [...rgba.subarray(((size >> 1) * size + (size >> 1)) * 4, ((size >> 1) * size + (size >> 1)) * 4 + 4)];
-
-  test("a multi-size .ico picks the exact size at each of 16, 20, 24 and 32 px", () => {
-    // One file, one colour per size: the colour read back names the image used.
-    const sizes = [16, 20, 24, 32];
-    const colours = ["#ff0000", "#00ff00", "#0000ff", "#ffff00"];
-    const { encodeIco, renderDot } = require("../icon") as typeof import("../icon");
-    const ico = encodeIco(new Map(sizes.map((s, i) => [s, renderDot(s, { color: colours[i] })])));
-    const expected = [
-      [255, 0, 0],
-      [0, 255, 0],
-      [0, 0, 255],
-      [255, 255, 0],
-    ];
-    sizes.forEach((size, i) => expect(pixel(binding().decodeIcon({ ico }, size)!, size)).toEqual([...expected[i]!, 255]));
-  });
-
-  test("a PNG decodes at the asked size, an icon with nothing for Windows gives null, garbage throws with the reason", () => {
+  // Which image each size decodes from, a PNG at the asked size, and an icon with nothing for
+  // Windows decoding to nothing are proven in Rust (crates/sweetview-runtime/src/icon.rs). Here: what
+  // the boundary converts, the RGBA bytes as a Uint8Array, nothing as null, and the error thrown.
+  test("decodeIcon gives the RGBA bytes at the asked size, null for an icon with nothing for Windows, and throws with the reason", () => {
     const rgba = binding().decodeIcon({ png: dotPng(64, RED) }, 16)!;
-    expect(pixel(rgba, 16)).toEqual([255, 0, 0, 255]);
+    expect(rgba).toBeInstanceOf(Uint8Array);
+    expect(rgba.length).toBe(16 * 16 * 4);
+    const centre = (8 * 16 + 8) * 4;
+    expect([...rgba.subarray(centre, centre + 4)]).toEqual([255, 0, 0, 255]);
     expect(binding().decodeIcon({ symbol: "gearshape" }, 16)).toBeNull();
     expect(() => binding().decodeIcon({ ico: new Uint8Array([1, 2, 3]) }, 16)).toThrow("sweetview: not a .ico file");
   });
@@ -166,6 +155,23 @@ describe.if(onWindows)("Menu.popup (binding: muda)", () => {
     } finally {
       owner.destroy();
     }
+  });
+
+  test("popupMenuAtCursor asks the binding for the menu at the cursor, opening above it (where the OS puts it is proven in Rust: menu_tray_os_tests.rs)", () => {
+    const native = binding() as unknown as { popupMenu: (owner: bigint, data: unknown[], at: unknown, above: boolean) => number | null };
+    const real = native.popupMenu;
+    const asked: { at: unknown; above: boolean }[] = [];
+    native.popupMenu = (_owner, _data, at, above) => {
+      asked.push({ at, above });
+      return null;
+    };
+    try {
+      expect(popupMenuAtCursor(1n, [{ label: "One" }])).toBe(false);
+      expect(popupMenuAtCursor(1n, [])).toBe(false); // an empty menu asks nothing
+    } finally {
+      native.popupMenu = real;
+    }
+    expect(asked).toEqual([{ at: null, above: true }]);
   });
 
   test("an empty menu shows nothing, and a null owner throws as before", () => {

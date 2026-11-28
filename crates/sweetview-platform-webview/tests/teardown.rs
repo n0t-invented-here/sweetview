@@ -155,6 +155,9 @@ fn teardown() {
         with_extras.gdi <= bare.gdi.max(0),
         "GDI objects return to their start: {with_extras:?} ({bare:?} without the extras)"
     );
+    // The webview itself (its widget window, its controller) gives back every USER and GDI
+    // object it took.
+    assert!(bare.user <= 0 && bare.gdi <= 0, "a webview gives back its window and GDI objects: {bare:?}");
     // Kernel handles are compared with the same loop without the extras: WebView2 keeps about
     // one per webview ever made in the process, extras or not (measured here: 6 over 5 lives
     // without the extras, 4 or 5 with them, in each of three runs).
@@ -193,21 +196,19 @@ fn growth(ctx: &mut Ctx, lives: usize, life: fn(&mut Ctx)) -> Growth {
     }
 }
 
-/// The same life as `one_life` with no extras: a window and a `wry` webview
-/// showing a page that reports through IPC, then dropped.
+/// The same life as `one_life` with no extras: a window and a webview of this
+/// crate showing a page that sets its title, then dropped.
 fn bare_life(ctx: &mut Ctx) {
     let window = tao::window::WindowBuilder::new().build(&ctx.el).expect("window");
-    let mut context = wry::WebContext::new(Some(
-        std::env::temp_dir().join(format!("sweetview-platform-webview-test-{}", std::process::id())),
-    ));
-    let loaded = Rc::new(std::cell::Cell::new(false));
-    let sink = loaded.clone();
-    let webview = wry::WebViewBuilder::new_with_web_context(&mut context)
-        .with_ipc_handler(move |_| sink.set(true))
-        .with_html("<script>window.ipc.postMessage('ready')</script>")
-        .build(&window)
-        .expect("webview");
-    assert!(ctx.pump(None, Duration::from_secs(20), || loaded.get()));
+    let webview = sweetview_platform_webview::Webview::create(
+        &sweetview_platform_window::BorrowedWindow::of(&window),
+        sweetview_platform_webview::Layout::Fill,
+        false,
+        None,
+    )
+    .expect("webview");
+    assert_eq!(webview.navigate_to_string("<script>document.title = 'ready'</script>").code(), 0);
+    assert!(ctx.pump(None, Duration::from_secs(20), || sweetview_platform_webview::test_support::document_title(&webview) == "ready"));
     drop(webview);
     drop(window);
     ctx.settle(None, Duration::from_millis(300));

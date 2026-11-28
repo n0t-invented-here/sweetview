@@ -50,8 +50,9 @@ fn a_dropped_file_reaches_the_handler_with_its_path() {
     assert_eq!(*delivered.borrow(), vec![vec![path.clone()]], "exactly the dropped file's path, once");
     ctx.settle(Some(&view), Duration::from_millis(200));
     assert_eq!(delivered.borrow().len(), 1);
-    // wry's IPC handler saw the drop script's message, which its owner ignores.
-    assert!(view.drain_raw().iter().any(|m| sweetview_platform_webview::is_file_drop_message(m)));
+    // The drop script's message is the extras' own: the page message handler never sees it,
+    // as the C++ fork's `on_message` never did.
+    assert!(!view.drain_raw().iter().any(|m| sweetview_platform_webview::is_file_drop_message(m)));
     drop(view);
     ctx.settle(None, Duration::from_millis(200));
 }

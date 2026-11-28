@@ -216,6 +216,9 @@ struct Core {
   wrappers: Cell<usize>,
   /// The frame of a tabbed window: what [`tab_frame::TabFrame`] keeps.
   tab: Option<TabState>,
+  /// What a webview filling the window does when the window is activated: give its page the
+  /// keyboard focus (set by the engine; see [`set_page_focus`]).
+  page_focus: RefCell<Option<Listener>>,
 }
 
 thread_local! {
@@ -283,6 +286,7 @@ impl Core {
       background: Cell::new(None),
       cloak: RefCell::new(None),
       icons: RefCell::new(None),
+      page_focus: RefCell::new(None),
       wrappers: Cell::new(0),
       tab,
     })
@@ -688,6 +692,12 @@ fn on_event(weak: &Weak<Core>, event: &WindowEvent) -> bool {
       if let Some(listener) = listener {
         listener(*active);
       }
+      if *active {
+        let page_focus = core.page_focus.borrow().clone();
+        if let Some(page_focus) = page_focus {
+          page_focus();
+        }
+      }
       false
     }
     WindowEvent::Destroyed => {
@@ -851,8 +861,13 @@ impl Window {
       return Err(Error::state("sweetview: window handle is NULL"));
     }
     if let Some(core) = core_of(handle) {
-      let detected = Some(core.chrome);
-      return Ok(Self::wrap(core, false, detected));
+      // A window Sweetview did not make has no subclass while it has no listener, so nothing
+      // saw it destroyed: its record is reused only while the handle still names a window.
+      if core.owned || BorrowedWindow::with_handle_value(handle, |_| ()).is_some() {
+        let detected = Some(core.chrome);
+        return Ok(Self::wrap(core, false, detected));
+      }
+      core.destroy();
     }
     let chrome = BorrowedWindow::with_handle_value(handle, |window| platform::chrome(window))
       .ok_or_else(|| Error::state(format!("sweetview: not a window: {handle:#x}")))?;
@@ -920,7 +935,7 @@ impl Window {
   fn show_now(&self) -> Result<()> {
     let core = &self.core;
     // Shown the way `show()` always has: `tao`'s own show activates the window (D9).
-    core.with_native(|window| platform::show(window, core.no_activate, core.topmost.get()));
+    core.with_native(|window| platform::show(window, core.no_activate, core.topmost.get(), core.tab.is_some()));
     core.with_tao(|tao| {
       // `tao` learns the window is visible and not minimised, so its later
       // style rewrites agree; the subclass keeps those from touching `WS_VISIBLE`.
@@ -1393,6 +1408,20 @@ pub fn tracked_count(handle: isize) -> usize {
 /// Sweetview's own windows while it lives, or an application's own window of
 /// this thread. The window implements `raw_window_handle::HasWindowHandle`.
 /// `None` (and `f` is not called) when the handle names neither.
+/// Sets or clears what happens when the window Sweetview knows by `handle` is activated, for
+/// a webview that fills it: its page is given the keyboard focus, as the C++ library's own
+/// window gave it on `WM_ACTIVATE`. False for a window Sweetview does not know (one of the
+/// application's own, which nothing of Sweetview's watches).
+pub(crate) fn set_page_focus(handle: isize, hook: Option<Rc<dyn Fn()>>) -> bool {
+  match core_of(handle) {
+    Some(core) => {
+      drop(core.page_focus.replace(hook));
+      true
+    }
+    None => false,
+  }
+}
+
 pub fn with_mount_target<R>(handle: isize, f: impl FnOnce(&BorrowedWindow<'_>) -> R) -> Option<R> {
   if let Some(core) = core_of(handle) {
     return if core.alive.get() { core.with_native(f) } else { None };

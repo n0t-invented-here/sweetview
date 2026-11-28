@@ -24,7 +24,7 @@ use windows::core::PCWSTR;
 use windows::core::BOOL;
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_CLOAK};
-use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, MonitorFromWindow, HMONITOR, MONITORINFO, MONITOR_DEFAULTTONULL};
+use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, MonitorFromWindow, HMONITOR, MONITORINFO, MONITOR_DEFAULTTONEAREST};
 use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetActiveWindow, GetAsyncKeyState, ReleaseCapture, VK_LBUTTON, VK_MBUTTON, VK_RBUTTON};
@@ -124,7 +124,7 @@ impl HasWindowHandle for BorrowedWindow<'_> {
     // confirmed it just above, and the borrow is tied to `&self`, which is itself lent
     // for one call or for the borrow of a `tao` window. The OS validates the handle on
     // every call its borrowers make with it (`rfd` and `muda` pass it to user32 as an
-    // owner, `wry` as a parent), so a window destroyed during the borrow makes those
+    // owner, the webview crate as a parent), so a window destroyed during the borrow makes those
     // calls fail; it reads no memory through the handle.
     Ok(unsafe { WindowHandle::borrow_raw(raw) })
   }
@@ -339,16 +339,17 @@ pub fn bring_to_front(window: &impl NativeWindow) {
   set_foreground(hwnd);
 }
 
-/// `show()`: a minimised window is restored, otherwise it is shown, either
-/// without activation for `no_activate` (as at tag `pre-rust-rewrite`'s tab
-/// frame); then, unless it must not activate or is
-/// topmost, it is brought to the front. Every window goes through it, a `tao`
-/// window included: `tao`'s `set_visible` shows with `SW_SHOW`, which
+/// `show()`: a minimised window is restored (`SW_RESTORE`; for a tab frame
+/// that must not activate, `SW_SHOWNOACTIVATE`, as at tag `pre-rust-rewrite`,
+/// whose regular windows and tab frame each did so), otherwise it is shown,
+/// without activation for `no_activate`; then, unless it must not activate or
+/// is topmost, it is brought to the front. Every window goes through it, a
+/// `tao` window included: `tao`'s `set_visible` shows with `SW_SHOW`, which
 /// activates even a `WS_EX_NOACTIVATE` window (D9).
-pub fn show(window: &impl NativeWindow, no_activate: bool, topmost: bool) {
+pub fn show(window: &impl NativeWindow, no_activate: bool, topmost: bool, tab_frame: bool) {
   if is_minimized(window) {
     // `SW_SHOWNOACTIVATE` restores a minimised window too, without activating it.
-    show_window(window.hwnd(), if no_activate { SW_SHOWNOACTIVATE } else { SW_RESTORE });
+    show_window(window.hwnd(), if no_activate && tab_frame { SW_SHOWNOACTIVATE } else { SW_RESTORE });
   } else {
     show_window(window.hwnd(), if no_activate { SW_SHOWNOACTIVATE } else { SW_SHOW });
   }
@@ -736,13 +737,21 @@ pub fn left_button_down() -> bool {
 /// most, else the nearest, and for a minimised window the one its restored position is on. `None`
 /// when the handle names no window or the monitor is not among `monitors`.
 pub fn monitor_of(window: &impl NativeWindow, monitors: impl IntoIterator<Item = tao::monitor::MonitorHandle>) -> Option<tao::monitor::MonitorHandle> {
-  // SAFETY: `MonitorFromWindow` takes the handle by value and reads no memory of ours; the OS
-  // validates the handle, and with `MONITOR_DEFAULTTONULL` an invalid one answers null.
-  let monitor = unsafe { MonitorFromWindow(window.hwnd(), MONITOR_DEFAULTTONULL) };
-  if monitor.is_invalid() {
+  let monitor = monitor_handle_of(window.hwnd())?;
+  monitors.into_iter().find(|m| m.hmonitor() == monitor)
+}
+
+/// The monitor handle value `MonitorFromWindow` answers for `hwnd` with `MONITOR_DEFAULTTONEAREST`,
+/// as at tag `pre-rust-rewrite`: a window off every screen is on the nearest. `None` only for a
+/// handle that names no window.
+fn monitor_handle_of(hwnd: HWND) -> Option<isize> {
+  if !is_window_handle(hwnd) {
     return None;
   }
-  monitors.into_iter().find(|m| m.hmonitor() == monitor.0 as isize)
+  // SAFETY: `MonitorFromWindow` takes the handle by value and reads no memory of ours; the OS
+  // validates the handle.
+  let monitor = unsafe { MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST) };
+  (!monitor.is_invalid()).then_some(monitor.0 as isize)
 }
 
 /// The part of a monitor windows should use: its bounds less the taskbar.
