@@ -170,30 +170,36 @@ fn a_download_shows_webview2_s_own_interface_as_under_the_cpp_fork() {
 fn a_webview_takes_the_focus_only_in_a_window_of_its_own_as_under_the_cpp_fork() {
   on_ui_thread(|runtime| {
     let _finish = Finish(&runtime);
-    // The C++ fork focused the page only when it made the window itself (`owns_window()`,
-    // win32_edge.hh): a webview put in a given window, or beside a native control that
-    // has the focus, leaves the focus where it is.
-    for host in HOSTS {
+    // The C++ fork focused the page at creation only when it made the window itself
+    // (`owns_window()`, win32_edge.hh): a webview made in a given window, or beside a native
+    // control that has the focus, leaves the focus where it is. Read right after
+    // `Engine::create` returns, before the loop runs, so nothing but the creation can have
+    // moved it (a filled window's later activation is `wry`'s focus forwarding; D45).
+    let mut checked = 0;
+    for host in ["given window", "child"] {
+      let mut had_focus = false;
       let (engine, window) = make(host, |window| {
-        if let Some(window) = window {
-          test_support::focus_window(window.handle());
-        }
+        let holder = window.expect("a given window").handle();
+        test_support::focus_window(holder);
+        had_focus = test_support::focused_window() == holder;
       });
-      let holder = window.as_ref().map(|w| w.handle());
-      load(&runtime, &engine, PAGE);
-      settle(&runtime, Duration::from_millis(300));
+      let holder = window.as_ref().expect("a given window").handle();
       let inside = wry_of(&engine, test_support::focus_is_inside);
       let focused = test_support::focused_window();
-      eprintln!("-- {host}: focus in the webview {inside}; focused window {focused:#x}, the given window {holder:?}");
-      // A window of the engine's own is hidden until it is first sized or run, so where its
-      // focus goes is printed, not asserted.
-      if let Some(holder) = holder {
-        assert!(!inside, "{host}: the webview did not take the focus");
+      eprintln!("-- {host}: before the webview, the window had the focus {had_focus}; after Engine::create, focus in the webview {inside}, focused window {focused:#x}");
+      // The webview must never have it. Where it went otherwise is the desktop's business
+      // when another program took the activation meanwhile (the focus is then nobody's).
+      assert!(!inside, "{host}: making the webview did not take the focus");
+      if had_focus && focused != 0 {
         assert_eq!(focused, holder, "{host}: the given window keeps the focus");
+        checked += 1;
+      } else {
+        eprintln!("   not run for the {host}: the desktop did not leave this thread the focus");
       }
       engine.destroy();
       settle(&runtime, Duration::from_millis(100));
     }
+    eprintln!("-- checked {checked} of 2 hosts");
   });
 }
 
