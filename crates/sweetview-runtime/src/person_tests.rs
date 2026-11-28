@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 use sweetview_platform_window::test_support as os;
 use sweetview_platform_window::BorrowedWindow;
 
+use crate::engine::{Engine, Host};
 use crate::runtime::testing::on_ui_thread;
 use crate::runtime::Runtime;
 use crate::window::{Window, WindowInit};
@@ -128,5 +129,51 @@ fn a_person_closes_a_framed_window_with_its_close_button_and_with_alt_f4() {
       }
       window.dispose();
     }
+  });
+}
+
+/// Section 3 row "Per-pixel transparency of a `transparent` window": the screen through a
+/// frameless `transparent` window whose webview has a transparent background, as `WebView.attach`
+/// gives one (alpha 0), over a window of a known colour: the page's opaque square shows its own
+/// colour, and everywhere else the window behind shows through.
+#[test]
+fn a_transparent_window_shows_its_pages_opaque_shape_and_the_window_behind_everywhere_else() {
+  on_ui_thread(|runtime| {
+    let at = Rect::new(400, 300, 360, 260);
+    let behind = Window::create(WindowInit {
+      frame: false,
+      topmost: true,
+      no_activate: true,
+      background_color: Some("#20a040".into()),
+      bounds: Some(Rect::new(at.x - 40, at.y - 40, at.width + 80, at.height + 80)),
+      ..init("rt person behind")
+    })
+    .expect("behind");
+    behind.show().expect("show");
+    let glass = Window::create(WindowInit { frame: false, transparent: true, topmost: true, no_activate: true, bounds: Some(at), ..init("rt person transparent") }).expect("glass");
+    let engine = Engine::create(false, Host::Fill(glass.handle()), None).expect("webview");
+    engine.set_background_color(0, 0, 0, 0);
+    let page = "<style>html,body{background:transparent;margin:0}#box{position:absolute;left:0;top:0;width:120px;height:120px;background:#ff00ff}</style><div id=box></div>";
+    engine.navigate(&format!("data:text/html,{}", page.replace('#', "%23")));
+    glass.show().expect("show");
+    let (inside, outside) = ((at.x + 60, at.y + 60), (at.x + 260, at.y + 180));
+    let pixel = |(x, y): (i32, i32)| os::screen_pixel(x, y);
+    pump_until(runtime.as_ref(), 8000, || pixel(inside) == Some(0xff_00_ff));
+    for (name, point) in [("inside", inside), ("outside", outside)] {
+      let over = os::window_at(point.0, point.1);
+      if over != glass.handle() && over != behind.handle() {
+        panic!("not run: another window ({over:#x}) is over the test's at {name} {point:?}");
+      }
+    }
+    pump_until(runtime.as_ref(), 3000, || pixel(outside) == Some(0x20_a0_40));
+    assert_eq!((pixel(inside), pixel(outside)), (Some(0xff_00_ff), Some(0x20_a0_40)), "the page's square, and the window behind through the rest");
+    engine.destroy();
+    glass.dispose();
+    behind.dispose();
+    // As the end of an application: every webview released, a pump so each has gone, then the
+    // thread's WebView2 environment (as `engine_tests`' `Finish`).
+    crate::engine::release_all();
+    pump_until(runtime.as_ref(), 300, || false);
+    sweetview_platform_webview::test_support::release_environment();
   });
 }

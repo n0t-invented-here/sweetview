@@ -339,6 +339,23 @@ describe.if(onWindows)("native binding: threads (W1.5, W1.7)", () => {
     }
   });
 
+  // Section 3 row "UI-thread calls throwing from a Worker for windows, screens, tray and menus".
+  test("the public window, screen, tray and menu calls made from a Worker throw that they must be made on the UI thread", async () => {
+    const { worker, next } = openWorker();
+    try {
+      const reply = next();
+      worker.postMessage({ kind: "public" });
+      const probed = await reply;
+      if (probed.kind !== "probed") throw new Error("unexpected reply");
+      expect(probed.isUiThread).toBe(false);
+      const names = ["Menu.popup", "Screen.all", "Screen.at", "Screen.cursor", "Screen.primary", "Window.fromHandle", "createTray", "new Window"];
+      expect(Object.keys(probed.refused).sort()).toEqual([...names].sort());
+      expect(probed.refused).toEqual(Object.fromEntries(names.map((name) => [name, UI_THREAD_ERROR])));
+    } finally {
+      worker.terminate();
+    }
+  });
+
   // docs/native.md: menu templates (resolveMenu), hit-region geometry, the icon encoders and the
   // PNG decoder, and the regular-file helpers are pure TypeScript, callable on any thread.
   test("the pure-TypeScript functions docs/ calls any-thread (resolveMenu, packRegions/hitRegions, dotPng/decodePng/icoFromPng, readTextFile) give the UI thread's answers in a Worker", async () => {

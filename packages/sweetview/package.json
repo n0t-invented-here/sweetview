@@ -16,7 +16,9 @@
     "src",
     "!src/**/*.test.ts",
     "!src/**/*.test.worker.ts",
-    "file-imports.d.ts"
+    "file-imports.d.ts",
+    "prebuilt/binding.d.ts",
+    "prebuilt/*.node"
   ],
   "exports": {
     ".": "./src/index.ts",
@@ -43,6 +45,12 @@
   },
   "engines": {
     "bun": ">=1.4.2"
+  },
+  "napi": {
+    "binaryName": "sweetview-webview",
+    "targets": [
+      "x86_64-pc-windows-msvc"
+    ]
   },
   "dependencies": {
     "@n1h/sweetview-ipc": "workspace:*",

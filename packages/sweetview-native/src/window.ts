@@ -196,6 +196,24 @@ export interface WindowBackend {
   onMove(handler: (bounds: Rect) => void): () => void;
   onClose(handler: () => void): () => void;
   onFileDrop(handler: (paths: string[]) => void): () => void;
+  /** Internal: whether an `onClose` listener is registered, so a close request would not destroy the window. */
+  hasCloseListeners?(): boolean;
+  /**
+   * Internal, for the end of a blocking `run()` (D49): hides the window and marks it hidden by
+   * Sweetview. Any `show()`, `hide()` or `toggle()` of the application's own clears the mark.
+   */
+  hideAtRunEnd?(): void;
+  /** Internal: whether the mark of `hideAtRunEnd` is still there, nothing else having shown or hidden the window since; clears it. */
+  takeHiddenAtRunEnd?(): boolean;
+  /**
+   * Internal, for Sweetview's reveal of a window whose page has to draw first (D49): shows a
+   * hidden window off the screen (DWM's cloak), visible to its webviews so they draw, until
+   * `uncloak`. True when it is cloaked; false when it was shown at once or was already visible.
+   * An application's own `show()` or `hide()` lets the cloak go.
+   */
+  showCloaked?(): boolean;
+  /** Internal: puts a window `showCloaked` cloaked on the screen. */
+  uncloak?(): void;
   /** Internal: lets Window wire default native close -> outer Window.dispose(). */
   setOwnerDispose?(fn: () => void): void;
   /** Internal: snapshots native window styles and outer bounds before WebView attach and returns a restore thunk. */
@@ -328,6 +346,26 @@ export function holdWindowNativeDispose(win: Window): () => void {
   };
 }
 
+/**
+ * Hides a visible window this process made, as the first instant of its teardown, so no window
+ * is on the screen with its webview gone and its client area empty (D49): its webviews and the
+ * window are destroyed right after. A failure is logged and the teardown goes on.
+ */
+function concealWindow(win: Window): boolean {
+  // macOS keeps the tag's teardown order until its goal (D42): nothing is ordered out first there.
+  if (macosKeepsTagPath() || !windowMetaMap.get(win)?.owned) return false;
+  const inner = windowBackendMap.get(win);
+  if (!inner) return false;
+  try {
+    if (!inner.isVisible()) return false;
+    inner.hide();
+    return true;
+  } catch (err) {
+    console.error("sweetview: hiding a window before its teardown threw:", err);
+    return false;
+  }
+}
+
 /** Internal check for whether Window.dispose() has already run. */
 export function isWindowDisposed(win: Window): boolean {
   return windowDisposed.has(win);
@@ -391,6 +429,7 @@ export class Window {
   readonly #fileDropListeners = new Set<FileDropListener>();
   #unsubscribeNativeDrop?: () => void;
   readonly #unregister: () => void;
+  readonly #unregisterConceal: () => void;
   readonly #tabListeners: TabListeners = {
     newTab: new Set(),
     tabSelect: new Set(),
@@ -452,8 +491,10 @@ export class Window {
     windowMetaMap.set(this, this.#meta);
     windowBackendMap.set(this, this.#inner);
     windowTabListeners.set(this, this.#tabListeners);
-    // Disposed when the application ends, after its webviews and trays.
+    // Disposed when the application ends, after its webviews and trays; hidden before any of
+    // them goes, so no window is seen with its webview gone (D49).
     this.#unregister = releaseAtEnd("window", () => this.dispose());
+    this.#unregisterConceal = releaseAtEnd("conceal", () => void concealWindow(this));
   }
 
   /** Non-mutating wrapper around an existing HWND or NSWindow*. */
@@ -629,8 +670,12 @@ export class Window {
    */
   dispose(): void {
     if (windowDisposed.has(this)) return;
+    // Off the screen first, then its webviews (the dispose hooks), then the window: never a
+    // window on the screen with its webview gone and its client area empty (D49).
+    concealWindow(this);
     windowDisposed.add(this);
     this.#unregister();
+    this.#unregisterConceal();
     ownedWindows.delete(this);
     const hooks = windowDisposeHooks.get(this);
     if (hooks) {

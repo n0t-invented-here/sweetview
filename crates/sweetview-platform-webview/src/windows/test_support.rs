@@ -141,6 +141,11 @@ fn container(webview: &Webview) -> Option<HWND> {
     Some(parent)
 }
 
+/// The handle value of the webview's widget window, while its controller answers.
+pub fn container_value(webview: &Webview) -> Option<isize> {
+    container(webview).map(|window| window.0 as isize)
+}
+
 /// Whether the webview is still in place: its controller answers and its
 /// widget window exists.
 pub fn container_alive(webview: &Webview) -> bool {
@@ -550,4 +555,19 @@ thread_local! {
 /// request handling WebView2 refuses to set up.
 pub fn fail_next_attach() {
     FAIL_NEXT_ATTACH.with(|fail| fail.set(true));
+}
+
+/// Whether this thread holds a WebView2 environment now.
+pub fn environment_cached() -> bool {
+    super::environment::cached()
+}
+
+thread_local! {
+    pub(super) static REFUSE_NEXT_DROP_SCRIPT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Makes WebView2's answer to this thread's next drop-script registration a
+/// refusal, as WebView2 reports one (no script id).
+pub fn refuse_next_drop_script() {
+    REFUSE_NEXT_DROP_SCRIPT.with(|refuse| refuse.set(true));
 }

@@ -6,7 +6,7 @@
 
 import { join } from "node:path";
 import { Window } from "../../src/window";
-import { completeWebviewRequest, engineOf, SizeHint, Webview, type WebviewRequest, type WebviewResponse } from "../../src/webview";
+import { completeWebviewRequest, engineOf, SizeHint, Webview, type WebviewRequest, type WebviewResponse } from "../../../sweetview/src/raw-webview";
 import { codeOf, finish, native, report, watchdog } from "./kit";
 import * as probe from "./win32-probe";
 

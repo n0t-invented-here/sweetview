@@ -302,17 +302,25 @@ fn the_focus_moves_into_the_page_only_where_the_cpp_fork_moved_it() {
       checked.push("own window".into());
     }
     own.destroy();
-    // 4. A runtime window a page fills (createApp's) gives the page the focus on activation.
-    let (filled, windows) = make("given window", |_| ());
-    load(&runtime, &filled, PAGE);
-    let window = windows[0].handle();
-    BorrowedWindow::with_handle_value(window, test_support::focus_window);
-    BorrowedWindow::with_handle_value(window, test_support::send_activate);
-    let activated = pump_until(&runtime, Duration::from_secs(3), || webview_of(&filled, test_support::focus_is_inside));
-    eprintln!("-- given window: the page has the focus after the window's activation {activated}");
-    assert!(activated, "the page of a runtime window it fills gets the focus when the window is activated");
-    checked.push("activation of a filled window".into());
-    filled.destroy();
+    // 4. A Sweetview window a page fills gives the page nothing on activation unless asked
+    //    (a window the application gave, as under the C++ library); the window createApp makes
+    //    asks (follow_window_activation), as the tag's createApp window was the webview's own.
+    for asked in [false, true] {
+      let (filled, windows) = make("given window", |_| ());
+      load(&runtime, &filled, PAGE);
+      if asked {
+        filled.follow_window_activation();
+      }
+      let window = windows[0].handle();
+      BorrowedWindow::with_handle_value(window, test_support::focus_window);
+      BorrowedWindow::with_handle_value(window, test_support::send_activate);
+      let activated = pump_until(&runtime, Duration::from_secs(3), || webview_of(&filled, test_support::focus_is_inside));
+      eprintln!("-- given window, asked {asked}: the page has the focus after the window's activation {activated}");
+      assert_eq!(activated, asked, "the page of a filled window gets the focus on activation only when asked (createApp's)");
+      checked.push(format!("activation of a filled window, asked {asked}"));
+      filled.destroy();
+      settle(&runtime, Duration::from_millis(100));
+    }
     eprintln!("-- checked: {checked:?}");
     assert!(checked.len() >= 4, "too little could be checked on this desktop to say anything: {checked:?}");
   });
@@ -959,6 +967,100 @@ fn a_page_filling_a_window_follows_its_client_area_whoever_made_the_window() {
   });
 }
 
+/// The order a webview and the window it is in go (D49, R1 and R3 of its first review), read
+/// inside the `WM_DESTROY` of WebView2's own window under the webview's widget
+/// (`Chrome_WidgetWin_0`), which closing the controller destroys.
+mod teardown_order {
+  use std::cell::Cell;
+
+  use sweetview_platform_window::test_support::{first_child, post_close, watch_destroy};
+
+  use super::*;
+
+  /// WebView2's own window under the webview's widget.
+  fn browser_window(engine: &Engine) -> isize {
+    let container = engine.inner.with_live(|live| test_support::container_value(&live.webview)).flatten().expect("the webview's widget");
+    BorrowedWindow::with_handle_value(container, |c| first_child(c)).flatten().expect("WebView2's window under the widget")
+  }
+
+  /// A standalone webview (its own window) shown, and `end` run: whether its own window was still
+  /// on the screen at the moment the webview went.
+  fn on_screen_as_it_goes(runtime: &Rc<Runtime>, end: fn(&Engine, isize)) -> Option<bool> {
+    let engine = Engine::create(false, Host::Own, None).expect("a standalone webview");
+    engine.show_own_window();
+    let window = engine
+      .inner
+      .with_live(|live| {
+        let HostWindow::Own { window, .. } = &live.window else { panic!("its own window") };
+        window_value_of(window)
+      })
+      .expect("live");
+    let browser = browser_window(&engine);
+    let seen = Rc::new(Cell::new(None));
+    let record = seen.clone();
+    let watch = BorrowedWindow::with_handle_value(browser, |b| {
+      watch_destroy(b, move || record.set(BorrowedWindow::with_handle_value(window, |w| sweetview_platform_window::is_visible(w))))
+    })
+    .expect("WebView2's window")
+    .expect("watched");
+    end(&engine, window);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while seen.get().is_none() && Instant::now() < deadline {
+      runtime.pump();
+    }
+    drop(watch);
+    seen.get()
+  }
+
+  /// R1: a standalone webview's window leaves the screen before the webview goes, on every path
+  /// that ends it: `destroy()`, a close of its own window (the title bar's, `WM_CLOSE`), and the
+  /// release at the end of the application. `Some(false)`: the window was hidden, and still a
+  /// window, when the webview went.
+  #[test]
+  fn a_standalone_webviews_window_leaves_the_screen_before_the_webview_goes() {
+    on_ui_thread(|runtime| {
+      assert_eq!(on_screen_as_it_goes(&runtime, |engine, _| engine.destroy()), Some(false), "destroy()");
+      assert_eq!(
+        on_screen_as_it_goes(&runtime, |_, window| {
+          BorrowedWindow::with_handle_value(window, |w| post_close(w));
+        }),
+        Some(false),
+        "its own window closed"
+      );
+      assert_eq!(on_screen_as_it_goes(&runtime, |_, _| release_all()), Some(false), "the release at the end");
+    });
+  }
+
+  /// R3: a webview whose drop waits because a webview callback is on the stack (a synchronous
+  /// handler that disposes the application) still goes before the window it fills. Inside a
+  /// callback scope the webview is destroyed, then its window disposed; once the scope is left
+  /// and the loop turns, the order the two went in is read from their `WM_DESTROY`s.
+  #[test]
+  fn a_webview_whose_drop_waits_for_a_callback_still_goes_before_its_window() {
+    on_ui_thread(|runtime| {
+      let window = Window::create(WindowInit { title: "rt r3".into(), frame: true, resizable: true, no_activate: true, ..Default::default() }).expect("window");
+      let handle = window.handle();
+      let engine = Engine::create(false, Host::Fill(handle), crate::window::background_of(handle)).expect("webview");
+      let browser = browser_window(&engine);
+      let order = Rc::new(RefCell::new(Vec::new()));
+      let (to_webview, to_window) = (order.clone(), order.clone());
+      let watch_webview = BorrowedWindow::with_handle_value(browser, |b| watch_destroy(b, move || to_webview.borrow_mut().push("webview"))).expect("WebView2's window").expect("watched");
+      let watch_window = BorrowedWindow::with_handle_value(handle, |w| watch_destroy(w, move || to_window.borrow_mut().push("window"))).expect("the window").expect("watched");
+      {
+        let _in_a_callback = CallbackScope::enter();
+        engine.destroy();
+        window.dispose();
+      }
+      let deadline = Instant::now() + Duration::from_secs(5);
+      while order.borrow().len() < 2 && Instant::now() < deadline {
+        runtime.pump();
+      }
+      drop((watch_webview, watch_window));
+      assert_eq!(*order.borrow(), ["webview", "window"]);
+    });
+  }
+}
+
 #[test]
 fn a_webview_whose_setup_fails_leaves_no_listener_of_its_own_window() {
   on_ui_thread(|runtime| {
@@ -970,5 +1072,98 @@ fn a_webview_whose_setup_fails_leaves_no_listener_of_its_own_window() {
     assert!(Engine::create(false, Host::Own, None).is_err(), "the forced failure");
     settle(&runtime, Duration::from_millis(100));
     assert_eq!(runtime.listener_count(), before, "no listener left behind");
+  });
+}
+
+/// A page at `http://webview.localhost/<name>` titled `name` that reports `ready <name>`.
+fn serve_page(engine: &Engine, name: &str) -> String {
+  let html = format!("<!doctype html><title>{name}</title><body>{name}<script>report('ready {name}')</script></body>");
+  assert_eq!(engine.set_asset(name, "text/html", html.into_bytes()), ErrorCode::Ok);
+  format!("http://webview.localhost/{name}")
+}
+
+#[test]
+fn a_script_after_a_navigation_within_the_document_runs_at_once() {
+  on_ui_thread(|runtime| {
+    let _finish = Finish(&runtime);
+    // Y1: a navigation that changes only the fragment makes no new document, and WebView2
+    // raises no NavigationStarting for it: a script asked for after it runs in that document,
+    // and what is asked for after it is not held behind it.
+    let (engine, _windows) = make("given window", |_| ());
+    let reports: Rc<RefCell<Vec<String>>> = Rc::default();
+    let sink = reports.clone();
+    assert_eq!(engine.bind("report", Rc::new(move |_seq, args| sink.borrow_mut().push(args.to_string()))), ErrorCode::Ok);
+    let url = serve_page(&engine, "first");
+    engine.navigate(&url);
+    assert!(pump_until(&runtime, Duration::from_secs(10), || reports.borrow().iter().any(|r| r.contains("ready first"))), "the page loaded");
+    for round in 0..3 {
+      reports.borrow_mut().clear();
+      engine.navigate(&format!("{url}#part{round}"));
+      engine.eval("report('after ' + location.hash + ' in ' + document.title)");
+      let ran = pump_until(&runtime, Duration::from_secs(5), || reports.borrow().iter().any(|r| r.contains("after")));
+      eprintln!("-- round {round}: {:?}", reports.borrow());
+      assert!(ran, "round {round}: the script after a fragment navigation ran");
+      assert!(reports.borrow().iter().any(|r| r.contains("in first")), "round {round}: in the same document");
+    }
+    engine.destroy();
+  });
+}
+
+#[test]
+fn a_script_after_two_overlapping_navigations_runs_in_the_second_s_document() {
+  on_ui_thread(|runtime| {
+    let _finish = Finish(&runtime);
+    // Y1: two navigations sent back to back, then a script: the first one's events are not
+    // taken for the second's, and the script runs in the second one's document.
+    for host in HOSTS {
+      let (engine, _windows) = make(host, |_| ());
+      let reports: Rc<RefCell<Vec<String>>> = Rc::default();
+      let sink = reports.clone();
+      assert_eq!(engine.bind("report", Rc::new(move |_seq, args| sink.borrow_mut().push(args.to_string()))), ErrorCode::Ok);
+      let start = serve_page(&engine, "start");
+      engine.navigate(&start);
+      assert!(pump_until(&runtime, Duration::from_secs(10), || reports.borrow().iter().any(|r| r.contains("ready start"))), "{host}: loaded");
+      for round in 0..4 {
+        reports.borrow_mut().clear();
+        let a = serve_page(&engine, &format!("a{round}"));
+        let b = serve_page(&engine, &format!("b{round}"));
+        engine.navigate(&a);
+        engine.navigate(&b);
+        engine.eval("report('script in ' + document.title)");
+        let ran = pump_until(&runtime, Duration::from_secs(10), || reports.borrow().iter().any(|r| r.contains("script in")));
+        let said = reports.borrow().iter().find(|r| r.contains("script in")).cloned().unwrap_or_default();
+        eprintln!("-- {host}, round {round}: {said}");
+        assert!(ran, "{host}, round {round}: the script ran");
+        assert!(said.contains(&format!("script in b{round}")), "{host}, round {round}: in the second navigation's document: {said}");
+      }
+      engine.destroy();
+      settle(&runtime, Duration::from_millis(100));
+    }
+  });
+}
+
+#[test]
+fn a_webview_whose_drop_script_is_refused_is_a_failed_setup() {
+  on_ui_thread(|runtime| {
+    let _finish = Finish(&runtime);
+    // Y4: WebView2 refusing the drop script's registration (an answer with no script id) is a
+    // failed setup, not a webview that would take no drop; nothing of it is left.
+    for host in HOSTS {
+      let before = runtime.listener_count();
+      test_support::refuse_next_drop_script();
+      let made = match host {
+        "own window" => Engine::create(false, Host::Own, None).map(|engine| (engine, Vec::new())),
+        _ => {
+          let window = host_window("engine test: refused drop script");
+          Engine::create(false, Host::Fill(window.handle()), None).map(|engine| (engine, vec![window]))
+        }
+      };
+      assert!(made.is_err(), "{host}: the refused registration fails the setup");
+      settle(&runtime, Duration::from_millis(100));
+      assert_eq!(runtime.listener_count(), before, "{host}: nothing left behind");
+      if host != "own window" {
+        break;
+      }
+    }
   });
 }

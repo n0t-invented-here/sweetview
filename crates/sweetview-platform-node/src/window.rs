@@ -53,6 +53,19 @@ impl Window {
     self.0.hide()
   }
 
+  /// Shows a hidden window off the screen until `uncloak`: the webviews in it draw first (D49).
+  /// True when it is cloaked; false when it was shown at once or was already visible.
+  #[napi(catch_unwind)]
+  pub fn show_cloaked(&self) -> napi::Result<bool> {
+    self.0.show_cloaked()
+  }
+
+  /// Puts a window `showCloaked` cloaked on the screen.
+  #[napi(catch_unwind)]
+  pub fn uncloak(&self) {
+    self.0.uncloak()
+  }
+
   /// The outer frame.
   #[napi(catch_unwind)]
   pub fn bounds(&self) -> Rect {

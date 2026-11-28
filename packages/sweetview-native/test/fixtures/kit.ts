@@ -3,8 +3,8 @@
 // `RESULT <json>` and exits. Each arms its own watchdog, so a fixture that
 // hangs reports and exits by itself and is never killed from outside.
 
-import { binding } from "../../src/binding";
-import { unload, WebviewError } from "../../src/webview";
+import { binding } from "../../../sweetview/src/binding";
+import { unload, WebviewError } from "../../../sweetview/src/raw-webview";
 
 export const native = binding();
 

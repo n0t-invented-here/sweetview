@@ -5,8 +5,10 @@
 #![forbid(unsafe_code)]
 
 pub mod activation;
+#[cfg(feature = "webview")]
 pub mod bridge;
 pub mod clipboard;
+#[cfg(feature = "webview")]
 pub mod engine;
 mod error;
 pub mod input;
@@ -31,9 +33,11 @@ mod window_os_tests;
 mod menu_tray_os_tests;
 #[cfg(all(test, windows))]
 mod reentry_tests;
-#[cfg(all(test, windows))]
+#[cfg(all(test, windows, feature = "webview"))]
 mod person_tests;
 
 pub use error::{Error, Result};
+/// Which binding owns this process (D50).
+pub use sweetview_platform_loop::process_owner::claim as claim_process;
 pub use sweetview_window_logic::{Point, Rect, ResizeEdge};
 pub use runtime::{wake, Runtime, TimeoutId};

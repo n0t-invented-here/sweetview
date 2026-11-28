@@ -27,9 +27,9 @@ export type DesktopCtx = {
   /** A new Window, disposed when the run ends. */
   window(options?: import("@n1h/sweetview-native").WindowOptions): import("@n1h/sweetview-native").Window;
   /** A native Webview in a window of its own, destroyed when the run ends. */
-  webview(): import("@n1h/sweetview-native").Webview;
+  webview(): import("@n1h/sweetview").RawWebview;
   /** What a page answers to an expression, through a binding of the fixture's own. */
-  ask(view: import("@n1h/sweetview-native").Webview, expression: string): Promise<string>;
+  ask(view: import("@n1h/sweetview").RawWebview, expression: string): Promise<string>;
   until(condition: () => boolean, ms?: number): Promise<boolean>;
   /** The app rows-page.ts runs in, made once with createApp; its page's report. */
   pageApp(): Promise<{ app: import("@n1h/sweetview").App; report: Record<string, any> }>;
@@ -126,7 +126,7 @@ const inModal = async (step: () => boolean, ms = 8000) => {
   scheduleNativeTimeout(25, tick);
 };
 /** Loads a page of the webview's own asset origin (so its requests are same-origin) and waits for it. */
-const onAssetPage = async (ctx: DesktopCtx, view: import("@n1h/sweetview-native").Webview) => {
+const onAssetPage = async (ctx: DesktopCtx, view: import("@n1h/sweetview").RawWebview) => {
   view.setAsset("rows-page.html", "text/html", "<!doctype html><title>rows page</title>");
   view.navigate(`${view.assetOrigin}/rows-page.html`);
   for (let i = 0; i < 40 && (await ctx.ask(view, "document.title").catch(() => "")) !== "rows page"; i++) await Bun.sleep(100);
@@ -407,6 +407,8 @@ export const RUNNERS: Record<string, Runner> = {
     const view = new value(false, undefined, host.handle);
     try {
       must(typeof view.unsafeHandle === "number" && BigInt(view.unsafeWindowHandle) !== 0n, "a webview in the given window", view.unsafeHandle);
+      const wrapped = new value(view.unsafeHandle);
+      must(wrapped.unsafeHandle === view.unsafeHandle, "new RawWebview(handle) wraps the same webview");
     } finally {
       view.destroy();
     }
@@ -502,26 +504,14 @@ export const RUNNERS: Record<string, Runner> = {
       view.dispose();
     }
   }),
-  "new Webview": desktop((value, ctx) => {
-    const { SizeHint } = require("@n1h/sweetview-native");
-    const view = new value(false, { width: 320, height: 240, hint: SizeHint.FIXED });
-    try {
-      const wrapped = new value(view.unsafeHandle);
-      must(wrapped.unsafeHandle === view.unsafeHandle, "new Webview(handle) wraps the same webview");
-      const r = ctx.os.windowRect(BigInt(view.unsafeWindowHandle));
-      must(r.right > r.left, "the webview has a window");
-    } finally {
-      view.destroy();
-    }
-  }),
-  "Webview#destroy": desktop((value) => {
+  "RawWebview#destroy": desktop((value) => {
     const view = new value(false);
     view.destroy();
     must(view.unsafeHandle === null && view.unsafeWindowHandle === null, "after destroy the handles are null");
   }),
-  "Webview#unsafeHandle": desktop((_value, ctx) => must(Number.isSafeInteger(ctx.webview().unsafeHandle), "an opaque safe integer")),
-  "Webview#unsafeWindowHandle": desktop((_value, ctx) => must(ctx.os.isWindow(BigInt(ctx.webview().unsafeWindowHandle!)), "a real HWND")),
-  "Webview#bindRaw": desktop(async (_value, ctx) => {
+  "RawWebview#unsafeHandle": desktop((_value, ctx) => must(Number.isSafeInteger(ctx.webview().unsafeHandle), "an opaque safe integer")),
+  "RawWebview#unsafeWindowHandle": desktop((_value, ctx) => must(ctx.os.isWindow(BigInt(ctx.webview().unsafeWindowHandle!)), "a real HWND")),
+  "RawWebview#bindRaw": desktop(async (_value, ctx) => {
     const view = ctx.webview();
     const arg = { token: 1 };
     let seen: unknown;
@@ -870,7 +860,7 @@ export const RUNNERS: Record<string, Runner> = {
   beginWebviewResponse: desktop((fn, ctx) => RUNNERS.endWebviewResponse!.run(fn, ctx as never)),
   writeWebviewResponseChunk: desktop((fn, ctx) => RUNNERS.endWebviewResponse!.run(fn, ctx as never)),
   endWebviewResponse: desktop(async (_fn, ctx) => {
-    const { beginWebviewResponse, writeWebviewResponseChunk, endWebviewResponse, completeWebviewRequest } = require("@n1h/sweetview-native");
+    const { beginWebviewResponse, writeWebviewResponseChunk, endWebviewResponse, completeWebviewRequest } = require("@n1h/sweetview");
     const view = ctx.webview();
     view.setRequestHandler((req: { id: bigint; url: string }) => {
       const handle = view.unsafeHandle!;

@@ -8,7 +8,7 @@
 // blocks this process's own watchdog too.
 
 import { writeSync } from "node:fs";
-import { Webview } from "../../src/webview";
+import { Webview } from "../../../sweetview/src/raw-webview";
 import { finish, native, report, watchdog } from "./kit";
 
 watchdog(30_000);

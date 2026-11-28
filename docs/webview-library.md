@@ -13,8 +13,11 @@ what happens underneath, choosing a build, and working on it.
   handler with streamed bodies, file drops, external drop control, the
   background colour and removable user scripts, through the typed WebView2
   interfaces of `webview2-com`, with the request rules in `sweetview-http`. Both are compiled into the
-  N-API binding that ships inside `@n1h/sweetview-native`. Nothing else is
-  installed, and `bun:ffi` is not involved.
+  N-API binding that ships inside `@n1h/sweetview`. The binding
+  `@n1h/sweetview-native` ships is built without them, so an application of
+  the native package alone takes no webview; once `@n1h/sweetview` is
+  imported, the process loads its binding only, which has every native call
+  too (D50). Nothing else is installed, and `bun:ffi` is not involved.
 - On macOS, until the macOS goal of the Rust rewrite, the webview is the C++
   webview library: a fork of upstream webview with Sweetview's additions,
   shipped in the optional peer `@n1h/sweetview-webview-bun` and called through
@@ -46,8 +49,10 @@ Windows binding provides the same behaviour as methods of `RawWebview`
 
 Windows:
 
-- The binding is `prebuilt/sweetview.win32-x64-msvc.node` in
-  `@n1h/sweetview-native`, built from the crates under `crates/` of this
+- The binding is `prebuilt/sweetview-webview.win32-x64-msvc.node` in
+  `@n1h/sweetview` (the native package's
+  `prebuilt/sweetview.win32-x64-msvc.node` is the same crates built without
+  the webview), built from the crates under `crates/` of this
   repository by `just native build` ([Rebuilding](#rebuilding)). The published
   package carries it; a clone of the repository does not, and builds it.
 - `@n1h/sweetview-webview-bun` is not needed on Windows and is not loaded.
@@ -59,7 +64,8 @@ macOS, until the macOS goal of the Rust rewrite:
   The Bun bindings build it from their `webview` submodule, a fork of
   upstream webview with Sweetview's additions.
 - `@n1h/sweetview` and `@n1h/sweetview-native` declare the bindings as an
-  optional peer dependency, `^2.7.0`, which a macOS application installs. Version 2.7.0 has the window, asset and transparency additions.
+  optional peer dependency (the native package for its input hooks and
+  `permissions` there), `^2.7.0`, which a macOS application installs. Version 2.7.0 has the window, asset and transparency additions.
   The later additions (request interception through `onRequest`, streaming
   responses, `allowExternalDrop`, and webview file drops) arrive with the
   2.8.0 bindings, which the `^2.7.0` range accepts. Until 2.8.0 is
@@ -317,7 +323,7 @@ no way to leave them out; that is why it is not used (DECISIONS D48).
 | Settings | WebView2's defaults, except the developer tools (`debug`) and the status bar (off). So zoom with Ctrl+wheel, Ctrl+plus, Ctrl+minus, Ctrl+0 and a pinch, swipe navigation, the browser's context menu and keys, script dialogs, the built-in error page and SmartScreen are on; CSS `app-region` support and password saving are off; general autofill is whatever the profile has, never written |
 | The environment | created once, with no options (no extra browser arguments, no language, the default scroll bars), on `%APPDATA%\<executable file name>` |
 | The page's container | a child window of class `webview_widget` with `WS_EX_CONTROLPARENT`, destroyed with the webview |
-| Focus | given to the page in a window Sweetview made itself, at creation and when that window is activated; a page filling a Sweetview `Window` (as `createApp`'s does) gets it when that window is activated. A webview in a window of the application's own, or beside a control that has the focus, takes nothing |
+| Focus | given to the page in a window Sweetview made itself, at creation and when that window is activated; the page of the window `createApp` makes gets it when that window is activated (at the tag that window was the webview's own). A webview in a window of the application's own (`createApp({ window })`, `WebView.attach`), or beside a control that has the focus, takes nothing |
 | A page's `window.close()`, from any document or frame, and the DevTools protocol's `Page.close` | nothing happens |
 | A download | WebView2's own: its interface, the profile's download folder, a file already there kept (the new one is named `name (1).ext`) |
 | A popup (`window.open`, `target="_blank"`) | WebView2 opens its own window, unless the tabs library has a handler set, which then gets the address |
@@ -343,9 +349,12 @@ Windows) after teardown starts do nothing.
 
 ## Library selection and symbol probing
 
-On Windows, `@n1h/sweetview-native` loads its binding on first use with a
-literal `require` of `prebuilt/sweetview.win32-x64-msvc.node`, the form
-`bun build --compile` embeds in the executable. A `bun build --compile` for
+On Windows, `@n1h/sweetview-native` loads a binding on first use: the one
+`@n1h/sweetview` handed it when it was imported (a literal `require` of
+`prebuilt/sweetview-webview.win32-x64-msvc.node` there), or else its own, a
+literal `require` of `prebuilt/sweetview.win32-x64-msvc.node`. Both are the
+form `bun build --compile` embeds in the executable, so an executable of
+`@n1h/sweetview` carries both and loads one. A `bun build --compile` for
 Windows made without that file fails at build time with
 `Could not resolve: "../prebuilt/sweetview.win32-x64-msvc.node"`; a build for
 macOS does not need it. `SWEETVIEW_NATIVE_PATH`
@@ -413,9 +422,10 @@ From this repository's root, with the Rust toolchain (installed with
 [rustup](https://rustup.rs), which on Windows also asks for the Visual Studio
 C++ build tools) and the [just](https://github.com/casey/just) recipes,
 `just native build` runs `bun install`, then builds
-`crates/sweetview-platform-node` in release mode with the napi-rs CLI into
-`packages/sweetview-native/prebuilt/` and regenerates `prebuilt/binding.d.ts`
-from the Rust signatures. When `cargo` is not on `PATH` it says so, and what to
+`crates/sweetview-platform-node` in release mode with the napi-rs CLI twice:
+without its `webview` feature into `packages/sweetview-native/prebuilt/`, and
+with it into `packages/sweetview/prebuilt/`, each with its `binding.d.ts`
+regenerated from the Rust signatures. When `cargo` is not on `PATH` it says so, and what to
 install, before anything else runs. The recipe is `build` in the `native`
 module, whose justfile is `packages/sweetview-native/justfile`.
 

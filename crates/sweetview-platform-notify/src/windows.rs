@@ -23,7 +23,6 @@ use windows::UI::Notifications::{
   ToastDismissedEventArgs, ToastFailedEventArgs, ToastNotification, ToastNotificationManager, ToastNotifier,
 };
 use windows::Win32::Foundation::{ERROR_FILE_NOT_FOUND, E_UNEXPECTED, HWND, LPARAM, RPC_E_CHANGED_MODE, WPARAM};
-use windows::Win32::System::Com::CoIncrementMTAUsage;
 use windows::Win32::System::Registry::KEY_QUERY_VALUE;
 use windows::Win32::System::WinRT::{RoInitialize, RoUninitialize, RO_INIT_SINGLETHREADED};
 use windows_registry::CURRENT_USER;
@@ -340,22 +339,6 @@ impl Drop for NotifyWindow {
 
 // ---- WinRT -------------------------------------------------------------------
 
-/// Keeps the process's COM alive for as long as the process runs, once.
-///
-/// `windows` caches agile activation factories in statics for the process.
-/// Today's notifier balances `RoInitialize` with `RoUninitialize`; without a
-/// process-wide reference, the last uninitialise would let COM unload the
-/// modules those cached factories live in.
-fn keep_com_loaded() {
-  static DONE: OnceLock<()> = OnceLock::new();
-  DONE.get_or_init(|| {
-    // SAFETY: CoIncrementMTAUsage takes no arguments; the cookie it returns is deliberately
-    // never passed to CoDecrementMTAUsage, so the reference lasts for the process.
-    let cookie = unsafe { CoIncrementMTAUsage() };
-    let _ = cookie;
-  });
-}
-
 /// A balanced `RoInitialize` on this thread, as today's notifier makes.
 struct RoInit {
   uninitialize: bool,
@@ -434,7 +417,9 @@ struct Toasts {
 
 impl Toasts {
   fn new(options: &NotifierOptions) -> Result<Self, NotifyError> {
-    keep_com_loaded();
+    // `windows` caches the agile factories of the toast classes for the process; the notifier
+    // balances `RoInitialize` with `RoUninitialize`, so the process's hold keeps their DLLs (D49).
+    sweetview_platform_loop::hold_com_for_the_process();
     let ro = RoInit::new()?;
     let app_id = crate::toast_xml::app_id(options.app_id.as_deref());
     register_app_id(app_id, display_name(options.app_id.as_deref(), options.app_name.as_deref()))?;

@@ -26,9 +26,11 @@ use super::pump::{pump_while, PumpEnd};
 
 /// What a thread keeps of WebView2 for its whole life.
 struct ThreadWebView2 {
-    /// This thread's WebView2 environment, made once on the first webview and
-    /// shared by every later one, as the C++ library's webviews shared one
-    /// browser process. A failure is not kept: the next webview tries again.
+    /// This thread's WebView2 environment while any webview of the thread
+    /// lives: made with the first, shared by every later one (D15), and let go
+    /// of when the thread's last webview goes (each webview holds it too, so
+    /// it is released then, while the thread runs). A failure is not kept:
+    /// the next webview tries again.
     shared: Option<ICoreWebView2Environment>,
     /// This thread's single-threaded apartment, entered by the first
     /// environment made on the thread that succeeds in entering it and left
@@ -36,17 +38,17 @@ struct ThreadWebView2 {
     apartment: Option<ComApartment>,
 }
 
-/// At the thread's end the environment is not released: the last release of a
-/// WebView2 environment has WebView2 call back into the thread's windows, and
-/// a callback cannot run while the thread's storage is torn down, so a thread
-/// that ended still holding it faulted with `0xc000041d`
-/// (`STATUS_FATAL_USER_CALLBACK_EXCEPTION`; test
-/// `a_thread_that_made_a_webview_ends_cleanly`), whichever order its storage
-/// went in. The UI thread is the process's main thread, whose storage goes as
-/// the process exits, so the same release could fault there. Let go of while
-/// the thread runs ([`release_shared`], from the end of the loop and the
-/// tests), it is released; left to the thread's end, the reference goes with
-/// the process (WebView2's browser process ends with its host's).
+/// An environment still held when the thread's storage is torn down (a
+/// webview of the thread still alive then, as when the process exits with
+/// one) is not released there: its last release has WebView2 call back into
+/// the thread's windows, and no callback can run during that teardown, so a
+/// thread that ended still holding it faulted with `0xc000041d`
+/// (`STATUS_FATAL_USER_CALLBACK_EXCEPTION`), whichever order its storage went
+/// in. That reference goes with the process (WebView2's browser process ends
+/// with its host's). Otherwise the environment is released while the thread
+/// runs, with the thread's last webview (tests
+/// `a_thread_that_made_webviews_keeps_no_environment_and_ends_cleanly`,
+/// `a_process_that_exits_with_a_live_webview_does_not_fault`).
 impl Drop for ThreadWebView2 {
     fn drop(&mut self) {
         std::mem::forget(self.shared.take());
@@ -139,7 +141,10 @@ pub(super) fn for_attempt(number: u32) -> Result<ICoreWebView2Environment, Faile
     }
     let folder = default_user_data_folder().map(|folder| HSTRING::from(folder.as_path()));
     let environment = create_once(folder.as_ref())?;
-    THREAD.with(|thread| thread.borrow_mut().shared = Some(environment.clone()));
+    // The one it replaces (if any) is taken out and released after the borrow ends: a release
+    // can call back into the thread's windows.
+    let replaced = THREAD.with(|thread| thread.borrow_mut().shared.replace(environment.clone()));
+    drop(replaced);
     Ok(environment)
 }
 
@@ -180,7 +185,8 @@ fn create_once(folder: Option<&HSTRING>) -> Result<ICoreWebView2Environment, Fai
 /// test's thread ends right after its body, and WebView2 faults with
 /// `0xc000041d` when an environment is released by the thread's own teardown.
 pub fn release_shared() {
-    drop(THREAD.with(|thread| thread.borrow_mut().shared.take()));
+    let held = THREAD.with(|thread| thread.borrow_mut().shared.take());
+    drop(held);
 }
 
 /// Creates a WebView2 environment exactly as the C++ fork's `embed()` does:
@@ -202,6 +208,12 @@ pub fn create_environment(user_data_folder: Option<&Path>) -> Result<ICoreWebVie
     prepare()?;
     let folder = user_data_folder.map(HSTRING::from);
     super::attempts::attempt(|_| create_once(folder.as_ref()), |_| Ok(()), || std::thread::sleep(RETRY_WAIT)).map(|(environment, ())| environment)
+}
+
+/// Tests only: whether the thread holds an environment now.
+#[cfg(any(test, feature = "test-support"))]
+pub(super) fn cached() -> bool {
+    THREAD.with(|thread| thread.borrow().shared.is_some())
 }
 
 #[cfg(test)]

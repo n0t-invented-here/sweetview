@@ -203,9 +203,18 @@ struct Core {
   /// Which delivery of a maximise change is under way: 0 none, 1 a change, 2
   /// the one further delivery of a change a listener made during the first.
   maximize_telling: Cell<u32>,
-  /// The window's `backgroundColor` (red, green, blue); `None` without one, or for a transparent
-  /// window. A webview made in the window starts with it (`background_of`).
+  /// What the window paints where no webview covers it (red, green, blue): its `backgroundColor`,
+  /// or with none its appearance's page colour (D49). `None` for a transparent window, a
+  /// colour-keyed one given no colour, and a tab frame (its `TabState` has its colours). A
+  /// webview made in the window starts with it (`background_of`).
   background: Cell<Option<(u8, u8, u8)>>,
+  /// Set while the window is shown and kept off the screen until its page has drawn
+  /// (`show_cloaked`, D49); `uncloak`, `show()` and `hide()` let it go.
+  cloak: RefCell<Option<platform::Cloak>>,
+  /// Whether the application gave the window a `backgroundColor`, which wins over
+  /// `WEBVIEW2_DEFAULT_BACKGROUND_COLOR`; without one the variable wins over the appearance's
+  /// page colour (D49).
+  background_given: Cell<bool>,
   icons: RefCell<Option<WindowIcons>>,
   /// Live wrappers of this window.
   wrappers: Cell<usize>,
@@ -225,11 +234,38 @@ thread_local! {
   static NEXT_WRAPPER: Cell<u64> = const { Cell::new(1) };
 }
 
+/// `WEBVIEW2_DEFAULT_BACKGROUND_COLOR` as WebView2 reads it (`AARRGGBB` hex), when it names a
+/// colour that is not transparent: red, green, blue.
+fn webview2_default_background() -> Option<(u8, u8, u8)> {
+  let text = std::env::var("WEBVIEW2_DEFAULT_BACKGROUND_COLOR").ok()?;
+  let text = text.trim();
+  let value = u32::from_str_radix(text.strip_prefix("0x").or_else(|| text.strip_prefix("0X")).unwrap_or(text), 16).ok()?;
+  let [alpha, red, green, blue] = value.to_be_bytes();
+  (alpha != 0).then_some((red, green, blue))
+}
+
 /// The `backgroundColor` of the Sweetview window `handle` names (a wrapper of
 /// one shares it), for a webview made in it to start with; `None` for any
 /// other window, or one without a colour.
 pub fn background_of(handle: isize) -> Option<(u8, u8, u8)> {
-  core_of(handle).and_then(|core| core.background.get())
+  let core = core_of(handle)?;
+  if !core.alive.get() {
+    return None;
+  }
+  // What the developer set wins over a default nobody set (D49): the window's `backgroundColor`,
+  // then `WEBVIEW2_DEFAULT_BACKGROUND_COLOR` (`None` here: WebView2 starts the webview with it
+  // itself), then the appearance's page colour.
+  if !core.background_given.get() && webview2_default_background().is_some() {
+    return None;
+  }
+  match &core.tab {
+    // A tab frame's page colour: its `backgroundColor`, or its appearance's (D49).
+    Some(tab) => {
+      let (red, green, blue, _) = tab.backdrop();
+      Some((red, green, blue))
+    }
+    None => core.background.get(),
+  }
 }
 
 /// True when `handle` names a window this thread's runtime made with `no_activate`: one that never
@@ -274,6 +310,8 @@ impl Core {
       maximized: Cell::new(false),
       maximize_telling: Cell::new(0),
       background: Cell::new(None),
+      cloak: RefCell::new(None),
+      background_given: Cell::new(false),
       icons: RefCell::new(None),
       page_focus: RefCell::new(None),
       wrappers: Cell::new(0),
@@ -551,6 +589,21 @@ impl Core {
     let subclass = self.subclass.borrow_mut().take();
     drop(subclass);
     let tao = self.tao.borrow_mut().take();
+    // A webview made in this window whose drop waits for a later turn (it was destroyed from
+    // inside a webview callback) goes first: the window is hidden now and destroyed after it, by
+    // a job queued behind the webview's own (D49, R3 of its first review).
+    let tao = match tao {
+      Some(tao) if webview_drop_waits_in(self.handle) => match Runtime::existing() {
+        Some(runtime) => {
+          tao.set_visible(false);
+          let _ = UNDESTROYED.try_with(|pending| pending.borrow_mut().push(tao));
+          runtime.defer(destroy_undestroyed);
+          None
+        }
+        None => Some(tao),
+      },
+      other => other,
+    };
     if let Some(tao) = tao {
       // Destroyed now, not when `tao` gets to its own deferred destroy, so
       // `dispose()` and a default close leave no window behind.
@@ -569,6 +622,11 @@ impl Core {
           None => drop(shared),
         },
       }
+    }
+    // A window going stays cloaked: uncloaking it would put it on the screen for the moment
+    // before it goes. A cloak holds nothing but the window's state, so nothing is kept.
+    if let Some(cloak) = self.cloak.borrow_mut().take() {
+      std::mem::forget(cloak);
     }
     // Dropped after the window: `WindowIcons` destroys icons no window shows
     // any more, and keeps those an adopted window that lives on still shows.
@@ -732,14 +790,29 @@ impl Window {
         .with_position(PhysicalPosition::new(bounds.x, bounds.y))
         .with_inner_size(PhysicalSize::new(bounds.width.max(1) as u32, bounds.height.max(1) as u32)),
       tab.as_ref(),
-      background,
     );
     let tao = runtime.with_target(|target| builder.build(target))?.map_err(|e| Error::os("the window could not be made", e))?;
+    // Where no webview covers it (before its page paints, or once its webview is gone) a window
+    // shows its `backgroundColor`, or with none its appearance's page colour: never the white of a
+    // client area nothing paints (D49). A transparent window, and a colour-keyed one given no
+    // colour, show through there instead, as they always have. Set here, on the window still
+    // hidden, for `System` to read the theme `tao` gave it. A tab frame paints its own (`TabState`).
+    // The window's own fill follows the same order as its webview's start colour (D49): its
+    // `backgroundColor`, then `WEBVIEW2_DEFAULT_BACKGROUND_COLOR`, then its appearance's.
+    let backdrop = if tabbed {
+      None
+    } else {
+      background.or_else(|| (!init.transparent && color_key.is_none()).then(|| webview2_default_background().unwrap_or_else(|| backdrop_for(init.appearance, &tao))))
+    };
+    if let Some((red, green, blue)) = backdrop {
+      tao.set_background_color(Some((red, green, blue, 0xff)));
+    }
     let handle = platform::handle_value(&tao);
     let min = MinSize::from_options(init.min_width, init.min_height);
     let min_options = (init.min_width, init.min_height);
     let core = Core::new(handle, Some(tao), Chrome { frame, resizable }, init.no_activate, min, init.topmost, tab);
-    core.background.set(background);
+    core.background.set(backdrop);
+    core.background_given.set(background.is_some());
     WINDOWS.with(|w| w.borrow_mut().insert(core.handle, core.clone()));
     // From here on a failure must not leave a half-made window behind.
     let made = Self::finish(&core, &init, color_key, bounds, min_options);
@@ -864,6 +937,32 @@ impl Window {
     if !self.live() {
       return Ok(());
     }
+    // On the screen at once, as at the tag: a cloak a reveal left is let go.
+    self.core.cloak.borrow_mut().take();
+    self.show_now()
+  }
+
+  /// Shows a hidden window cloaked (`platform::Cloak`): visible to the webviews in it, so they
+  /// draw, and off the screen until `uncloak`. Sweetview's reveal of a window whose page has to
+  /// draw first (D49). True when it is cloaked; false when it was shown at once (DWM refused the
+  /// cloak) or was already visible, which it leaves as it is.
+  pub fn show_cloaked(&self) -> Result<bool> {
+    if !self.live() || self.core.is_visible() {
+      return Ok(false);
+    }
+    let cloak = self.core.with_native(|window| platform::Cloak::new(window)).flatten();
+    let cloaked = cloak.is_some();
+    *self.core.cloak.borrow_mut() = cloak;
+    self.show_now()?;
+    Ok(cloaked)
+  }
+
+  /// Puts a window `show_cloaked` cloaked on the screen. Nothing for one that is not cloaked.
+  pub fn uncloak(&self) {
+    self.core.cloak.borrow_mut().take();
+  }
+
+  fn show_now(&self) -> Result<()> {
     let core = &self.core;
     // Shown the way `show()` always has: `tao`'s own show activates the window (D9).
     core.with_native(|window| platform::show(window, core.no_activate, core.topmost.get(), core.tab.is_some()));
@@ -888,6 +987,8 @@ impl Window {
     if self.core.with_tao(|tao| tao.set_visible(false)).is_none() {
       self.core.with_native(|window| platform::show_as(window, ShowAs::Hidden));
     }
+    // Hidden first, so letting the cloak go puts nothing on the screen.
+    self.core.cloak.borrow_mut().take();
   }
 
   /// The outer frame.
@@ -1285,27 +1386,38 @@ impl Drop for Window {
   }
 }
 
+/// The page colour of a window of this appearance, the same a tab frame paints. For `System`,
+/// the theme `tao` gave the window: `tao` follows the system's for a window with no theme of its own.
+fn backdrop_for(appearance: Appearance, tao: &tao::window::Window) -> (u8, u8, u8) {
+  let dark = match appearance {
+    Appearance::System => tao.theme() == Theme::Dark,
+    Appearance::Light => false,
+    Appearance::Dark => true,
+  };
+  if dark {
+    tab_frame::PAGE_DARK
+  } else {
+    tab_frame::PAGE_LIGHT
+  }
+}
+
 #[cfg(windows)]
-fn platform_builder(builder: WindowBuilder, tab: Option<&TabState>, background: Option<(u8, u8, u8)>) -> WindowBuilder {
+fn platform_builder(builder: WindowBuilder, tab: Option<&TabState>) -> WindowBuilder {
   use tao::platform::windows::WindowBuilderExtWindows;
   // Drops arrive through the subclass, as `WM_DROPFILES`; `tao`'s OLE drop
   // target would take them first. A frameless window has no shadow, as before;
   // a tab frame keeps the system's border and shadow with its caption removed,
   // and paints the page's colour wherever no webview covers it.
   let builder = builder.with_drag_and_drop(false).with_undecorated_shadow(tab.is_some());
-  match (tab, background) {
-    (Some(tab), _) => builder.with_background_color(tab.backdrop()),
-    (None, Some((red, green, blue))) => builder.with_background_color((red, green, blue, 0xff)),
-    (None, None) => builder,
+  match tab {
+    Some(tab) => builder.with_background_color(tab.backdrop()),
+    None => builder,
   }
 }
 
 #[cfg(not(windows))]
-fn platform_builder(builder: WindowBuilder, _tab: Option<&TabState>, background: Option<(u8, u8, u8)>) -> WindowBuilder {
-  match background {
-    Some((red, green, blue)) => builder.with_background_color((red, green, blue, 0xff)),
-    None => builder,
-  }
+fn platform_builder(builder: WindowBuilder, _tab: Option<&TabState>) -> WindowBuilder {
+  builder
 }
 
 /// The number of things kept for the window `handle`: its record, each
@@ -1321,6 +1433,18 @@ pub fn tracked_count(handle: isize) -> usize {
   count
 }
 
+/// Whether a webview made in the window `handle` names waits for a later turn to drop; never, in
+/// the native package's binding, which has no webview (D50).
+fn webview_drop_waits_in(handle: isize) -> bool {
+  #[cfg(feature = "webview")]
+  return crate::engine::drop_waits_in(handle);
+  #[cfg(not(feature = "webview"))]
+  {
+    let _ = handle;
+    false
+  }
+}
+
 /// Lends the window `handle` names to `f` for the length of the call, for
 /// mounting a webview in it or a call on a window a webview was given: one of
 /// Sweetview's own windows while it lives, or an application's own window of
@@ -1330,6 +1454,7 @@ pub fn tracked_count(handle: isize) -> usize {
 /// a webview that fills it: its page is given the keyboard focus, as the C++ library's own
 /// window gave it on `WM_ACTIVATE`. False for a window Sweetview does not know (one of the
 /// application's own, which nothing of Sweetview's watches).
+#[cfg(feature = "webview")]
 pub(crate) fn set_page_focus(handle: isize, hook: Option<Rc<dyn Fn()>>) -> bool {
   match core_of(handle) {
     Some(core) => {
@@ -1354,6 +1479,18 @@ fn destroy_undestroyed() {
   for shared in pending {
     if let Ok(tao) = Rc::try_unwrap(shared) {
       platform::destroy_now(tao);
+    }
+  }
+}
+
+/// Hides every visible window Sweetview made on this thread, so none is on the screen while the
+/// webviews in it go and before it is destroyed: the step of the end of the application before the webviews (D49).
+pub(crate) fn hide_all() {
+  let cores: Vec<Rc<Core>> = WINDOWS.try_with(|w| w.borrow().values().cloned().collect()).unwrap_or_default();
+  for core in cores {
+    if core.owned && core.alive.get() && core.is_visible() {
+      core.stop_hit_poll();
+      core.with_tao(|tao| tao.set_visible(false));
     }
   }
 }

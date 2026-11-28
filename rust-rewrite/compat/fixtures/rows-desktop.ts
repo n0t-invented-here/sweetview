@@ -10,7 +10,8 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { RUNNERS, scratch, type DesktopCtx } from "./row-runners";
-import { Webview, Window, installKeyboardHook, installMouseHook, quitEventLoop, runEventLoop } from "@n1h/sweetview-native";
+import { Window, installKeyboardHook, installMouseHook, quitEventLoop, runEventLoop } from "@n1h/sweetview-native";
+import { RawWebview as Webview } from "@n1h/sweetview";
 import { scheduleNativeTimeout } from "../../../packages/sweetview-native/src/internal";
 
 type Job = { key: string; target: string; name: string; spec: string };
