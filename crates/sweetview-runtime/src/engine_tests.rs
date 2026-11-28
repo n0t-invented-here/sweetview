@@ -860,3 +860,31 @@ fn webview2_is_told_each_time_the_window_moves_in_every_kind_of_host() {
     }
   });
 }
+
+#[test]
+fn a_script_asked_for_right_after_a_new_webview_s_first_navigation_runs_in_the_new_document() {
+  on_ui_thread(|runtime| {
+    let _finish = Finish(&runtime);
+    // D21: what the host asks of the page happens in the order asked. On a new webview, a
+    // navigation, a binding and a script asked for at once (as `webview-load-in-flight.ts`
+    // does): the script runs in the document the navigation makes, where the binding answers,
+    // never in the blank document the webview starts with. Each round is a new webview.
+    for host in HOSTS {
+      for round in 0..6 {
+        let (engine, _windows) = make(host, |_| ());
+        let answers: Rc<RefCell<Vec<String>>> = Rc::default();
+        let sink = answers.clone();
+        let title = format!("first {round}");
+        engine.set_html(&format!("<!doctype html><title>{title}</title><body>first</body>"));
+        assert_eq!(engine.bind("answer", Rc::new(move |_seq, args| sink.borrow_mut().push(args.to_string()))), ErrorCode::Ok);
+        engine.eval("answer(document.title)");
+        assert!(pump_until(&runtime, Duration::from_secs(10), || !answers.borrow().is_empty()), "{host}, round {round}: the script answered");
+        let said = answers.borrow().first().cloned().unwrap_or_default();
+        eprintln!("-- {host}, round {round}: {said}");
+        assert!(said.contains(&title), "{host}, round {round}: answered from the new document: {said}");
+        engine.destroy();
+        settle(&runtime, Duration::from_millis(50));
+      }
+    }
+  });
+}

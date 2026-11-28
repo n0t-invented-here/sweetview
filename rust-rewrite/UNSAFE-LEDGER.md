@@ -1,6 +1,6 @@
 # Unsafe ledger
 
-Rewritten by `bun rust-rewrite/verify.ts <platform> --ledger`. 350 uses in 23 files.
+Rewritten by `bun rust-rewrite/verify.ts <platform> --ledger`. 351 uses in 23 files.
 
 | File | Uses of `unsafe` |
 |---|---|
@@ -17,7 +17,7 @@ Rewritten by `bun rust-rewrite/verify.ts <platform> --ledger`. 350 uses in 23 fi
 | `crates/sweetview-platform-webview/src/windows/handlers.rs` | 22 |
 | `crates/sweetview-platform-webview/src/windows/host.rs` | 31 |
 | `crates/sweetview-platform-webview/src/windows/istream.rs` | 13 |
-| `crates/sweetview-platform-webview/src/windows/mod.rs` | 44 |
+| `crates/sweetview-platform-webview/src/windows/mod.rs` | 45 |
 | `crates/sweetview-platform-webview/src/windows/test_support.rs` | 53 |
 | `crates/sweetview-platform-window/src/metrics.rs` | 1 |
 | `crates/sweetview-platform-window/src/popup.rs` | 9 |
@@ -121,7 +121,7 @@ What `wry::WebViewBuilder::build` and `wry::WebView`'s methods did, done as `win
 - **Telling WebView2 its window moved** (5: `GetCurrentThreadId`, `SetWinEventHook`, `UnhookWinEvent`, `IsChild`, `NotifyParentWindowPositionChanged`): an out-of-context WinEvent hook on this thread's windows' location changes, held by `MoveWatch` (unhooked in `Drop`, kept while any widget of the thread exists); on a move of a window holding a widget, that widget's controller is told. Replaces `wry`'s subclass of the parent, which told WebView2 from the parent's moves; nothing is attached to a window the application gave. The procedure runs inside `catch_unwind` and calls no controller while the widget table is borrowed.
 - **Tests only: the colour at first show** (1: `DefaultBackgroundColor` in `note_first_shown`), compiled only for tests and the `test-support` feature: the widget's `WM_SHOWWINDOW` reads the controller's default background the first time it is shown, so a test proves a window's start colour is set before anything is shown. The out-value is a local for the call to fill.
 
-### `crates/sweetview-platform-webview/src/windows/mod.rs` (44)
+### `crates/sweetview-platform-webview/src/windows/mod.rs` (45)
 
 - **Keys held** (1: `GetKeyState`). Looked for: `tao` 0.38.0 `ModifiersState` (https://docs.rs/tao/0.38.0/tao/keyboard/struct.ModifiersState.html) is delivered only to `tao`'s own event handler, which a WebView2 accelerator handler is not; `windows` 0.62.2 declares `GetKeyState` `unsafe` and no other crate in the policy reads a key's state. Takes an integer and reads no memory of ours.
 - **Controller and webview calls** (6: `Stop`, `SetAllowExternalDrop`, `AllowExternalDrop`, `NotifyParentWindowPositionChanged`, `CallDevToolsProtocolMethod`, `Close`). No `wry` API had them; the extras close the controller before releasing deferrals (`requests.md` order).
@@ -131,7 +131,7 @@ What `wry::WebViewBuilder::build` and `wry::WebView`'s methods did, done as `win
 - **The page's messages and dropped files** (5: `TryGetWebMessageAsString`, `AdditionalObjects`, `Count`, `GetValueAtIndex`, `Path`); the one `WebMessageReceived` registration carries both, as the fork's did, and replaces `wry`'s IPC handler and the `window.ipc` object it defined in every frame.
 - **The clipboard-read permission** (2: `PermissionKind`, `SetState`), the fork's `PermissionRequested` handler; replaces `wry`'s `with_clipboard`.
 - **Popups** (2: `SetHandled`, `Uri`), only while the tabs library has a popup handler; replaces `wry`'s `NewWindowRequested` handler, which was registered on every webview and took a deferral on every popup.
-- **Accelerator keys** (3: `KeyEventKind`, `VirtualKey`, `SetHandled`) and **navigation failures** (7: `NavigationId` twice, `Uri`, `IsSuccess`, `WebErrorStatus`, `HttpStatusCode`, `Source`). `wry` had no accelerator or failed-navigation callback.
+- **Accelerator keys** (3: `KeyEventKind`, `VirtualKey`, `SetHandled`) and **navigation failures** (7: `NavigationId` twice, `Uri`, `IsSuccess`, `WebErrorStatus`, `HttpStatusCode`, `Source`), and **the new document of a navigation the host sent** (1: `NavigationId` in `ContentLoading`), so a script asked for after it runs there (D21). `wry` had no accelerator or failed-navigation callback.
 - Outside the count: `webview2_com::take_pwstr` and `webview2_com::string_from_pcwstr` are safe functions of `webview2-com` 0.39.1 (`src/pwstr.rs`) that read a NUL-terminated string through a raw pointer the COM call just before filled (or left null, which reads as empty); a comment at each call says which.
 
 ### `crates/sweetview-platform-webview/src/windows/handlers.rs` (22)

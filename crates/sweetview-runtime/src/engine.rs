@@ -304,21 +304,23 @@ impl Engine {
       inner.follow_window_activation(value);
     }
 
-    // Held navigations and evaluations run on a later turn, once every script is registered:
-    // the handler runs inside WebView2's completion callback.
+    // Held navigations and evaluations run on a later turn, once every script is registered and
+    // the navigation sent before them has started: the handlers run inside WebView2's callbacks.
     let release_target = Rc::downgrade(&inner);
     let release_runtime = Rc::downgrade(&runtime);
+    let release: Rc<dyn Fn()> = Rc::new(move || {
+      let target = release_target.clone();
+      if let Some(runtime) = release_runtime.upgrade() {
+        runtime.defer(move || {
+          if let Some(inner) = target.upgrade() {
+            inner.release_held();
+          }
+        });
+      }
+    });
     inner.with_live(|live| {
-      live.extras.set_scripts_registered_handler(Some(Rc::new(move || {
-        let target = release_target.clone();
-        if let Some(runtime) = release_runtime.upgrade() {
-          runtime.defer(move || {
-            if let Some(inner) = target.upgrade() {
-              inner.release_held();
-            }
-          });
-        }
-      })));
+      live.extras.set_scripts_registered_handler(Some(release.clone()));
+      live.extras.set_navigation_started_handler(Some(release));
     });
 
     let drain_target = Rc::downgrade(&inner);
@@ -655,7 +657,10 @@ impl Inner {
   /// anyway, and WebView2 reports a registration only once that navigation
   /// has its response or is stopped. A held evaluation stops nothing.
   fn page_op(&self, op: PageOp) {
-    let hold = self.with_live(|live| live.extras.scripts_pending() || !self.held.borrow().is_empty());
+    // A script waits, too, while a navigation the host sent has not started: WebView2 would run
+    // it in the document that navigation replaces (D21).
+    let script = matches!(op, PageOp::Script(_));
+    let hold = self.with_live(|live| live.extras.scripts_pending() || !self.held.borrow().is_empty() || (script && live.extras.navigation_starting()));
     match hold {
       Some(true) => {
         let navigates = !matches!(op, PageOp::Script(_));
@@ -678,7 +683,13 @@ impl Inner {
   /// is outstanding.
   fn release_held(&self) {
     while self.with_live(|live| !live.extras.scripts_pending()) == Some(true) {
-      let Some(op) = self.held.borrow_mut().pop_front() else { return };
+      let script_waits = self.with_live(|live| live.extras.navigation_starting()) == Some(true);
+      let mut held = self.held.borrow_mut();
+      if script_waits && matches!(held.front(), Some(PageOp::Script(_))) {
+        return;
+      }
+      let Some(op) = held.pop_front() else { return };
+      drop(held);
       self.run_page_op(&op);
     }
   }
@@ -688,11 +699,17 @@ impl Inner {
       let _ = match op {
         PageOp::Url(url) => {
           live.extras.note_host_navigation();
-          live.webview.navigate(url)
+          live.extras.note_host_navigation_sent(false);
+          let sent = live.webview.navigate(url);
+          live.extras.note_host_navigation_sent(sent != ErrorCode::Ok);
+          sent
         }
         PageOp::Html(html) => {
           live.extras.note_host_navigation();
-          live.webview.navigate_to_string(html)
+          live.extras.note_host_navigation_sent(false);
+          let sent = live.webview.navigate_to_string(html);
+          live.extras.note_host_navigation_sent(sent != ErrorCode::Ok);
+          sent
         }
         PageOp::Script(source) => live.webview.evaluate(source),
       };

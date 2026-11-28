@@ -166,6 +166,17 @@ impl WebviewExtras {
     /// Records that the host is about to navigate.
     pub fn note_host_navigation(&self) {}
 
+    /// Records that a navigation of the host's is sent (or was refused).
+    pub fn note_host_navigation_sent(&self, started: bool) {}
+
+    /// True from a navigation the host sent until it starts.
+    pub fn navigation_starting(&self) -> bool {
+        false
+    }
+
+    /// Sets the handler called when a navigation starts.
+    pub fn set_navigation_started_handler(&self, handler: Option<Rc<dyn Fn()>>) {}
+
     /// Tells the webview its window moved.
     pub fn notify_parent_window_position_changed(&self) {}
 

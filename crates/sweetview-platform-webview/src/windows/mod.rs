@@ -86,6 +86,15 @@ struct Inner {
     new_window_registration: RefCell<Option<Registration>>,
     navigations: RefCell<Navigations>,
     host_epoch: Cell<u64>,
+    /// True from a navigation the host sends until its document exists
+    /// (`ContentLoading`) or it ends without one (`NavigationCompleted`).
+    awaiting_start: Cell<bool>,
+    /// The id of the navigation `awaiting_start` waits for, from the first
+    /// `NavigationStarting` after it was sent.
+    awaited: Cell<Option<u64>>,
+    /// Called when that navigation's document exists or it has ended, inside
+    /// WebView2's `ContentLoading` or `NavigationCompleted`.
+    navigation_started: RefCell<Option<Rc<dyn Fn()>>>,
     registrations: RefCell<Vec<Registration>>,
     /// The two web-resource filters, removed when this value drops (on a failed
     /// `register` too) or in `WebviewExtras`'s teardown.
@@ -163,6 +172,9 @@ impl WebviewExtras {
             new_window_registration: RefCell::new(None),
             navigations: RefCell::new(Navigations::default()),
             host_epoch: Cell::new(0),
+            awaiting_start: Cell::new(false),
+            awaited: Cell::new(None),
+            navigation_started: RefCell::new(None),
             registrations: RefCell::new(Vec::new()),
             filters: RefCell::new(Vec::new()),
             scripts_outstanding: Cell::new(0),
@@ -380,6 +392,31 @@ impl WebviewExtras {
         self.inner.host_epoch.set(self.inner.host_epoch.get() + 1);
     }
 
+    /// Records that a navigation the host asked for is being sent to WebView2
+    /// now (`started` false), or that it was refused and will not start
+    /// (`started` true). Until its document exists, or it ends without one,
+    /// [`navigation_starting`](Self::navigation_starting) is true: a script
+    /// asked for before then can run in the document being replaced (measured
+    /// on a new webview's first navigation, even after its
+    /// `NavigationStarting`).
+    pub fn note_host_navigation_sent(&self, started: bool) {
+        self.inner.awaiting_start.set(!started);
+        self.inner.awaited.set(None);
+    }
+
+    /// True from a navigation the host sent until its document exists or it
+    /// has ended.
+    pub fn navigation_starting(&self) -> bool {
+        self.inner.awaiting_start.get()
+    }
+
+    /// Sets or clears the handler called when the navigation the host sent
+    /// has its document or has ended. It runs inside WebView2's
+    /// `ContentLoading` or `NavigationCompleted`: it should only schedule work.
+    pub fn set_navigation_started_handler(&self, handler: Option<Rc<dyn Fn()>>) {
+        drop(self.inner.navigation_started.replace(handler));
+    }
+
     /// Tells WebView2 its window moved, so popups (select lists, tooltips)
     /// follow it.
     pub fn notify_parent_window_position_changed(&self) {
@@ -465,9 +502,9 @@ impl Inner {
         let weak = Rc::downgrade(self);
         registrations.push(Registration::add_content_loading(
             &self.webview,
-            &ContentLoading::create(move |_| {
+            &ContentLoading::create(move |args| {
                 if let Some(inner) = weak.upgrade() {
-                    inner.on_content_loading();
+                    inner.on_content_loading(args);
                 }
             }),
         )?);
@@ -815,9 +852,15 @@ impl Inner {
     }
 
     /// A new top-level document is loading: its drop script starts disabled.
-    fn on_content_loading(&self) {
+    fn on_content_loading(&self, args: &ICoreWebView2ContentLoadingEventArgs) {
         if self.file_drop_enabled.get() {
             let _ = self.execute_script(&file_drop_flag_script(true));
+        }
+        let mut id = 0u64;
+        // SAFETY: `args` is the event's arguments, held by WebView2 for this call; `id` is a
+        // local u64 for the call to fill.
+        if unsafe { args.NavigationId(&mut id) }.is_ok() {
+            self.navigation_arrived(id);
         }
     }
 
@@ -864,6 +907,23 @@ impl Inner {
         // A redirect starts again under the same id: keep its latest address.
         navigations.urls.insert(id, url);
         navigations.epochs.insert(id, self.host_epoch.get());
+        drop(navigations);
+        if self.awaiting_start.get() && self.awaited.get().is_none() {
+            self.awaited.set(Some(id));
+        }
+    }
+
+    /// The navigation `id` has its document or has ended: a script held for
+    /// it may go now.
+    fn navigation_arrived(&self, id: u64) {
+        if self.awaiting_start.get() && self.awaited.get() == Some(id) {
+            self.awaiting_start.set(false);
+            self.awaited.set(None);
+            let handler = self.navigation_started.borrow().clone();
+            if let Some(handler) = handler {
+                handler();
+            }
+        }
     }
 
     fn on_navigation_completed(self: &Rc<Self>, args: &ICoreWebView2NavigationCompletedEventArgs) {
@@ -872,6 +932,7 @@ impl Inner {
         if unsafe { args.NavigationId(&mut id) }.is_err() {
             return;
         }
+        self.navigation_arrived(id);
         let (started, epoch) = {
             let mut navigations = self.navigations.borrow_mut();
             (navigations.urls.remove(&id), navigations.epochs.remove(&id).unwrap_or(0))
