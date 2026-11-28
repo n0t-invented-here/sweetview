@@ -44,6 +44,7 @@ const page = `<!doctype html><title>app faults</title><script>
   note("uiUnreadable", rpc("ui.unreadable", null));
   note("workerUnreadable", rpc("throws.unreadable", null));
   note("workerNoPrototype", rpc("throws.noPrototype", null));
+  fetch("/route").then((r) => (seen.route = r.status), () => (seen.route = "failed"));
   const sent = () => {
     rpc("seen", seen);
     // Then the crash: the worker's own crash frame and Worker.onerror both see it.
@@ -70,6 +71,7 @@ const app = await createApp({
   noActivate: true,
   assets: { "index.html": new TextEncoder().encode(crashEvent ? `<!doctype html><script>window.__sweetview_rpc("__sweetview.ready", null)</script>` : page) },
   worker: new URL("./app-faults.worker.ts", import.meta.url),
+  onRequest: "worker",
   uiMethods: {
     "ui.unreadable": () => {
       throw unreadable();
@@ -96,6 +98,9 @@ app.onEvent((event) => {
   if (event.payload === 7) throw new Error("another onEvent listener 7");
 });
 
+// A method called with notify that throws, in listen mode: the worker prints it; no listener is told.
+if (mode === "listen") app.notify("notify.throws" as never, null as never);
+
 async function pumpUntil(done: () => boolean, ms: number) {
   const deadline = Date.now() + ms;
   while (!done() && Date.now() < deadline) {
@@ -114,6 +119,21 @@ if (crashEvent) {
 } else {
   await pumpUntil(() => seen !== undefined, 30_000);
   await pumpUntil(() => false, 1500);
+}
+if (mode === "listen") {
+  // What the pages say a listener is not told about, beside the faults above: an onReadyTimeout
+  // hook that throws (the notified method's throw is sent above, before the page crashes the worker).
+  const waiting = await createApp({
+    title: `sweetview app faults ready timeout ${process.pid}`,
+    noActivate: true,
+    assets: { "index.html": new TextEncoder().encode("<!doctype html><title>never ready</title>") },
+    readyTimeoutMs: 300,
+    onReadyTimeout: () => {
+      throw new Error("onReadyTimeout throws");
+    },
+  });
+  await pumpUntil(() => false, 2000);
+  waiting.dispose();
 }
 app.dispose();
 console.log("RESULT " + JSON.stringify({ seen: seen ?? null, tapped, told }));
