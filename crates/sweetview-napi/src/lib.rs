@@ -30,6 +30,14 @@ pub fn on_load() {
   sweetview_runtime::threads::claim_ui_thread();
 }
 
+/// Also when the binding is loaded, with that thread's environment: makes the guard every callback
+/// is held through (`callback.rs`), so what it captures of the global object (`Reflect.apply`,
+/// `Object.create`, `String`) is what the environment had when the binding loaded, not what an
+/// application left there by the time it makes its first callback.
+pub fn prepare_environment(env: napi::Env) -> napi::Result<()> {
+  callback::prepare_guard(&env)
+}
+
 /// True on the thread that loaded the binding first.
 pub fn is_ui_thread() -> bool {
   sweetview_runtime::threads::is_ui_thread()
