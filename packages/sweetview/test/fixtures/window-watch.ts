@@ -55,6 +55,14 @@ export type Sample = {
   coveredBy?: string[];
   /** Visible, not cloaked and not minimised when read again after the screen was. */
   visibleAfter?: boolean;
+  /** The wall clock (`Date.now()`) when the read began, to set it beside what other processes log. */
+  at?: number;
+  /**
+   * Who owns the pixels at two points of the client area (its centre, `page`, and 8 pixels below
+   * its top edge, `top`): the windows from this one down to the deepest visible child there
+   * (`ChildWindowFromPointEx`), each `class pid #handle left,top widthxheight`, outermost first.
+   */
+  owners?: { page: string[]; top: string[] };
 };
 
 /** On the screen: visible, not cloaked by DWM, not minimised, with a client area. */
@@ -177,6 +185,10 @@ if (import.meta.main) {
     // (POINT by value, packed x | y << 32) -> HWND
     WindowFromPoint: { args: [u64], returns: u64 },
     GetAncestor: { args: [u64, u32], returns: u64 },
+    // (HWND parent, POINT by value in its client coordinates, flags) -> HWND
+    ChildWindowFromPointEx: { args: [u64, u64, u32], returns: u64 },
+    ScreenToClient: { args: [u64, FFIType.ptr], returns: i32 },
+    GetWindowRect: { args: [u64, FFIType.ptr], returns: i32 },
   }).symbols;
   const gdi32 = dlopen("gdi32.dll", {
     CreateCompatibleDC: { args: [u64], returns: u64 },
@@ -287,6 +299,26 @@ if (import.meta.main) {
     const same = again.mode.every((v, i) => Math.abs(v - sample.mode[i]!) <= 8) && Math.abs(again.flat - sample.flat) <= 0.05;
     sample.ours = !same;
   };
+  const CWP_SKIPINVISIBLE = 1;
+  const levelRect = new Int32Array(4);
+  /** The windows from `hwnd` down to the deepest visible child at a screen point, each `class pid`. */
+  const chain = (hwnd: bigint, x: number, y: number): string[] => {
+    const levels: string[] = [];
+    const point = new Int32Array(2);
+    for (let at = hwnd, depth = 0; at !== 0n && depth < 8; depth++) {
+      user32.GetWindowThreadProcessId(at, ptr(pidBuf));
+      user32.GetWindowRect(at, ptr(levelRect));
+      levels.push(`${read(user32.GetClassNameW, at)} ${pidBuf[0]} #${at.toString(16)} ${levelRect[0]},${levelRect[1]} ${levelRect[2]! - levelRect[0]!}x${levelRect[3]! - levelRect[1]!}`);
+      point[0] = x;
+      point[1] = y;
+      user32.ScreenToClient(at, ptr(point));
+      const next = user32.ChildWindowFromPointEx(at, BigInt.asUintN(32, BigInt(point[0]!)) | (BigInt.asUintN(32, BigInt(point[1]!)) << 32n), CWP_SKIPINVISIBLE);
+      if (next === 0n || next === at) break;
+      at = next;
+    }
+    return levels;
+  };
+
   /** The root windows the OS names at five points of the client area that are not `hwnd`, described. */
   const others = (hwnd: bigint, left: number, top: number, width: number, height: number): string[] => {
     const inset = Math.min(8, Math.floor(width / 4), Math.floor(height / 4));
@@ -326,7 +358,7 @@ if (import.meta.main) {
     }
     for (const hwnd of known.keys()) {
       const exists = user32.IsWindow(hwnd) !== 0;
-      const sample: Sample = { t: Math.round(t * 10) / 10, hwnd: String(hwnd), title: "", exists, visible: false, cloaked: false, iconic: false, webviews: 0, width: 0, height: 0, mode: [0, 0, 0], flat: 0 };
+      const sample: Sample = { t: Math.round(t * 10) / 10, at: Date.now(), hwnd: String(hwnd), title: "", exists, visible: false, cloaked: false, iconic: false, webviews: 0, width: 0, height: 0, mode: [0, 0, 0], flat: 0 };
       if (exists) {
         sample.title = read(user32.GetWindowTextW, hwnd);
         sample.visible = user32.IsWindowVisible(hwnd) !== 0;
@@ -357,6 +389,7 @@ if (import.meta.main) {
           })();
           const after = sample.visibleAfter ? others(hwnd, left, top, width, height) : [];
           sample.coveredBy = [...new Set([...before, ...after])];
+          sample.owners = { page: chain(hwnd, left + Math.floor(width / 2), top + Math.floor(height / 2)), top: chain(hwnd, left + Math.floor(width / 2), top + 8) };
           if (before.length > 0 || moved) sample.ours = false;
           // A window that shows the backstop over half of it shows what is behind it, not itself.
           else if (isBackstop(sample.mode) && sample.flat >= 0.5) sample.ours = false;

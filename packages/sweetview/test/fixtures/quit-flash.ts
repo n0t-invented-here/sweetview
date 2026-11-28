@@ -32,11 +32,16 @@ const bounds = { x: 160, y: 140, width: 640, height: 420 };
 const options = (onReady: () => void) => ({
   assets: {
     "index.html": indexHtml({ title: "quit-flash", css: "", head: `<style>html,body{background:${PAGE};margin:0;height:100%}</style>`, body: `<p style="color:#8899aa;margin:0;padding:8px">quit-flash</p>` }),
-    "main.js": new Blob([`window.__sweetview_rpc("__sweetview.ready", null);`]),
+    // Ready at once; the time of the page's first animation frame is logged, for the timeline.
+    "main.js": new Blob([`window.__sweetview_rpc("__sweetview.ready", null); requestAnimationFrame(() => window.__sweetview_rpc("paint.at", Date.now()));`]),
   },
   showOnReady: true,
   readyTimeoutMs: 10_000,
-  onReady,
+  onReady: () => {
+    console.log(`T ready ${Date.now()}`);
+    onReady();
+  },
+  uiMethods: { "paint.at": (at: unknown) => void console.log(`T first-frame ${at}`) },
 });
 const windowOptions = { title: "quit-flash", bounds, topmost: true, noActivate: true, appearance: "dark" as const };
 
@@ -117,7 +122,9 @@ if (mode === "blocking" || mode === "dispose" || mode === "window-dispose" || mo
   noFade(win);
   let first!: () => void;
   const firstReady = new Promise<void>((resolve) => (first = resolve));
+  console.log(`T open-start ${Date.now()}`);
   const tab = await WebView.openTab(win, options(first));
+  console.log(`T open-done ${Date.now()}`);
   await firstReady;
   ready(win.handle);
   await Bun.sleep(1200);
