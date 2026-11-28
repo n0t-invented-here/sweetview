@@ -8,6 +8,8 @@
 // the macOS goal of the rewrite replaces it; `./darwin/webview` is that seam.
 
 import { binding } from "./binding";
+import { reportCallbackError } from "./callback-errors";
+import { isErrorValue } from "./thrown";
 import type { Engine } from "../prebuilt/binding";
 import { releaseAtEnd } from "./lifetime";
 import type { WindowHandle } from "./types";
@@ -221,14 +223,27 @@ export function endWebviewResponse(handle: WebviewHandle, id: bigint) {
 
 /** How a binding's thrown or rejected value reaches the page (see {@link Webview.bind}). */
 export function serializeBindingError(err: unknown): string {
+  // As the main branch for every value it could read. Where it threw (a Proxy whose
+  // `getPrototypeOf` throws, an `Error` whose `message` getter throws), the page's call is
+  // rejected all the same: such an `Error` is described as any other value.
   if (err === undefined) return "";
-  if (err instanceof Error) return JSON.stringify(err.message);
+  if (isErrorValue(err)) {
+    try {
+      return JSON.stringify(err.message);
+    } catch {
+      return describedForPage(err);
+    }
+  }
   try {
     const json = JSON.stringify(err);
     if (json !== undefined) return json;
   } catch {
     // Falls through to String().
   }
+  return describedForPage(err);
+}
+
+function describedForPage(err: unknown): string {
   try {
     return JSON.stringify(String(err));
   } catch {
@@ -514,19 +529,32 @@ export class Webview {
         let result: ReturnType<RequestHandler>;
         try {
           result = handler(request);
-        } catch {
+        } catch (err) {
+          reportCallbackError("webview.setRequestHandler", err, null);
           this.#completeQuietly(request.id, { status: 500 });
           return;
         }
-        if (result instanceof Promise) {
-          result.then(
-            (response) => {
-              if (response) this.#completeQuietly(request.id, response);
-            },
-            () => this.#completeQuietly(request.id, { status: 500 }),
-          );
-        } else if (result) {
-          this.#completeQuietly(request.id, result);
+        // As the main branch: a Promise is awaited, through its own `then`, and anything else
+        // that is truthy (a thenable that is no Promise included) is the response. The checks are
+        // part of the call: a value whose `instanceof` or `then` throws fails it, as a handler
+        // that throws does, with 500.
+        try {
+          if (result instanceof Promise) {
+            result.then(
+              (response) => {
+                if (response) this.#completeQuietly(request.id, response);
+              },
+              (err: unknown) => {
+                reportCallbackError("webview.setRequestHandler", err, null);
+                this.#completeQuietly(request.id, { status: 500 });
+              },
+            );
+          } else if (result) {
+            this.#completeQuietly(request.id, result);
+          }
+        } catch (err) {
+          reportCallbackError("webview.setRequestHandler", err, null);
+          this.#completeQuietly(request.id, { status: 500 });
         }
       }),
     );
@@ -603,8 +631,9 @@ export class Webview {
         if (!this.#engine) return;
         try {
           handler(paths);
-        } catch {
-          // A drop handler's exception goes nowhere, as before.
+        } catch (err) {
+          // Printed nowhere, as before; told to an onCallbackError listener.
+          reportCallbackError("webview.setFileDropHandler", err, null);
         }
       }),
     );
@@ -738,16 +767,38 @@ export class Webview {
         // "" is the page's undefined; JSON.stringify gives undefined for a function or a symbol.
         reply(0, json ?? "");
       };
+      // The bound function's own failure (it throws, or its promise rejects) is told to an
+      // onCallbackError listener and rejects the page's call; an unreadable request only rejects.
+      // Reported first, as every catch of the package does: the reply's text reads the value
+      // (its `message`, its `toJSON`), which can add or remove a listener.
+      const failed = (err: unknown) => {
+        reportCallbackError("webview.bind", err, null, name);
+        reject(err);
+      };
+      let args: unknown[];
       try {
-        const args = JSON.parse(req);
-        const result = callback(...args);
+        args = JSON.parse(req);
+      } catch (err) {
+        reject(err);
+        return;
+      }
+      let result: unknown;
+      try {
+        result = callback(...args);
+      } catch (err) {
+        failed(err);
+        return;
+      }
+      try {
+        // As the main branch: a value whose `then` is a function is awaited. Reading `then` is
+        // part of the call: a getter that throws fails it, and the page's call is rejected.
         if (result !== null && (typeof result === "object" || typeof result === "function") && typeof (result as PromiseLike<unknown>).then === "function") {
-          Promise.resolve(result as PromiseLike<unknown>).then(fulfill, reject);
+          Promise.resolve(result as PromiseLike<unknown>).then(fulfill, failed);
         } else {
           fulfill(result);
         }
       } catch (err) {
-        reject(err);
+        failed(err);
       }
     });
   }

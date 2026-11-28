@@ -11,6 +11,7 @@
 // OS drops a low-level hook's event past its timeout and delivers it unseen.
 
 import { binding } from "./binding";
+import { reportCallbackError } from "./callback-errors";
 import { releaseAtEnd } from "./lifetime";
 
 /** The modifier keys held when an event happened. */
@@ -123,7 +124,7 @@ function installMouseHookNow(handler: MouseHandler): MouseHook {
     try {
       return handler({ event, x, y, wheel, modifiers: modifiersFrom(modifiers) }) === true;
     } catch (err) {
-      console.error("sweetview: mouse hook handler threw:", err);
+      reportCallbackError("mouseHook", err, "sweetview: mouse hook handler threw:");
       return false;
     }
   });
@@ -186,7 +187,7 @@ function installKeyboardHookNow(handler: KeyHandler): KeyboardHook {
     try {
       return handler({ event, code: key, raw, modifiers: modifiersFrom(modifiers) }) === true;
     } catch (err) {
-      console.error("sweetview: keyboard hook handler threw:", err);
+      reportCallbackError("keyboardHook", err, "sweetview: keyboard hook handler threw:");
       return false;
     }
   });
