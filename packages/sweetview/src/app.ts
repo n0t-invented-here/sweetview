@@ -11,7 +11,7 @@ import { createFrameAssembler, type AnyEvent, type EventMap, type MethodMap, typ
 import { RequestResponseAssembler, requestError, runNativeRequest, type NativeRequestResponse, type StreamingResponseFrame } from "./request-response";
 import type { HttpRequestMessage, InitMessage, NativeRequest, NativeResponse, WorkerCrashFrame } from "./messages";
 import { RawWebview, SizeHint, Window, quitEventLoop, runEventLoop, signalReady, type Rect, type TabHandle, type WindowOptions } from "@n1h/sweetview-native";
-import { concealWindow, createChildWebview, discardQuit, emitWindowFileDrop, engineOf, getWindowMeta, holdWindowNativeDispose, isWindowDisposed, macosKeepsTagPath, markHiddenAtRunEnd, onWindowDispose, onWindowFileDropListenersChange, preserveWindowGeometry, releaseAtEnd, scheduleNativeTimeout, takeHiddenAtRunEnd, windowFileDropCount } from "@n1h/sweetview-native/internal";
+import { addReachable, concealWindow, createChildWebview, discardQuit, emitWindowFileDrop, engineOf, getWindowMeta, holdWindowNativeDispose, isWindowDisposed, macosKeepsTagPath, markHiddenAtRunEnd, onWindowDispose, onWindowFileDropListenersChange, preserveWindowGeometry, releaseAtEnd, scheduleNativeTimeout, takeHiddenAtRunEnd, windowFileDropCount } from "@n1h/sweetview-native/internal";
 import { Ring } from "./ring";
 import { webviewEngine, type WebviewHost, type WorkerWake } from "./webview-host";
 import { ASSET_ORIGIN } from "./webview-lib";
@@ -88,6 +88,11 @@ export type TabOptions<M extends MethodMap = MethodMap> = WebViewOptions<M> & {
 export type TabAttachHooks = {
   /** The tab's current logical host: file-drop demand comes from it and drops over the webview are delivered to it. */
   fileDropHost(): Window;
+  /**
+   * True for a webview that is the window's own chrome (the Windows tab strip), not one the
+   * application made: it does not keep the pumped loop running by itself (D43).
+   */
+  chrome?: boolean;
   /** Replaces `window.show()` on the borrowed child window for `showOnReady` and the ready watchdog. */
   revealWindow?(): void;
   /**
@@ -165,6 +170,11 @@ export type TabsDriver = {
 };
 
 let tabsDriver: TabsDriver | undefined;
+/** Webviews and tabs being made: they keep the pumped loop holding the process (D43). */
+let starting = 0;
+/** One token per live WebView that is not a window's own chrome. */
+const liveViews = new Set<object>();
+addReachable(() => starting > 0 || liveViews.size > 0);
 export function registerTabsDriver(driver: TabsDriver): void {
   tabsDriver = driver;
 }
@@ -270,6 +280,16 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
     window: Window,
     options: WebViewOptions<M>,
   ): Promise<WebView<M, E>> {
+    // A webview being made keeps the pumped loop holding the process until it is made or fails (D43).
+    starting++;
+    try {
+      return await WebView.#attach<M, E>(window, options);
+    } finally {
+      starting--;
+    }
+  }
+
+  static async #attach<M extends MethodMap, E extends EventMap>(window: Window, options: WebViewOptions<M>): Promise<WebView<M, E>> {
     const tabHooks = (options as InternalWebViewOptions<M>)[tabAttachHooks];
     if (process.platform !== "win32" && process.platform !== "darwin") {
       throw new Error(
@@ -427,6 +447,7 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
       let down = false;
       // Takes back the dispose registered for the end of the application.
       let unregisterAtEnd: (() => void) | undefined;
+      const liveToken = {};
       const isLive = () => !down && !isWindowDisposed(window) && raw.unsafeHandle !== null;
       const completeRequest = ({ id, status, headers, body }: NativeRequestResponse) => {
         pendingWorkerRequests.delete(BigInt(id));
@@ -602,6 +623,7 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
         if (down) return;
         down = true;
         unregisterAtEnd?.();
+        liveViews.delete(liveToken);
         if (tabHooks) tabHooks.rebindFileDrop = undefined;
         unsubscribeWindowDispose();
         cancelStartup();
@@ -886,6 +908,8 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
       });
       // Disposed when the application ends, before the windows: its worker stops and its webview goes.
       unregisterAtEnd = releaseAtEnd("app", () => webview.dispose());
+      // Its page and worker can still act: it keeps the pumped loop running until it goes (D43).
+      if (!tabHooks?.chrome) liveViews.add(liveToken);
       return webview;
     } catch (err) {
       if (raw.unsafeHandle !== null) {
@@ -905,7 +929,8 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
     if (!tabsDriver) {
       throw new Error("sweetview: tabs driver is not loaded");
     }
-    return tabsDriver.openTab<M, E>(window, options);
+    starting++;
+    return tabsDriver.openTab<M, E>(window, options).finally(() => starting--);
   }
 
   emit<N extends keyof E & string>(name: N, payload: E[N]): void {

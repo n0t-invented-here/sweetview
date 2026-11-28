@@ -9,7 +9,7 @@
 import type { HitPolygon } from "./hit-regions";
 import type { AppIdentity, AppIdentityIcon } from "@n1h/sweetview-settings";
 import { icoFromRgba, type Icon } from "./icon";
-import { releaseAtEnd } from "./lifetime";
+import { addReachable, releaseAtEnd } from "./lifetime";
 import { backend, macosKeepsTagPath } from "./platform";
 import type { Point, Rect, WindowHandle } from "./types";
 
@@ -187,6 +187,17 @@ const windowTabListeners = new WeakMap<Window, TabListeners>();
 const windowDisposeHooks = new WeakMap<Window, Set<() => void>>();
 const windowDisposed = new WeakSet<Window>();
 const ownedWindows = new Set<Window>();
+// A window the application has shown, visible or hidden since (to a tray, say), keeps the pumped
+// loop running until it is disposed; one never shown and alone does not (D43).
+const shownWindows = new WeakSet<Window>();
+addReachable(() => {
+  let any = false;
+  for (const win of ownedWindows) {
+    if (win.isVisible()) shownWindows.add(win);
+    if (shownWindows.has(win)) any = true;
+  }
+  return any;
+});
 // Active native-dispose holds per Window, and Windows whose backend dispose
 // waits for the last hold to be released.
 const windowNativeDisposeHolds = new WeakMap<Window, number>();
@@ -474,6 +485,7 @@ export class Window {
   }
   show(): void {
     windowsHiddenAtRunEnd.delete(this);
+    shownWindows.add(this);
     this.#inner.show();
   }
   hide(): void {

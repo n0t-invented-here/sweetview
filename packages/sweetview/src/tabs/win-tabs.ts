@@ -614,6 +614,8 @@ async function ensureHost(window: Window): Promise<WinTabHost> {
         "strip.closeWindow": () => fromStrip(() => requestClose(host)),
       },
       [tabAttachHooks]: {
+        // The strip is the window's chrome: it does not keep the loop running by itself (D43).
+        chrome: true,
         fileDropHost: () => host.window,
         mountChild: () => ({ window: frame.hwnd, bounds: frame.stripBounds(), visible: true }),
         // A disposed window abandons the attach before it touches the frame again.

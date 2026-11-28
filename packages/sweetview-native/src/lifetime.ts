@@ -57,6 +57,44 @@ export function releaseAtEnd(kind: ReleaseKind, release: () => void): () => void
   return () => void set.delete(entry);
 }
 
+const reachers = new Set<() => boolean>();
+
+/**
+ * Internal: registers a test of whether the application has something a
+ * person can still reach (a window it has shown, a webview, a webview or tab
+ * still being made). Returns the function that takes it back.
+ */
+export function addReachable(test: () => boolean): () => void {
+  reachers.add(test);
+  return () => void reachers.delete(test);
+}
+
+/**
+ * Whether the application has anything a person can still reach, or that can
+ * still bring a window back: a tray icon, a notifier, a single-instance lock
+ * (a second launch reaches it), an input hook, or what a registered test
+ * reports (a window the application has shown and not disposed, a webview of
+ * `@n1h/sweetview` whose page and worker can still act, a webview or tab
+ * still being made). `runEventLoop` ends by itself once this has been false
+ * for a moment (D43). Always true where nothing is registered for the end of
+ * the application (macOS until its goal).
+ */
+export function applicationReachable(): boolean {
+  if (macosKeepsTagPath()) return true;
+  for (const kind of ["tray", "notifier", "lock", "hook"] as const) {
+    if (entries.get(kind)!.size > 0) return true;
+  }
+  for (const test of reachers) {
+    try {
+      if (test()) return true;
+    } catch (err) {
+      console.error("sweetview: a reachability test threw:", err);
+      return true;
+    }
+  }
+  return false;
+}
+
 /**
  * Releases everything still registered and everything the binding still
  * holds. Safe to call any number of times, and from inside a release (it then

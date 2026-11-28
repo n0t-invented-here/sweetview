@@ -5,6 +5,7 @@
 // from a Bun timer that drains pending OS events each tick, so the UI thread
 // keeps Bun's event loop and `setTimeout`, promises and I/O work on it.
 
+import { applicationReachable } from "./lifetime";
 import { backend } from "./platform";
 
 /** macOS NSApplicationActivationPolicy: `regular` has a Dock tile and app menu, `accessory` has neither but can show windows and menus, `prohibited` cannot show anything. */
@@ -65,11 +66,23 @@ export function discardQuit(): void {
 
 let stopRunning: (() => void) | undefined;
 
+/** How long the application must have had nothing to reach before the loop ends by itself (D43). */
+const UNREACHABLE_MS = 250;
+
 /**
  * Runs the OS loop from Bun's event loop: `pumpEvents` every `intervalMs`
  * until `quitEventLoop` is called or the OS ends the loop. Resolves then.
  * Create the tray, notifier and windows before or after calling it, on this
  * thread. One loop per process: a second call while one runs throws.
+ *
+ * It also ends by itself, and resolves, once the application has had nothing
+ * a person can reach for `UNREACHABLE_MS`: no window it has shown and not
+ * disposed, no tray icon, notifier, single-instance lock, input hook or
+ * webview, and no window or tab being made (`applicationReachable`). That is
+ * a start-up that failed with its error caught, or an application whose last
+ * window was disposed with nothing else left: nothing could ever end the loop
+ * otherwise, and Bun keeps a process waiting on `await runEventLoop()` alive
+ * for as long as the promise is pending (D43).
  */
 export function runEventLoop(options: EventLoopOptions = {}): Promise<void> {
   const { intervalMs = 16 } = options;
@@ -78,8 +91,19 @@ export function runEventLoop(options: EventLoopOptions = {}): Promise<void> {
   const { pumpEvents: pump } = impl(); // an unsupported OS throws here, synchronously, like every other native call
   return new Promise((resolve) => {
     const timer = setInterval(() => {
-      if (!pump()) stopRunning?.();
+      if (!pump()) {
+        stopRunning?.();
+        return;
+      }
+      if (applicationReachable()) {
+        unreachableSince = undefined;
+      } else {
+        const now = performance.now();
+        unreachableSince ??= now;
+        if (now - unreachableSince >= UNREACHABLE_MS) stopRunning?.();
+      }
     }, intervalMs);
+    let unreachableSince: number | undefined;
     stopRunning = () => {
       clearInterval(timer);
       stopRunning = undefined;
