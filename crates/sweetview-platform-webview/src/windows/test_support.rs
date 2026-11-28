@@ -130,19 +130,21 @@ pub fn set_general_autofill(webview: &wry::WebView, enabled: bool) {
     unsafe { s4.SetIsGeneralAutofillEnabled(enabled) }.expect("SetIsGeneralAutofillEnabled");
 }
 
-/// The window WebView2 is parented to: `wry`'s container window.
-fn container(webview: &wry::WebView) -> HWND {
+/// The window WebView2 is parented to (`wry`'s container window); `None` once
+/// the controller is closed and no longer answers.
+fn container(webview: &wry::WebView) -> Option<HWND> {
     let controller = webview.controller();
     let mut parent = HWND::default();
-    // SAFETY: `controller` is a COM reference this frame owns to the live controller, and
-    // `parent` a local HWND for the call to fill.
-    unsafe { controller.ParentWindow(&mut parent) }.expect("ParentWindow");
-    parent
+    // SAFETY: `controller` is a COM reference this frame owns to the controller, and
+    // `parent` a local HWND for the call to fill; a closed controller returns an error.
+    unsafe { controller.ParentWindow(&mut parent) }.ok()?;
+    Some(parent)
 }
 
-/// Whether `wry`'s container window of `webview` still exists.
+/// Whether the webview is still in place: its controller answers and `wry`'s
+/// container window exists.
 pub fn container_alive(webview: &wry::WebView) -> bool {
-    let window = container(webview);
+    let Some(window) = container(webview) else { return false };
     // SAFETY: `IsWindow` takes any handle value, a stale one included, and reads no memory of ours.
     unsafe { IsWindow(Some(window)) }.as_bool()
 }
@@ -150,7 +152,7 @@ pub fn container_alive(webview: &wry::WebView) -> bool {
 /// Whether this thread's keyboard focus is in `webview` (its container or a
 /// window inside it).
 pub fn focus_is_inside(webview: &wry::WebView) -> bool {
-    let window = container(webview);
+    let Some(window) = container(webview) else { return false };
     // SAFETY: `GetFocus` takes no arguments and reads the calling thread's input state.
     let focus = unsafe { GetFocus() };
     // SAFETY: `IsChild` takes two handle values, stale or null ones included, and reads no memory of ours.
@@ -214,4 +216,18 @@ pub fn close_download_dialog(webview: &wry::WebView) {
         // SAFETY: `webview9` is a COM reference this frame owns; no arguments.
         let _ = unsafe { webview9.CloseDefaultDownloadDialog() };
     }
+}
+
+/// Gives this thread's keyboard focus to the window with handle value
+/// `window` (one of this thread's), as a person clicking a native control would.
+pub fn focus_window(window: isize) {
+    // SAFETY: `SetFocus` takes a handle value; one that names no window of this thread
+    // makes the call fail, which the test then sees through `focused_window`.
+    let _ = unsafe { windows::Win32::UI::Input::KeyboardAndMouse::SetFocus(Some(HWND(window as *mut _))) };
+}
+
+/// The handle value of the window with this thread's keyboard focus, 0 for none.
+pub fn focused_window() -> isize {
+    // SAFETY: `GetFocus` takes no arguments and reads the calling thread's input state.
+    unsafe { GetFocus() }.0 as isize
 }

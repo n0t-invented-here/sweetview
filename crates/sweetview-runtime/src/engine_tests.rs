@@ -76,15 +76,32 @@ fn host_window(title: &str) -> Window {
   window
 }
 
-/// Each kind of host, with the window it needs kept alive beside it.
-fn engines() -> Vec<(&'static str, Engine, Option<Window>)> {
-  let own = Engine::create(false, Host::Own).expect("own");
-  own.set_size(480, 360, SizeHint::None);
-  let filled = host_window("engine test: filled");
-  let fill = Engine::create(false, Host::Fill(filled.handle())).expect("fill");
-  let parent = host_window("engine test: child");
-  let child = Engine::create(false, Host::Child(parent.handle(), Bounds { x: 10, y: 10, width: 300, height: 200 })).expect("child");
-  vec![("own window", own, None), ("given window", fill, Some(filled)), ("child", child, Some(parent))]
+/// The kinds of host, in the order the tests go through them.
+const HOSTS: [&str; 3] = ["own window", "given window", "child"];
+
+/// A webview in a host of kind `host`, with the window it needs kept alive
+/// beside it. `before` runs once that window exists and before the webview is
+/// made.
+fn make(host: &str, before: impl FnOnce(Option<&Window>)) -> (Engine, Option<Window>) {
+  match host {
+    "own window" => {
+      before(None);
+      let engine = Engine::create(false, Host::Own).expect("own");
+      engine.set_size(480, 360, SizeHint::None);
+      (engine, None)
+    }
+    "given window" => {
+      let window = host_window("engine test: filled");
+      before(Some(&window));
+      (Engine::create(false, Host::Fill(window.handle())).expect("fill"), Some(window))
+    }
+    _ => {
+      let window = host_window("engine test: child");
+      before(Some(&window));
+      let bounds = Bounds { x: 10, y: 10, width: 300, height: 200 };
+      (Engine::create(false, Host::Child(window.handle(), bounds)).expect("child"), Some(window))
+    }
+  }
 }
 
 #[test]
@@ -92,7 +109,8 @@ fn a_download_shows_webview2_s_own_interface_as_under_the_cpp_fork() {
   on_ui_thread(|runtime| {
     let folder = std::env::temp_dir().join(format!("sweetview-engine-download-{}", std::process::id()));
     std::fs::create_dir_all(&folder).unwrap();
-    for (host, engine, _window) in engines() {
+    for host in HOSTS {
+      let (engine, _window) = make(host, |_| ());
       load(&runtime, &engine, PAGE);
       let watch = wry_of(&engine, |webview| DownloadWatch::attach(webview, folder.clone()));
       engine.eval(
@@ -117,3 +135,57 @@ fn a_download_shows_webview2_s_own_interface_as_under_the_cpp_fork() {
   });
 }
 
+
+#[test]
+fn a_webview_takes_the_focus_only_in_a_window_of_its_own_as_under_the_cpp_fork() {
+  on_ui_thread(|runtime| {
+    // The C++ fork focused the page only when it made the window itself (`owns_window()`,
+    // win32_edge.hh): a webview put in a given window, or beside a native control that
+    // has the focus, leaves the focus where it is.
+    for host in HOSTS {
+      let (engine, window) = make(host, |window| {
+        if let Some(window) = window {
+          test_support::focus_window(window.handle());
+        }
+      });
+      let holder = window.as_ref().map(|w| w.handle());
+      load(&runtime, &engine, PAGE);
+      settle(&runtime, Duration::from_millis(300));
+      let inside = wry_of(&engine, test_support::focus_is_inside);
+      let focused = test_support::focused_window();
+      eprintln!("-- {host}: focus in the webview {inside}; focused window {focused:#x}, the given window {holder:?}");
+      // A window of the engine's own is hidden until it is first sized or run, so where its
+      // focus goes is printed, not asserted.
+      if let Some(holder) = holder {
+        assert!(!inside, "{host}: the webview did not take the focus");
+        assert_eq!(focused, holder, "{host}: the given window keeps the focus");
+      }
+      engine.destroy();
+      settle(&runtime, Duration::from_millis(100));
+    }
+    finish(&runtime);
+  });
+}
+
+#[test]
+fn a_page_that_calls_window_close_stays_as_under_the_cpp_fork() {
+  on_ui_thread(|runtime| {
+    // The C++ fork did not handle WindowCloseRequested, so a page's `window.close()` left
+    // the webview where it was.
+    for host in HOSTS {
+      let (engine, _window) = make(host, |_| ());
+      let reports = load(&runtime, &engine, PAGE);
+      engine.eval("window.close()");
+      settle(&runtime, Duration::from_millis(800));
+      let alive = wry_of(&engine, test_support::container_alive);
+      engine.eval("report('still here')");
+      let answered = pump_until(&runtime, Duration::from_secs(3), || reports.borrow().iter().any(|r| r.contains("still here")));
+      eprintln!("-- {host}: after window.close(), the webview's window exists {alive}; the page answers {answered}");
+      assert!(alive, "{host}: the webview's window is still there");
+      assert!(answered, "{host}: the page still runs");
+      engine.destroy();
+      settle(&runtime, Duration::from_millis(100));
+    }
+    finish(&runtime);
+  });
+}

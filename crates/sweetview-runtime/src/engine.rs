@@ -246,7 +246,9 @@ impl Engine {
           _ => NewWindowResponse::Allow,
         }
       });
-    let builder = configure_for_platform(builder)?;
+    // The page takes the focus only in a window the engine makes itself, as under the C++
+    // library (`owns_window()` in `win32_edge.hh`); `wry` would move it into every webview.
+    let builder = configure_for_platform(builder.with_focused(matches!(host, Host::Own)))?;
 
     let mount = |error: wry::Error| Error::os("the webview could not be created (is the WebView2 runtime installed?)", error);
     let no_window = || Error::state("sweetview: the window handle given for the webview names no window");

@@ -40,7 +40,7 @@ use crate::shared::{next_request_id, Job, Responder, Shared};
 use crate::stream::StreamState;
 use crate::{
     failure_reason, file_drop_flag_script, is_file_drop_message, ExtrasOptions, KeyData, NavigationFailure, RawRequest,
-    FILE_DROP_SCRIPT,
+    FILE_DROP_SCRIPT, KEEP_OPEN_SCRIPT,
 };
 
 /// A request handed to the request handler and not yet answered.
@@ -522,7 +522,8 @@ impl Inner {
         *self.filters.borrow_mut() = filters;
 
         // The drop script is the same in every document and starts disabled.
-        self.add_script(FILE_DROP_SCRIPT, None)
+        self.add_script(FILE_DROP_SCRIPT, None)?;
+        self.add_script(KEEP_OPEN_SCRIPT, None)
     }
 
     /// `AddScriptToExecuteOnDocumentCreated`, with the handler that receives the

@@ -215,6 +215,25 @@ pub(crate) const FILE_DROP_SCRIPT: &str = r#"(function() {
   }, true);
 })()"#;
 
+/// The script that keeps a page's `window.close()` from closing the webview,
+/// run in every document and frame. Under the C++ fork nothing handled
+/// WebView2's `WindowCloseRequested`, so the call did nothing. `wry` 0.58.2
+/// handles it on every webview by destroying the webview's container window
+/// (`src/webview2/mod.rs`, `attach_handlers`), with no option to leave it out
+/// and no way to remove its handler, so the request is not made: each frame's
+/// `window.close` (an own property of the window object, `Window` being a
+/// `[Global]` interface) does nothing, as the call did before, whichever frame
+/// calls it. The property keeps the built-in's attributes.
+pub(crate) const KEEP_OPEN_SCRIPT: &str = r#"(function() {
+  'use strict';
+  Object.defineProperty(window, 'close', {
+    value: function close() {},
+    writable: true,
+    enumerable: true,
+    configurable: true,
+  });
+})()"#;
+
 /// Sets the drop script's flag in the current top-level document.
 pub(crate) fn file_drop_flag_script(enabled: bool) -> String {
     format!("if (window === window.top) {{ window.__webview_file_drop_enabled__ = {enabled}; }}")
