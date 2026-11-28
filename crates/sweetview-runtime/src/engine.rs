@@ -244,6 +244,16 @@ impl Engine {
           _ => NewWindowResponse::Allow,
         }
       });
+    // Until its page paints, a webview shows its default background: the colour the window it is
+    // made in paints there (its appearance's, or a tab frame's page colour), not WebView2's white (D42).
+    let backdrop = match &host {
+      Host::Own => None,
+      Host::Fill(value) | Host::Child(value, _) => crate::window::backdrop_of(*value),
+    };
+    let builder = match backdrop {
+      Some((red, green, blue)) => builder.with_background_color((red, green, blue, 0xff)),
+      None => builder,
+    };
     let builder = configure_for_platform(builder)?;
 
     let mount = |error: wry::Error| Error::os("the webview could not be created (is the WebView2 runtime installed?)", error);

@@ -159,6 +159,9 @@ struct Core {
   wrappers: Cell<usize>,
   /// The frame of a tabbed window: what [`tab_frame::TabFrame`] keeps.
   tab: Option<TabState>,
+  /// What a window without tabs paints where no webview covers it, from its appearance
+  /// (red, green, blue). `None` for a transparent or colour-keyed window, and one Sweetview did not make.
+  backdrop: Cell<Option<(u8, u8, u8)>>,
 }
 
 thread_local! {
@@ -206,6 +209,7 @@ impl Core {
       icons: RefCell::new(None),
       wrappers: Cell::new(0),
       tab,
+      backdrop: Cell::new(None),
     })
   }
 
@@ -526,6 +530,10 @@ impl Window {
       Appearance::Light => Some(Theme::Light),
       Appearance::Dark => Some(Theme::Dark),
     };
+    // Where no webview covers it (before its page paints, or once its webview is gone) a window
+    // shows its appearance's page colour, not the white of a client area nothing paints (D42).
+    // A transparent or colour-keyed window shows through there instead, as it always has.
+    let backdrop = (!tabbed && !init.transparent && color_key.is_none()).then(|| backdrop_for(init.appearance));
     let builder = platform_builder(
       WindowBuilder::new()
         .with_visible(false)
@@ -541,12 +549,14 @@ impl Window {
         .with_position(PhysicalPosition::new(bounds.x, bounds.y))
         .with_inner_size(PhysicalSize::new(bounds.width.max(1) as u32, bounds.height.max(1) as u32)),
       tab.as_ref(),
+      backdrop,
     );
     let tao = runtime.with_target(|target| builder.build(target))?.map_err(|e| Error::os("the window could not be made", e))?;
     let handle = platform::handle_value(&tao);
     let min = MinSize::from_options(init.min_width, init.min_height);
     let min_options = (init.min_width, init.min_height);
     let core = Core::new(handle, Some(tao), Chrome { frame, resizable }, init.no_activate, min, init.topmost, tab);
+    core.backdrop.set(backdrop);
     WINDOWS.with(|w| w.borrow_mut().insert(core.handle, core.clone()));
     // From here on a failure must not leave a half-made window behind.
     let made = Self::finish(&core, &init, color_key, bounds, min_options);
@@ -997,22 +1007,49 @@ impl Drop for Window {
   }
 }
 
+/// The page colour of a window of this appearance, the same a tab frame paints.
+fn backdrop_for(appearance: Appearance) -> (u8, u8, u8) {
+  if tab_frame::is_dark(appearance) {
+    tab_frame::PAGE_DARK
+  } else {
+    tab_frame::PAGE_LIGHT
+  }
+}
+
+/// The colour a window Sweetview made paints where no webview covers it, for a webview made in
+/// it to show until its page paints: a tab frame's page colour, or a window's appearance's.
+/// `None` for a transparent or colour-keyed window, and for a window Sweetview did not make.
+pub fn backdrop_of(handle: isize) -> Option<(u8, u8, u8)> {
+  let core = core_of(handle)?;
+  if !core.alive.get() {
+    return None;
+  }
+  match &core.tab {
+    Some(tab) => {
+      let (red, green, blue, _) = tab.backdrop();
+      Some((red, green, blue))
+    }
+    None => core.backdrop.get(),
+  }
+}
+
 #[cfg(windows)]
-fn platform_builder(builder: WindowBuilder, tab: Option<&TabState>) -> WindowBuilder {
+fn platform_builder(builder: WindowBuilder, tab: Option<&TabState>, backdrop: Option<(u8, u8, u8)>) -> WindowBuilder {
   use tao::platform::windows::WindowBuilderExtWindows;
   // Drops arrive through the subclass, as `WM_DROPFILES`; `tao`'s OLE drop
   // target would take them first. A frameless window has no shadow, as before;
   // a tab frame keeps the system's border and shadow with its caption removed,
   // and paints the page's colour wherever no webview covers it.
   let builder = builder.with_drag_and_drop(false).with_undecorated_shadow(tab.is_some());
-  match tab {
-    Some(tab) => builder.with_background_color(tab.backdrop()),
-    None => builder,
+  match (tab, backdrop) {
+    (Some(tab), _) => builder.with_background_color(tab.backdrop()),
+    (None, Some((red, green, blue))) => builder.with_background_color((red, green, blue, 0xff)),
+    (None, None) => builder,
   }
 }
 
 #[cfg(not(windows))]
-fn platform_builder(builder: WindowBuilder, _tab: Option<&TabState>) -> WindowBuilder {
+fn platform_builder(builder: WindowBuilder, _tab: Option<&TabState>, _backdrop: Option<(u8, u8, u8)>) -> WindowBuilder {
   builder
 }
 
@@ -1048,6 +1085,18 @@ fn destroy_undestroyed() {
   for shared in pending {
     if let Ok(tao) = Rc::try_unwrap(shared) {
       platform::destroy_now(tao);
+    }
+  }
+}
+
+/// Hides every visible window Sweetview made on this thread, so none is on the screen while the
+/// webviews in it go and before it is destroyed: the step of the end of the application before the webviews (D42).
+pub(crate) fn hide_all() {
+  let cores: Vec<Rc<Core>> = WINDOWS.try_with(|w| w.borrow().values().cloned().collect()).unwrap_or_default();
+  for core in cores {
+    if core.owned && core.alive.get() && core.is_visible() {
+      core.stop_hit_poll();
+      core.with_tao(|tao| tao.set_visible(false));
     }
   }
 }
