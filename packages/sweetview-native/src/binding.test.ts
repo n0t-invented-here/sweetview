@@ -29,7 +29,7 @@ function peMachine(bytes: Uint8Array): number {
  * Runs the package's real loader (`src/binding.ts`, copied unchanged) in a process of its own, from
  * a folder whose `prebuilt/` holds `prebuilt` as `sweetview.win32-x64-msvc.node`, or nothing. So the
  * literal `require("../prebuilt/sweetview.win32-x64-msvc.node")` and its failure branch run as an
- * installed package runs them. Returns what `binding()` threw, or "LOADED".
+ * installed package runs them. Returns what `binding()` threw (the whole message, every line), or "LOADED".
  */
 function loadInFolderOfItsOwn(prebuilt: Uint8Array | null): { outcome: string; exitCode: number | null } {
   const dir = mkdtempSync(join(tmpdir(), "sweetview-loader-"));
@@ -45,9 +45,10 @@ function loadInFolderOfItsOwn(prebuilt: Uint8Array | null): { outcome: string; e
     const env: Record<string, string | undefined> = { ...process.env };
     delete env.SWEETVIEW_NATIVE_PATH;
     const run = Bun.spawnSync([process.execPath, join(dir, "run.ts")], { cwd: dir, env, stdout: "pipe", stderr: "pipe", timeout: 30_000 });
-    const line = run.stdout.toString().split(/\r?\n/).find((l) => l.startsWith("OUTCOME "));
-    if (!line) throw new Error(`the loader gave no outcome (exit ${run.exitCode})\n${run.stdout}\n${run.stderr}`);
-    return { outcome: line.slice("OUTCOME ".length), exitCode: run.exitCode };
+    const stdout = run.stdout.toString();
+    const at = stdout.search(/^OUTCOME /m);
+    if (at < 0) throw new Error(`the loader gave no outcome (exit ${run.exitCode})\n${run.stdout}\n${run.stderr}`);
+    return { outcome: stdout.slice(at + "OUTCOME ".length).trimEnd(), exitCode: run.exitCode };
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -85,12 +86,17 @@ describe.if(onWindows)("native binding: loading (W1.1)", () => {
 
   // The loader's literal require and its failure branch, as an installed package runs them.
   const LOOKED_FOR = "sweetview: the native binding could not be loaded from @n1h/sweetview-native/prebuilt/sweetview.win32-x64-msvc.node: ";
+  // What follows when the file is not there: how to build it in a checkout, and what it means in an install.
+  const NOT_BUILT = ["The file is not there.", "run `just native build`", "rustup", "SWEETVIEW_NATIVE_PATH", "broken install"];
 
   test("the literal require: with prebuilt/ empty, binding() fails with a message that names the file looked for", () => {
     const { outcome, exitCode } = loadInFolderOfItsOwn(null);
     expect(exitCode).toBe(0);
     expect(outcome.startsWith(LOOKED_FOR)).toBe(true);
     expect(outcome.length).toBeGreaterThan(LOOKED_FOR.length); // the OS's or Bun's reason follows
+    // then, on a line of its own, what to run
+    const hint = outcome.slice(outcome.lastIndexOf("\n") + 1);
+    for (const part of NOT_BUILT) expect(hint).toContain(part);
   });
 
   test.skipIf(!haveX86Pe)("the literal require: with an i386 PE file in its place, binding() fails with a message that names the file looked for", () => {
@@ -100,6 +106,7 @@ describe.if(onWindows)("native binding: loading (W1.1)", () => {
     expect(exitCode).toBe(0);
     expect(outcome.startsWith(LOOKED_FOR)).toBe(true);
     expect(outcome.length).toBeGreaterThan(LOOKED_FOR.length);
+    expect(outcome).not.toContain(NOT_BUILT[0]); // the file is there, so building it is not the answer
   });
 
   test("the literal require: with the real binding in its place, the same copied loader loads it (the control)", () => {
@@ -107,6 +114,69 @@ describe.if(onWindows)("native binding: loading (W1.1)", () => {
     expect(peMachine(real)).toBe(0x8664);
     expect(loadInFolderOfItsOwn(real)).toEqual({ outcome: "LOADED", exitCode: 0 });
   });
+
+  // `bun build --compile` of the same copied loader, from a folder whose `prebuilt/` holds the real
+  // binding or nothing. Returns the build's exit code and output, and the executable's path.
+  function compileInFolderOfItsOwn(prebuilt: Uint8Array | null, target: string, dir: string) {
+    mkdirSync(join(dir, "src"));
+    mkdirSync(join(dir, "prebuilt"));
+    copyFileSync(fileURLToPath(new URL("./binding.ts", import.meta.url)), join(dir, "src", "binding.ts"));
+    if (prebuilt) writeFileSync(join(dir, "prebuilt", "sweetview.win32-x64-msvc.node"), prebuilt);
+    writeFileSync(
+      join(dir, "run.ts"),
+      `import { binding } from "./src/binding";\ntry { binding(); console.log("OUTCOME LOADED"); } catch (err) { console.log("OUTCOME " + (err as Error).message); }\n`,
+    );
+    const exe = join(dir, target.includes("windows") ? "run.exe" : "run");
+    const build = Bun.spawnSync([process.execPath, "build", "--compile", `--target=${target}`, "run.ts", "--outfile", exe], {
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 120_000,
+    });
+    return { exitCode: build.exitCode, output: `${build.stdout}${build.stderr}`, exe };
+  }
+
+  test("bun build --compile for Windows without the binary fails at build time, naming the file", () => {
+    const dir = mkdtempSync(join(tmpdir(), "sweetview-compile-"));
+    try {
+      const { exitCode, output, exe } = compileInFolderOfItsOwn(null, "bun-windows-x64", dir);
+      expect(exitCode).not.toBe(0);
+      expect(output).toContain('Could not resolve: "../prebuilt/sweetview.win32-x64-msvc.node"');
+      expect(existsSync(exe)).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 120_000);
+
+  test("bun build --compile for macOS does not need the Windows binary", () => {
+    const dir = mkdtempSync(join(tmpdir(), "sweetview-compile-"));
+    try {
+      const { exitCode, output, exe } = compileInFolderOfItsOwn(null, "bun-darwin-arm64", dir);
+      expect({ exitCode, output: exitCode === 0 ? "" : output }).toEqual({ exitCode: 0, output: "" });
+      expect(existsSync(exe)).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 120_000);
+
+  test("bun build --compile with the binary in place embeds it: the executable, alone in an empty folder, loads it", () => {
+    const dir = mkdtempSync(join(tmpdir(), "sweetview-compile-"));
+    const alone = mkdtempSync(join(tmpdir(), "sweetview-alone-"));
+    try {
+      const real = new Uint8Array(readFileSync(fileURLToPath(new URL("../prebuilt/sweetview.win32-x64-msvc.node", import.meta.url))));
+      const { exitCode, output, exe } = compileInFolderOfItsOwn(real, "bun-windows-x64", dir);
+      expect({ exitCode, output: exitCode === 0 ? "" : output }).toEqual({ exitCode: 0, output: "" });
+      const moved = join(alone, "run.exe");
+      copyFileSync(exe, moved);
+      rmSync(dir, { recursive: true, force: true }); // the source folder and its prebuilt/ are gone
+      const run = Bun.spawnSync([moved], { cwd: alone, stdout: "pipe", stderr: "pipe", timeout: 30_000 });
+      const line = run.stdout.toString().split(/\r?\n/).find((l) => l.startsWith("OUTCOME "));
+      expect(line).toBe("OUTCOME LOADED");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+      rmSync(alone, { recursive: true, force: true });
+    }
+  }, 120_000);
 });
 
 describe.if(onWindows)("native binding: callbacks from inside the loop (W1.2, W1.4)", () => {
