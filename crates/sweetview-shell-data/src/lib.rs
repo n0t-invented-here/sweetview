@@ -6,6 +6,7 @@
 #![forbid(unsafe_code)]
 
 pub mod error;
+pub mod single_instance;
 pub mod text;
 pub mod url_scheme;
 
