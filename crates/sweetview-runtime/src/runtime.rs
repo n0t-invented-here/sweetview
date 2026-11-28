@@ -152,6 +152,8 @@ impl Runtime {
   pub fn shutdown_for_tests() {
     crate::window::destroy_all();
     *WAKER.lock().unwrap_or_else(PoisonError::into_inner) = None;
+    // Before the runtime, whose apartment the environment belongs to.
+    crate::engine::release_environment_for_tests();
     RUNTIME.with(|slot| slot.borrow_mut().take());
   }
 
