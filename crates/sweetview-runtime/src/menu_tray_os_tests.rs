@@ -18,6 +18,7 @@ use crate::runtime::{Runtime, TimeoutId};
 use crate::screen;
 use crate::tray::{Tray, TrayInit};
 use crate::window::{Window, WindowInit};
+use crate::window::tab_frame::{PopupEntry, TabFrame};
 use crate::Rect;
 
 const VK_RETURN: u16 = 0x0d;
@@ -306,6 +307,40 @@ fn a_no_activate_owner_never_takes_the_foreground_for_its_menu() {
     assert_eq!(menu::stand_in_for_tests(), 0, "released with the menus");
     assert!(BorrowedWindow::with_handle_value(stand_in, |_| ()).is_none(), "its window is gone");
     overlay.dispose();
+  });
+}
+
+/// The tab menu goes the one popup way (the fold, D26; round 2, G4): `TabFrame::show_menu` itself
+/// shows its entries, a separator and a disabled item among them (a lone `&` shown as itself), with
+/// the menu's top-left corner at the cursor, and returns the zero-based index of the item chosen.
+#[test]
+fn a_tab_frames_menu_shows_its_entries_at_the_cursor_and_returns_the_chosen_index() {
+  on_ui_thread(|runtime| {
+    let frame = Window::create(WindowInit { title: "rt os tab menu".into(), bounds: Some(Rect { x: 200, y: 200, width: 480, height: 320 }), tab_strip_height: Some(40), ..Default::default() }).expect("a frame");
+    frame.show().expect("shown");
+    let tabs = TabFrame::of(frame.handle()).expect("a tab frame");
+    if !os::set_cursor(400, 300) {
+      panic!("not run: the cursor could not be put where the test reads the menu");
+    }
+    let shown: Rc<RefCell<(Vec<MenuEntry>, Edges)>> = Rc::default();
+    let seen = shown.clone();
+    when_menu_opens(&runtime, move |menu_window| {
+      *seen.borrow_mut() = (os::read_menu(os::menu_of_window(menu_window)), rect_of(menu_window));
+      // The keyboard stops on the first item, on the disabled one, then on "Close tab".
+      os::press_keys(menu_window, &[VK_DOWN, VK_DOWN, VK_DOWN, VK_RETURN]);
+    });
+    let entries = vec![
+      PopupEntry::Item { label: "New tab\tCtrl+T".into(), enabled: true },
+      PopupEntry::Separator,
+      PopupEntry::Item { label: "Fish & chips".into(), enabled: false },
+      PopupEntry::Item { label: "Close tab".into(), enabled: true },
+    ];
+    assert_eq!(tabs.show_menu(&entries).expect("the menu"), Some(3), "the zero-based index of the item chosen");
+    let (read, rect) = shown.borrow().clone();
+    assert_eq!(labels(&read), ["New tab\tCtrl+T", "", "Fish && chips", "Close tab"]);
+    assert!(read[1].separator && read[2].disabled && !read[0].disabled && !read[3].disabled, "a separator and a disabled item: {read:?}");
+    assert_eq!((rect.0, rect.1), (400, 300), "the menu's top-left corner at the cursor");
+    frame.dispose();
   });
 }
 
