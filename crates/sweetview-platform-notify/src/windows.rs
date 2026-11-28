@@ -1257,10 +1257,19 @@ mod tests {
     .expect("notifier");
     notifier.force_path(ForcedPath::BalloonOnly);
     let Some(Shown::Balloon(uid)) = notifier.show(&note("drop me")) else { panic!("balloon") };
+    let Some(Shown::Balloon(queued)) = notifier.show(&note("queued")) else { panic!("balloon") };
+    // Both clicks are posted before either is dispatched: the one queued behind the click that
+    // drops the notifier is never delivered.
     assert!(notifier.simulate_balloon_event(uid, BalloonEvent::Clicked));
+    assert!(notifier.simulate_balloon_event(queued, BalloonEvent::Clicked));
     *slot.borrow_mut() = Some(notifier);
     pump_until(|| calls.get() == 1);
-    assert_eq!(calls.get(), 1);
+    let settle = Instant::now() + Duration::from_millis(100);
+    while Instant::now() < settle {
+      pump();
+      std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(calls.get(), 1, "the queued click was not delivered");
     assert!(slot.borrow().is_none());
   }
 
