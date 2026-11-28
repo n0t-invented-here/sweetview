@@ -782,6 +782,11 @@ impl Inner {
     match taken {
       Some(live) => {
         let Live { extras, webview, window, container_backdrop } = live;
+        // A standalone webview's own window leaves the screen first, so it is never seen with
+        // its page gone, on every path that ends it (D46, R1 of its first review).
+        if let HostWindow::Own { window, .. } = &window {
+          window.set_visible(false);
+        }
         drop(container_backdrop);
         drop(extras);
         match window {
@@ -831,8 +836,17 @@ fn wry_rect(bounds: Bounds) -> wry::Rect {
 thread_local! {
   /// The process's WebView2 environment, made once on the UI thread and shared
   /// by every webview, as the C++ library's webviews shared theirs.
-  static ENVIRONMENT: std::cell::OnceCell<webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Environment> =
-    const { std::cell::OnceCell::new() };
+  static ENVIRONMENT: RefCell<Option<webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Environment>> =
+    const { RefCell::new(None) };
+}
+
+/// Lets go of the process's WebView2 environment, for `Runtime::shutdown_for_tests`: a test's UI
+/// thread leaves its COM apartment when its runtime goes, and a COM object kept past that would be
+/// released by the thread's local-storage destructors, outside any apartment (a fault,
+/// `0xc000041d`, at the end of every test that made a webview).
+#[cfg(windows)]
+pub(crate) fn forget_environment() {
+  let _ = ENVIRONMENT.try_with(|cell| cell.borrow_mut().take());
 }
 
 /// The WebView2 environment, created the way the C++ library created it: the
@@ -843,14 +857,14 @@ thread_local! {
 fn configure_for_platform(builder: WebViewBuilder<'_>) -> Result<WebViewBuilder<'_>> {
   use wry::WebViewBuilderExtWindows;
   let environment = ENVIRONMENT.with(|cell| {
-    if let Some(environment) = cell.get() {
+    if let Some(environment) = cell.borrow().as_ref() {
       return Ok(environment.clone());
     }
     let folder = sweetview_platform_webview::default_user_data_folder();
     let environment = sweetview_platform_webview::create_environment(folder.as_deref()).map_err(|code| {
       Error::os("the WebView2 environment could not be created (is the WebView2 runtime installed?)", format!("webview_error_t {}", code.code()))
     })?;
-    Ok(cell.get_or_init(|| environment).clone())
+    Ok(cell.borrow_mut().get_or_insert(environment).clone())
   })?;
   Ok(builder.with_environment(environment))
 }
@@ -880,4 +894,67 @@ fn reparent(webview: &WebView, parent: &BorrowedWindow<'_>) -> std::result::Resu
 #[cfg(not(windows))]
 fn reparent(_webview: &WebView, _parent: &BorrowedWindow<'_>) -> std::result::Result<(), wry::Error> {
   Ok(())
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+  use std::cell::Cell;
+  use std::rc::Rc;
+  use std::time::{Duration, Instant};
+
+  use sweetview_platform_window::test_support::{first_child, post_close, watch_destroy};
+  use sweetview_platform_window::BorrowedWindow;
+  use wry::WebViewExtWindows;
+
+  use super::*;
+  use crate::runtime::testing::on_ui_thread;
+
+  /// A standalone webview (its own window) shown, and `end` run: whether its own window was still
+  /// on the screen at the moment the webview went, read inside the `WM_DESTROY` of WebView2's own
+  /// window under `wry`'s container (`Chrome_WidgetWin_0`), which closing the controller destroys.
+  fn on_screen_as_it_goes(runtime: &Rc<Runtime>, end: fn(&Engine, isize)) -> Option<bool> {
+    let engine = Engine::create(false, Host::Own).expect("a standalone webview");
+    engine.show_own_window();
+    let (window, container) = engine
+      .inner
+      .with_live(|live| {
+        let HostWindow::Own { window, .. } = &live.window else { panic!("its own window") };
+        (window_value_of(window), live.webview.hwnd().0 as isize)
+      })
+      .expect("live");
+    let browser = BorrowedWindow::with_handle_value(container, |c| first_child(c)).flatten().expect("WebView2's window under the container");
+    let seen = Rc::new(Cell::new(None));
+    let record = seen.clone();
+    let watch = BorrowedWindow::with_handle_value(browser, |b| {
+      watch_destroy(b, move || record.set(BorrowedWindow::with_handle_value(window, |w| sweetview_platform_window::is_visible(w))))
+    })
+    .expect("WebView2's window")
+    .expect("watched");
+    end(&engine, window);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while seen.get().is_none() && Instant::now() < deadline {
+      runtime.pump();
+    }
+    drop(watch);
+    seen.get()
+  }
+
+  /// R1 of the first review of D46: a standalone webview's window leaves the screen before the
+  /// webview goes, on every path that ends it: `destroy()`, a close of its own window (the title
+  /// bar's, `WM_CLOSE`), and the release at the end of the application. `Some(false)`: the window
+  /// was hidden, and still a window, when the webview went.
+  #[test]
+  fn a_standalone_webviews_window_leaves_the_screen_before_the_webview_goes() {
+    on_ui_thread(|runtime| {
+      assert_eq!(on_screen_as_it_goes(&runtime, |engine, _| engine.destroy()), Some(false), "destroy()");
+      assert_eq!(
+        on_screen_as_it_goes(&runtime, |_, window| {
+          BorrowedWindow::with_handle_value(window, |w| post_close(w));
+        }),
+        Some(false),
+        "its own window closed"
+      );
+      assert_eq!(on_screen_as_it_goes(&runtime, |_, _| release_all()), Some(false), "the release at the end");
+    });
+  }
 }
