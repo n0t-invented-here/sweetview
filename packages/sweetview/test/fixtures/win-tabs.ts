@@ -196,6 +196,8 @@ function screenPixel(x: number, y: number): string {
   const screen = user32.GetDC(0n);
   const c = gdi32.GetPixel(screen, x, y);
   user32.ReleaseDC(0n, screen);
+  // CLR_INVALID: the point is outside what the screen shows; a colour read from nothing is no colour.
+  if (c === 0xffffffff) throw new Error(`GetPixel(${x}, ${y}) failed: CLR_INVALID`);
   return `#${[c & 0xff, (c >> 8) & 0xff, (c >> 16) & 0xff].map((v) => v.toString(16).padStart(2, "0")).join("")}`;
 }
 
