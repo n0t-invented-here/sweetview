@@ -111,8 +111,9 @@ struct Live {
 
 #[cfg(windows)]
 type ContainerBackdrop = sweetview_platform_window::FrameMessages;
+/// Elsewhere `wry` paints its own background: nothing is kept.
 #[cfg(not(windows))]
-type ContainerBackdrop = ();
+struct ContainerBackdrop;
 
 /// Makes the container window `wry` made for `webview` paint `colour` where WebView2 has not
 /// drawn yet. `wry`'s container has no background brush, and a parent that clips its children
