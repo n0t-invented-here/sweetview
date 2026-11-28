@@ -50,11 +50,15 @@ after them give every export its row.
 7. **The end.** Delete the teardown lines after the loop and, on Windows, any `unload()`:
    the last line is `app.run()`, and Sweetview releases what it made (on
    macOS, until its goal, keep them).
-8. **Faults in your callbacks.** An exception thrown by a UI-thread callback
-   or an input hook is caught and printed, and no longer reaches
-   `uncaughtException`; a packaged application, which has no console, sees
-   it only through `onCallbackError`
-   ([exceptions](#what-changed-for-every-application)).
+8. **Faults in your callbacks.** On Windows, an exception thrown by a
+   UI-thread callback or an input hook is caught and printed, and no longer
+   reaches `uncaughtException`
+   ([exceptions](#what-changed-for-every-application)). `onCallbackError`
+   is told of the faults
+   [its list](native.md#exceptions-thrown-by-your-callbacks) names, and not
+   of a throwing `onReady` or `onReadyTimeout` (printed), a `uiMethods`
+   handler's (an RPC error to the page), the facade's other catches, or any
+   on macOS, where until its goal the faults are handled as before.
 9. **Notifications.** Pass the application's identity
    (`identity: defineAppIdentity({ appId, appName })`), or toasts show as
    "Sweetview"; no tray is needed first.
