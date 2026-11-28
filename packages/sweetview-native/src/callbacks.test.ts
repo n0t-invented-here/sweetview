@@ -1017,6 +1017,7 @@ describe.if(onWindows)("onCallbackError", () => {
       closeRequestStillTaken: true,
       throwingMenuOpensNoMenu: true,
       noMenuLeftOpen: true,
+      closerEndedTheFirstMenu: true,
       handedOff: 1,
     });
     expect(r.throwingListener).toEqual({
