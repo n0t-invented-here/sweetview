@@ -62,7 +62,10 @@ const typesPath = join(import.meta.dir, "upgrade-types.ts");
 const guide = readFileSync(guidePath, "utf8");
 const typesFile = readFileSync(typesPath, "utf8");
 
-type Row = { section: string; line: number; old: string; spans: string[] };
+type Row = { section: string; line: number; old: string; write: string; spans: string[] };
+
+/** The Write now of a row whose capability 1.0 has no public call for: no code, and nothing named in its place. */
+const NO_PUBLIC_CALL = "no public call in 1.0";
 
 function splitCells(line: string): string[] {
   const cells: string[] = [];
@@ -92,7 +95,7 @@ function parseGuide(text: string): Row[] {
     if (line.trim() !== "| Old | Write now | Change |") continue;
     for (i += 2; i < lines.length && lines[i]!.startsWith("|"); i++) {
       const [old, write] = splitCells(lines[i]!);
-      rows.push({ section, line: i + 1, old: old ?? "", spans: [...(write ?? "").matchAll(/`([^`]+)`/g)].map((m) => m[1]!) });
+      rows.push({ section, line: i + 1, old: old ?? "", write: write ?? "", spans: [...(write ?? "").matchAll(/`([^`]+)`/g)].map((m) => m[1]!) });
     }
   }
   return rows;
@@ -138,6 +141,7 @@ const literal = (text: string): unknown => new Function(`return (${text});`)();
 /** Checks one row; returns what is wrong with it, or nothing. Collects the libraries of own-table rows. */
 async function checkRow(row: Row, ownLibraries: Set<string>): Promise<string[]> {
   const problems: string[] = [];
+  if (row.write === NO_PUBLIC_CALL) return [];
   const [first, ...checks] = row.spans;
   if (!first) return ["no code in the Write now column"];
 
@@ -245,6 +249,7 @@ function valueRows(): { row: Row; name: string; spec: string; targets: string[] 
 
 /** A row's kind, from its first span after the import (or the import alone). */
 function rowKind(row: Row): string {
+  if (row.write === NO_PUBLIC_CALL) return "no public call in 1.0";
   const first = row.spans[0] ?? "";
   if (first.startsWith("type ")) return "type";
   const m = IMPORT.exec(first);
@@ -275,8 +280,22 @@ describe("docs/upgrading.md", () => {
   });
 
   test("every row names an old export in backticks and a new form", () => {
-    const bad = rows.filter((r) => !/`[^`]+`/.test(r.old) || r.spans.length === 0).map((r) => `line ${r.line}`);
+    const bad = rows.filter((r) => !/`[^`]+`/.test(r.old) || (r.spans.length === 0 && r.write !== NO_PUBLIC_CALL)).map((r) => `line ${r.line}`);
     expect(bad).toEqual([]);
+  });
+
+  test("the capabilities 1.0 has no public call for are these rows, each naming nothing in its place", () => {
+    // Each is on the owner's list; a row added here is a decision, not a slip.
+    const none = rows.filter((r) => r.write === NO_PUBLIC_CALL);
+    expect(none.map((r) => r.old)).toEqual(["`createPane(…)`", "`adoptPane(…)`", "`placePane(…)`", "`showPane(…)`", "`hidePane(…)`", "`destroyPane(…)`"]);
+    // A capability without a public call is not offered a substitute in its Change column either.
+    const offered = none.filter((r) => /`[A-Za-z]+[.#(]/.test(guide.split(/\r?\n/)[r.line - 1]!.split("|")[3] ?? ""));
+    expect(offered.map((r) => r.old)).toEqual([]);
+    // The two uses of a message window of the application's own that 1.0 has no call for are said so, with no substitute.
+    for (const old of ["`HWND_MESSAGE`", "`createMessageWindow`", "`createMessageWindowRaw`"]) {
+      const line = guide.split(/\r?\n/)[rows.find((r) => r.old === old)!.line - 1]!;
+      expect({ old, says: line.includes("Two uses have no public call in 1.0"), offersHook: line.includes("installKeyboardHook") }).toEqual({ old, says: true, offersHook: false });
+    }
   });
 
   test("every row's new form imports and is what the row says", async () => {

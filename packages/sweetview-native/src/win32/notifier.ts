@@ -3,6 +3,7 @@
 // with or without a Tray. Each toast or balloon carries its own click payload.
 
 import { binding } from "../binding";
+import { reportCallbackError } from "../callback-errors";
 import type { Notifier as NativeNotifier } from "../../prebuilt/binding";
 import { type NotificationClick, type NotificationOptions, type NotifierBackend, type NotifierOptions, notificationId } from "../notifications";
 import { notifierTrayIcon, onNotifierTrayIcon } from "./notify-icon";
@@ -42,7 +43,7 @@ export function createNotifier(options: NotifierOptions = {}): NotifierBackend {
     try {
       options.onClick?.(click);
     } catch (err) {
-      console.error("sweetview: notification onClick threw:", err);
+      reportCallbackError("notifier.onClick", err, "sweetview: notification onClick threw:");
     }
   };
 

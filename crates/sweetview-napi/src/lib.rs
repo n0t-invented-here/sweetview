@@ -37,7 +37,9 @@ pub fn is_ui_thread() -> bool {
 
 /// The end of the application: releases everything the binding made on the UI thread that
 /// is still alive (hooks, webviews, trays, notifiers, single-instance locks, menus, windows,
-/// then timers and callbacks), in that order. Does nothing on another thread.
+/// then timers and callbacks), in that order. Does nothing on another thread. The callback error
+/// sink is not released here: an `onCallbackError` listener still hears of what happens after,
+/// and the environment's cleanup hook releases the sink when the environment ends.
 pub fn release_all() {
   sweetview_runtime::lifetime::release_all();
 }

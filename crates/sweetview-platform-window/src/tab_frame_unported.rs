@@ -9,6 +9,33 @@ pub fn is_foreground(_window: &impl NativeWindow) -> bool {
   false
 }
 pub fn show_system_menu(_window: &impl NativeWindow, _at: Point) {}
+
+/// See the Windows implementation for the contract.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SystemMenuState {
+  pub maximized: bool,
+  pub minimized: bool,
+  pub can_size: bool,
+  pub can_maximize: bool,
+}
+
+/// See the Windows implementation for the contract.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SystemCommand {
+  Restore,
+  Move,
+  Size,
+  Minimize,
+  Maximize,
+  Close,
+  Other(u32),
+}
+
+pub fn track_system_menu(_window: &impl NativeWindow, _at: Point, _state: SystemMenuState) -> Option<SystemCommand> {
+  None
+}
+
+pub fn post_system_command(_window: &impl NativeWindow, _command: SystemCommand) {}
 pub fn request_close(_window: &impl NativeWindow) {}
 
 /// See the Windows implementation for the contract.
