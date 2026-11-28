@@ -401,6 +401,24 @@ fn every_maximise_transition_is_told_once_in_order_to_every_listener_and_resize_
   });
 }
 
+/// Review round 2, M6: a frameless window whose minimum size is larger than the work area is
+/// maximised by `toggle_maximize` (at the work area's origin, at its minimum size), as at tag
+/// `pre-rust-rewrite`, and the next toggle gives back the bounds it had.
+#[test]
+fn a_frameless_maximise_larger_than_the_work_area_is_still_a_maximise() {
+  on_ui_thread(|_runtime| {
+    let area = screen::primary().expect("primary").work_area;
+    let start = Rect::new(area.x + 100, area.y + 100, 400, 300);
+    let window = Window::create(WindowInit { frame: false, bounds: Some(start), min_width: Some(area.width + 600), ..init("rt big minimum") }).expect("window");
+    let start = window.bounds(); // the minimum applies from the start
+    window.toggle_maximize().expect("maximise");
+    assert!(window.is_maximized(), "maximised: {:?}", window.bounds());
+    window.toggle_maximize().expect("restore");
+    assert_eq!((window.is_maximized(), window.bounds()), (false, start));
+    window.dispose();
+  });
+}
+
 #[test]
 fn adopting_a_handle_that_is_not_a_window_fails() {
   on_ui_thread(|_runtime| {
