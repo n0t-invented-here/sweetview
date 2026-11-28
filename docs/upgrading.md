@@ -7,8 +7,9 @@ export of the earlier API surfaces to what an application writes now, one
 table row per export, and lists the steps and the behaviour changes an
 application notices.
 
-Three kinds of application upgrade here. Find yours, follow its steps, then
-look up each import in its part:
+Read [what changes](#what-changes-in-the-order-you-meet-it) first: it is
+short. Three kinds of application upgrade here; find yours, follow its steps,
+then look up each import in its part:
 
 - **A.** On the published `@n1h/sweetview` 0.1.x or 0.2.x, with `@n1h/sweetview-webview-bun` 2.x. See [Part A](#part-a-published-0x-packages).
 - **B.** On the `v1-drafting` API: `@n1h/sweetview` 1.0.0 and its workspace packages as they were before the native layer moved to Rust (tag `pre-rust-rewrite` of `n0t-invented-here/sweetview`). See [Part B](#part-b-the-v1-drafting-api).
@@ -17,28 +18,48 @@ look up each import in its part:
 An application can be more than one kind: a B application that also imports
 the input hooks from the bindings package follows the steps of B and of C.
 
-## Reading the tables
+## What changes, in the order you meet it
 
-Each row has three columns:
+Each line is the 1.0 way; the [details](#what-changed-for-every-application)
+and the [steps](#steps-for-each-kind-of-application) follow, and the tables
+after them give every export its row.
 
-- **Old**: the name the application imported, from the entry point the
-  section names. A member row names the member (`maximized()`).
-- **Write now**: code. The first span is the import. The spans after it say
-  what to use: `name(…)` is a function, `new Name(…)` a class,
-  `Name.member` a static member or a property of an object, `Name#member` a
-  member of an instance, and `Name === value` a constant's value. A row
-  whose first span is `import { dlopen } from "bun:ffi"`, followed by
-  `dlopen("name.dll", { … })`, means the application declares its own
-  `bun:ffi` table for its own calls. A row whose span starts with `type` is a
-  declaration the application keeps in its own code. A row whose Write now
-  is `no public call in 1.0`, with no code, is a capability 1.0 has no public
-  call for; the Change column says which, and what the public API covers of
-  it where it covers a part (a row that names no part names no substitute).
-- **Change**: what is different, in a few words. `unchanged` means the
-  import and the call stay as they are.
-
-Every row is run by `rust-rewrite/compat/upgrade-guide.test.ts`, which reads
-this page: it imports each new form and checks that it is what the row says.
+1. **Install.** Move `@n1h/sweetview` to 1.0. On Windows drop
+   `@n1h/sweetview-webview-bun`; keep it for macOS, which runs the code it
+   ran before 1.0 until the macOS goal of the rewrite.
+2. **Imports.** Every public name keeps its module and its name. An import of
+   one of Sweetview's internal modules has a row naming its public call, or
+   saying `no public call in 1.0` for that capability.
+3. **Creating the window.** `createWebviewApp(options)` is
+   `createApp(options)`, which makes the window too; window options go in the
+   same object.
+4. **Its size.** `contentSize: { width, height }` is the page's size in DIPs,
+   the window centred; `bounds` is the outer frame in physical pixels (on
+   macOS, until its goal, a window is made from `bounds`).
+5. **Showing it.** Pass `showOnReady: true` and call `signalReady()` from
+   `@n1h/sweetview/page` once the page has rendered.
+6. **Closing it.** A close disposes the window. A tray application declares
+   close-to-tray: `closeToTrayOnLastWindow(win, onHide)`.
+7. **The end.** Delete the teardown lines after the loop and any `unload()`:
+   the last line is `app.run()`, and Sweetview releases what it made (on
+   macOS, until its goal, keep them).
+8. **Notifications.** Pass the application's identity
+   (`identity: defineAppIdentity({ appId, appName })`), or toasts show as
+   "Sweetview"; no tray is needed first.
+9. **Menus and the window's own state.** `Menu.popup(owner, menu, at)` opens
+   downward and, with `{ above: true }`, upward as a tray menu does;
+   `Window#isMinimized()`, `Window#onMaximizeChange(fn)` and
+   `Window#showSystemMenu()` replace an application's own `IsIconic`, a
+   polling timer and the system menu's internal call.
+10. **The loop.** `app.run()`, or `runEventLoop()` to keep Bun's event loop
+    on the UI thread; `pumpEvents()` inside a running loop does nothing.
+11. **Your own native calls.** `Window.handle` is still the real `HWND`, and
+    an application's own `bun:ffi` calls, its dialogs and menus included,
+    run inside Sweetview's loop.
+12. **Environment.** `SWEETVIEW_NATIVE_PATH` replaces `WEBVIEW_PATH`.
+13. **Building.** `make-app.ts` is in `@n1h/sweetview-build`, and
+    `refreshWindowsIcons()` of `@n1h/sweetview/build` tells the shell a
+    rebuilt program's icon changed.
 
 ## What changed for every application
 
@@ -296,6 +317,29 @@ this page: it imports each new form and checks that it is what the row says.
 5. If you set `WEBVIEW_PATH`, set `SWEETVIEW_NATIVE_PATH` instead.
 6. Delete the `unload()` call: the end of the application destroys every
    live webview itself, and there is no library to close.
+
+## Reading the tables
+
+Each row has three columns:
+
+- **Old**: the name the application imported, from the entry point the
+  section names. A member row names the member (`maximized()`).
+- **Write now**: code. The first span is the import. The spans after it say
+  what to use: `name(…)` is a function, `new Name(…)` a class,
+  `Name.member` a static member or a property of an object, `Name#member` a
+  member of an instance, and `Name === value` a constant's value. A row
+  whose first span is `import { dlopen } from "bun:ffi"`, followed by
+  `dlopen("name.dll", { … })`, means the application declares its own
+  `bun:ffi` table for its own calls. A row whose span starts with `type` is a
+  declaration the application keeps in its own code. A row whose Write now
+  is `no public call in 1.0`, with no code, is a capability 1.0 has no public
+  call for; the Change column says which, and what the public API covers of
+  it where it covers a part (a row that names no part names no substitute).
+- **Change**: what is different, in a few words. `unchanged` means the
+  import and the call stay as they are.
+
+Every row is run by `rust-rewrite/compat/upgrade-guide.test.ts`, which reads
+this page: it imports each new form and checks that it is what the row says.
 
 ## Part A: published 0.x packages
 
