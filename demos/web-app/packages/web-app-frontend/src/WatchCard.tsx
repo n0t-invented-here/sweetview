@@ -21,9 +21,12 @@ export function WatchCard() {
   const [busy, setBusy] = useState(false);
   const [typedPath, setTypedPath] = useState("");
   const nextId = useRef(1);
+  // The folder dialog's mechanism differs by OS, so the sentence about it names the one in use.
+  const [platform, setPlatform] = useState<string | null>(null);
 
   useEffect(() => {
     rpc("watch.status").then(setStatus).catch((e: Error) => setError(e.message));
+    if (inApp) rpc("info.get").then((info) => setPlatform(info.platform)).catch(() => {});
     const offStatus = on("watch.status", setStatus);
     const offChange = on("fs.change", (changes) => {
       const fresh = changes.map<Row>((c) => ({ ...c, id: nextId.current++ }));
@@ -140,9 +143,20 @@ export function WatchCard() {
         <Text c="dimmed" size="sm">
           {inApp ? (
             <>
-              Opens the OS folder dialog in-process (COM <Code>IFileOpenDialog</Code> / <Code>NSOpenPanel</Code> over{" "}
-              <Code>bun:ffi</Code>), then <Code>fs.watch</Code> runs on the worker and pushes every change through the
-              shared ring into this page. No polling, no sockets, no child processes.
+              Opens the OS folder dialog in-process
+              {platform === "win32" ? (
+                <>
+                  {" "}
+                  (<Code>IFileOpenDialog</Code>, shown by Sweetview's Rust binding through <Code>rfd</Code>)
+                </>
+              ) : platform === "darwin" ? (
+                <>
+                  {" "}
+                  (<Code>NSOpenPanel</Code> over <Code>bun:ffi</Code>)
+                </>
+              ) : null}
+              , then <Code>fs.watch</Code> runs on the worker and pushes every change through the shared ring into this
+              page. No polling, no sockets, no child processes.
             </>
           ) : (
             <>
