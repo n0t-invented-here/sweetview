@@ -251,6 +251,8 @@ tray.dispose();
 let itemChosen = false;
 const menuTray = new Tray({ tooltip: `callback-errors menu ${process.pid}`, menu: () => [{ label: "Boom", click: () => ((itemChosen = true), boom("menu item")()) }] });
 const menuTrayWindow = currentTray()!.windowHandle();
+// The first attempt posts no keys, so the closer is what ends that menu (review 4, C4).
+let closerEnded = 0;
 for (let attempt = 1; attempt <= 3 && !itemChosen; attempt++) {
   // A menu the keys did not close is ended by a native timeout, which its own modal loop
   // dispatches: neither this process's watchdog nor its pump can run while the menu is open, and a
@@ -262,9 +264,9 @@ for (let attempt = 1; attempt <= 3 && !itemChosen; attempt++) {
     native.cancelTimeout(watcher);
     closer = native.scheduleTimeout(1500, () => {
       closer = undefined;
-      if (openPopupMenu() !== 0n) endMenu();
+      if (openPopupMenu() !== 0n && endMenu()) closerEnded++;
     });
-    pressKeys(menu, VK.DOWN, VK.RETURN);
+    if (attempt > 1) pressKeys(menu, VK.DOWN, VK.RETURN);
   });
   postTrayMouse(menuTrayWindow, TRAY.RBUTTONDOWN, TRAY.RBUTTONUP);
   await pumpUntil(() => itemChosen, 3000);
@@ -273,6 +275,7 @@ for (let attempt = 1; attempt <= 3 && !itemChosen; attempt++) {
   await pumpUntil(() => openPopupMenu() === 0n, 1000);
 }
 steps.noMenuLeftOpen = openPopupMenu() === 0n;
+steps.closerEndedTheFirstMenu = closerEnded === 1;
 menuTray.dispose();
 
 // A notification click, through the notifier's own test hooks, under a throwaway app id.
