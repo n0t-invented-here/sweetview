@@ -44,8 +44,9 @@ async function runApp(mode: string): Promise<{ exitCode: number | null; afterQui
     }, 30_000);
     const reading = (async () => {
       const decoder = new TextDecoder();
-      for await (const chunk of proc.stdout) {
-        stdout += decoder.decode(chunk);
+      const reader = proc.stdout.getReader();
+      for (let read = await reader.read(); !read.done; read = await reader.read()) {
+        stdout += decoder.decode(read.value, { stream: true });
         if (quitAt === undefined && /^QUIT$/m.test(stdout)) {
           quitAt = Date.now();
           clearTimeout(startLimit);
