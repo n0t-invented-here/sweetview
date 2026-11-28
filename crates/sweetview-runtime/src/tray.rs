@@ -393,27 +393,14 @@ impl TrayState {
   /// The hidden window that owns the menu, made on first use.
   fn menu_owner(&self) -> Result<isize> {
     if self.menu_owner.borrow().is_none() {
-      let runtime = Runtime::get()?;
-      let window = runtime
-        .with_target(|target| tao::window::WindowBuilder::new().with_visible(false).with_title("sweetview.tray-menu").build(target))?
-        .map_err(|e| Error::os("the tray menu's window could not be made", e))?;
+      let window = menu::hidden_menu_owner("sweetview.tray-menu")?;
       *self.menu_owner.borrow_mut() = Some(window);
     }
-    let handle = self.menu_owner.borrow().as_ref().map_or(0, window_handle_value);
+    let handle = self.menu_owner.borrow().as_ref().map_or(0, menu::window_handle_value);
     BorrowedWindow::with_handle_value(handle, |_| handle).ok_or_else(|| Error::state("sweetview: the tray menu's window is gone"))
   }
 }
 
-#[cfg(windows)]
-fn window_handle_value(window: &tao::window::Window) -> isize {
-  use tao::platform::windows::WindowExtWindows;
-  window.hwnd()
-}
-
-#[cfg(not(windows))]
-fn window_handle_value(_window: &tao::window::Window) -> isize {
-  0
-}
 
 #[cfg(test)]
 mod tests {
