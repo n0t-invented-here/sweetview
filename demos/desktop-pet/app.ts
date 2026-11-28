@@ -8,7 +8,7 @@
 import { appendFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { createHitRelay, createNotifier, createTray, Screen, setAppIcon, unpackRegions, Window, type MenuTemplate, type Notifier } from "@n1h/sweetview/native";
-import { indexHtml, WebView, windowChromeMethods, type Asset } from "@n1h/sweetview";
+import { indexHtml, WebView, windowChromeEvents, windowChromeMethods, type Asset } from "@n1h/sweetview";
 import { SettingsStore } from "@n1h/sweetview/settings-store";
 import petCss from "./build/frontend/main.css" with { type: "file" };
 import petJs from "./build/frontend/main.js" with { type: "file" };
@@ -85,12 +85,8 @@ const petAssets: Record<string, Asset> = {
 
 // ---- the settings window ---------------------------------------------------------
 
+// The page's size in CSS pixels; Sweetview sizes the frame around it at the screen's scale and centres it.
 const SETTINGS_SIZE = { width: 460, height: 560 };
-const settingsBounds = {
-  x: area.x + Math.round((area.width - SETTINGS_SIZE.width) / 2),
-  y: area.y + Math.round((area.height - SETTINGS_SIZE.height) / 2),
-  ...SETTINGS_SIZE,
-};
 const settingsWindow =
   SETTINGS_CHROME === "os"
     ? new Window({
@@ -98,7 +94,7 @@ const settingsWindow =
         frame: true,
         appearance: "dark",
         title: `${APP_NAME} Settings`,
-        bounds: settingsBounds,
+        contentSize: SETTINGS_SIZE,
         icon: petIcon(pet),
         onClose: () => settingsWindow.hide(),
       })
@@ -107,7 +103,7 @@ const settingsWindow =
         frame: false,
         transparent: true,
         title: `${APP_NAME} Settings`,
-        bounds: settingsBounds,
+        contentSize: SETTINGS_SIZE,
         icon: petIcon(pet),
         onClose: () => settingsWindow.hide(),
       });
@@ -177,6 +173,8 @@ const settingsView: WebView<Methods, Events> = await WebView.attach<Methods, Eve
   debug: DEBUG,
   uiMethods,
 });
+// The settings page's own title bar follows the window's maximised state as it changes.
+windowChromeEvents(settingsWindow, settingsView);
 
 overlay.show();
 hits.apply();
