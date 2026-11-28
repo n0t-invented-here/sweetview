@@ -1,21 +1,44 @@
-$ bun test packages/sweetview-native/src/win32/notifier.test.ts packages/sweetview-native/src/index.test.ts
-bun test v1.4.4 (38afee6c8)
-
+$ bun test packages/sweetview-native/src/win32/notifier.test.ts packages/sweetview-native/src/index.test.ts   (CLAUDECODE, CLAUDE_CODE_ENTRYPOINT and AGENT unset; WEBVIEW2_USER_DATA_FOLDER a fresh folder under <TEMP>)
 packages\sweetview-native\src\index.test.ts:
-(pass) public modules > Window.fromHandle resolves to this platform's implementation on first call [13.56ms]
-(pass) public modules > pickFolder and createNotifier are plain synchronous functions [0.02ms]
-(pass) public modules > Notifier works standalone without creating a Tray first [4.44ms]
-(pass) public modules > Screen exposes primary, all, at, bounds, and cursor without a window [0.44ms]
-(pass) public modules > Menu and Tray classes are exported [0.01ms]
-
+(pass) public modules > Window.fromHandle resolves to this platform's implementation on first call [12.88ms]
+(pass) public modules > pickFolder and createNotifier are plain synchronous functions [0.03ms]
+(pass) public modules > Notifier works standalone without creating a Tray first [0.95ms]
+(pass) public modules > Screen exposes primary, all, at, bounds, and cursor without a window [0.43ms]
+(pass) public modules > Screen.cursor() is where SetCursorPos put the cursor, as GetCursorPos reads it (physical pixels) [2.41ms]
+(pass) public modules > Menu and Tray classes are exported [0.02ms]
 packages\sweetview-native\src\win32\notifier.test.ts:
-(pass) Windows notifier > registers an AUMID and shows real WinRT toasts with independently routed clicks [107.28ms]
-(pass) Windows notifier > uses the explicit app ID and falls back when WinRT Show fails [100.68ms]
-(pass) Windows notifier > without WinRT every notification is a balloon, with the tray's icon or the stock one [35.29ms]
-(pass) Windows notifier > a click handler that throws is logged with today's message and the loop goes on [8.83ms]
-
- 9 pass
+(pass) Windows notifier > registers an AUMID and shows real WinRT toasts with independently routed clicks [95.61ms]
+(pass) Windows notifier > uses the explicit app ID and falls back when WinRT Show fails [118.08ms]
+(pass) Windows notifier > without WinRT every notification is a balloon, with the tray's icon or the stock one [33.19ms]
+(pass) Windows notifier > with a real Tray in the process the fallback is still a balloon on the notifier's own icon: its click is the notification's, and the tray's clicks stay the tray's [33.84ms]
+(pass) Windows notifier > a click handler that throws is logged with today's message and the loop goes on [8.25ms]
+ 11 pass
  0 fail
- 79 expect() calls
-Ran 9 tests across 2 files. [329.00ms]
-exit: 0
+ 104 expect() calls
+Ran 11 tests across 2 files. [379.00ms]
+
+$ cargo test -p sweetview-platform-notify
+     Running unittests src\lib.rs (sweetview_platform_notify)
+test ico::tests::a_zero_dimension_means_256 ... ok
+test ico::tests::rejects_what_today_rejects ... ok
+test ico::tests::parses_the_directory_and_picks_like_todays_code ... ok
+test platform::tests::copy_wide_truncates_so_the_nul_fits ... ok
+test platform::tests::balloon_data_lays_out_the_balloon_fields_where_windows_expects_them ... ok
+test toast_xml::tests::app_id_validation_matches_todays_rules ... ok
+test toast_xml::tests::launch_keeps_whitespace_as_character_references ... ok
+test toast_xml::tests::identity_defaults_follow_todays_rules ... ok
+test toast_xml::tests::toast_xml_escapes_like_todays_code ... ok
+test toast_xml::tests::unrepresentable_characters_become_replacement_characters ... ok
+test platform::tests::an_ico_given_as_the_balloon_icon_loads_and_is_not_the_stock_icon ... ok
+test platform::tests::balloon_data_is_hidden_and_carries_the_balloon_with_the_documented_flags ... ok
+test platform::tests::a_click_handler_may_drop_its_notifier_and_a_panic_does_not_unwind ... ok
+test platform::tests::a_failed_show_falls_back_to_a_balloon_whose_click_comes_back ... ok
+test platform::tests::without_winrt_every_notification_is_a_balloon_with_or_without_an_icon ... ok
+test platform::tests::creating_and_dropping_returns_every_handle ... ok
+test platform::tests::toasts_end_their_subscriptions_when_dropped ... ok
+test platform::tests::toasts_register_the_app_id_and_route_each_click_once ... ok
+test platform::tests::a_toast_handler_that_panics_reports_failure_and_does_not_unwind ... ok
+test platform::tests::the_shell_holds_the_fallback_icon_hidden_until_the_notifier_goes ... ok
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.28s
+   Doc-tests sweetview_platform_notify
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s

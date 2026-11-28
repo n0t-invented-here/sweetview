@@ -10,12 +10,15 @@ removing <TEMP>/pack
 OK: the packed native package carries the binding and the loader finds it after install
 exit: 0
 
-$ just pack   (the lines that name a tarball or the prebuilt binding)
-[30m[43m WARNING [49m[39m Filesystem transaction committed but recovery-state cleanup failed at <REPO>\packages\sweetview-native\prebuilt\.napi-rs-filesystem-transaction.swp: EPERM: operation not permitted, unlink '<REPO>\packages\sweetview-native\prebuilt\..sweetview.win32-x64-msvc.node.e2c83885-d49f-49c1-8564-e5664fe792d0.1.retired.tmp.10904.67d5b205-02fc-4fea-8000-277dcd7b024d.tmp'
+$ just pack   (as in rust-rewrite/evidence/w8-compile-pack.txt, without the build lines)
+bun install
+bun install v1.4.4 (38afee6c8)
+Checked 139 installs across 184 packages (no changes) [12.00ms]
+bunx napi build --platform --release --cwd packages/sweetview-native --manifest-path ../../crates/sweetview-platform-node/Cargo.toml --output-dir prebuilt --no-js --dts binding.d.ts
 bun pack v1.4.4 (38afee6c8)
 packed 2.11KB package.json
 packed 0.61KB file-imports.d.ts
-packed 41.45KB src/app.ts
+packed 43.30KB src/app.ts
 packed 39B src/build.ts
 packed 7.37KB src/darwin-webview-host.ts
 packed 9.46KB src/darwin-webview-lib.ts
@@ -32,28 +35,28 @@ packed 47B src/ipc-ws/client.ts
 packed 40B src/ipc-ws/index.ts
 packed 47B src/ipc-ws/server.ts
 packed 37B src/ipc/index.ts
-packed 1.37KB src/messages.ts
+packed 1.38KB src/messages.ts
 packed 52B src/native/hit-regions.ts
 packed 40B src/native/index.ts
 packed 2.28KB src/page.ts
 packed 8.52KB src/request-response.ts
-packed 4.79KB src/ring.ts
+packed 4.68KB src/ring.ts
 packed 57B src/settings-store.ts
 packed 26.34KB src/tabs/darwin-tabs.ts
 packed 13.30KB src/tabs/darwin-webview.ts
 packed 1.53KB src/tabs/index.ts
 packed 0.96KB src/tabs/load-failed.ts
 packed 16.45KB src/tabs/win-strip-assets.ts
-packed 31.44KB src/tabs/win-tabs.ts
+packed 34.19KB src/tabs/win-tabs.ts
 packed 4.76KB src/tabs/win-webview2.ts
 packed 4.97KB src/webview-host.ts
 packed 0.66KB src/webview-lib.ts
 packed 6.55KB src/window-chrome.ts
 packed 0.71KB src/worker-wake.ts
-packed 11.18KB src/worker.ts
+packed 11.21KB src/worker.ts
 n1h-sweetview-1.0.0.tgz
 Total files: 38
-Unpacked size: 202.1KB
+Unpacked size: 206.59KB
 bun pack v1.4.4 (38afee6c8)
 packed 0.86KB package.json
 packed 11.87KB src/build.ts
@@ -99,9 +102,9 @@ n1h-sweetview-ipc-ws-1.0.0.tgz
 Total files: 4
 Unpacked size: 10.63KB
 bun pack v1.4.4 (38afee6c8)
-packed 1.74KB package.json
-packed 20.47KB prebuilt/binding.d.ts
-packed 2.67MB prebuilt/sweetview.win32-x64-msvc.node
+packed 1.64KB package.json
+packed 24.80KB prebuilt/binding.d.ts
+packed 2.97MB prebuilt/sweetview.win32-x64-msvc.node
 packed 8.85KB src/activation.ts
 packed 1.27KB src/app-icon.ts
 packed 0.68KB src/app-menu.ts
@@ -132,7 +135,7 @@ packed 6.67KB src/hit-regions.ts
 packed 23.37KB src/icon.ts
 packed 2.61KB src/index.ts
 packed 6.21KB src/input-hooks.ts
-packed 0.65KB src/internal.ts
+packed 0.69KB src/internal.ts
 packed 2.1KB src/menu.ts
 packed 2.1KB src/notifications.ts
 packed 2.94KB src/permissions.ts
@@ -142,31 +145,26 @@ packed 0.70KB src/shell-icons.ts
 packed 2.22KB src/tray.ts
 packed 1.00KB src/types.ts
 packed 1.69KB src/ui-thread.ts
-packed 30.62KB src/webview.ts
+packed 32.12KB src/webview.ts
 packed 2.31KB src/win32/activation.ts
-packed 15.97KB src/win32/api.ts
 packed 309B src/win32/app-icon.ts
 packed 0.77KB src/win32/app-menu.ts
 packed 460B src/win32/clipboard.ts
 packed 1.57KB src/win32/event-loop.ts
 packed 0.71KB src/win32/folder-picker.ts
-packed 2.41KB src/win32/icon.ts
-packed 2.21KB src/win32/init.ts
-packed 2.93KB src/win32/menu.ts
-packed 3.16KB src/win32/message-window.ts
+packed 4.69KB src/win32/menu.ts
 packed 3.80KB src/win32/notifier.ts
 packed 1.23KB src/win32/notify-icon.ts
 packed 0.89KB src/win32/screen.ts
 packed 1.83KB src/win32/shortcuts.ts
 packed 2.75KB src/win32/strip-shared.ts
-packed 24.45KB src/win32/tab-window.ts
-packed 8.1KB src/win32/tabbed-window.ts
+packed 7.83KB src/win32/tab-window.ts
 packed 3.22KB src/win32/tray.ts
-packed 7.26KB src/win32/window.ts
+packed 8.45KB src/win32/window.ts
 packed 21.73KB src/window.ts
 n1h-sweetview-native-1.0.0.tgz
-Total files: 65
-Unpacked size: 3.0MB
+Total files: 60
+Unpacked size: 3.29MB
 bun pack v1.4.4 (38afee6c8)
 packed 0.76KB package.json
 packed 3.1KB src/app-identity.ts

@@ -529,3 +529,187 @@ On the three whole-work questions. Functionality: three capabilities are dropped
 ## Answers
 
 Each finding above is fixed or answered here by the session that owns the work.
+
+### F1
+
+**Fixed.** `QueuedMessage::dispatch` takes `self` (`crates/sweetview-platform-loop/src/windows.rs`), so a message is dispatched at most once: a second `dispatch` of the same value does not compile. The `compile_fail` doctest on `QueuedMessage` in the same file proves it.
+
+### F2
+
+**Fixed.** `message_window_proc` (`crates/sweetview-platform-loop/src/windows.rs`) answers `WM_CLOSE` itself, and on `WM_NCDESTROY` zeroes the post target and forgets the closure, so a `MessageWindow` destroyed by other code refuses every later call and its `Drop` destroys nothing. The tests `a_posted_close_leaves_the_window_and_its_owner_coherent` (posts `WM_CLOSE` through a `Poster`) and `a_window_destroyed_by_other_code_disarms_its_owner` (destroys the window out from under its owner), both in the same file, prove it.
+
+### F3
+
+**Fixed.** `ForeignWindow` is gone. `BorrowedWindow<'a>` (`crates/sweetview-platform-window/src/windows.rs`) is lent for one call by `BorrowedWindow::with_handle_value`, which checks the value with `IsWindow`, or for the borrow of a `tao` window by `BorrowedWindow::of`; it is not `Clone` and cannot be kept. The runtime keeps an adopted window, and a window a webview was given, as its handle value and lends it per call (`with_native` and `with_mount_target` in `crates/sweetview-runtime/src/window.rs`). The SAFETY comments of `borrow_raw` and of the `TrackPopupMenu` block in `popup.rs` now state what is true: the OS validates the handle on each call. The test `a_handle_value_is_lent_only_when_it_names_a_window` (`crates/sweetview-platform-window/src/windows_tests.rs`) destroys a lent window inside the call and shows the calls then fail. `WindowSubclass` is answered under F29. `BalloonIcon` (`crates/sweetview-platform-notify/src/windows.rs`) is now `enum BalloonIcon { Own(OwnedIcon), Stock }`: only `OwnedIcon` stores an `HICON`, and destroys it in `Drop`; the stock icon is asked of the system by `stock_icon()` each time a `NOTIFYICONDATAW` is built and is never stored. The test `an_ico_given_as_the_balloon_icon_loads_and_is_not_the_stock_icon` in that file covers it. Decision D25.
+
+### F4
+
+**Fixed.** Dropping `WindowIcons` (`crates/sweetview-platform-window/src/windows.rs`) never destroys icons a live window still shows: they are parked by the window's handle value and destroyed at the next `WindowIcons::set` of the thread after that window is gone. The tests `an_adopted_window_keeps_valid_icons_after_it_is_released` (`crates/sweetview-runtime/src/window_tests.rs`) and `icons_a_live_window_shows_outlive_their_owner_and_go_with_the_window` (`crates/sweetview-platform-window/src/windows_tests.rs`) prove it. `LockedGlobal::lock` (`crates/sweetview-platform-shell/src/clipboard.rs`) borrows the block's owner, `Block::Owned(&mut OwnedGlobal)` or `Block::ClipboardText(&OpenedClipboard)`, so the lock cannot outlive it. `destroy_now` takes the `tao` window by value.
+
+### F5
+
+**Fixed.** The menu shapes and `menu_data` (`MenuItemData`, `IconBytes`, `Point`, `icon_bytes`) moved to `crates/sweetview-napi/src/menus.rs`, and the window object shapes with the `WindowInit` conversion (rounding, clamping to zero, an unknown appearance becoming the default) to `crates/sweetview-napi/src/objects.rs`, both under `#![forbid(unsafe_code)]` as D12 says they can be. The tests are `missing_fields_take_their_defaults_and_unknown_kinds_are_left_out` (`menus.rs`), and `sizes_are_rounded_and_never_negative` and `an_unknown_appearance_is_the_default` (`objects.rs`). `crates/sweetview-platform-node/src/menus.rs` and `types.rs` only forward and re-export, as the crate's `README.md` says, and `packages/sweetview-native/prebuilt/binding.d.ts` was regenerated with the same interfaces.
+
+### F6
+
+**Fixed.** The background colour goes through `wry` 0.58.2's safe `WebView::set_background_color`, called by `set_background_color` in `crates/sweetview-platform-webview/src/windows/mod.rs`, which refuses an alpha other than 0 and 255 by a comparison; `crates/sweetview-runtime/src/engine.rs` calls it on the webview it owns, and `WebviewExtras::set_background_color` is gone. The error codes are unchanged: `request_path_on_a_real_webview` (`crates/sweetview-platform-webview/tests/requests.rs`) and the tests "W2.3 setBackgroundColor: alpha 0 and 255 accepted, ..." and "W2.3 alpha 0 shows the window behind a transparent window on the screen; ..." (`packages/sweetview-native/src/webview.test.ts`) prove it. `double_click_time_ms` (`crates/sweetview-platform-window/src/metrics.rs`) reads the safe WinRT `UISettings::DoubleClickTime`; the test `the_double_click_time_is_the_one_win32_reports` in that file reads it and `GetDoubleClickTime` and finds them equal, and keeps the file's one remaining use only for that comparison. Two source uses of `unsafe` are gone.
+
+### F7
+
+**Fixed.** In `rust-rewrite/UNSAFE-LEDGER.md` the window-icon entry gives the real reason `tao`'s `set_window_icon` and `set_taskbar_icon` are not used (one RGBA image at one size, no `.ico` bytes, `None` clears the icons, no `tao` window for an adopted one); the `pump_events` reference is gone; the double-click entry names the safe WinRT call now used (F6); and the handle-test sentence names its one exception, the `LoopHost` test (D23). The groups the finding listed as naming no API or page now name the API looked for and its docs.rs page.
+
+### F8
+
+**Fixed.** The seven WebView2 handlers (`crates/sweetview-platform-webview/src/windows/handlers.rs`) and the three toast handlers (`guarded_handler` in `crates/sweetview-platform-notify/src/windows.rs`) return `E_UNEXPECTED` when the guarded call panicked. The environment-completed closure (`guarded_completion` in `environment.rs`), `IStream::Stat` and the stream's `Drop` (`istream.rs`) run inside `catch_unwind`, and `message_window_proc` (`crates/sweetview-platform-loop/src/windows.rs`) runs its whole body, the table lookup included, inside it. The tests `an_event_handler_that_panics_reports_failure_and_does_not_unwind`, `a_script_completion_that_panics_reports_failure_and_does_not_unwind` (`handlers.rs`), `a_completion_that_panics_reports_failure_and_does_not_unwind` (`environment.rs`), `a_panic_during_the_last_release_does_not_unwind` (`istream.rs`) and `a_toast_handler_that_panics_reports_failure_and_does_not_unwind` (the notify crate's `windows.rs`, through a real `TypedEventHandler`) provoke a panic and assert the failure value. `Stat` has no panic path a test can provoke and is wrapped anyway. Decision D27.
+
+### F9
+
+**Fixed.** Every handle test of the loop, window and shell crates and of the runtime's windows calls `testing::assert_gives_back_every_handle` (`crates/sweetview-platform-loop/src/testing.rs`), which requires the USER, GDI and kernel counts each back at their starting value; only the `LoopHost` test compares with a bare `tao` loop (D23). `crates/sweetview-platform-input/tests/windows_hooks.rs` asserts all three counts, read once they stop moving (`settled_counts`), equal their start after 200 install and drop rounds. `crates/sweetview-platform-webview/tests/teardown.rs` asserts USER and GDI growth of exactly 0 and keeps the control run for kernel handles only. `creating_and_dropping_environments_returns_every_handle` (`crates/sweetview-platform-webview/tests/environment.rs`) is the counted loop `create_environment` lacked. The notifier's `creating_and_dropping_returns_every_handle` asserts USER and GDI equal to the start and the kernel count equal with nothing shown, and its one allowance for the showing rounds has its measured reason. The reasons for the control run and that allowance are in D20.
+
+### F10
+
+**Fixed.** `cargo +nightly miri test -p sweetview-runtime --lib -- bridge::tests icon::tests menu::tests tray::tests` passes 20 tests, and `cargo +nightly miri test -p sweetview-napi` passes the 2 tests of `objects.rs` (the recorded run predates the `menus.rs` test of F5); both runs are in `rust-rewrite/evidence/w10-miri.txt`, with each of the 22 other runtime tests listed with the OS call it stops at. The sentence that said no runtime test can run under Miri is corrected there.
+
+### F11
+
+**Fixed.** `MOUSE_INSTALLED` and `KEYBOARD_INSTALLED` (`crates/sweetview-platform-input/src/windows.rs`), `AUTO_REQUEST` (`permissions.rs`), the notify crate's three counters (`crates/sweetview-platform-notify/src/windows.rs`) and the request-id counter (`crates/sweetview-platform-webview/src/shared.rs`) are each a `OnceLock` holding the atomic, a form the policy lists. Decision D31.
+
+### F12
+
+**Answered.** Pushed history is not rewritten, by the repository's rules, so the two commit messages stay as they are; this answer is their record. `368f339` added the webview crate's uses; each of them, as they are now, is counted and given its reason under `## sweetview-platform-webview` in `rust-rewrite/UNSAFE-LEDGER.md` (sections for `windows/mod.rs`, `handlers.rs`, `istream.rs` and `environment.rs`). `d92c94f` added four uses to `crates/sweetview-platform-window/src/size_hint.rs`; one remains, accounted for in that file's section of the ledger (`AdjustWindowRectExForDpi`).
+
+### F13
+
+**Fixed.** In commit `cc51999` the path in `rust-rewrite/evidence/w8-packaging.txt` line 14 became `<REPO>`, as the other evidence files write it. The privacy check of `verify.ts` now catches such a line (F35).
+
+### F14
+
+**Fixed.** Popup menus are tracked by `show_popup` (`crates/sweetview-platform-window/src/popup.rs`) with `TrackPopupMenu(TPM_RIGHTBUTTON | TPM_RETURNCMD)`, plus `TPM_BOTTOMALIGN` for the tray's menu and `popupMenuAtCursor`; `muda` still builds the menu, and each item's command id is the caller's number (`set_command_id`). `windowMenu(hwnd)` shows the system menu of any window of the UI thread (`window_menu` in `crates/sweetview-runtime/src/menu.rs`), and `buildMenu` and `destroyMenu` of `@n1h/sweetview-native/win32/menu` are back with the tag's `{ hmenu, commands, bitmaps }` shape and ids from 1 in template order. Proven in `packages/sweetview-native/src/win32/tray-menu.test.ts` by "letting go of the right button over an item chooses it (real input over the menu's own window)", "popupMenuAtCursor opens the menu above the cursor (its bottom-left corner there), ...", "buildMenu hands the application a menu for its own TrackPopupMenu: ids count from 1 in template order, a key chooses, destroyMenu frees it" and "windowMenu shows the system menu of an ordinary framed Window, read from a second process, and choosing Minimize minimises it"; the first two fail with the old `TPM_LEFTALIGN | TPM_RETURNCMD` flags. The three rows run in `rust-rewrite/compat/fixtures/row-runners.ts`, and `docs/upgrading.md` and `docs/native/menus-and-tray.md` say what is true now. Decision D26.
+
+### F15
+
+**Fixed.** Every evidence file that records a run was produced again after the fixes above were merged, each on or after the last change to anything it runs, and the blocks pasted under the checklist items were replaced by the current output. The eight rows of the finding:
+
+- W0.4: `bun rust-rewrite/checks/cargo-sources.ts` again; the block reads 311 packages and 299 from crates.io.
+- W1.3: `w1-callbacks.txt` ends with the run of its seven files on the final tree, 123 pass, 0 skip, 0 fail.
+- W2.1 to W2.9: `w2-webview.txt` and `w2-sweetview-tests.txt` list every test of the files they name, the four the review found missing among them.
+- W4.2, W4.6, W5.2, W5.4: `w4-windows.txt` and `w5-tray-menus.txt` are new listings; the four names that no longer exist are gone, and W4.6 cites the names that do.
+- W6.1, W6.2: `w6-activation.txt` again; `w6-single-instance-interop.txt` is the output of the tracked `rust-rewrite/checks/single-instance-interop.ts`, run again: the tag's build and this one hand off in both directions.
+- W7.1, W7.2: `w7-native-tabs.txt` has the tab tests' run on the final tree (121 pass, both fixtures 0 skipped), and `just demos native-tabs drive` again, every line `ok` and `PASS`.
+- W8.1: `w8-packaging.txt` is `bun rust-rewrite/checks/pack-install.ts` again; the native package holds 60 files and the installed loader finds the binding.
+- W9.1: the count under the item is `verify.ts`'s own, 31 files and 31 allowlisted; the allowlist holds 10 macOS-only sources and 21 probes.
+
+Run again as well, though the finding did not name them: `w0-build.txt` (`just native`, `just check` with the whole suite, 472 pass, 15 skip, 0 fail), `w1-boundary.txt`, `w1-compiled-alone.txt`, `w3-input.txt`, `w3-input-hooks-example.txt`, `w4-demos.txt`, `w5-clipboard.txt`, `w5-notifier.txt`, `w5-demos-real-clicks.txt` (every demo scenario of `rust-rewrite/checks/demo-run.ps1`, each exit 0), `w8-build.txt`, `w8-compile-pack.txt` (`just compile`, `just pack`), `w9-docs.txt` and `w10-miri.txt`. Two files nothing cited, `w5-tray-driven.txt` and `w5-notify-driven.txt`, records of runs driven with posted messages that the real-click runs replaced, are removed.
+
+### F16
+
+**Fixed.** The balloon's `NOTIFYICONDATAW` is built by the safe `balloon_data` (`crates/sweetview-platform-notify/src/windows.rs`), and the tests `balloon_data_lays_out_the_balloon_fields_where_windows_expects_them`, `balloon_data_is_hidden_and_carries_the_balloon_with_the_documented_flags` (`NIS_HIDDEN`, `NIF_INFO` and the info flags) and `an_ico_given_as_the_balloon_icon_loads_and_is_not_the_stock_icon` replace the three baseline balloon tests; `the_shell_holds_the_fallback_icon_hidden_until_the_notifier_goes` reads the hidden state from the shell. What `bitmapItemInfo` guarded, an item's icon reaching the real menu as a bitmap, is read from the OS menu (`hbmpItem`) by "at a point: check marks, icons, submenus, separators and disabled items are on the real menu, and the chosen item runs" and by the `buildMenu` test (`packages/sweetview-native/src/win32/tray-menu.test.ts`). D20 now lists the skippable `startDrag` test, the test toasts of `758c2fc` and `a5d4260` with the `Failed` check that has no counterpart, and the four layout tests (commit `1ff7e56`). "a generated .ico becomes the window's small and 32px big icon" (`packages/sweetview-native/src/win32/win32.test.ts`) now sets the stock icon after the `.ico`, reads it, and asserts that neither icon the `.ico` gave is the stock one, which is what a refused `.ico` would have left (D20). The sentence under W9.1 in `rust-rewrite/CHECKLIST-windows.md` now names all five tests that went with the deleted files and where what each guarded is asserted today.
+
+### F17
+
+**Fixed.** "each call opens its own handle scope: what 400 callbacks return is collected before the blocking run returns; kept deliberately, it is not" (`packages/sweetview-native/src/binding.test.ts`) counts ArrayBuffers on the heap after a full collection from inside one blocking run: 400 buffers returned by callbacks leave the count unchanged, and 400 kept deliberately raise it by 400. Without a scope per call the returned values would stay in `runLoop()`'s scope and count like the kept ones.
+
+### F18
+
+**Fixed.** `TabFrame.onActivate` has a throw test, self-removal tests and an owner-destroy test in `packages/sweetview-native/src/callbacks.test.ts` ("W1.3 an onActivate callback that throws ...", "W1.4 the binding's onActivate listener removes itself, and another replaces itself, ...", "W1.4 the tabs library's onActivate callback removes itself ...", "W1.4 an onActivate listener disposes its window from inside its own call"). "W1.4 an accelerator-key handler destroys its webview from inside its own call (needs the foreground)" (`packages/sweetview-native/src/webview.test.ts`) destroys the webview from inside the handler; the accelerator tests skip with a printed reason when the session cannot take the foreground. `rust-rewrite/evidence/w1-callbacks.txt` has the new rows.
+
+### F19
+
+**Fixed.** Through the TypeScript API, `packages/sweetview-native/src/input-hooks.test.ts` asserts down, repeat, up for a held F24 that is not swallowed ("a held key that is not swallowed reaches the system and its second press is a repeat: down, repeat, up"), a swallowed press that leaves the OS key state up so the next press is a down ("a handler returning true swallows per event: ..."), and a swallowed move that leaves `GetCursorPos` unchanged while the same move let through moves the pointer ("a handler returning true swallows a move (the pointer stays); returning false lets the same move through (the pointer moves)").
+
+### F20
+
+**Fixed.** "WebView.attach mounts a webview in an application's own window (CreateWindowExW through bun:ffi): the page loads and answers a call; the window keeps GWL_STYLE and its outer bounds" (`packages/sweetview/src/app.test.ts`) attaches a webview to a `STATIC` window made with the application's own `CreateWindowExW`.
+
+### F21
+
+**Fixed.** "a topmost overlay, the first Sweetview window of a process started hidden, is shown above the taskbar: WindowFromPoint inside the taskbar returns it, and the taskbar once it is hidden" (`packages/sweetview-native/src/win32/overlay.test.ts`) runs `packages/sweetview-native/test/fixtures/overlay-taskbar.ts` in a fresh process started hidden; its first Sweetview window, a topmost overlay over part of the taskbar, is what `WindowFromPoint` returns at the taskbar's centre. A session with no taskbar, or one auto-hidden or covered, records a skip with its reason.
+
+### F22
+
+**Fixed.** `rust-rewrite/compat/own-modal-loops.test.ts` opens `MessageBoxW` and then `TrackPopupMenu` from `uiMethods` of a `createApp` app, called from its page (`rust-rewrite/compat/fixtures/app-modals.ts` with `app-modals.worker.ts`), under `app.run()` and under `runEventLoop()`; inside each loop the page's UI-method and worker-method calls are answered and the page reports the answers back while the loop is open.
+
+### F23
+
+**Fixed.** "a tray with no icon shows the stock icon, and the public Tray works the same" and "setIcon, setTooltip and setMenu take effect; a removed menu opens nothing" (`packages/sweetview-native/src/win32/tray-menu.test.ts`) read the tooltip Explorer shows (UI Automation) and the icon's middle pixel from the screen through `packages/sweetview-native/test/tray-shell.ps1` (`trayFromShell` in `packages/sweetview-native/test/win32-os.ts`): the new tooltip replaces the old one, a given green icon shows green where the stock icon showed another colour, and `setIcon({})` brings the stock image back. A reading the shared desktop refuses (its mouse in use, another window over the icon) is asked again, up to six times, and a test whose reading never happened throws `not run: ...` (`shellIcon` in the test file, `DesktopNotOurs`); the right-button choice and the menu's place at the cursor in the same file do the same after five attempts (D20). None of them passes without asserting.
+
+### F24
+
+**Fixed.** The fallback icon's hidden state and the balloon's flags are asserted by `balloon_data_is_hidden_and_carries_the_balloon_with_the_documented_flags` and read from the shell by `the_shell_holds_the_fallback_icon_hidden_until_the_notifier_goes` (`Shell_NotifyIconGetRect` gives an empty rectangle for the hidden icon and a real one for the same icon made visible as the control), both in `crates/sweetview-platform-notify/src/windows.rs`. The "with a `Tray`" case is "with a real Tray in the process the fallback is still a balloon on the notifier's own icon: its click is the notification's, and the tray's clicks stay the tray's" (`packages/sweetview-native/src/win32/notifier.test.ts`): it makes a real tray with `createTray`, shows the fallback both ways (WinRT not in use, and a toast whose `Show` fails), reads that the shell accepted a balloon each time (`debugBalloonsShown`), routes the balloon's click to the notifier and a double click posted to the tray's window to the tray, then disposes of the tray and shows a balloon again.
+
+### F25
+
+**Answered.** Nobody is at this machine, so the tray icon was not clicked by a hand. It was clicked with real mouse input through the shell: `rust-rewrite/checks/tray-real-click.ps1` finds the icon Explorer shows through UI Automation and injects the click with `SendInput` (run by `rust-rewrite/checks/demo-run.ps1`). The click by hand is listed for the owner in `rust-rewrite/OWNER-ACTIONS.md` section 4.
+
+### F26
+
+**Fixed.** `packages/sweetview/test/fixtures/win-tabs.ts` gains 33 checks and `win-tabs-input.ts` one, so each clause of the 27 bullets has a check, listed by clause in `rust-rewrite/evidence/w7-native-tabs.txt`: choosing items of the strip's system menu, every failed-load exclusion live, the initial dark state against the registry, the selection after a close, the options a torn-off window copies, centring on the work area, the popup's place after its opener, and `strip.scrolled` with a real drop on a scrolled strip. `packages/sweetview-native/src/win32/strip-shared.test.ts` has "on a strip whose tabs are scrolled, the drop index counts the tabs scrolled out of view", with a non-zero `scrolled`. The false sentence is gone from the evidence. The new failed-load check found a defect, fixed in merge `718f1a3`: WebView2 reports a refused `about:<name>` as `edge://<name>/`, and `failure_reason` (`crates/sweetview-platform-webview/src/lib.rs`) now excludes it, with an assertion in that file's tests. A real change of display scale was not run: this machine has one monitor (`rust-rewrite/OWNER-ACTIONS.md` section 4).
+
+### F27
+
+**Fixed.** `rust-rewrite/compat/upgrade-guide.test.ts` works out each row's targets from the guide's own tables and fails "every row's new form has a runner" when a target has no runner in `rust-rewrite/compat/fixtures/row-runners.ts`. "every row's new form runs" calls each target once in its new form with real arguments and checks what comes back, in the test's process or, for windows, webviews, the tray, the clipboard, hooks, dialogs and the loop, in `rust-rewrite/compat/fixtures/rows-desktop.ts`, a process of its own. Every class, constant, function and method or member row runs; rows of an application's own `bun:ffi` table run in `rust-rewrite/compat/fixtures/own-ffi.ts`; type rows are checked by tsc through `rust-rewrite/compat/upgrade-types.ts`; rows of a `/darwin/` module are macOS-only and are not run on Windows. `ROWS_OF_ANOTHER_CHANGE` is empty since the menu rows of F14 got their runners. The sentence in `rust-rewrite/OWNER-ACTIONS.md` section 3 now says this. Decision D32.
+
+### F28
+
+**Fixed.** In commit `1ff7e56` W10.4 in `rust-rewrite/CHECKLIST-windows.md` gained a fenced block: the section headings of `rust-rewrite/OWNER-ACTIONS.md` as `grep -n "^## "` prints them.
+
+### F29
+
+**Fixed.** `WindowSubclass` (`crates/sweetview-platform-window/src/windows.rs`) holds the state it installed and does nothing once `WM_NCDESTROY` marks it gone, and its `Drop` removes a table entry only when it is that same state, as `FrameMessages` does. The test `a_subclass_whose_window_is_gone_leaves_a_later_window_alone` (`crates/sweetview-platform-window/src/windows_tests.rs`) shows a later window with the same handle value is left alone.
+
+### F30
+
+**Fixed.** `RequestFilter` (`crates/sweetview-platform-webview/src/windows/handlers.rs`) owns each web-resource filter and removes it in `Drop`; it is held by `Inner`, so a failed `register` and the extras' teardown both remove the filters. A failure of `register` cannot be provoked from a test; `crates/sweetview-platform-webview/tests/requests.rs` and the request tests in Bun show the filters still serve both origins.
+
+### F31
+
+**Fixed.** The seven handler types in `crates/sweetview-platform-webview/src/windows/handlers.rs` are `#[implement(..., Agile = false)]`, which `windows-implement` 0.60.2 accepts. The test `the_handlers_are_not_agile` in that file asserts they answer no `IAgileObject` or `IMarshal`, while the stream type stays agile. Decision D27.
+
+### F32
+
+**Fixed.** `Toasts` (`crates/sweetview-platform-notify/src/windows.rs`) ends its subscriptions and hides its toasts in its own `Drop`, which `toasts_end_their_subscriptions_when_dropped` asserts. `OwnedHandle` (`crates/sweetview-platform-shell/src/win.rs`) can be made only by `named_mutex`, the call that opens the handle. `MessageWindow::new` (`crates/sweetview-platform-loop/src/windows.rs`) refuses a class of its name registered with another procedure (`GetClassInfoExW`), and the last window of a class unregisters it under one process-wide lock; `a_class_registered_with_another_procedure_is_refused` and `a_posted_close_leaves_the_window_and_its_owner_coherent` in that file cover it.
+
+### F33
+
+**Fixed.** `packages/sweetview/src/tabs/win-tabs.test.ts` declares a check the fixture recorded as skipped with `test.skip`, so it shows as "(skip)", never as a pass, and prints per fixture how many checks ran, passed, failed, were skipped and are missing. A condition found during a test (a held mouse button, the window not under the cursor) is retried and then the test throws "not run: <reason>" (`untilDesktopIsOurs` in `packages/sweetview-native/test/desktop.ts`, used by `window-native.test.ts` and `callbacks.test.ts`). A condition known only from a fixture run before the test (the foreground, the taskbar) gives `test.skipIf` with the reason printed. D20 records the rule.
+
+### F34
+
+**Fixed.** W1.1: "the literal require: with prebuilt/ empty, ...", "the literal require: with an i386 PE file in its place, ..." and the control with the real binding (`packages/sweetview-native/src/binding.test.ts`) copy the real `src/binding.ts` into a temp package and run its literal `require` in a process of its own; the other-platform file is a real i386 PE. W1.8: `modal-loop.test.ts` asserts the answers the page reports back while the box is open, and adds the popup-menu case with page calls, a drain and a timeout inside it. W3.5: `input-hooks-example.test.ts` injects F24 and a wheel notch and reads the unedited example's page log. W4.6: "Screen.cursor() is where SetCursorPos put the cursor, as GetCursorPos reads it (physical pixels)" (`packages/sweetview-native/src/index.test.ts`). W8.3: "refreshWindowsIcons() reaches the shell: a window registered for SHCNE_ASSOCCHANGED receives the notification" (`packages/sweetview-build/src/build.test.ts`). W6.2: the driver that ran the two builds is tracked as `rust-rewrite/checks/single-instance-interop.ts` (commit `fb42a85`), and the demo runs as `rust-rewrite/checks/demo-run.ps1`, so both can be repeated from the tree. W2.7: not changed; the original tests are in another repository (F39), and the item's text in the checklist says which of their assertions have no counterpart.
+
+### F35
+
+**Fixed.** The `privacy` check of `rust-rewrite/verify.ts` also fails on any changed file that holds the checkout's own absolute location, with either slash (commit `1ff7e56`). Decision D24.
+
+### F36
+
+**Fixed.** Every `#[napi]` function, method, getter, factory and constructor in `crates/sweetview-platform-node` carries `catch_unwind`, so a panic becomes a JavaScript exception instead of ending the process. No path the tests can reach panics without adding product surface, so the proof was a probe export built, called from Bun and removed: with the attribute the call threw and the process went on; without it the process aborted. `ForcedPath`, `balloons_shown` and the `debug*` methods stay in the binding, because the tests must run against the binding that ships; they are documented as test hooks in `crates/sweetview-platform-notify/README.md`, `crates/sweetview-platform-node/README.md` and on each item in `binding.d.ts`. Decision D28.
+
+### F37
+
+**Answered.** No change. D2 states the departure and its reason, which the review checked in the macro sources; it stands for the owner to accept. The part that was not explained, logic in the export table, is fixed under F5.
+
+### F38
+
+**Answered.** No change in this tree. `.github/workflows/windows.yml` has a step for each thing W0.6 names, and the item stays open until a hosted run of a pushed commit of the final tree is pasted under it.
+
+### F39
+
+**Answered.** No change. `assets.md`, `request-handler.md`, `requests.md` and `permissions.md`, the C++ fork's tests and the bindings' original test file and example live in other repositories, and this work did not compare against them; the tests agree with `docs/webview-library.md`, the nearest text in this repository.
+
+### F40
+
+**Fixed.** W1.5: "the pure-TypeScript functions docs/ calls any-thread (resolveMenu, packRegions/hitRegions, dotPng/decodePng/icoFromPng, readTextFile) give the UI thread's answers in a Worker" (`packages/sweetview-native/src/binding.test.ts`). W2.1: "W2.1 new Webview(true, size): made with debug on, its window is real and its page answers a binding" and "W2.1 with debug on, F12 opens the developer tools; ..." (`packages/sweetview-native/src/webview.test.ts`). W4.2a: "WebView.attach preserves exact outer bounds and GWL_STYLE for framed, frameless-resizable, and Window.fromHandle windows" (`packages/sweetview/src/app.test.ts`) asserts `GWL_STYLE` for the framed case too. The blank line in the D1 table of `rust-rewrite/DECISIONS.md` is gone. The `WM_QUIT` comment in `crates/sweetview-platform-webview/src/windows/pump.rs` says the message is consumed. The SAFETY comments that leaned on "the caller" now cite the parameter's borrowed type (`create_response`, `read_request_headers_json` and `read_request_body` in `windows/mod.rs`, `read_into` in `istream.rs`), the loop crate's `peek` names `live_hwnd` of a borrowed `MessageWindow`, and the tab frame's `track` takes a `TrackedMenu` (`crates/sweetview-platform-window/src/tab_frame.rs`). Each `take_pwstr` read and the one `string_from_pcwstr` read has a comment saying what filled the pointer, and the ledger notes these reads are outside the count. W0.5: `rust-rewrite/evidence/w0-build.txt` records the load check as the command that was run. W1.3: the sentence under the item now says that the two hook messages are this package's own, the hooks' handlers having been the bindings package's at the tag. W1.6: the block under the item is the output of the tracked `rust-rewrite/checks/demo-run.ps1 -Scenario alone-menubar-only`, which makes the empty folder, pasted as printed. `rust-rewrite/HANDOFF-macos.md` no longer names an item as open. No change, the remark being a statement of what the evidence already says: W2.6 (the drop is driven through DevTools), W4.4 (the 10 ms interval is a constant, and the button rule is tested in the logic crate), WT.1 (the page labels itself by the bridge's kind), W10.3 (the stand-ins are behind `cfg(not(windows))`, as the handoff states).
+
+### F41
+
+**Fixed.** `create_environment` (`crates/sweetview-platform-webview/src/windows/environment.rs`) enters the COM apartment once per thread and keeps it in a `thread_local` `ComApartment`, left when the thread ends, the way the runtime holds its own; `the_apartment_is_entered_once_per_thread` in that file checks it, and `creating_and_dropping_environments_returns_every_handle` shows no growth. Decision D27. The clipboard (D23) and W9.4 (D19) bullets needed no change.
+
+### Found after the review
+
+Two defects in the product and several in the tests were found while the evidence was regenerated on the merged tree, so the tree moved after the fixes above.
+
+- A keyboard hook saw nothing while the application's own window was in front. `tao` registers each of its windows for raw keyboard input, and while a process that takes raw keyboard input holds the foreground, Windows does not call that process's own low-level keyboard hook. Fixed in commit `a61910c`: `build_event_loop` (`crates/sweetview-runtime/src/runtime.rs`) calls `set_device_event_filter(DeviceEventFilter::Always)`, so `tao` registers nothing. The test "installKeyboardHook while the application's own window is in front" (`packages/sweetview-native/src/input-hooks.test.ts`) proves it. Decision D29.
+- A pump of the timer-driven loop could wait for a message for good. A look at the queue that removes nothing, which the message wait inside a COM call makes, makes the OS drop the repaint request `tao` keeps queued for itself, and `run_return` then waits in `GetMessageW`. Fixed in commit `ea51374`: `Runtime::pump` (same file) sends `tao` a user event before each pump and sets a guard timer that sends another while the pump runs. The test `a_pump_returns_though_a_handler_looked_at_the_queue_without_removing_anything` in that file proves it. Decision D30.
+- The hosted runner failed tests that passed here, each because the test measured the machine: the tab frame's centred position on a screen smaller than the frame, the wait after the last webview life in `teardown.rs`, F12 pressed before the focus had moved into the page, the example's page read over a DevTools port the runner refuses, and the start-up tests' time limits. Each correction is in `rust-rewrite/DECISIONS.md`, D20, with its reason; none asserts less than before.
+- A popup-menu watcher of one test stayed armed and worked the next test's menu (`whenMenuOpens` in `callbacks.test.ts` and `tray-menu.test.ts`); every watcher is now disarmed when its test ends (commit `0118832`). In the retry that leak caused, a menu was seen open with no native timer firing inside its loop; that state is not explained, and D20 records what was observed.

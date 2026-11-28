@@ -57,8 +57,8 @@ Items name today's API members to say which behaviour is meant. The API may chan
 
     ```
     $ bun rust-rewrite/checks/cargo-sources.ts
-    packages in the dependency graph: 310 (cargo metadata --locked: Cargo.lock is current)
-    from crates.io: 298
+    packages in the dependency graph: 311 (cargo metadata --locked: Cargo.lock is current)
+    from crates.io: 299
     git dependencies: 0
     other registries: 0
     path packages: 12: sweetview-http, sweetview-keycodes, sweetview-napi, sweetview-platform-input, sweetview-platform-loop, sweetview-platform-node, sweetview-platform-notify, sweetview-platform-shell, sweetview-platform-webview, sweetview-platform-window, sweetview-runtime, sweetview-window-logic
@@ -79,20 +79,24 @@ Items name today's API members to say which behaviour is meant. The API may chan
 
 - [x] W0.5 `just native` builds the binding for the host and places it where the loader finds it. `just check` builds it first.
 
-    `rust-rewrite/evidence/w0-build.txt`: `just native` runs `bunx napi build --platform --release --cwd packages/sweetview-native --manifest-path ../../crates/sweetview-platform-node/Cargo.toml --output-dir prebuilt --no-js --dts binding.d.ts`, which leaves `sweetview.win32-x64-msvc.node` and `binding.d.ts` in `packages/sweetview-native/prebuilt/`, the folder the loader's literal `require` names; a script that loads it through `packages/sweetview-native/src/binding.ts` prints `binding loaded: true exports: 53`. `just check` is declared as `check: native typecheck test` in the root `justfile`, and its run shows the build first:
+    `rust-rewrite/evidence/w0-build.txt`: `just native` runs `bunx napi build --platform --release --cwd packages/sweetview-native --manifest-path ../../crates/sweetview-platform-node/Cargo.toml --output-dir prebuilt --no-js --dts binding.d.ts`, which leaves `sweetview.win32-x64-msvc.node` and `binding.d.ts` in `packages/sweetview-native/prebuilt/`, the folder the loader's literal `require` names; a one-line script that loads it through `packages/sweetview-native/src/binding.ts` (the command is in the evidence file) prints `binding loaded: true exports: 56`. `just check` is declared as `check: native typecheck test` in the root `justfile`, and its run shows the build first:
 
     ```
     $ just check
     exit code: 0
+    bun install
+    bun install v1.4.4 (38afee6c8)
     bunx napi build --platform --release --cwd packages/sweetview-native --manifest-path ../../crates/sweetview-platform-node/Cargo.toml --output-dir prebuilt --no-js --dts binding.d.ts
         Finished `release` profile [optimized] target(s) in 0.12s
     bun run typecheck
+    $ tsc --noEmit
     bun test
-     404 pass
-     16 skip
+    bun test v1.4.4 (38afee6c8)
+     472 pass
+     15 skip
      0 fail
-     1832 expect() calls
-    Ran 420 tests across 45 files.
+     2100 expect() calls
+    Ran 487 tests across 45 files. [211.19s]
     ```
 
 - [ ] W0.6 A GitHub Actions workflow builds the binding and runs `cargo test`, `cargo clippy`, `bun run typecheck` and `bun test` on `windows-latest`.
@@ -101,43 +105,49 @@ Items name today's API members to say which behaviour is meant. The API may chan
 
 - [x] W1.1 The binding loads with a literal `require` from `packages/sweetview-native`. A missing or wrong-platform binary fails with a message that names the file looked for.
 
-    `rust-rewrite/evidence/w1-boundary.txt`, "native binding: loading (W1.1)": the binding loads through the literal `require` in `packages/sweetview-native/src/binding.ts`; a missing file and a file for another platform each throw `sweetview: the native binding could not be loaded from <file>: ...`. 3 pass.
+    `rust-rewrite/evidence/w1-boundary.txt`, "native binding: loading (W1.1)", 6 pass: the binding loads through the literal `require` in `packages/sweetview-native/src/binding.ts`; a copy of that file with its literal `require`, run in a process of its own, throws `sweetview: the native binding could not be loaded from <file>: ...` when `prebuilt/` is empty and when it holds a real i386 PE, and loads the real binding (the control); `loadBindingFrom` throws the same for a missing file and for that PE.
 
 - [x] W1.2 A JavaScript function passed to the binding is called from inside the blocking loop and its return value comes back. Each call opens its own handle scope. Proven by a `bun test` test; `rust-rewrite/spike/` shows the mechanism.
 
-    `rust-rewrite/evidence/w1-boundary.txt`: "a JavaScript function is called from inside the blocking loop and its return value comes back" and "each call opens its own handle scope: ten thousand callbacks inside one blocking run". `JsCallback::call` in `crates/sweetview-napi/src/callback.rs` runs every call inside `Env::run_in_scope`.
+    `rust-rewrite/evidence/w1-boundary.txt`: "a JavaScript function is called from inside the blocking loop and its return value comes back", "each call opens its own handle scope: ten thousand callbacks inside one blocking run", and "each call opens its own handle scope: what 400 callbacks return is collected before the blocking run returns; kept deliberately, it is not", which counts the ArrayBuffers alive inside one blocking run after a full collection. `JsCallback::call` in `crates/sweetview-napi/src/callback.rs` runs every call inside `Env::run_in_scope`.
 
 - [x] W1.3 A JavaScript exception thrown from such a callback is caught at the boundary, logged with the message today's code logs, and does not unwind into the OS. A test throws from each callback kind.
 
-    `rust-rewrite/evidence/w1-callbacks.txt`: a table of every function-typed parameter of the generated `packages/sweetview-native/prebuilt/binding.d.ts` (26 kinds, and `onOpenUrl`, which on Windows is called from the single-instance handoff), each with the test that throws from it, followed by the per-test output: 96 pass, 1 skip, 0 fail across the seven files it cites (the skip is the accelerator-key test, which needs the foreground and passed in the run before). Each test asserts the message today's TypeScript logs for that kind (`UI dispatch failed:`, `onResize handler threw:`, `hit region poll threw:`, `keyboard hook handler threw:`, `onSecondInstance handler threw:` and the rest), that the loop goes on delivering, and the fallback where there is one: a hook does not swallow (read back from the OS: the key state and the cursor position), a request handler answers 500, a throwing menu function opens no menu. One test, "W1.3 an exception from every non-webview kind, with no TypeScript wrapper in between, is logged by the binding with its kind; each fallback applies and the loop goes on", throws straight through the raw binding in a process of its own and reads the binding's own `sweetview: <kind> threw:` line, so the backstop of D7 is proven apart from the wrappers.
+    `rust-rewrite/evidence/w1-callbacks.txt`: a table of every function-typed parameter of the generated `packages/sweetview-native/prebuilt/binding.d.ts` (27 kinds, with `TabFrame.onActivate`, and `onOpenUrl`, which on Windows is called from the single-instance handoff), each with the test that throws from it, followed by the per-test output: 123 pass, 0 skip, 0 fail across the seven files it cites. Each test asserts the message logged for that kind, which is the message today's TypeScript logs, except for the two hooks, whose handlers were the bindings package's at the tag and whose messages are this package's own (`UI dispatch failed:`, `onResize handler threw:`, `hit region poll threw:`, `keyboard hook handler threw:`, `onSecondInstance handler threw:` and the rest), that the loop goes on delivering, and the fallback where there is one: a hook does not swallow (read back from the OS: the key state and the cursor position), a request handler answers 500, a throwing menu function opens no menu. One test, "W1.3 an exception from every non-webview kind, with no TypeScript wrapper in between, is logged by the binding with its kind; each fallback applies and the loop goes on", throws straight through the raw binding in a process of its own and reads the binding's own `sweetview: <kind> threw:` line, so the backstop of D7 is proven apart from the wrappers.
 
     ```
-    $ bun test packages/sweetview-native/src/callbacks.test.ts
-     27 pass
+    $ bun test <the seven files>   (the run in the evidence file)
+     123 pass
+     0 skip
      0 fail
+    Ran 123 tests across 7 files.
     ```
 
 - [x] W1.4 A callback that removes itself or destroys its owner from inside its own call works. A test does both.
 
-    `rust-rewrite/evidence/w1-callbacks.txt`, third column of the same table: for each kind, the test in which the callback removes or replaces itself, and the test in which it disposes of or destroys its owner (the webview, the window, the tray, the notifier, the hook, the single-instance lock, the timeout) from inside its own call; each asserts no crash and that the callback is not called again (or that the replacement is). `popupMenu` takes no callback: it returns the chosen number.
+    `rust-rewrite/evidence/w1-callbacks.txt`, third column of the same table: for each kind, the test in which the callback removes or replaces itself, and the test in which it disposes of or destroys its owner (the webview, the window, the tray, the notifier, the hook, the single-instance lock, the timeout) from inside its own call; each asserts no crash and that the callback is not called again (or that the replacement is), among them "W1.4 an onActivate listener disposes its window from inside its own call" and "W1.4 an accelerator-key handler destroys its webview from inside its own call (needs the foreground)". `popupMenu` takes no callback: it returns the chosen number.
 
 - [x] W1.5 Calling a UI-thread function from a `Worker` throws `sweetview: this call must be made on the UI thread`. The functions `docs/` documents as callable from any thread work from a `Worker`.
 
-    `rust-rewrite/evidence/w1-boundary.txt`, "a UI-thread function called from a Worker throws, and the worker is not the UI thread": each of nine UI-thread functions throws `sweetview: this call must be made on the UI thread` in a `Worker`; `wake` works there. The functions documented as callable from any thread (`completeWebviewRequest` and the streaming ones) answer real requests from a `Worker` in `rust-rewrite/evidence/w2-webview.txt`.
+    `rust-rewrite/evidence/w1-boundary.txt`, "a UI-thread function called from a Worker throws, and the worker is not the UI thread": each of nine UI-thread functions throws `sweetview: this call must be made on the UI thread` in a `Worker`; `wake` works there. The pure-TypeScript functions `docs/` calls any-thread run in a `Worker` too: "the pure-TypeScript functions docs/ calls any-thread (resolveMenu, packRegions/hitRegions, dotPng/decodePng/icoFromPng, readTextFile) give the UI thread's answers in a Worker". The functions documented as callable from any thread (`completeWebviewRequest` and the streaming ones) answer real requests from a `Worker` in `rust-rewrite/evidence/w2-webview.txt`.
 
 - [x] W1.6 `bun build --compile` embeds the binding: a demo's compiled executable, copied alone into an empty folder, runs.
 
-    `rust-rewrite/evidence/w1-compiled-alone.txt`: two demos' executables from `just compile`, each copied alone into a new empty folder under the temp directory (the folder listing shows the one file) and run from there. `menubar-only-windows-x64.exe`: its tray icon appears, its menu is read item by item on each open, an item is checked, Quit ends it:
+    `rust-rewrite/evidence/w1-compiled-alone.txt`: two demos' executables from `just compile`, each copied alone into a new empty folder under the temp directory (the folder listing shows the one file) and run from there. `menubar-only-windows-x64.exe`: its tray icon appears, its menu is read item by item on each open, an item is checked, Quit ends it (the output of `rust-rewrite/checks/demo-run.ps1 -Scenario alone-menubar-only`, which makes the folder, as printed):
 
     ```
     files in the folder: menubar-only-windows-x64.exe
+    started: <TEMP>\sv-alone-f052bf5a\menubar-only-windows-x64.exe
     tray icon window found (class tray_icon_app) in the app's process
     right click -> menu: ["Up for 0 s [disabled]","----","Clock in Tooltip","----","Quit Menubar Only"]
+    Escape -> menu closed, nothing chosen
+    right click again -> menu: ["Up for 2 s [disabled]","----","Clock in Tooltip","----","Quit Menubar Only"]
     Down, Down, Return -> chose 'Clock in Tooltip'
     right click again -> menu: ["Up for 2 s [disabled]","----","Clock in Tooltip [checked]","----","Quit Menubar Only"]
     Down, Down, Down, Return -> chose 'Quit Menubar Only'
     process exit: 0
     stderr: (empty)
+    tray-drive exit code: 0
     ```
 
     `web-app-windows-x64.exe` (a webview window with a worker and a tray): its window appears, tray clicks toggle it, a real right click on the icon chooses Quit, exit code 0.
@@ -148,7 +158,7 @@ Items name today's API members to say which behaviour is meant. The API may chan
 
 - [x] W1.8 A handler run on the UI thread opens a modal loop of its own (a message box, a popup menu) and, while it is open, the page's calls are still answered and worker replies still drain, as `scheduleDeferred` in `packages/sweetview/src/app.ts` relies on today. Proven under both loop modes.
 
-    `rust-rewrite/evidence/w1-boundary.txt`, "a modal loop opened by a handler (W1.8)", both loop modes. From the fixture's own report in the blocking run: `{"modalOpened":true,"modalReturned":true,"pageCallsInsideModal":6,"drainsInsideModal":1,"timeoutsInsideModal":1,"framesFromWorker":["written while the box was open"]}`; the pumped run reports the same counts.
+    `rust-rewrite/evidence/w1-boundary.txt`, "a modal loop opened by a handler (W1.8)" (`modal-loop.test.ts`), both loop modes: inside the application's own `MessageBoxW` and then inside its own `TrackPopupMenu`, the page's calls are answered and the page reports the answers back while the loop is open, a worker's frame drains and a native timeout fires.
 
 
 ## W2. The webview
@@ -159,7 +169,7 @@ Source of truth for behaviour: the bindings repository's `docs/` and `test/`, an
 
 - [x] W2.1 Every capability of `RawWebview` (the bindings' `Webview` class) is available: constructor forms, `title`, `size`, `navigate`, `setHTML`, `init`, `eval`, `bind`, `bindRaw`, `unbind`, `return`, `run`, `destroy`, `unsafeHandle`, `unsafeWindowHandle`, and `unload`.
 
-    `rust-rewrite/evidence/w2-webview.txt`, "W2.1 the Webview class", 5 tests on real webviews: `new Webview(debug, size)` with its own window (the real `HWND`, checked with `IsWindow` and `GetWindowTextW`), `title`, `size` with each `SizeHint`; `new Webview(debug, size, hwnd)` mounted in a given window; `new Webview(handle)`; `navigate`, `setHTML`, `init`, `eval`, `bind`, `bindRaw`, `return`, `unbind`, `run`, `destroy` (also from inside a binding), `unsafeHandle`, `unsafeWindowHandle`, `unload`.
+    `rust-rewrite/evidence/w2-webview.txt`, 11 tests named "W2.1 ..." on real webviews: `new Webview(debug, size)` with its own window (the real `HWND`, checked with `IsWindow` and `GetWindowTextW`), `title`, `size` with each `SizeHint`; `new Webview(debug, size, hwnd)` mounted in a given window; `new Webview(handle)`; `navigate`, `setHTML`, `init`, `eval`, `bind`, `bindRaw`, `return`, `unbind`, `run`, `destroy` (also from inside a binding), `unsafeHandle`, `unsafeWindowHandle`, `unload`. `new Webview(true, size)` is made with debug on: its page answers a binding, and F12 opens the developer tools, where with debug off the same key opens none.
 
 - [x] W2.2 `setAsset` and `assetOrigin`: `http://webview.localhost`, path matching and validation exactly as `assets.md` states.
 
@@ -194,7 +204,7 @@ Source of truth for behaviour: the bindings repository's `docs/` and `test/`, an
 
 - [x] W2.8 Sweetview's own webview tests pass: `request-handler.test.ts`, `app.test.ts`, `worker.test.ts`, `webview-lib.test.ts`.
 
-    `rust-rewrite/evidence/w2-sweetview-tests.txt`: `request-handler.test.ts`, `app.test.ts`, `worker.test.ts`, `webview-lib.test.ts`: 28 pass, 0 fail, 9 skip (the macOS-only tests). The three live tests that were skipped at the baseline for want of a library with the request handler now run and pass: "serves worker routes and isolates the frames origin in a real desktop webview", "registers and clears file drops on a live WebView2 as Window listeners change", "returns clean errors for synchronous Promises and absent worker handlers". `webview-lib.test.ts` asserts the origins on every platform; its `dlopen` caching test, which tested `bun:ffi` plumbing that no longer exists on Windows, runs on macOS only.
+    `rust-rewrite/evidence/w2-sweetview-tests.txt`: `request-handler.test.ts`, `app.test.ts`, `worker.test.ts`, `webview-lib.test.ts`: 29 pass, 0 fail, 9 skip (the macOS-only tests). The three live tests that were skipped at the baseline for want of a library with the request handler now run and pass: "serves worker routes and isolates the frames origin in a real desktop webview", "registers and clears file drops on a live WebView2 as Window listeners change", "returns clean errors for synchronous Promises and absent worker handlers". `webview-lib.test.ts` asserts the origins on every platform; its `dlopen` caching test, which tested `bun:ffi` plumbing that no longer exists on Windows, runs on macOS only.
 
 - [x] W2.9 Teardown: destroying a webview with requests open, from inside a handler, and from a worker racing the destroy, each behave as `requests.md` states. A test covers each.
 
@@ -205,11 +215,11 @@ Source of truth for behaviour: the bindings repository's `docs/` and `test/`, an
 
 - [x] W3.1 `installMouseHook`: every event kind, coordinates, wheel notches, modifiers, swallow per event, one hook per process, dispose from inside the handler.
 
-    `rust-rewrite/evidence/w3-input.txt`: the 13 integration tests of `crates/sweetview-platform-input/tests/windows_hooks.rs` drive a real `WH_MOUSE_LL` hook with `SendInput`: every event kind at the cursor position, wheel notches 1, -2 and 0.5, modifiers, a swallowed move that does not move the pointer, one hook per process (from another thread too), a hook dropped from inside its handler. Through the TypeScript API: "a move arrives with coordinates and modifiers, a second hook is refused, dispose is idempotent" and "a hook may dispose itself from inside its handler, and a handler that throws does not swallow".
+    `rust-rewrite/evidence/w3-input.txt`: the 13 integration tests of `crates/sweetview-platform-input/tests/windows_hooks.rs` drive a real `WH_MOUSE_LL` hook with `SendInput`: every event kind at the cursor position, wheel notches 1, -2 and 0.5, modifiers, a swallowed move that does not move the pointer, one hook per process (from another thread too), a hook dropped from inside its handler. Through the TypeScript API: "a move arrives with coordinates and modifiers, a second hook is refused, dispose is idempotent" and "a hook may dispose itself from inside its handler, and a handler that throws does not swallow". Read back from the OS (`GetCursorPos`): "a handler returning true swallows a move (the pointer stays); returning false lets the same move through (the pointer moves)".
 
 - [x] W3.2 `installKeyboardHook`: down, up, repeat, DOM codes, raw code, modifiers after the event, swallow per event.
 
-    `rust-rewrite/evidence/w3-input.txt`: down, repeat and up with `"F24"` and raw `0x87`, a swallowed key that never reaches the system (the next press is a down, not a repeat), modifiers after the event, scan-code injection, in the same integration tests; through the TypeScript API, "down, repeat and up arrive with the DOM code and the raw code, and a swallowed key is swallowed per event".
+    `rust-rewrite/evidence/w3-input.txt`: down, repeat and up with `"F24"` and raw `0x87`, a swallowed key that never reaches the system (the next press is a down, not a repeat), modifiers after the event, scan-code injection, in the same integration tests; through the TypeScript API, "down, repeat and up arrive with the DOM code and the raw code, and a swallowed key is swallowed per event". Read back from the OS (`GetAsyncKeyState`): "a held key that is not swallowed reaches the system and its second press is a repeat: down, repeat, up" and "a handler returning true swallows per event: the swallowed press never reaches the system, so the next press is a down again, not a repeat". While the application's own window is in front (decision D29): "a key typed while this process's own Window holds the foreground reaches the hook (down, up), as it does when another window is in front", and the same with its own webview window.
 
 - [x] W3.3 `permissions`: `needed`, `status`, `request`, `ready`, `autoRequest`, with the Windows answers.
 
@@ -221,7 +231,7 @@ Source of truth for behaviour: the bindings repository's `docs/` and `test/`, an
 
 - [x] W3.5 The bindings' `examples/input-hooks.ts` runs against the new package, edited only for API changes that `docs/upgrading.md` records.
 
-    `rust-rewrite/evidence/w3-input-hooks-example.txt`: the bindings' `examples/input-hooks.ts` is at `packages/sweetview-native/examples/input-hooks.ts` with no edit at all (its import, `../src/index`, names this package's index); it starts, shows its window, and exits with code 0 when the window is closed.
+    `rust-rewrite/evidence/w3-input-hooks-example.txt`: the bindings' `examples/input-hooks.ts` is at `packages/sweetview-native/examples/input-hooks.ts` with no edit at all (its import, `../src/index`, names this package's index); it starts, installs both hooks and shows its window; with F24 pressed and one wheel notch turned over its window (injected with `SendInput`), its page's log reads `key Down F24 (raw 135)`, `key Up F24 (raw 135)` and `mouse Wheel at x,y wheel 1`; it exits with code 0 when the window is closed. The page reports its own text through a preload (`packages/sweetview-native/test/fixtures/page-reader-preload.ts`), so the example's source is untouched.
 
 - [x] W3.6 The hooks, `permissions` and every other name in `rust-rewrite/reference/bindings-exports.txt` are exported by a Sweetview package. Today an application imports them from `@n1h/sweetview-webview-bun`, which Sweetview does not re-export; `docs/upgrading.md` gives the new import for each.
 
@@ -244,7 +254,7 @@ Source of truth for behaviour: the bindings repository's `docs/` and `test/`, an
 
 - [x] W4.2 `Window`: every option of `WindowOptions` and every method, per `docs/native/windows.md`. `handle` is the real `HWND`. `Window.fromHandle` wraps a window this process did not create through Sweetview (an application's own `HWND`), with `onResize`, `onMove`, `onClose` and `onFileDrop` working on it, and `WebView.attach` mounts a webview inside it.
 
-    `rust-rewrite/evidence/w4-windows.txt`, "Window on the binding: options read back from the OS" (bounds, title, frame, resizable, minimum size, appearance, topmost, `hideFromTaskbar`, `noActivate`, layering, show, minimise, maximise), "win32 Window" (15 tests), and "Window.fromHandle on an application's own window (made here through bun:ffi) > onResize, onMove, onClose and onFileDrop arrive; dispose leaves the window alive". `handle` is the real `HWND`: the tests pass it to `user32` calls of their own. A webview mounted in a wrapped window: `rust-rewrite/evidence/w2-sweetview-tests.txt`, "WebView.attach preserves exact outer bounds and GWL_STYLE for framed, frameless-resizable, and Window.fromHandle windows".
+    `rust-rewrite/evidence/w4-windows.txt`, "Window on the binding: options read back from the OS" (bounds, title, frame, resizable, minimum size, appearance, topmost, `hideFromTaskbar`, `noActivate`, layering, show, minimise, maximise), "win32 Window" (15 tests), and "Window.fromHandle on an application's own window (made here through bun:ffi) > onResize, onMove, onClose and onFileDrop arrive; dispose leaves the window alive". `handle` is the real `HWND`: the tests pass it to `user32` calls of their own. A webview mounted in a wrapped window: `rust-rewrite/evidence/w2-sweetview-tests.txt`, "WebView.attach preserves exact outer bounds and GWL_STYLE for framed, frameless-resizable, and Window.fromHandle windows". A webview mounted in a window the application made itself: the same file, "WebView.attach mounts a webview in an application's own window (CreateWindowExW through bun:ffi): the page loads and answers a call; the window keeps GWL_STYLE and its outer bounds".
 
 - [x] W4.2a A webview is mounted inside a window that already exists (`WebView.attach(window, options)`), and the window keeps its styles and outer bounds across the mount, as `preserveGeometry` ensures today.
 
@@ -252,7 +262,7 @@ Source of truth for behaviour: the bindings repository's `docs/` and `test/`, an
 
 - [x] W4.3 Overlays: transparent, colour key, opacity, topmost above the taskbar, hidden from the taskbar, no-activate, the hidden first window.
 
-    `rust-rewrite/evidence/w4-windows.txt`: "topmost, hideFromTaskbar, noActivate and layering, kept through a style rewrite", "show() leaves a noActivate window inactive and activates any other", the `colorKey` and opacity tests of `overlay.test.ts`. The hidden first window: `tao` creates a hidden top-level tool window with its event loop, before any window of Sweetview's (`tao` 0.38.0, `src/platform_impl/windows/event_loop.rs`), so Sweetview's own first window is never the process's first.
+    `rust-rewrite/evidence/w4-windows.txt`: "topmost, hideFromTaskbar, noActivate and layering, kept through a style rewrite", "show() leaves a noActivate window inactive and activates any other", the `colorKey` and opacity tests of `overlay.test.ts`. The hidden first window: `tao` creates a hidden top-level tool window with its event loop, before any window of Sweetview's (`tao` 0.38.0, `src/platform_impl/windows/event_loop.rs`), so Sweetview's own first window is never the process's first. Above the taskbar: `overlay.test.ts`, "a topmost overlay, the first Sweetview window of a process started hidden, is shown above the taskbar: WindowFromPoint inside the taskbar returns it, and the taskbar once it is hidden".
 
 - [x] W4.4 `setClickThrough` and `setHitRegions` with the refiner, the 10 ms poll and the "no flip while a button is down" rule, per `docs/native/overlays-and-hit-regions.md`.
 
@@ -269,7 +279,7 @@ Source of truth for behaviour: the bindings repository's `docs/` and `test/`, an
 
 - [x] W4.6 `Screen`: `primary`, `all`, `at`, `of`, `bounds`, `cursor`.
 
-    `rust-rewrite/evidence/w4-windows.txt`: "Screen exposes primary, all, at, bounds, and cursor without a window", "Screen.of a window is the screen its frame is on; Screen.bounds holds every screen", "Screen.of(hwnd) resolves the monitor hosting a message window".
+    `rust-rewrite/evidence/w4-windows.txt`: "Screen exposes primary, all, at, bounds, and cursor without a window", "Screen.of a window is the screen its frame is on; Screen.bounds holds every screen", "Screen.of(hwnd) resolves the monitor hosting an application's own window", "Screen.at: a point on the primary monitor maps to its rect, a point off every monitor to the nearest" and "Screen.cursor() is where SetCursorPos put the cursor, as GetCursorPos reads it (physical pixels)".
 
 - [x] W4.7 `packages/sweetview-native/src/win32/window.test.ts` and `win32.test.ts` pass. `demos/desktop-pet` and `demos/web-app` run and compile.
 
@@ -285,12 +295,12 @@ Source of truth for behaviour: the bindings repository's `docs/` and `test/`, an
     `demos/desktop-pet` and `demos/web-app` compile (`rust-rewrite/evidence/w8-compile-pack.txt`) and run, compiled and from source. The pet, driven by its own `scripts/probe.ps1` with real input: the OS hands a click on its body to the pet's window and a click on its transparent corners to the desktop behind it, and a press-and-drag moves it:
 
     ```
-    centre       (1632,1344) -> 44108116 'Pet'
-    lower body   (1632,1400) -> 44108116 'Pet'
+    centre       (1632,1344) -> 178522086 'Pet'
+    lower body   (1632,1400) -> 178522086 'Pet'
     top-left     (1542,1254) -> 65784 'Program Manager'
     top-right    (1722,1254) -> 65784 'Program Manager'
-    while held: window at 1756,1188
-    after drop : window at 1756,1248  (moved 220 px right, back on the ground: True)
+    while held: window at 1736,1188
+    after drop : window at 1736,1248  (moved 200 px right, back on the ground: True)
     app exit code: 0
     ```
 
@@ -298,22 +308,22 @@ Source of truth for behaviour: the bindings repository's `docs/` and `test/`, an
 
 - [x] W4.8 An application's own `bun:ffi` modal dialog and popup menu, opened from a `uiMethods` call, work under both loop modes. A fixture under `rust-rewrite/compat/` does this.
 
-    `rust-rewrite/evidence/w4-windows.txt`, `rust-rewrite/compat/own-modal-loops.test.ts`: an application's own `MessageBoxW` and `TrackPopupMenu`, called through `bun:ffi` from a handler, under the blocking loop and under `runEventLoop`; inside each modal loop a native timeout fires and a wake drains. 2 pass, 0 fail.
+    `rust-rewrite/evidence/w4-windows.txt`, `rust-rewrite/compat/own-modal-loops.test.ts`: an application's own `MessageBoxW` and `TrackPopupMenu`, called through `bun:ffi` from a `uiMethods` method of a `createApp` app that its page calls, under `app.run()` and under `runEventLoop()`, with the page's UI calls and worker calls answered inside each loop; and the same two called from a plain handler under both loop modes, where a native timeout fires and a wake drains inside each. 4 pass, 0 fail.
 
 
 ## W5. Tray, menus, notifications, dialogs, clipboard
 
 - [x] W5.1 `Tray`: icon, tooltip, click, double click, menu on right click, `setIcon`, `setMenu`, re-added when Explorer restarts.
 
-    `rust-rewrite/evidence/w5-tray-menus.txt`, "Tray (binding: tray-icon)", 8 tests on a real notification icon driven with the messages the shell posts: made and disposed; the stock icon when none is given; a left click is a click only once the double-click time has passed, and a double click is a double click and no click; the right-click menu built from the function form on each open; `setIcon`, `setTooltip`, `setMenu`; a throwing handler logged with today's message. Re-adding after an Explorer restart is `tray-icon`'s own (`tray-icon` 0.27.0, `src/platform_impl/windows/mod.rs`, the `S_U_TASKBAR_RESTART` arm); the test posts the registered `TaskbarCreated` message and a click still arrives.
+    `rust-rewrite/evidence/w5-tray-menus.txt`, "Tray (binding: tray-icon)", 8 tests on a real notification icon driven with the messages the shell posts: made and disposed; the stock icon when none is given; a left click is a click only once the double-click time has passed, and a double click is a double click and no click; the right-click menu built from the function form on each open; `setIcon`, `setTooltip`, `setMenu`; a throwing handler logged with today's message. Re-adding after an Explorer restart is `tray-icon`'s own (`tray-icon` 0.27.0, `src/platform_impl/windows/mod.rs`, the `S_U_TASKBAR_RESTART` arm); the test posts the registered `TaskbarCreated` message and a click still arrives. What Explorer shows is read back as well (UI Automation and a pixel of the screen, `packages/sweetview-native/test/tray-shell.ps1`): the tooltip, the colour of a given icon, and the stock image again after `setIcon({})`.
 
 - [x] W5.2 Menus: check marks, icons, submenus, separators, disabled items, the function form rebuilt on each open, `Menu.popup` at a point and at the cursor.
 
-    `rust-rewrite/evidence/w5-tray-menus.txt`, "Menu.popup (binding: muda)" and "win32 icons": check marks, icons, submenus, separators and disabled items read back from the real OS menu; an item chosen inside a submenu; a dismissed menu chooses nothing; the function form called on each open; at a point (the menu's corner reads back at the point given) and at the cursor; `&` doubled; every showing frees what it made (GDI and USER counts).
+    `rust-rewrite/evidence/w5-tray-menus.txt`, "Menu.popup (binding: muda)" and "win32 icons": check marks, icons, submenus, separators and disabled items read back from the real OS menu; an item chosen inside a submenu; a dismissed menu chooses nothing; the function form called on each open; at a point (the menu's corner reads back at the point given) and at the cursor; `&` doubled; every showing frees what it made (GDI and USER counts). Letting go of the right button over an item chooses it (real input over the menu's own window); the menu at the cursor opens above it, as the tray's does; `buildMenu` hands an application a menu for its own `TrackPopupMenu` and `destroyMenu` frees it; `windowMenu` shows the system menu of an ordinary framed `Window` (decision D26).
 
 - [x] W5.3 `Notifier`: WinRT toasts with click, `appId` and identity registration, per `docs/native/notifications.md`. The fallback when WinRT is unavailable or a toast fails is a balloon on a hidden notification icon of the notifier's own, with or without a `Tray`, as `win32/notifier.ts` does today. The C shim that `winrt-toast.ts` compiles at run time with Bun's `cc` is gone.
 
-    `rust-rewrite/evidence/w5-notifier.txt`: 9 pass, 0 fail. Real WinRT toasts with an AUMID registered and clicks routed per toast; an explicit `appId`; the fallback to a balloon on the notifier's own hidden icon when `Show` fails and when WinRT is off, with and without a `Tray`; a throwing `onClick` logged with today's message. `win32/winrt-toast.ts` and its C shim are deleted:
+    `rust-rewrite/evidence/w5-notifier.txt`: 11 pass, 0 fail in the two test files, and `cargo test -p sweetview-platform-notify`. Real WinRT toasts with an AUMID registered and clicks routed per toast; an explicit `appId`; the fallback to a balloon on the notifier's own hidden icon when `Show` fails and when WinRT is off, with and without a `Tray`; a throwing `onClick` logged with today's message. The balloon's flags, its hidden state and its icon are asserted on the Rust that builds it (`balloon_data_is_hidden_and_carries_the_balloon_with_the_documented_flags`, `the_shell_holds_the_fallback_icon_hidden_until_the_notifier_goes`, `an_ico_given_as_the_balloon_icon_loads_and_is_not_the_stock_icon`), and the fallback beside a real `Tray` in "with a real Tray in the process the fallback is still a balloon on the notifier's own icon: its click is the notification's, and the tray's clicks stay the tray's". `win32/winrt-toast.ts` and its C shim are deleted:
 
     ```
     $ git ls-files packages/sweetview-native/src/win32/winrt-toast.ts | wc -l
@@ -330,18 +340,18 @@ Source of truth for behaviour: the bindings repository's `docs/` and `test/`, an
 
     ```
     $ bun test packages/sweetview-native/src/win32/notifier.test.ts
-     4 pass
+     5 pass
      0 fail
     ```
 
-    `demos/menubar-only` and `demos/menubar-notify` compile (`rust-rewrite/evidence/w8-compile-pack.txt`) and run. The tray icon was not clicked by a hand: nobody is at this machine. It was clicked with real mouse input instead, which travels the same way from the shell onwards: `rust-rewrite/checks/tray-real-click.ps1` finds the icon Explorer shows through UI Automation, moves the cursor onto it and injects the press with `SendInput`; Explorer posts the icon's message, the app opens its menu, typed keys choose an item. What was seen: in `menubar-only`, "Clock in Tooltip" chosen and the icon's tooltip then carrying the time (`'Menubar Only · 10:33:56 AM'`), then Quit and exit code 0, from source and compiled; in `menubar-notify` (compiled), "Send Notification Now" chosen from the tray menu, the toast appearing, a real left click on the toast banner (`rust-rewrite/checks/toast-real-click.ps1`) coming back as the notification's click, then Quit. The app's own log of that run:
+    `demos/menubar-only` and `demos/menubar-notify` compile (`rust-rewrite/evidence/w8-compile-pack.txt`) and run. The tray icon was not clicked by a hand: nobody is at this machine. It was clicked with real mouse input instead, which travels the same way from the shell onwards: `rust-rewrite/checks/tray-real-click.ps1` finds the icon Explorer shows through UI Automation, moves the cursor onto it and injects the press with `SendInput`; Explorer posts the icon's message, the app opens its menu, typed keys choose an item. What was seen: in `menubar-only`, "Clock in Tooltip" chosen and the icon's tooltip then carrying the time (`'Menubar Only · 2:49:36 PM'`), then Quit and exit code 0, from source and compiled; in `menubar-notify` (compiled), "Send Notification Now" chosen from the tray menu, the toast appearing, a real left click on the toast banner (`rust-rewrite/checks/toast-real-click.ps1`) coming back as the notification's click, then Quit. The app's own log of that run:
 
     ```
-    started; log at <LOCALAPPDATA>\menubar-notify.log
-    page ready
-    Sent menubar-notify-1
-    Clicked menubar-notify-1, sent at 10:35:40 AM
-    quit
+    2026-11-27T22:49:46.746Z started; log at <LOCALAPPDATA>\menubar-notify.log
+    2026-11-27T22:49:46.772Z page ready
+    2026-11-27T22:49:55.689Z Sent menubar-notify-1
+    2026-11-27T22:49:58.012Z Clicked menubar-notify-1, sent at 2:49:55 PM
+    2026-11-27T22:50:03.369Z quit
     ```
 
     A click by a person is listed for the owner in `rust-rewrite/OWNER-ACTIONS.md`, section 4.
@@ -375,12 +385,16 @@ Source of truth for behaviour: the bindings repository's `docs/` and `test/`, an
     `rust-rewrite/evidence/w7-native-tabs.txt`: a table with one row for each of the 27 bullets of "Behaviour: tabs on Windows" in `rust-rewrite/reference/v1-drafting-tabs-and-window.md`, in the reference's order, and the check or checks that prove it; then the runs. The checks are in `packages/sweetview/src/tabs/win-tabs.test.ts`, which runs two fixtures in processes of their own, each on its own WebView2 profile: `packages/sweetview/test/fixtures/win-tabs.ts` (frame styles and metrics read back from the OS, tabs opened, selected, renamed, reordered, closed, the last-tab rule, tear-off and merge keeping the page, shortcuts, popups, the failed-load page, the tab menu and the system menu read and chosen from a second process, the two-colour backdrop read as pixels, a DPI change, window moves, file drops on the frame and on a moved tab) and `win-tabs-input.ts` (real input: the strip dragged and resized with a held mouse button, a tab dragged out, the only tab dragging its window, a tab dropped on another window's strip, Ctrl+T and Ctrl+W typed).
 
     ```
-    $ bun test packages/sweetview/src/tabs
-     76 pass
+    $ bun test packages/sweetview/src/tabs packages/sweetview-native/src/win32/strip-shared.test.ts packages/sweetview-native/src/win32/shortcuts.test.ts
+    win-tabs.ts: 100 checks: 100 ran, 100 passed, 0 failed, 0 skipped, 0 missing
+    win-tabs-input.ts: 10 checks: 10 ran, 10 passed, 0 failed, 0 skipped, 0 missing
+     121 pass
+     0 skip
      0 fail
+    Ran 121 tests across 3 files.
     ```
 
-    Nothing was skipped in that run: the control that tells whether this session's OS runs a move loop for an injected press (`moveLoopControl()` in `packages/sweetview-native/test/win32-os.ts`) succeeded, so every gesture check was mandatory. Not run, as the evidence file's last section says: a real change of scale (one monitor at one scale; the suggested rectangle of `WM_DPICHANGED` is applied and tested), and a check of its own for `strip.scrolled` (its use in the drop index is unit-tested in `strip-shared.test.ts`).
+    Nothing was skipped in that run (each fixture's own count line says 0 skipped). The defect these checks found (a refused `about:` address showed the failed-load page) is fixed, and its check passes. Not run, as the evidence file's last section says: a real change of display scale (one monitor at one scale; the suggested rectangle of `WM_DPICHANGED` is applied and tested).
 
 - [x] W7.2 `demos/native-tabs` runs; its `scripts/win-drive.ts` passes.
 
@@ -390,17 +404,20 @@ Source of truth for behaviour: the bindings repository's `docs/` and `test/`, an
     ok   three tabs opened: 3
     ok   window is visible
     ok   tab 1 renamed: Alpha Tab
+    ok   tab 1 page rendered: Tab 1 (36a1)
     ok   captured tabbed window screenshot: 1040x760
     ok   tabbed window maximizes
     ok   tabbed window restores
     ok   moveToNewWindow returns a new visible Window
     ok   mergeAllWindows moves tab back into primary window
     ok   a refused initial navigation shows the failed-load page: This site did not open
+    ok   the failed-load page names the refused address: http://127.0.0.1:64487/
+    ok   closing the failed tab leaves 3 open: 3
+    ok   closing tab 3 leaves 2 open: 2
+    ok   closing tab 2 leaves 1 open: 1
     ok   closing the last tab exits the event loop
     PASS
     ```
-
-    (15 lines of `ok` in the file; the ten above are quoted.)
 
 
 ## W8. Packaging
@@ -420,24 +437,24 @@ Source of truth for behaviour: the bindings repository's `docs/` and `test/`, an
 
     ```
     $ ls -la demos/*/dist/*.exe
-    127290880 demos/desktop-pet/dist/desktop-pet-windows-x64.exe
-    118944256 demos/menubar-notify/dist/menubar-notify-windows-x64.exe
-    118235136 demos/menubar-only/dist/menubar-only-windows-x64.exe
-    120040960 demos/web-app/dist/web-app-windows-x64.exe
+    127484928 demos/desktop-pet/dist/desktop-pet-windows-x64.exe
+    119138304 demos/menubar-notify/dist/menubar-notify-windows-x64.exe
+    118429696 demos/menubar-only/dist/menubar-only-windows-x64.exe
+    120235520 demos/web-app/dist/web-app-windows-x64.exe
     ```
 
     `just pack` exits 0, builds the binding first and lists what each of the eight packages would publish (`bun pm pack --dry-run`); the native package's list holds the binding and its declarations:
 
     ```
-    packed 23.79KB prebuilt/binding.d.ts
-    packed 2.78MB prebuilt/sweetview.win32-x64-msvc.node
+    packed 24.80KB prebuilt/binding.d.ts
+    packed 2.97MB prebuilt/sweetview.win32-x64-msvc.node
     n1h-sweetview-native-1.0.0.tgz
     Total files: 60
     ```
 
 - [x] W8.3 `refreshWindowsIcons` and the rest of `packages/sweetview-build` work with no `bun:ffi`.
 
-    `rust-rewrite/evidence/w8-build.txt`: 11 pass, 0 fail, 2 skip (macOS-only signing). `refreshWindowsIcons` goes through the binding (`refreshShellIcons`), does nothing on another OS, and a test asserts no source of `packages/sweetview-build` imports `bun:ffi`.
+    `rust-rewrite/evidence/w8-build.txt`: 12 pass, 0 fail, 2 skip (macOS-only signing). `refreshWindowsIcons` goes through the binding (`refreshShellIcons`), does nothing on another OS, a test asserts no source of `packages/sweetview-build` imports `bun:ffi`, and the refresh is seen arriving: "refreshWindowsIcons() reaches the shell: a window registered for SHCNE_ASSOCCHANGED receives the notification".
 
     ```
     $ git grep -l "bun:ffi" -- packages/sweetview-build/src ':!*.test.ts' | wc -l
@@ -510,7 +527,7 @@ Pure TypeScript and the same on every OS, so it is done once, here. The contract
 
 - [x] W9.1 Every Windows file in `rust-rewrite/reference/ffi-files.md` is deleted or free of `bun:ffi`. The three shared files that hold FFI for both platforms today (`packages/sweetview/src/app.ts`, `webview-lib.ts`, `worker.ts`) no longer import it; what macOS still needs of that code sits in macOS-only files. `ffi-allowlist.txt` holds macOS-only files and probes, each with its reason, and at most three `setup:` entries.
 
-    `packages/sweetview-native/src/win32/api.ts`, `message-window.ts`, `init.ts`, `icon.ts`, `tabbed-window.ts`, `winrt-toast.ts` are deleted; every other Windows source file imports no `bun:ffi`. The only files under `win32/` that still import it are two tests, listed as probes:
+    `packages/sweetview-native/src/win32/api.ts`, `message-window.ts`, `init.ts`, `icon.ts`, `tabbed-window.ts`, `winrt-toast.ts` are deleted; every other Windows source file imports no `bun:ffi`. The only files under `win32/` that still import it are 2 tests, listed as probes:
 
     ```
     $ git grep -l -E "(from|import\()[[:space:]]*[\"']bun:ffi[\"']|require\([\"']bun:ffi[\"']\)" -- packages/sweetview/src/app.ts packages/sweetview/src/worker.ts packages/sweetview/src/webview-lib.ts packages/sweetview-native/src/win32
@@ -518,10 +535,10 @@ Pure TypeScript and the same on every OS, so it is done once, here. The contract
     packages/sweetview-native/src/win32/window-native.test.ts
     $ bun rust-rewrite/verify.ts windows --quick
     PASS  ffi
-          27 files import bun:ffi, 27 allowlisted, 0 of them as setup
+          31 files import bun:ffi, 31 allowlisted, 0 of them as setup
     ```
 
-    `packages/sweetview/src/app.ts`, `webview-lib.ts` and `worker.ts` import none; what macOS still needs of that code is in `darwin-webview-host.ts`, `darwin-webview-lib.ts` and `darwin-worker-wake.ts` (decision D18). `rust-rewrite/ffi-allowlist.txt` holds 10 macOS-only sources, each with what macOS uses it for until the macOS goal, and 17 probes (tests, fixtures and demo scripts that read real OS state or drive real OS input); no `setup:` entry. One test went with the deleted files: "the message window's JSCallback window procedure runs (WM_CREATE arrives synchronously)", which tested `message-window.ts`'s own window procedure; the icon and monitor tests that called `api.ts` are rewritten on `Window#setIcon` and `Screen.at` and assert the same OS state.
+    `packages/sweetview/src/app.ts`, `webview-lib.ts` and `worker.ts` import none; what macOS still needs of that code is in `darwin-webview-host.ts`, `darwin-webview-lib.ts` and `darwin-worker-wake.ts` (decision D18). `rust-rewrite/ffi-allowlist.txt` holds 10 macOS-only sources, each with what macOS uses it for until the macOS goal, and 21 probes (tests, fixtures and demo scripts that read real OS state or drive real OS input); no `setup:` entry. Five tests went with the deleted files, and decision D20 lists them. "the message window's JSCallback window procedure runs (WM_CREATE arrives synchronously)" tested `message-window.ts`'s own window procedure, which no longer exists. "notifyIconData lays out the balloon fields where Windows expects them", "the 32px balloon icon loads from the generated .ico" and "hiddenBalloonData sets NIS_HIDDEN and NIF_INFO for standalone notifications" tested byte layouts written by hand in TypeScript; what they guarded is asserted on the Rust that replaced them, in `crates/sweetview-platform-notify/src/windows.rs` (`balloon_data_lays_out_the_balloon_fields_where_windows_expects_them`, `balloon_data_is_hidden_and_carries_the_balloon_with_the_documented_flags`, `an_ico_given_as_the_balloon_icon_loads_and_is_not_the_stock_icon`). "bitmapItemInfo lays out MENUITEMINFOW for hbmpItem" likewise: an item's icon is read back from the real menu (`hbmpItem`) in `tray-menu.test.ts`. The icon and monitor tests that called `api.ts` are rewritten on `Window#setIcon` and `Screen.at`; the icon test asserts that the window's icons are the `.ico`'s and not the stock icon.
 
 - [x] W9.2 `docs/` describes the result: no page tells a Windows reader that Sweetview calls the OS through `bun:ffi`.
 
@@ -543,13 +560,13 @@ Pure TypeScript and the same on every OS, so it is done once, here. The contract
           docs/upgrading.md: present
           rust-rewrite/compat: 3 test files
     $ bun test rust-rewrite/compat
-     20 pass
+     24 pass
      0 fail
-     52 expect() calls
-    Ran 20 tests across 3 files.
+     69 expect() calls
+    Ran 24 tests across 3 files.
     ```
 
-    `rust-rewrite/compat/upgrade-guide.test.ts` reads the guide's own tables and imports the new form of every row (and type-checks the type rows through `upgrade-types.ts`); `behaviour.test.ts` runs the rows whose behaviour changed (the webview class, tabs on the Rust frame, an application's own window, the removed start-up helpers) in fixtures of their own.
+    `rust-rewrite/compat/upgrade-guide.test.ts` reads the guide's own tables, imports the new form of every row, and fails when a row's target has no runner in `rust-rewrite/compat/fixtures/row-runners.ts`; its test "every row's new form runs" calls each class, constant, function and member row once in its new form (the ones that need the desktop in `fixtures/rows-desktop.ts`, a process of its own), and type rows are checked by the compiler through `upgrade-types.ts`. Its own count: "rows by kind (rows / run): type (checked by tsc in upgrade-types.ts) 315/0, class 77/77, constant 41/41, function 295/295, method or member 119/119, own bun:ffi table (run by fixtures/own-ffi.ts) 13/13, macOS-only 85/0". `behaviour.test.ts` runs the rows whose behaviour changed (the webview class, tabs on the Rust frame, an application's own window, the removed start-up helpers) in fixtures of their own.
 
 - [x] W9.4 When `rust-rewrite/local/dependents.txt` exists, each listed application was upgraded in a temp copy and its own checks run; the result is in `rust-rewrite/local/dependents-result.md`.
 
@@ -568,20 +585,40 @@ Pure TypeScript and the same on every OS, so it is done once, here. The contract
 
 - [x] W10.1 `rust-rewrite/UNSAFE-LEDGER.md` is current and every entry has its reason.
 
-    `rust-rewrite/UNSAFE-LEDGER.md`: the table as `bun rust-rewrite/verify.ts windows --quick --ledger` writes it (running it again changes nothing but line endings), and under `## Reasons` an entry for every group of uses in every one of the 20 files: the behaviour, the number of uses, the safe API that was looked for with its crate, version and docs.rs page or source file, why it does not serve, and the owning type or invariant that contains it.
+    `rust-rewrite/UNSAFE-LEDGER.md`: the table as `bun rust-rewrite/verify.ts windows --quick --ledger` writes it (running it again changes nothing but line endings), and under `## Reasons` an entry for every group of uses in every one of the 21 files: the behaviour, the number of uses, the safe API that was looked for with its crate, version and docs.rs page or source file, why it does not serve, and the owning type or invariant that contains it.
 
     ```
     $ bun rust-rewrite/verify.ts windows --quick
     PASS  unsafe
-          111 Rust files, 217 uses of unsafe in 20 files
+          113 Rust files, 229 uses of unsafe in 21 files
     ```
 
-    The safety pass that preceded it (decision D23) took the workspace from 322 uses to 217: 178 in source and 39 in test code, all in the six `sweetview-platform-*` crates that call the OS. The policy's tests: every owning type has a test that creates and drops it in a loop and reads the handle counts (the ledger and D23 name the ones added), and `rust-rewrite/evidence/w10-miri.txt` has `cargo miri test` for the logic crates: `sweetview-http` 15 passed, `sweetview-keycodes` 23 passed, `sweetview-window-logic` 29 passed, no undefined behaviour reported; `sweetview-runtime` cannot run under Miri (its first OS call is refused) and `sweetview-napi` has no tests of its own.
+    The safety pass that preceded it (decision D23) took the workspace from 322 uses to 217: 178 in source and 39 in test code, all in the six `sweetview-platform-*` crates that call the OS. The review's fixes then moved the count to 229 uses in 21 files, 179 in source and 50 in test code: the popup menu's own `TrackPopupMenu` (D26) and the tests the review asked for added uses, and the merged window functions and the borrowed window type (D25) removed some; every file's entry in the ledger carries its current count. The policy's tests: every owning type has a test that creates and drops it in a loop and reads the handle counts (the ledger and D23 name the ones added), and `rust-rewrite/evidence/w10-miri.txt` has `cargo miri test` for the logic crates: `sweetview-http` 15 passed, `sweetview-keycodes` 23 passed, `sweetview-window-logic` 29 passed, the four modules of `sweetview-runtime` that make no OS call 20 passed, `sweetview-napi` 3 passed, no undefined behaviour reported; every other test of `sweetview-runtime` stops at its first OS call, which Miri cannot make (the file lists each).
 
-- [ ] W10.2 A reviewer that did not write the code read every `unsafe` block against `UNSAFE-POLICY.md` and every checklist item against its evidence. Its findings are in `rust-rewrite/evidence/review-windows.md` and each is fixed or answered.
+- [x] W10.2 A reviewer that did not write the code read every `unsafe` block against `UNSAFE-POLICY.md` and every checklist item against its evidence. Its findings are in `rust-rewrite/evidence/review-windows.md` and each is fixed or answered.
+
+    `rust-rewrite/evidence/review-windows.md`. The reviewer wrote none of the code: a separate session, given `UNSAFE-POLICY.md`, this checklist, the requirements and the tree at commit `26a5474`. It read every `unsafe` block against the policy (section 2 of the file lists each file with its block count and the findings that touch it) and every item of this checklist against its evidence, and wrote 41 findings: 28 `must fix`, 8 `should fix`, 5 remarks. The file's last section, "Answers", has one answer per finding, in order: 36 fixed, each naming what changed, where, and the test that holds it, and 5 answered (F12, F25, F37, F38, F39), each saying why no change answers it and where it is recorded. A closing part lists what was found after the review, while the evidence was produced again, with the commit that fixed each.
+
+    ```
+    $ grep -c '^### F[0-9]*\. `must fix`' rust-rewrite/evidence/review-windows.md
+    28
+    $ grep -c '^### F[0-9]*\. `should fix`' rust-rewrite/evidence/review-windows.md
+    8
+    $ grep -c '^### F[0-9]*\. `remark`' rust-rewrite/evidence/review-windows.md
+    5
+    $ grep -c '^### F[0-9]*$' rust-rewrite/evidence/review-windows.md
+    41
+    $ grep -c '^\*\*Fixed\.\*\*' rust-rewrite/evidence/review-windows.md
+    36
+    $ grep -c '^\*\*Answered\.\*\*' rust-rewrite/evidence/review-windows.md
+    5
+    ```
+
+    Not fixed by a change, and said so in its answer: F25 (a tray click by a person's hand: nobody is at this machine; the click was made with injected mouse input, and the click by hand is listed for the owner in `rust-rewrite/OWNER-ACTIONS.md`, section 4) and F12 (pushed history is not rewritten).
+
 - [x] W10.3 `rust-rewrite/HANDOFF-macos.md` exists: what compiles for macOS, what is stubbed behind `cfg(target_os = "macos")`, the result of `cargo check --target aarch64-apple-darwin`, and anything the Windows work learned that changes `CHECKLIST-macos.md`.
 
-    `rust-rewrite/HANDOFF-macos.md`, seven sections: where things stand; what compiles for macOS, with the command and its output; what is stubbed, crate by crate, with every public item's signature, what Windows does and what the stand-in returns (the gate in the code is `cfg(not(windows))`, which the document states with what the macOS goal should do about it when Linux arrives); the TypeScript seams; what the Windows work learned, decision by decision (D1 to D23) and item by item of `CHECKLIST-macos.md`, with item texts proposed for what no item covers; the shared files and the Windows commands to re-run; and the open points handed over, each with file and line.
+    `rust-rewrite/HANDOFF-macos.md`, seven sections: where things stand; what compiles for macOS, with the command and its output; what is stubbed, crate by crate, with every public item's signature, what Windows does and what the stand-in returns (the gate in the code is `cfg(not(windows))`, which the document states with what the macOS goal should do about it when Linux arrives); the TypeScript seams; what the Windows work learned, decision by decision (D1 to D32) and item by item of `CHECKLIST-macos.md`, with item texts proposed for what no item covers; the shared files and the Windows commands to re-run; and the open points handed over, each with file and line.
 
     ```
     $ bun rust-rewrite/checks/mac-check.ts
@@ -602,7 +639,7 @@ Pure TypeScript and the same on every OS, so it is done once, here. The contract
     30:## 3. Run the upgrade against the real applications
     40:## 4. Things only a person at the desk can do
     46:## 5. Upstream
-    63:## 6. The forks
-    68:## 7. Housekeeping
+    65:## 6. The forks
+    70:## 7. Housekeeping
     ```
 

@@ -2,52 +2,28 @@ W6.2 singleInstance interop: an instance of tag pre-rust-rewrite (TypeScript bun
 and an instance of this branch (single instance in Rust through the binding) hand off to each other
 in both directions.
 
-Setup (no worktree; <TEMP> is the system temp directory, <REPO> this checkout):
-$ mkdir -p <TEMP>/sweetview-w62-old <TEMP>/sweetview-w62-driver
-$ git archive pre-rust-rewrite | tar -x -C <TEMP>/sweetview-w62-old
-$ (cd <TEMP>/sweetview-w62-old && bun install)        # 36 packages installed
-$ (cd <REPO> && just native)                          # the rewrite's binding
+The run is rust-rewrite/checks/single-instance-interop.ts (its header says what it does: the tag's
+tree from `git archive` in a new folder under the system temp directory, `bun install` there, then a
+primary from one tree and a secondary from the other, each as `bun -e <script>` with its own tree as
+the working directory, twice; the folder is removed at the end). <TEMP> is the system temp
+directory, <REPO> this checkout; the binding was built first with `just native`.
 
-Each side runs `bun -e <script>` with its own tree as the working directory, so
-`@n1h/sweetview-native` resolves to that tree's package. The scripts:
-
-primary:
-  import { pumpEvents, singleInstance } from "@n1h/sweetview-native";
-  let got;
-  const lock = await singleInstance({ appId, urlSchemes: ["svtest"], args: [], onSecondInstance: (e) => { got = e; } });
-  console.log("READY isPrimary=" + lock.isPrimary);
-  while (!got && Date.now() < deadline) { pumpEvents(); await Bun.sleep(10); }
-  console.log("RECEIVED " + JSON.stringify(got ?? null));
-  lock.dispose();
-
-secondary:
-  import { singleInstance } from "@n1h/sweetview-native";
-  const lock = await singleInstance({ appId, urlSchemes: ["svtest"], args: ["--from", who, "svtest://open/42"] });
-  console.log("RESULT " + JSON.stringify({ isPrimary: lock.isPrimary, handedOff: lock.handedOff }));
-  lock.dispose();
-
-The driver (<TEMP>/sweetview-w62-driver/driver.ts) starts the primary, waits for READY, runs the
-secondary, then waits for the primary to exit:
-$ cd <TEMP>/sweetview-w62-driver && bun driver.ts <TEMP>/sweetview-w62-old <REPO>
-
-Output:
-== old primary, new secondary (appId dev.sweetview.w62.old-primary.28124.1795790174632)
-$ (cwd <TEMP>/sweetview-w62-old) bun -e <primary script>   # pid 18812
+$ bun rust-rewrite/checks/single-instance-interop.ts
+$ git archive pre-rust-rewrite | tar -x -C <TEMP>/sweetview-interop-old-bBQx4X
+$ bun install        (in the tag's tree)
+== old primary, new secondary
   [old primary] READY isPrimary=true
-$ (cwd <REPO>) bun -e <secondary script>   # pid 43076
   [new secondary] RESULT {"isPrimary":false,"handedOff":true}
   [new secondary] exit 0; stderr: ""
   [old primary] RECEIVED {"args":["--from","new","svtest://open/42"],"cwd":"<REPO>","url":"svtest://open/42"}
   [old primary] exit 0; stderr: ""
-== new primary, old secondary (appId dev.sweetview.w62.new-primary.28124.1795790174843)
-$ (cwd <REPO>) bun -e <primary script>   # pid 21328
+  handed off: true; the payload { args, cwd, url } arrived unchanged: true
+== new primary, old secondary
   [new primary] READY isPrimary=true
-$ (cwd <TEMP>/sweetview-w62-old) bun -e <secondary script>   # pid 36400
   [old secondary] RESULT {"isPrimary":false,"handedOff":true}
   [old secondary] exit 0; stderr: ""
-  [new primary] RECEIVED {"args":["--from","old","svtest://open/42"],"cwd":"<TEMP>\\sweetview-w62-old","url":"svtest://open/42"}
+  [new primary] RECEIVED {"args":["--from","old","svtest://open/42"],"cwd":"<TEMP>\\sweetview-interop-old-bBQx4X","url":"svtest://open/42"}
   [new primary] exit 0; stderr: ""
-
-Result: old primary <- new secondary: handedOff true, the payload { args, cwd, url } arrived unchanged.
-new primary <- old secondary: handedOff true, the payload arrived unchanged. Both processes exited 0
-with empty stderr in both directions. The temp folders were deleted afterwards.
+  handed off: true; the payload { args, cwd, url } arrived unchanged: true
+OK: the old build and the new build hand off to each other in both directions
+exit: 0

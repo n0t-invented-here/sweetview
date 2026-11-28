@@ -10,7 +10,7 @@ The folder, then demos/menubar-only/scripts/tray-drive.ts, which starts the exec
 icon with the messages the shell posts:
 
 files in the folder: menubar-only-windows-x64.exe
-started: <TEMP>\sv-alone-f98cc339\menubar-only-windows-x64.exe
+started: <TEMP>\sv-alone-f052bf5a\menubar-only-windows-x64.exe
 tray icon window found (class tray_icon_app) in the app's process
 right click -> menu: ["Up for 0 s [disabled]","----","Clock in Tooltip","----","Quit Menubar Only"]
 Escape -> menu closed, nothing chosen

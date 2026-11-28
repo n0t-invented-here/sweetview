@@ -46,14 +46,15 @@ test tray::tests::a_double_click_is_a_double_click_and_no_click ... ok
 test tray::tests::only_left_and_right_button_ups_and_left_double_clicks_are_inputs ... ok
 test tray::tests::two_clicks_further_apart_than_the_double_click_time_are_two_clicks ... ok
 test tray::tests::with_no_click_handler_no_timer_runs ... ok
-test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 22 filtered out
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 24 filtered out
 exit 0
 
 $ cargo +nightly miri test -p sweetview-napi
      Running unittests src\lib.rs (target\miri\x86_64-pc-windows-msvc\debug\build\sweetview-napi/...)
+test menus::tests::missing_fields_take_their_defaults_and_unknown_kinds_are_left_out ... ok
 test objects::tests::an_unknown_appearance_is_the_default ... ok
 test objects::tests::sizes_are_rounded_and_never_negative ... ok
-test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
    Doc-tests: test result: ok. 0 passed; 0 failed
 exit 0
 
@@ -67,6 +68,7 @@ sweetview-runtime: the tests of bridge.rs, icon.rs, menu.rs and tray.rs make no 
   notify::tests::a_balloon_click_arrives_from_the_runtime_loop | can't call foreign function `CoInitializeEx`
   notify::tests::another_thread_is_refused | can't call foreign function `CoInitializeEx`
   runtime::tests::a_job_may_clear_itself_and_a_cleared_timeout_never_runs | can't call foreign function `CoInitializeEx`
+  runtime::tests::a_pump_returns_though_a_handler_looked_at_the_queue_without_removing_anything | can't call foreign function `CoInitializeEx`
   runtime::tests::a_quit_request_ends_a_pump_and_can_be_taken_back | can't call foreign function `CoInitializeEx`
   runtime::tests::another_thread_is_refused_and_can_still_wake | can't call foreign function `CoInitializeEx`
   runtime::tests::one_pump_dispatches_everything_that_was_waiting | can't call foreign function `CoInitializeEx`
@@ -75,6 +77,7 @@ sweetview-runtime: the tests of bridge.rs, icon.rs, menu.rs and tray.rs make no 
   shell::tests::refreshing_returns_on_any_thread | can't call foreign function `SHChangeNotify`
   window::tests::a_tab_frame_keeps_the_system_frame_and_lays_out_a_strip_and_a_page | can't call foreign function `CoInitializeEx`
   window::tests::adopting_a_handle_that_is_not_a_window_fails | can't call foreign function `CoInitializeEx`
+  window::tests::an_adopted_window_keeps_valid_icons_after_it_is_released | can't call foreign function `CoInitializeEx`
   window::tests::click_through_and_hit_regions_set_the_style_bits | can't call foreign function `CoInitializeEx`
   window::tests::events_reach_every_wrapper_and_close_follows_the_listeners | can't call foreign function `CoInitializeEx`
   window::tests::every_option_shows_in_the_window_styles_and_survives_a_style_rewrite | can't call foreign function `CoInitializeEx`
@@ -83,4 +86,4 @@ sweetview-runtime: the tests of bridge.rs, icon.rs, menu.rs and tray.rs make no 
   window::tests::owned_windows_give_every_handle_back | can't call foreign function `CoInitializeEx`
   window::tests::show_activates_unless_no_activate | can't call foreign function `CoInitializeEx`
 
-sweetview-napi: its own tests (`objects.rs`, the conversions of the object shapes) make no N-API call and pass under Miri (above). Every other function converts values through N-API, whose napi_* functions are provided by the host process (Bun) at load time, so none can run outside that host, under Miri or not. They are exercised by the Bun test suite.
+sweetview-napi: its own tests (`objects.rs` and `menus.rs`, the conversions of the object shapes and of menu data) make no N-API call and pass under Miri (above). Every other function converts values through N-API, whose napi_* functions are provided by the host process (Bun) at load time, so none can run outside that host, under Miri or not. They are exercised by the Bun test suite.

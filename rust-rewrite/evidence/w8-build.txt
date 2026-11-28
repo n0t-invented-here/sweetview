@@ -1,24 +1,21 @@
-$ bun test packages/sweetview-build
-bun test v1.4.4 (38afee6c8)
-
+$ bun test packages/sweetview-build   (CLAUDECODE, CLAUDE_CODE_ENTRYPOINT and AGENT unset; WEBVIEW2_USER_DATA_FOLDER a fresh folder under <TEMP>)
 packages\sweetview-build\src\build.test.ts:
-(pass) makeMacApp > writes the bundle's files and the plist entries, unsigned when asked [11.11ms]
-(pass) makeMacApp > writes CFBundleURLTypes from urlSchemes and supports defineAppIdentity [12.58ms]
-(pass) makeMacApp > plist.CFBundleURLTypes alongside urlSchemes throws before anything is written [0.92ms]
-(pass) makeMacApp > a missing binary throws before anything is written [0.46ms]
-(pass) makeMacApp > a name with path separators or .. is rejected before anything is written [0.73ms]
-(pass) makeMacApp > a failed rebuild leaves the existing bundle intact and no staging folder behind [5.25ms]
-(pass) makeMacApp > a failed swap restores the existing bundle and leaves no staging or backup folder behind [7.83ms]
-(pass) makeMacApp > a rebuild replaces the existing bundle [14.08ms]
+(pass) makeMacApp > writes the bundle's files and the plist entries, unsigned when asked [10.14ms]
+(pass) makeMacApp > writes CFBundleURLTypes from urlSchemes and supports defineAppIdentity [13.33ms]
+(pass) makeMacApp > plist.CFBundleURLTypes alongside urlSchemes throws before anything is written [0.67ms]
+(pass) makeMacApp > a missing binary throws before anything is written [0.41ms]
+(pass) makeMacApp > a name with path separators or .. is rejected before anything is written [0.61ms]
+(pass) makeMacApp > a failed rebuild leaves the existing bundle intact and no staging folder behind [19.04ms]
+(pass) makeMacApp > a failed swap restores the existing bundle and leaves no staging or backup folder behind [7.51ms]
+(pass) makeMacApp > a rebuild replaces the existing bundle [13.48ms]
 (skip) makeMacApp > signs the bundle ad-hoc by default, with the bundle id as the identifier
 (skip) makeMacApp > sign: false leaves the binary's own signature in place
-(pass) refreshWindowsIcons > goes through the native binding, with no bun:ffi in the build package [0.77ms]
-(pass) refreshWindowsIcons > tells the shell that icons changed and returns [18.70ms]
-(pass) refreshWindowsIcons > does nothing on another OS [0.65ms]
-
- 11 pass
+(pass) refreshWindowsIcons > goes through the native binding, with no bun:ffi in the build package [0.62ms]
+(pass) refreshWindowsIcons > tells the shell that icons changed and returns [16.84ms]
+(pass) refreshWindowsIcons > refreshWindowsIcons() reaches the shell: a window registered for SHCNE_ASSOCCHANGED receives the notification [428.65ms]
+(pass) refreshWindowsIcons > does nothing on another OS [0.53ms]
+ 12 pass
  2 skip
  0 fail
- 39 expect() calls
-Ran 13 tests across 1 file. [117.00ms]
-exit: 0
+ 42 expect() calls
+Ran 14 tests across 1 file. [592.00ms]

@@ -1,29 +1,30 @@
 # Unsafe ledger
 
-Rewritten by `bun rust-rewrite/verify.ts <platform> --ledger`. 217 uses in 20 files.
+Rewritten by `bun rust-rewrite/verify.ts <platform> --ledger`. 229 uses in 21 files.
 
 | File | Uses of `unsafe` |
 |---|---|
 | `crates/sweetview-platform-input/src/windows.rs` | 8 |
 | `crates/sweetview-platform-input/tests/windows_hooks.rs` | 7 |
 | `crates/sweetview-platform-loop/src/com.rs` | 4 |
-| `crates/sweetview-platform-loop/src/windows.rs` | 18 |
-| `crates/sweetview-platform-notify/src/windows.rs` | 9 |
-| `crates/sweetview-platform-shell/src/clipboard.rs` | 12 |
+| `crates/sweetview-platform-loop/src/windows.rs` | 24 |
+| `crates/sweetview-platform-notify/src/windows.rs` | 11 |
+| `crates/sweetview-platform-shell/src/clipboard.rs` | 13 |
 | `crates/sweetview-platform-shell/src/icons.rs` | 1 |
-| `crates/sweetview-platform-shell/src/single_instance.rs` | 10 |
-| `crates/sweetview-platform-shell/src/win.rs` | 1 |
+| `crates/sweetview-platform-shell/src/single_instance.rs` | 9 |
+| `crates/sweetview-platform-shell/src/win.rs` | 2 |
 | `crates/sweetview-platform-webview/src/windows/environment.rs` | 1 |
-| `crates/sweetview-platform-webview/src/windows/handlers.rs` | 12 |
+| `crates/sweetview-platform-webview/src/windows/handlers.rs` | 16 |
 | `crates/sweetview-platform-webview/src/windows/istream.rs` | 11 |
-| `crates/sweetview-platform-webview/src/windows/mod.rs` | 43 |
+| `crates/sweetview-platform-webview/src/windows/mod.rs` | 40 |
 | `crates/sweetview-platform-window/src/metrics.rs` | 1 |
 | `crates/sweetview-platform-window/src/popup.rs` | 3 |
 | `crates/sweetview-platform-window/src/size_hint.rs` | 1 |
 | `crates/sweetview-platform-window/src/tab_frame.rs` | 16 |
 | `crates/sweetview-platform-window/src/tab_frame_tests.rs` | 12 |
+| `crates/sweetview-platform-window/src/test_support.rs` | 2 |
 | `crates/sweetview-platform-window/src/windows.rs` | 37 |
-| `crates/sweetview-platform-window/src/windows_tests.rs` | 9 |
+| `crates/sweetview-platform-window/src/windows_tests.rs` | 10 |
 
 ## Reasons
 

@@ -1,135 +1,214 @@
-$ bun test packages/sweetview-native/src/win32 packages/sweetview-native/src/event-loop.test.ts packages/sweetview-native/src/index.test.ts packages/sweetview-native/src/hit-regions.test.ts rust-rewrite/compat/own-modal-loops.test.ts
-bun test v1.4.4 (38afee6c8)
-
+$ bun test packages/sweetview-native/src/win32/window.test.ts packages/sweetview-native/src/win32/window-native.test.ts packages/sweetview-native/src/win32/win32.test.ts packages/sweetview-native/src/win32/overlay.test.ts packages/sweetview-native/src/event-loop.test.ts packages/sweetview-native/src/index.test.ts packages/sweetview-native/src/hit-regions.test.ts rust-rewrite/compat/own-modal-loops.test.ts   (CLAUDECODE, CLAUDE_CODE_ENTRYPOINT and AGENT unset; WEBVIEW2_USER_DATA_FOLDER a fresh folder under <TEMP>)
 rust-rewrite\compat\own-modal-loops.test.ts:
-(pass) an application's own modal dialog and popup menu inside Sweetview's loop > under the Bun-timer loop (runEventLoop) [277.41ms]
-(pass) an application's own modal dialog and popup menu inside Sweetview's loop > under the blocking loop [268.80ms]
-
+(pass) an application's own modal dialog and popup menu, opened from a uiMethods call of createApp's app, called from its page > under app.run(): inside each loop the page's UI calls and worker calls are answered and the answers reach the page [5816.27ms]
+(pass) an application's own modal dialog and popup menu, opened from a uiMethods call of createApp's app, called from its page > under runEventLoop(): inside each loop the page's UI calls and worker calls are answered and the answers reach the page [5752.91ms]
+(pass) an application's own modal dialog and popup menu inside Sweetview's loop > under the Bun-timer loop (runEventLoop) [293.69ms]
+(pass) an application's own modal dialog and popup menu inside Sweetview's loop > under the blocking loop [262.73ms]
 packages\sweetview-native\src\event-loop.test.ts:
-(pass) event loop > intervalMs below 1 or not a number is a RangeError, before the platform is touched [0.11ms]
+(pass) event loop > intervalMs below 1 or not a number is a RangeError, before the platform is touched [0.15ms]
 (skip) event loop > an unsupported OS throws synchronously
-(pass) event loop > pumpEvents with nothing queued returns true [0.39ms]
-(pass) event loop > runEventLoop resolves when quitEventLoop is called; a second loop at the same time throws; quit with no loop is a no-op [11.13ms]
-
+(pass) event loop > pumpEvents with nothing queued returns true [0.43ms]
+(pass) event loop > runEventLoop resolves when quitEventLoop is called; a second loop at the same time throws; quit with no loop is a no-op [10.55ms]
 packages\sweetview-native\src\hit-regions.test.ts:
-(pass) packRegions > packs count, bounds, then the points [0.14ms]
+(pass) packRegions > packs count, bounds, then the points [0.15ms]
 (pass) packRegions > drops polygons with fewer than three points [0.01ms]
-(pass) hitRegions > inside any polygon [0.05ms]
+(pass) hitRegions > inside any polygon [0.04ms]
 (pass) hitRegions > outside is outside [0.01ms]
 (pass) hitRegions > a diamond: inside its bounds but outside the shape misses [0.02ms]
-(pass) convexHull > the hull of a box's corners plus interior points is the box [0.12ms]
-(pass) convexHull > collinear and duplicate points are dropped [0.01ms]
-(pass) HitRelay > tracks enabled state, relays probes, and binds answer for tear-off use [0.16ms]
-
+(pass) convexHull > the hull of a box's corners plus interior points is the box [0.11ms]
+(pass) convexHull > collinear and duplicate points are dropped [0.03ms]
+(pass) HitRelay > tracks enabled state, relays probes, and binds answer for tear-off use [0.14ms]
 packages\sweetview-native\src\index.test.ts:
-(pass) public modules > Window.fromHandle resolves to this platform's implementation on first call [2.51ms]
+(pass) public modules > Window.fromHandle resolves to this platform's implementation on first call [2.87ms]
 (pass) public modules > pickFolder and createNotifier are plain synchronous functions [0.03ms]
-(pass) public modules > Notifier works standalone without creating a Tray first [1.03ms]
-(pass) public modules > Screen exposes primary, all, at, bounds, and cursor without a window [0.24ms]
+(pass) public modules > Notifier works standalone without creating a Tray first [0.92ms]
+(pass) public modules > Screen exposes primary, all, at, bounds, and cursor without a window [0.39ms]
+(pass) public modules > Screen.cursor() is where SetCursorPos put the cursor, as GetCursorPos reads it (physical pixels) [1.28ms]
 (pass) public modules > Menu and Tray classes are exported [0.01ms]
-
-packages\sweetview-native\src\win32\activation.test.ts:
-(pass) activation URL buffering & extraction > extractUrlFromArgs matches declared schemes or custom non-web schemes [0.14ms]
-(pass) activation URL buffering & extraction > buffers early URLs until signalReady() and then drains in FIFO order [0.36ms]
-(pass) win32 URL schemes & single-instance > registerUrlScheme writes HKCU keys and unregisterUrlScheme removes them cleanly [68.59ms]
-(pass) win32 URL schemes & single-instance > singleInstance retries when the mutex exists before its message window is discoverable [172.85ms]
-(pass) win32 URL schemes & single-instance > singleInstance hands off args and URL from a real secondary process via WM_COPYDATA [52.22ms]
-
-packages\sweetview-native\src\win32\notifier.test.ts:
-(pass) Windows notifier > registers an AUMID and shows real WinRT toasts with independently routed clicks [84.36ms]
-(pass) Windows notifier > uses the explicit app ID and falls back when WinRT Show fails [100.62ms]
-(pass) Windows notifier > without WinRT every notification is a balloon, with the tray's icon or the stock one [31.81ms]
-(pass) Windows notifier > a click handler that throws is logged with today's message and the loop goes on [8.94ms]
-
 packages\sweetview-native\src\win32\overlay.test.ts:
-(pass) colorKey > swaps #rrggbb into COLORREF 0x00bbggrr [15.03ms]
-(pass) colorKey > rejects anything else [0.08ms]
-(pass) colorKey > opacity sets the layered alpha, alone or with a colour key [2.92ms]
-
-packages\sweetview-native\src\win32\shortcuts.test.ts:
-(pass) the keys every tabbed Windows app answers to [0.07ms]
-(pass) Ctrl+1 to Ctrl+8 pick a tab by place, Ctrl+9 the last [0.02ms]
-(pass) everything else is left to the page and the browser [0.02ms]
-
-packages\sweetview-native\src\win32\strip-shared.test.ts:
-(pass) a few tabs are as wide as a tab gets; many share the room; none is narrower than the least [0.05ms]
-(pass) the + and somewhere to take the window by always fit beside the tabs [0.04ms]
-(pass) tabs that all fit are never scrolled [0.03ms]
-(pass) more tabs than fit scroll just far enough to show the one asked for [0.02ms]
-(pass) a tab dropped on a strip goes before the tab whose left half it lands on, after the one whose right half [0.03ms]
-
-packages\sweetview-native\src\win32\tray-menu.test.ts:
-(pass) icon decoding (binding) > each size comes from its own image of the .ico, or the next larger one resampled [0.53ms]
-(pass) icon decoding (binding) > a multi-size .ico picks the exact size at each of 16, 20, 24 and 32 px [0.35ms]
-(pass) icon decoding (binding) > a PNG decodes at the asked size, an icon with nothing for Windows gives null, garbage throws with the reason [1.17ms]
-(pass) Menu.popup (binding: muda) > at a point: check marks, icons, submenus, separators and disabled items are on the real menu, and the chosen item runs [13.21ms]
-(pass) Menu.popup (binding: muda) > an item in a submenu is chosen; a dismissed menu chooses nothing; the function form is called on each open [28.88ms]
-(pass) Menu.popup (binding: muda) > at the cursor when no point is given [14.76ms]
-(pass) Menu.popup (binding: muda) > an empty menu shows nothing, and a null owner throws as before [0.06ms]
-(pass) Tray (binding: tray-icon) > a tray is made with its own window and disposed, twice safely [6.12ms]
-(pass) Tray (binding: tray-icon) > making and disposing trays and their menus returns every GDI and USER object [3810.73ms]
-(pass) Tray (binding: tray-icon) > a tray with no icon shows the stock icon, and the public Tray works the same [14.61ms]
-(pass) Tray (binding: tray-icon) > a left click is a click once the double-click time has passed; a double click is a double click and no click [1309.53ms]
-(pass) Tray (binding: tray-icon) > a handler that throws is logged with today's message, and a handler may dispose the tray [13.12ms]
-(pass) Tray (binding: tray-icon) > a right click opens the menu built from the function form; dismissed it chooses nothing, chosen it runs the item [40.89ms]
-(pass) Tray (binding: tray-icon) > setIcon, setTooltip and setMenu take effect; a removed menu opens nothing [434.47ms]
-(pass) Tray (binding: tray-icon) > the icon is re-added when the taskbar is recreated (the registered TaskbarCreated message, as Explorer broadcasts it) [118.34ms]
-(pass) pickFolder (binding: rfd) > cancelled with no loop running (the timer-pumped mode) returns null [193.03ms]
-(pass) pickFolder (binding: rfd) > cancelled from inside the blocking loop returns null, and the loop goes on [140.88ms]
-(pass) pickFolder (binding: rfd) > returns the chosen folder, with the dialog owned by the given window [182.89ms]
-(pass) app-wide settings (binding) > setAppMenu, setAppIcon and setActivationPolicy are accepted and change nothing on Windows [1.08ms]
-
+(pass) colorKey > swaps #rrggbb into COLORREF 0x00bbggrr [9.99ms]
+(pass) colorKey > rejects anything else [0.09ms]
+(pass) colorKey > a topmost overlay, the first Sweetview window of a process started hidden, is shown above the taskbar: WindowFromPoint inside the taskbar returns it, and the taskbar once it is hidden [0.04ms]
+(pass) colorKey > opacity sets the layered alpha, alone or with a colour key [2.56ms]
 packages\sweetview-native\src\win32\win32.test.ts:
-(pass) win32 FFI > CreateIconFromResourceEx accepts a generated .ico image [1.68ms]
-(pass) win32 FFI > the message window's JSCallback window procedure runs (WM_CREATE arrives synchronously) [0.95ms]
-(pass) win32 FFI > Window.fromHandle onClose swallows WM_CLOSE and the window survives [1.15ms]
-(pass) win32 FFI > the 32px balloon icon loads from the generated .ico [0.34ms]
-(pass) win32 FFI > MonitorFromRect + GetMonitorInfoW: a point on the primary monitor maps to its rect, a point off every monitor to the nearest [0.16ms]
-(pass) win32 FFI > discardQuit takes a PostQuitMessage back, after dispatching what was waiting ahead of it [1.13ms]
-(pass) win32 FFI > a literal ampersand in a menu label is doubled, so the OS shows it instead of an access key [11.94ms]
-(pass) win32 icons > a menu icon decodes at the asked size from a larger .ico image (the resample path) [0.22ms]
-(pass) win32 icons > a menu with an icon builds and the bitmap is set on the item [13.62ms]
-(pass) win32 icons > setWindowIcon on a message window does not fail and replaces its handles [1.61ms]
-(pass) win32 icons > menus handle submenus, separators, checkmarks, and icons, and each showing frees what it made [169.75ms]
-(pass) win32 icons > Screen.of(hwnd) resolves the monitor hosting a message window [0.93ms]
-
+(pass) win32 OS state > a generated .ico becomes the window's small and 32px big icon [2.97ms]
+(pass) win32 OS state > Window.fromHandle onClose swallows WM_CLOSE and the window survives [1.05ms]
+(pass) win32 OS state > Screen.at: a point on the primary monitor maps to its rect, a point off every monitor to the nearest [0.12ms]
+(pass) win32 OS state > discardQuit takes a PostQuitMessage back, after dispatching what was waiting ahead of it [1.09ms]
+(pass) win32 OS state > a literal ampersand in a menu label is doubled, so the OS shows it instead of an access key [12.81ms]
+(pass) win32 icons > a menu icon decodes at the asked size from a larger .ico image (the resample path) [0.33ms]
+(pass) win32 icons > a menu with an icon builds and the bitmap is set on the item [17.53ms]
+(pass) win32 icons > setIcon on an application's own window replaces its icons, and back to the stock icon [3.94ms]
+(pass) win32 icons > menus handle submenus, separators, checkmarks, and icons, and each showing frees what it made [166.65ms]
+(pass) win32 icons > Screen.of(hwnd) resolves the monitor hosting an application's own window [1.84ms]
 packages\sweetview-native\src\win32\window-native.test.ts:
-(pass) Window on the binding: options read back from the OS > bounds, title, frame, resizable and the minimum size [7.64ms]
-(pass) Window on the binding: options read back from the OS > appearance sets the title bar's dark mode [2.98ms]
-(pass) Window on the binding: options read back from the OS > topmost, hideFromTaskbar, noActivate and layering, kept through a style rewrite [5.85ms]
-(pass) Window on the binding: options read back from the OS > show() leaves a noActivate window inactive and activates any other [60.40ms]
-(pass) Window on the binding: options read back from the OS > minimize, show restoring it, and toggleMaximize on a framed window [62.73ms]
-(pass) Window on the binding: options read back from the OS > Screen.of a window is the screen its frame is on; Screen.bounds holds every screen [3.97ms]
-(pass) Window on the binding: click-through, hit regions, the resize gesture > setClickThrough sets and clears the click-through bits [2.02ms]
-(pass) Window on the binding: click-through, hit regions, the resize gesture > the 10 ms poll follows the cursor into and out of a polygon, with and without the refiner [823.85ms]
-(pass) Window on the binding: click-through, hit regions, the resize gesture > startResize follows the cursor from an edge while the left button is down [257.52ms]
-(pass) Window on the binding: click-through, hit regions, the resize gesture > startDrag hands the window to the OS, which moves it with the cursor until the button is released [541.03ms]
-(pass) Window.fromHandle on an application's own window (made here through bun:ffi) > onResize, onMove, onClose and onFileDrop arrive; dispose leaves the window alive [5.34ms]
-(pass) both loop modes serve a window > the blocking loop and the Bun-timer loop deliver a close request and run the hit-region poll [135.84ms]
-
+(pass) Window on the binding: options read back from the OS > bounds, title, frame, resizable and the minimum size [6.61ms]
+(pass) Window on the binding: options read back from the OS > appearance sets the title bar's dark mode [3.38ms]
+(pass) Window on the binding: options read back from the OS > topmost, hideFromTaskbar, noActivate and layering, kept through a style rewrite [5.39ms]
+(pass) Window on the binding: options read back from the OS > show() leaves a noActivate window inactive and activates any other [70.16ms]
+(pass) Window on the binding: options read back from the OS > minimize, show restoring it, and toggleMaximize on a framed window [69.46ms]
+(pass) Window on the binding: options read back from the OS > Screen.of a window is the screen its frame is on; Screen.bounds holds every screen [2.17ms]
+(pass) Window on the binding: click-through, hit regions, the resize gesture > setClickThrough sets and clears the click-through bits [2.16ms]
+(pass) Window on the binding: click-through, hit regions, the resize gesture > the 10 ms poll follows the cursor into and out of a polygon, with and without the refiner [817.49ms]
+(pass) Window on the binding: click-through, hit regions, the resize gesture > startResize follows the cursor from an edge while the left button is down [271.30ms]
+(pass) Window on the binding: click-through, hit regions, the resize gesture > startDrag hands the window to the OS, which moves it with the cursor until the button is released [359.11ms]
+(pass) Window.fromHandle on an application's own window (made here through bun:ffi) > onResize, onMove, onClose and onFileDrop arrive; dispose leaves the window alive [4.77ms]
+(pass) both loop modes serve a window > the blocking loop and the Bun-timer loop deliver a close request and run the hit-region poll [130.53ms]
 packages\sweetview-native\src\win32\window.test.ts:
-(pass) win32 Window > close-to-tray destroys the secondary window and hides the last visible owned window [16.92ms]
-(pass) win32 Window > identity sets a window's title and icon, and explicit options win [13.88ms]
-(pass) win32 Window > delivers Unicode file drops and cleans up owned, tabbed and borrowed listeners [5.78ms]
-(pass) win32 Window > creates hidden framed and frameless windows and disposes cleanly & idempotently [3.45ms]
-(pass) win32 Window > closing one window disposes it without posting WM_QUIT to kill the app loop [3.50ms]
-(pass) win32 Window > onClose intercepts WM_CLOSE and unsubscribing restores default close-and-dispose [2.18ms]
-(pass) win32 Window > a native-dispose hold keeps the HWND until the last hold is released (dispose() and WM_CLOSE) [5.11ms]
-(pass) win32 Window > onResize and onMove fire with outer bounds and stop after unsubscribe [2.16ms]
-(pass) win32 Window > frameless toggleMaximize uses the window's own monitor workArea and restores bounds [1.73ms]
-(pass) win32 Window > Window.fromHandle intercepts events non-mutatingly and dispose does not destroy the external HWND [0.79ms]
-(pass) win32 Window > tabbed windows honor topmost on creation and setTopmost afterwards [2.24ms]
-(pass) win32 Window > tabbed windows apply resizable, opacity, hideFromTaskbar, noActivate and outer minimum size [2.72ms]
-(pass) win32 Window > tabbed windows keep per-frame appearance; system updates only touch system frames [4.44ms]
-(pass) win32 Window > Window.fromHandle reports the wrapped window's frame and resizability [4.70ms]
-(pass) win32 Window > disposing a Window.fromHandle wrapper of an owned Window preserves the owner's onClose listener [1.86ms]
-
-1 tests skipped:
+(pass) win32 Window > close-to-tray destroys the secondary window and hides the last visible owned window [17.97ms]
+(pass) win32 Window > identity sets a window's title and icon, and explicit options win [14.38ms]
+(pass) win32 Window > delivers Unicode file drops and cleans up owned, tabbed and borrowed listeners [8.79ms]
+(pass) win32 Window > creates hidden framed and frameless windows and disposes cleanly & idempotently [3.34ms]
+(pass) win32 Window > closing one window disposes it without posting WM_QUIT to kill the app loop [3.61ms]
+(pass) win32 Window > onClose intercepts WM_CLOSE and unsubscribing restores default close-and-dispose [1.78ms]
+(pass) win32 Window > a native-dispose hold keeps the HWND until the last hold is released (dispose() and WM_CLOSE) [5.09ms]
+(pass) win32 Window > onResize and onMove fire with outer bounds and stop after unsubscribe [2.21ms]
+(pass) win32 Window > frameless toggleMaximize uses the window's own monitor workArea and restores bounds [1.82ms]
+(pass) win32 Window > Window.fromHandle intercepts events non-mutatingly and dispose does not destroy the external HWND [0.87ms]
+(pass) win32 Window > tabbed windows honor topmost on creation and setTopmost afterwards [3.37ms]
+(pass) win32 Window > tabbed windows apply resizable, opacity, hideFromTaskbar, noActivate and outer minimum size [4.63ms]
+(pass) win32 Window > tabbed windows keep per-frame appearance; system updates only touch system frames [6.81ms]
+(pass) win32 Window > Window.fromHandle reports the wrapped window's frame and resizability [4.86ms]
+(pass) win32 Window > disposing a Window.fromHandle wrapper of an owned Window preserves the owner's onClose listener [1.72ms]
 (skip) event loop > an unsupported OS throws synchronously
-
- 96 pass
+ 62 pass
  1 skip
  0 fail
- 527 expect() calls
-Ran 97 tests across 13 files. [9.66s]
-exit: 0
+ 307 expect() calls
+Ran 63 tests across 8 files. [15.27s]
+
+$ cargo test -p sweetview-window-logic
+     Running unittests src\lib.rs (sweetview_window_logic)
+test color::tests::rejects_anything_else ... ok
+test color::tests::swaps_rrggbb_into_colorref ... ok
+test geometry::tests::overlap_distance_and_union ... ok
+test hit::tests::a_truncated_buffer_is_a_miss_not_a_panic ... ok
+test hit::tests::packing_matches_pack_regions ... ok
+test hit::tests::replacing_the_regions_keeps_the_sequence_and_drops_the_question ... ok
+test geometry::tests::contains_excludes_the_right_and_bottom_edges ... ok
+test ico::tests::picks_exact_then_smallest_larger_then_largest ... ok
+test hit::tests::nothing_flips_while_a_mouse_button_is_down ... ok
+test hit::tests::a_diamond_misses_the_corners_of_its_bounds ... ok
+test hit::tests::empty_regions_make_the_whole_window_click_through ... ok
+test hit::tests::inside_any_polygon_and_outside_is_outside ... ok
+test hit::tests::a_stale_answer_is_dropped ... ok
+test screen::tests::the_virtual_screen_holds_them_all ... ok
+test hit::tests::without_a_refiner_the_polygon_decides ... ok
+test style::tests::applying_twice_is_applying_once ... ok
+test ico::tests::rejects_what_is_not_an_ico ... ok
+test resize::tests::edge_names_parse ... ok
+test resize::tests::frameless_maximise_toggles_between_the_work_area_and_the_saved_bounds ... ok
+test resize::tests::left_and_top_keep_the_opposite_edge_in_place ... ok
+test resize::tests::right_and_bottom_grow_with_the_cursor ... ok
+test resize::tests::the_minimum_size_holds_and_pins_the_moving_edge ... ok
+test screen::tests::a_point_maps_to_its_screen_or_the_nearest ... ok
+test screen::tests::a_window_belongs_to_the_screen_it_overlaps_most ... ok
+test hit::tests::the_refiner_is_asked_once_per_point_and_its_answer_decides ... ok
+test style::tests::accept_files_follows_the_drop_listeners ... ok
+test style::tests::click_through_adds_layered_only_when_not_layered_for_another_reason ... ok
+test style::tests::hide_from_taskbar_forces_the_tool_window_bits ... ok
+test style::tests::an_empty_policy_changes_nothing ... ok
+test result: ok. 29 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+   Doc-tests sweetview_window_logic
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+$ cargo test -p sweetview-platform-window
+     Running unittests src\lib.rs (sweetview_platform_window)
+test size_hint::tests::fixed_takes_the_resize_frame_and_the_maximize_box_off_and_every_other_hint_puts_them_on ... ok
+test popup::tests::a_value_that_names_no_window_is_refused ... ok
+test size_hint::tests::sizes_scale_with_the_dpi_and_round_as_muldiv_does ... ok
+test metrics::tests::the_double_click_time_is_the_one_win32_reports ... ok
+test metrics::tests::metrics_are_sane ... ok
+test tab_frame::tests::the_system_theme_reads_without_failing ... ok
+test platform::tests::layered_attributes_chrome_and_geometry_restore ... ok
+test platform::tests::the_style_policy_holds_whoever_changes_the_style ... ok
+test platform::tests::a_shell_drop_is_read_and_freed_by_the_window ... ok
+test platform::tests::a_subclass_on_a_window_of_another_thread_is_refused ... ok
+test tab_frame::tests::frame_messages_give_every_handle_back ... ok
+test tab_frame::tests::the_frame_paints_the_strip_and_the_page_in_their_own_colours ... ok
+test platform::tests::a_bad_ico_is_an_error ... ok
+test platform::tests::owning_types_give_every_handle_back ... ok
+test platform::tests::the_subclass_delivers_bounds_close_and_destroy ... ok
+test platform::tests::a_handle_value_is_lent_only_when_it_names_a_window ... ok
+test size_hint::live_tests::a_given_window_is_restyled_and_resized_as_the_library_did_and_never_shown ... ok
+test tab_frame::tests::a_destroyed_frame_forgets_its_messages_and_a_late_drop_is_harmless ... ok
+test tab_frame::tests::a_dpi_change_applies_the_suggested_rectangle ... ok
+test tab_frame::tests::a_hidden_window_is_never_the_foreground_window ... ok
+test platform::tests::a_subclass_whose_window_is_gone_leaves_a_later_window_alone ... ok
+test tab_frame::tests::popup_menus_give_every_handle_back ... ok
+test platform::tests::icons_a_live_window_shows_outlive_their_owner_and_go_with_the_window ... ok
+test tab_frame::tests::the_subclass_reports_activation_and_keeps_forced_style_bits ... ok
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.32s
+   Doc-tests sweetview_platform_window
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+$ cargo test -p sweetview-platform-loop
+     Running unittests src\lib.rs (sweetview_platform_loop)
+test com::tests::entering_twice_and_leaving_is_balanced ... ok
+test com::tests::entering_and_leaving_returns_every_handle ... ok
+test platform::tests::a_quit_request_is_taken_back_after_what_was_posted_ahead_of_it ... ok
+test loop_host::tests::target_is_reachable_inside_and_outside_a_run_and_a_nested_run_is_refused ... ok
+test platform::tests::a_waker_outlives_its_window_and_then_reports_failure ... ok
+test platform::tests::message_windows_give_back_every_handle_and_route_posts_to_their_closure ... ok
+test loop_host::tests::making_and_dropping_a_host_keeps_nothing_beyond_taos_own_loop ... ok
+test platform::tests::a_posted_close_leaves_the_window_and_its_owner_coherent ... ok
+test platform::tests::a_wake_from_another_thread_and_a_timer_are_delivered_on_this_thread ... ok
+test platform::tests::a_window_destroyed_by_other_code_disarms_its_owner ... ok
+test platform::tests::a_class_registered_with_another_procedure_is_refused ... ok
+test platform::tests::creating_and_dropping_returns_every_handle ... ok
+test platform::tests::due_timers_are_delivered_on_request_while_other_messages_are_queued ... ok
+test platform::tests::a_handler_may_drop_its_own_window_and_a_panic_does_not_unwind ... ok
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.89s
+   Doc-tests sweetview_platform_loop
+test crates\sweetview-platform-loop\src\windows.rs - platform::QueuedMessage (line 376) - compile fail ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+$ cargo test -p sweetview-runtime
+     Running unittests src\lib.rs (sweetview_runtime)
+test icon::tests::the_exact_size_else_the_next_larger_else_the_largest_is_picked ... ok
+test bridge::tests::bind_and_unbind_notices_name_the_function_as_json ... ok
+test bridge::tests::the_bind_script_lists_names_as_json_and_guards_the_top_frame ... ok
+test icon::tests::resampling_keeps_a_solid_colour_and_blends_an_edge ... ok
+test tray::tests::a_click_after_a_double_click_is_a_click_again ... ok
+test bridge::tests::the_init_script_guards_the_top_frame_and_posts_through_the_given_function ... ok
+test icon::tests::bytes_that_are_no_icon_are_refused_with_a_reason ... ok
+test menu::tests::ampersands_are_doubled ... ok
+test bridge::tests::line_separators_are_escaped_so_the_literal_is_valid_javascript ... ok
+test bridge::tests::a_call_keeps_its_params_text_exactly_and_other_messages_are_not_calls ... ok
+test bridge::tests::a_reply_passes_json_text_as_a_string_and_empty_as_undefined ... ok
+test tray::tests::a_click_left_alone_is_a_click_once_the_double_click_time_passes ... ok
+test tray::tests::a_double_click_is_a_double_click_and_no_click ... ok
+test tray::tests::two_clicks_further_apart_than_the_double_click_time_are_two_clicks ... ok
+test icon::tests::a_png_on_its_own_decodes_at_the_asked_size ... ok
+test menu::tests::only_ids_of_this_module_are_taken ... ok
+test icon::tests::each_size_comes_from_its_own_image_or_the_next_larger_one ... ok
+test tray::tests::only_left_and_right_button_ups_and_left_double_clicks_are_inputs ... ok
+test tray::tests::with_no_click_handler_no_timer_runs ... ok
+test activation::tests::a_second_acquisition_hands_off_and_release_frees_the_id ... ok
+test clipboard::tests::another_thread_is_refused ... ok
+test icon::tests::a_png_image_inside_the_ico_decodes ... ok
+test clipboard::tests::text_round_trips_and_the_clipboard_is_restored ... ok
+test activation::tests::another_thread_is_refused_but_schemes_are_validated_anywhere ... ok
+test notify::tests::another_thread_is_refused ... ok
+test shell::tests::refreshing_returns_on_any_thread ... ok
+test runtime::tests::a_job_may_clear_itself_and_a_cleared_timeout_never_runs ... ok
+test runtime::tests::a_pump_returns_though_a_handler_looked_at_the_queue_without_removing_anything ... ok
+test runtime::tests::another_thread_is_refused_and_can_still_wake ... ok
+test runtime::tests::a_quit_request_ends_a_pump_and_can_be_taken_back ... ok
+test runtime::tests::one_pump_dispatches_everything_that_was_waiting ... ok
+test screen::tests::screens_without_a_window ... ok
+test runtime::tests::the_blocking_run_serves_jobs_timeouts_and_wakes_and_ends_on_request ... ok
+test notify::tests::a_balloon_click_arrives_from_the_runtime_loop ... ok
+test window::tests::every_option_shows_in_the_window_styles_and_survives_a_style_rewrite ... ok
+test window::tests::adopting_a_handle_that_is_not_a_window_fails ... ok
+test window::tests::an_adopted_window_keeps_valid_icons_after_it_is_released ... ok
+test window::tests::owned_windows_give_every_handle_back ... ok
+test window::tests::click_through_and_hit_regions_set_the_style_bits ... ok
+test window::tests::events_reach_every_wrapper_and_close_follows_the_listeners ... ok
+test window::tests::a_tab_frame_keeps_the_system_frame_and_lays_out_a_strip_and_a_page ... ok
+test window::tests::frameless_maximise_uses_the_work_area_of_its_own_screen ... ok
+test window::tests::hidden_windows_take_their_exact_outer_bounds_and_dispose_destroys_them ... ok
+test window::tests::show_activates_unless_no_activate ... ok
+test result: ok. 44 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.83s
+   Doc-tests sweetview_runtime
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s

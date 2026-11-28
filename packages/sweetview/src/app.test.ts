@@ -14,7 +14,12 @@ const liveDesktop = onWindows || process.platform === "darwin";
 
 const htmlBytes = (html: string) => new TextEncoder().encode(html);
 
-function pumpUntil(done: () => boolean, budgetMs = 2000): void {
+// How long a live test waits for something that must happen. WebView2 itself can take seconds to
+// start on a loaded machine, and that is not what these tests measure; a wait ends as soon as
+// its condition holds.
+const LIVE_TEST_MS = 30_000;
+
+function pumpUntil(done: () => boolean, budgetMs = 10_000): void {
   const deadline = performance.now() + budgetMs;
   do {
     pumpEvents();
@@ -46,10 +51,11 @@ describe.if(liveDesktop)("desktop startup & deferred RPC", () => {
       view.dispose();
       win.dispose();
     }
-  });
+  }, LIVE_TEST_MS);
 
   test("a native watchdog also fires while webview_run blocks Bun", async () => {
-    // A broken watchdog could hang a blocking native run. Bound it from the parent.
+    // A broken watchdog could hang a blocking native run. Bound it from the parent: twenty seconds,
+    // which a run whose watchdog fires never needs and a slow start of WebView2 does not reach.
     const script = `
       import { createApp } from "@n1h/sweetview";
       let timeouts = 0;
@@ -67,10 +73,10 @@ describe.if(liveDesktop)("desktop startup & deferred RPC", () => {
       const next = await createApp({ url: "about:blank" });
       next.dispose();
     `;
-    const child = Bun.spawn([process.execPath, "-e", script], { stdout: "pipe", stderr: "inherit", timeout: 4000 });
+    const child = Bun.spawn([process.execPath, "-e", script], { stdout: "pipe", stderr: "inherit", timeout: 20_000 });
     expect(await child.exited).toBe(0);
     expect(JSON.parse(await new Response(child.stdout).text())).toEqual({ timeouts: 1, visible: false });
-  });
+  }, LIVE_TEST_MS);
 
   test("the ready handshake drains activation, acknowledges duplicates, and cancels the watchdog", async () => {
     _resetActivationForTest();
@@ -109,7 +115,7 @@ describe.if(liveDesktop)("desktop startup & deferred RPC", () => {
       view?.dispose();
       win.dispose();
     }
-  });
+  }, LIVE_TEST_MS);
 
   test("keeps startup behavior opt-in and cancels an armed watchdog on disposal", async () => {
     const win = new Window({ noActivate: true });
