@@ -16,6 +16,7 @@ The Windows goal is **not complete**. This file says what is on the main branch,
 - **No copies of the owner's applications** are made anywhere; they are upgraded in place on branches. Their names, paths and behaviour never enter anything tracked here.
 - **Hosted CI is not used.**
 - **The orchestrating session writes no code**; it delegates, integrates and documents.
+- **`rust-rewrite/evidence/` is not in git.** Run output, dumps and reports stay on the machine in that folder, which git ignores. Nothing is committed there, by any branch.
 
 ## Why the checklist reads complete and the goal is not
 
