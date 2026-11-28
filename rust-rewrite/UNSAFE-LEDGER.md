@@ -1,6 +1,6 @@
 # Unsafe ledger
 
-Rewritten by `bun rust-rewrite/verify.ts <platform> --ledger`. 289 uses in 21 files.
+Rewritten by `bun rust-rewrite/verify.ts <platform> --ledger`. 307 uses in 21 files.
 
 | File | Uses of `unsafe` |
 |---|---|
@@ -22,9 +22,9 @@ Rewritten by `bun rust-rewrite/verify.ts <platform> --ledger`. 289 uses in 21 fi
 | `crates/sweetview-platform-window/src/size_hint.rs` | 1 |
 | `crates/sweetview-platform-window/src/tab_frame.rs` | 16 |
 | `crates/sweetview-platform-window/src/tab_frame_tests.rs` | 12 |
-| `crates/sweetview-platform-window/src/test_support.rs` | 33 |
+| `crates/sweetview-platform-window/src/test_support.rs` | 56 |
 | `crates/sweetview-platform-window/src/windows.rs` | 39 |
-| `crates/sweetview-platform-window/src/windows_tests.rs` | 14 |
+| `crates/sweetview-platform-window/src/windows_tests.rs` | 9 |
 
 ## Reasons
 

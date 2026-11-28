@@ -12,15 +12,17 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::rc::Rc;
 
 use windows::core::{w, HSTRING, PCWSTR};
-use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM};
-use windows::Win32::Graphics::Gdi::{DeleteObject, InvalidateRect};
+use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
+use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_USE_IMMERSIVE_DARK_MODE};
+use windows::Win32::Graphics::Gdi::{ClientToScreen, DeleteObject, GetDC, GetPixel, InvalidateRect, ReleaseDC, CLR_INVALID};
 use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentProcessId, GetCurrentThreadId};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-  GetAsyncKeyState, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBDINPUT, KEYBD_EVENT_FLAGS,
+  GetAsyncKeyState, GetKeyState, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBDINPUT, KEYBD_EVENT_FLAGS,
   KEYEVENTF_KEYUP, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEINPUT, VIRTUAL_KEY, VK_LBUTTON, VK_MBUTTON, VK_RBUTTON,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-  AppendMenuW, BringWindowToTop, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DestroyWindow, FindWindowExW,
+  AppendMenuW, BringWindowToTop, GetClientRect, GetGUIThreadInfo, GetWindowTextW, SendMessageW, GUITHREADINFO, GUI_INMOVESIZE, MINMAXINFO,
+  WM_DROPFILES, WM_GETMINMAXINFO, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DestroyWindow, FindWindowExW,
   FindWindowW, GetCursorPos, GetForegroundWindow, GetIconInfo, GetWindowThreadProcessId, IsWindowVisible, MessageBoxW, PostMessageW,
   RegisterClassW, SetCursorPos, SetForegroundWindow, SetWindowPos, TrackPopupMenu, WindowFromPoint, HICON, HMENU, HWND_TOPMOST, ICONINFO,
   ICON_BIG, ICON_SMALL, MB_OK, MF_STRING, SWP_NOACTIVATE, SWP_SHOWWINDOW, TPM_NONOTIFY, TPM_RETURNCMD, WM_GETICON, WM_NCDESTROY,
@@ -153,7 +155,7 @@ pub fn popup_menus_open() -> usize {
 
 // ---- input ---------------------------------------------------------------------------
 
-fn send(inputs: &[INPUT]) -> bool {
+fn send_input(inputs: &[INPUT]) -> bool {
   // SAFETY: `inputs` is a slice of fully initialised INPUTs borrowed for the whole call, and the
   // size is INPUT's.
   let sent = unsafe { SendInput(inputs, size_of::<INPUT>() as i32) };
@@ -165,14 +167,14 @@ fn send(inputs: &[INPUT]) -> bool {
 pub fn send_key(virtual_key: u16, up: bool) -> bool {
   let flags = if up { KEYEVENTF_KEYUP } else { KEYBD_EVENT_FLAGS(0) };
   let ki = KEYBDINPUT { wVk: VIRTUAL_KEY(virtual_key), wScan: 0, dwFlags: flags, time: 0, dwExtraInfo: 0 };
-  send(&[INPUT { r#type: INPUT_KEYBOARD, Anonymous: INPUT_0 { ki } }])
+  send_input(&[INPUT { r#type: INPUT_KEYBOARD, Anonymous: INPUT_0 { ki } }])
 }
 
 /// Presses or releases the left mouse button where the pointer is, as real input.
 pub fn send_left_button(down: bool) -> bool {
   let flags = if down { MOUSEEVENTF_LEFTDOWN } else { MOUSEEVENTF_LEFTUP };
   let mi = MOUSEINPUT { dx: 0, dy: 0, mouseData: 0, dwFlags: flags, time: 0, dwExtraInfo: 0 };
-  send(&[INPUT { r#type: INPUT_MOUSE, Anonymous: INPUT_0 { mi } }])
+  send_input(&[INPUT { r#type: INPUT_MOUSE, Anonymous: INPUT_0 { mi } }])
 }
 
 /// Whether the system holds a key down: the last event of it that reached the system was a press.
@@ -269,6 +271,8 @@ extern "system" fn own_window_procedure(hwnd: HWND, message: u32, wparam: WPARAM
 /// drop. Not `Send`: it belongs to the thread that made it.
 pub struct OwnWindow {
   hwnd: HWND,
+  /// Set when the window is destroyed by other means (its own procedure, for one, on `WM_CLOSE`).
+  destroyed: Rc<std::cell::Cell<bool>>,
   _not_send: std::marker::PhantomData<Rc<()>>,
 }
 
@@ -287,8 +291,15 @@ impl OwnWindow {
     let made = unsafe { CreateWindowExW(WS_EX_TOOLWINDOW, class, &title, WS_POPUP, x, y, width, height, None, None, None, None) };
     let hwnd = made.ok()?;
     // Owned from here: a failure below still destroys the window.
-    let window = OwnWindow { hwnd, _not_send: std::marker::PhantomData };
-    OWN_HANDLERS.with(|all| all.borrow_mut().insert(window.handle_value(), Rc::new(on_message)));
+    let destroyed = Rc::new(std::cell::Cell::new(false));
+    let window = OwnWindow { hwnd, destroyed: destroyed.clone(), _not_send: std::marker::PhantomData };
+    let handler: MessageHandler = Rc::new(move |message| {
+      on_message(message);
+      if message == WM_NCDESTROY {
+        destroyed.set(true);
+      }
+    });
+    OWN_HANDLERS.with(|all| all.borrow_mut().insert(window.handle_value(), handler));
     // SAFETY: `window.hwnd` is the live window made above; the flags are constants.
     unsafe { SetWindowPos(window.hwnd, Some(HWND_TOPMOST), x, y, width, height, SWP_SHOWWINDOW | SWP_NOACTIVATE) }.ok()?;
     Some(window)
@@ -296,6 +307,11 @@ impl OwnWindow {
 
   pub fn handle_value(&self) -> isize {
     self.hwnd.0 as isize
+  }
+
+  /// False once the window has been destroyed, by its drop or by other means.
+  pub fn is_alive(&self) -> bool {
+    !self.destroyed.get()
   }
 
   /// Asks the OS to repaint the whole window: a `WM_PAINT` comes when the queue gives it its turn.
@@ -308,7 +324,184 @@ impl OwnWindow {
 
 impl Drop for OwnWindow {
   fn drop(&mut self) {
-    // SAFETY: `self.hwnd` is owned by this `OwnWindow` and destroyed only here.
+    if self.destroyed.get() {
+      return;
+    }
+    // SAFETY: `self.hwnd` is owned by this `OwnWindow`, still alive (its `WM_NCDESTROY` has not
+    // come), and destroyed only here.
     let _destroyed = unsafe { DestroyWindow(self.hwnd) };
   }
+}
+
+// ---- the test process ---------------------------------------------------------------
+
+/// Keeps COM loaded in this test process until it ends (`CoIncrementMTAUsage`, taken once and
+/// never given back). Each runtime test runs on a thread of its own and leaves that thread's
+/// apartment when it ends; the `windows` crate caches WinRT factories for the whole process (the
+/// system theme's `UISettings`), and when the last apartment is left COM unloads the DLLs they live
+/// in, so the next test's call through a cached factory runs freed code. An application's UI
+/// thread never leaves its apartment while the process lives.
+pub fn keep_com_loaded_for_the_test_process() {
+  static HELD: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+  HELD.get_or_init(|| {
+    // SAFETY: one call with no arguments; the cookie it returns is never given back, so the usage
+    // lasts until the process ends.
+    let _cookie = unsafe { windows::Win32::System::Com::CoIncrementMTAUsage() };
+  });
+}
+
+// ---- read back from the OS ---------------------------------------------------------------
+
+/// Sends `message` with integer parameters to the window with handle value `window` and returns
+/// its answer, as the OS or another application would send it. Only for messages whose
+/// parameters are integers.
+pub fn send(window: isize, message: u32, wparam: usize, lparam: isize) -> isize {
+  // SAFETY: `SendMessageW` validates the handle value; the parameters are integers, which callers
+  // pass only for messages that take integers.
+  unsafe { SendMessageW(hwnd_of(window), message, Some(WPARAM(wparam)), Some(LPARAM(lparam))) }.0
+}
+
+/// The window's title, as `GetWindowTextW` reads it.
+pub fn title_of(window: isize) -> String {
+  let mut text = [0u16; 512];
+  // SAFETY: `text` is a buffer owned by this frame for the call; its length comes from the slice.
+  let length = unsafe { GetWindowTextW(hwnd_of(window), &mut text) };
+  String::from_utf16_lossy(&text[..usize::try_from(length).unwrap_or(0)])
+}
+
+/// The size of the window's client area, in physical pixels.
+pub fn client_size(window: isize) -> (i32, i32) {
+  let mut rect = RECT::default();
+  // SAFETY: `rect` is a RECT owned by this frame for the call to fill.
+  let _read = unsafe { GetClientRect(hwnd_of(window), &mut rect) };
+  (rect.right - rect.left, rect.bottom - rect.top)
+}
+
+/// A point of the window's client area in screen pixels.
+pub fn client_to_screen(window: isize, x: i32, y: i32) -> (i32, i32) {
+  let mut point = POINT { x, y };
+  // SAFETY: `point` is a POINT owned by this frame for the call to convert in place.
+  let _converted = unsafe { ClientToScreen(hwnd_of(window), &mut point) };
+  (point.x, point.y)
+}
+
+/// The smallest outer size the OS lets the window be sized to (`MINMAXINFO.ptMinTrackSize` of a
+/// `WM_GETMINMAXINFO` sent to it), in physical pixels.
+pub fn min_track_size(window: isize) -> (i32, i32) {
+  let mut info = MINMAXINFO::default();
+  let address = (&raw mut info) as isize;
+  // SAFETY: `info` is a MINMAXINFO owned by this frame for the whole call; the message's lParam is
+  // its address, which the window's procedure fills, as the OS sends it.
+  let _answer = unsafe { SendMessageW(hwnd_of(window), WM_GETMINMAXINFO, None, Some(LPARAM(address))) };
+  (info.ptMinTrackSize.x, info.ptMinTrackSize.y)
+}
+
+/// Whether the window's title bar is dark (`DWMWA_USE_IMMERSIVE_DARK_MODE`); `None` when DWM
+/// refuses the read.
+pub fn uses_dark_title_bar(window: isize) -> Option<bool> {
+  let mut value = 0i32;
+  let address = (&raw mut value).cast::<c_void>();
+  // SAFETY: `value` is an i32 owned by this frame for the call, and the size passed is its size.
+  let read = unsafe { DwmGetWindowAttribute(hwnd_of(window), DWMWA_USE_IMMERSIVE_DARK_MODE, address, size_of::<i32>() as u32) };
+  read.ok().map(|()| value != 0)
+}
+
+/// The colour the screen shows at a point, as `0xRRGGBB`; `None` for a point no screen shows
+/// (`GetPixel`'s `CLR_INVALID`), rather than reading it as a colour.
+pub fn screen_pixel(x: i32, y: i32) -> Option<u32> {
+  // SAFETY: the screen's device context, released below; no window is passed.
+  let dc = unsafe { GetDC(None) };
+  // SAFETY: `dc` is the device context just taken; the point is passed by value.
+  let colour = unsafe { GetPixel(dc, x, y) };
+  // SAFETY: releases the device context taken above, once.
+  let _released = unsafe { ReleaseDC(None, dc) };
+  if colour.0 == CLR_INVALID {
+    return None;
+  }
+  // COLORREF is 0x00BBGGRR.
+  let (r, g, b) = (colour.0 & 0xff, (colour.0 >> 8) & 0xff, (colour.0 >> 16) & 0xff);
+  Some((r << 16) | (g << 8) | b)
+}
+
+/// Whether this thread is in the OS's move or size loop (`GUI_INMOVESIZE`), read by this thread's
+/// id: the foreground thread may be another process's.
+pub fn in_move_size() -> bool {
+  let mut info = GUITHREADINFO { cbSize: size_of::<GUITHREADINFO>() as u32, ..Default::default() };
+  // SAFETY: takes nothing and reads no memory.
+  let thread = unsafe { GetCurrentThreadId() };
+  // SAFETY: `info` is a GUITHREADINFO owned by this frame for the call, its size set.
+  let read = unsafe { GetGUIThreadInfo(thread, &mut info) };
+  read.is_ok() && (info.flags.0 & GUI_INMOVESIZE.0) != 0
+}
+
+/// Whether this thread's own key state has the left button down: its queue has seen the press,
+/// which is when the OS will start a move loop for it.
+pub fn this_thread_sees_left_down() -> bool {
+  // SAFETY: takes a key number and touches no memory of ours.
+  let state = unsafe { GetKeyState(i32::from(VK_LBUTTON.0)) };
+  state < 0
+}
+
+/// Moves the cursor to a screen point as a mouse would: an injected absolute move over the whole
+/// virtual desktop, which is what the OS's own move loop follows, then `SetCursorPos` so the point
+/// is exact (the injected move is rounded to 1/65535 of the desktop).
+pub fn move_cursor_as_input(x: i32, y: i32) -> bool {
+  use windows::Win32::UI::Input::KeyboardAndMouse::{MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_MOVE, MOUSEEVENTF_VIRTUALDESK};
+  use windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN};
+  // SAFETY: takes a metric index and touches no memory of ours.
+  let left = unsafe { GetSystemMetrics(SM_XVIRTUALSCREEN) };
+  // SAFETY: as above.
+  let top = unsafe { GetSystemMetrics(SM_YVIRTUALSCREEN) };
+  // SAFETY: as above.
+  let width = unsafe { GetSystemMetrics(SM_CXVIRTUALSCREEN) };
+  // SAFETY: as above.
+  let height = unsafe { GetSystemMetrics(SM_CYVIRTUALSCREEN) };
+  let scaled = |at: i32, from: i32, size: i32| ((f64::from(at - from) * 65535.0) / f64::from((size - 1).max(1))).round() as i32;
+  let mi = MOUSEINPUT {
+    dx: scaled(x, left, width),
+    dy: scaled(y, top, height),
+    mouseData: 0,
+    dwFlags: MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK,
+    time: 0,
+    dwExtraInfo: 0,
+  };
+  send_input(&[INPUT { r#type: INPUT_MOUSE, Anonymous: INPUT_0 { mi } }]) && set_cursor(x, y)
+}
+
+/// A file drop as the shell hands one to a window: a movable global block holding a `DROPFILES`
+/// header followed by the NUL-separated wide paths and a final NUL. The window that receives it
+/// owns it and frees it with `DragFinish`.
+pub fn shell_drop(paths: &[&str]) -> windows::Win32::Foundation::HGLOBAL {
+  use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE, GMEM_ZEROINIT};
+  use windows::Win32::UI::Shell::DROPFILES;
+  let text: Vec<u16> = paths.iter().flat_map(|path| path.encode_utf16().chain([0])).chain([0]).collect();
+  let header = DROPFILES { pFiles: size_of::<DROPFILES>() as u32, fWide: true.into(), ..Default::default() };
+  let bytes = size_of::<DROPFILES>() + text.len() * 2;
+  // SAFETY: GlobalAlloc takes its flags and size by value and reads no memory of ours.
+  let memory = unsafe { GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, bytes) }.expect("GlobalAlloc");
+  // SAFETY: `memory` is the block just allocated, owned by this function until it is handed over.
+  let base = unsafe { GlobalLock(memory) }.cast::<u8>();
+  assert!(!base.is_null(), "GlobalLock");
+  // SAFETY: the locked block is `bytes` long, at least a DROPFILES, which the `windows` crate lays
+  // out; the write is unaligned-safe.
+  unsafe { base.cast::<DROPFILES>().write_unaligned(header) };
+  let after_header = base.wrapping_add(size_of::<DROPFILES>());
+  // SAFETY: the block has exactly `text.len() * 2` bytes after the header (its size above), and
+  // `text` is a separate Rust buffer, so the ranges do not overlap.
+  unsafe { std::ptr::copy_nonoverlapping(text.as_ptr().cast::<u8>(), after_header, text.len() * 2) };
+  // SAFETY: balances the GlobalLock above on the same, still allocated block.
+  let _unlocked = unsafe { GlobalUnlock(memory) };
+  memory
+}
+
+/// Sends the window with handle value `window` a file drop of `paths`, as the shell does, and
+/// returns whether the window freed the drop (`DragFinish`), as the window that takes one must.
+pub fn send_file_drop(window: isize, paths: &[&str]) -> bool {
+  use windows::Win32::System::Memory::GlobalSize;
+  let drop = shell_drop(paths);
+  send(window, WM_DROPFILES, drop.0 as usize, 0);
+  // SAFETY: GlobalSize takes a handle value by value and only reports on it, 0 for a value that
+  // names no block; nothing of ours is read or written.
+  let size = unsafe { GlobalSize(drop) };
+  size == 0
 }

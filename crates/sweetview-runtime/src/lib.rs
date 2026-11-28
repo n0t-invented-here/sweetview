@@ -25,6 +25,8 @@ pub mod tray;
 
 #[cfg(all(test, windows))]
 mod loop_tests;
+#[cfg(all(test, windows))]
+mod window_os_tests;
 
 pub use error::{Error, Result};
 pub use sweetview_window_logic::{Point, Rect, ResizeEdge};
