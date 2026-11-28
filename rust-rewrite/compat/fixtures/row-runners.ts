@@ -441,13 +441,28 @@ export const RUNNERS: Record<string, Runner> = {
     const text = await ctx.ask(view, `fetch("${view.assetOrigin}/stream").then((r) => r.text())`);
     must(text === "streamed by method", "the streamed answer reaches the page", text);
   }),
-  "RawWebview#setFileDropHandler": desktop((_value, ctx) => {
+  "RawWebview#setFileDropHandler": desktop(async (_value, ctx) => {
     // A real drop reaching the handler with its path is proven in Rust (crates/sweetview-platform-webview/
-    // tests/file_drop.rs); here the call reaches the webview, set and cleared.
+    // tests/file_drop.rs); here the wrapper hands the binding a handler, which calls the one given,
+    // and then its removal.
     const view = ctx.webview();
-    view.setFileDropHandler(() => {});
-    view.setFileDropHandler(null);
-    must(view.unsafeHandle !== null, "the webview takes the handler and its removal");
+    const { engineOf } = await import("../../../packages/sweetview-native/src/internal");
+    const engine = engineOf(view)! as unknown as { setFileDropHandler(handler: ((paths: string[]) => void) | null): number };
+    const real = engine.setFileDropHandler.bind(engine);
+    const handed: (((paths: string[]) => void) | null)[] = [];
+    engine.setFileDropHandler = (handler) => {
+      handed.push(handler);
+      return real(handler);
+    };
+    const got: string[][] = [];
+    try {
+      view.setFileDropHandler((paths) => got.push(paths));
+      handed[0]?.(["C:\compat\one.txt"]);
+      view.setFileDropHandler(null);
+    } finally {
+      engine.setFileDropHandler = real;
+    }
+    must(handed.length === 2 && typeof handed[0] === "function" && handed[1] === null && same(got, [["C:\compat\one.txt"]]), "the handler and its removal reach the binding, and the binding's calls reach the handler", { handed: handed.map((h) => typeof h), got });
   }),
   "RawWebview#setAllowExternalDrop": desktop((_value, ctx) => {
     const view = ctx.webview();
