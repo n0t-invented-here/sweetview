@@ -571,3 +571,14 @@ thread_local! {
 pub fn refuse_next_drop_script() {
     REFUSE_NEXT_DROP_SCRIPT.with(|refuse| refuse.set(true));
 }
+
+/// Brings the top-level window `webview` is in to the front and gives it the
+/// keyboard focus, as a click in it would (`SetForegroundWindow`; the system
+/// may refuse it on a desktop where another program has the input, which
+/// [`not_in_front`] then reports).
+pub fn bring_to_front(webview: &Webview) {
+    use windows::Win32::UI::WindowsAndMessaging::SetForegroundWindow;
+    let root = root_of(webview);
+    // SAFETY: `root` is a top-level window of this thread; the call reads no memory of ours.
+    let _ = unsafe { SetForegroundWindow(root) };
+}

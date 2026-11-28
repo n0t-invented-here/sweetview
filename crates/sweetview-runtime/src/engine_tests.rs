@@ -214,9 +214,16 @@ fn a_download_is_left_to_webview2_which_keeps_an_existing_file_and_shows_its_int
     let folder = std::env::temp_dir().join(format!("sweetview-engine-download-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&folder);
     std::fs::create_dir_all(&folder).unwrap();
+    let mut judged = Vec::new();
     for host in HOSTS {
       let (engine, _windows) = make(host, |_| ());
+      if host == "own window" {
+        engine.show_own_window();
+      }
       load(&runtime, &engine, PAGE);
+      // Shown and brought to the front, as a person's window is when they click a link in it.
+      webview_of(&engine, test_support::bring_to_front);
+      settle(&runtime, Duration::from_millis(200));
       let original = webview_of(&engine, test_support::download_folder);
       webview_of(&engine, |webview| test_support::set_download_folder(webview, &folder.to_string_lossy()));
       let existing = folder.join("sweetview-download.txt");
@@ -228,10 +235,17 @@ fn a_download_is_left_to_webview2_which_keeps_an_existing_file_and_shows_its_int
       );
       assert!(pump_until(&runtime, Duration::from_secs(10), || !watch.handled().is_empty()), "{host}: the download started");
       let saved = pump_until(&runtime, Duration::from_secs(10), || std::fs::read_dir(&folder).map(|d| d.count()).unwrap_or(0) >= 2);
-      let opened = pump_until(&runtime, Duration::from_secs(5), || webview_of(&engine, test_support::download_dialog_open) == Some(true));
       // WebView2 opens its dialog for a webview in front only, and closes it when the webview
-      // loses the focus: on a desktop where another window is in front, it cannot be judged.
-      let away = if opened { None } else { webview_of(&engine, test_support::not_in_front) };
+      // loses the focus: the webview's place in front is watched through the whole wait, and a
+      // wait during which another window came in front cannot be judged.
+      let mut away: Option<String> = webview_of(&engine, test_support::not_in_front);
+      let opened = pump_until(&runtime, Duration::from_secs(5), || {
+        if away.is_none() {
+          away = webview_of(&engine, test_support::not_in_front);
+        }
+        webview_of(&engine, test_support::download_dialog_open) == Some(true)
+      });
+      let away = if opened { None } else { away };
       webview_of(&engine, test_support::close_download_dialog);
       let names: Vec<String> = std::fs::read_dir(&folder).unwrap().filter_map(|e| e.ok()).map(|e| e.file_name().to_string_lossy().into_owned()).collect();
       let kept = std::fs::read_to_string(&existing).unwrap_or_default();
@@ -242,7 +256,10 @@ fn a_download_is_left_to_webview2_which_keeps_an_existing_file_and_shows_its_int
       assert_eq!(kept, "already here", "{host}: the existing file was kept");
       match &away {
         Some(reason) => eprintln!("-- {host}: WebView2's own download interface: not run: {reason}"),
-        None => assert!(opened, "{host}: WebView2's own download interface opened"),
+        None => {
+          assert!(opened, "{host}: WebView2's own download interface opened");
+          judged.push(host);
+        }
       }
       drop(watch);
       engine.destroy();
@@ -252,6 +269,7 @@ fn a_download_is_left_to_webview2_which_keeps_an_existing_file_and_shows_its_int
       }
     }
     let _ = std::fs::remove_dir_all(&folder);
+    assert!(!judged.is_empty(), "not judged: in no host was the webview in front through the whole wait");
   });
 }
 

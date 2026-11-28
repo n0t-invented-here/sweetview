@@ -72,7 +72,7 @@ thread_local! {
     /// `WM_SIZE` sizes (once there is one). An entry goes at `WM_NCDESTROY`,
     /// so a widget destroyed with its parent is never destroyed again under a
     /// handle value the system may have given to another window since.
-    static WIDGETS: RefCell<HashMap<isize, (u64, Option<ICoreWebView2Controller>)>> = RefCell::new(HashMap::new());
+    static WIDGETS: RefCell<HashMap<isize, (u64, Option<Held>)>> = RefCell::new(HashMap::new());
     static NEXT_WIDGET: Cell<u64> = const { Cell::new(1) };
     /// How many webviews of this thread are alive: with the last, the thread's
     /// environment is let go of (`environment.rs`).
@@ -110,7 +110,7 @@ fn note_first_shown(hwnd: HWND) {
     if FIRST_SHOWN.with(|shown| shown.borrow().contains_key(&key(hwnd))) {
         return;
     }
-    let controller = WIDGETS.try_with(|widgets| widgets.borrow().get(&key(hwnd)).and_then(|(_, c)| c.clone())).ok().flatten();
+    let controller = WIDGETS.try_with(|widgets| widgets.borrow().get(&key(hwnd)).and_then(|(_, c)| c.as_ref().map(|held| held.0.clone()))).ok().flatten();
     let colour = controller.and_then(|c| c.cast::<ICoreWebView2Controller2>().ok()).and_then(|c| {
         let mut colour = webview2_com::Microsoft::Web::WebView2::Win32::COREWEBVIEW2_COLOR::default();
         // SAFETY: `c` is a COM reference this frame holds (from `cast`); `colour` is a local for
@@ -118,6 +118,26 @@ fn note_first_shown(hwnd: HWND) {
         unsafe { c.DefaultBackgroundColor(&mut colour) }.ok().map(|()| (colour.A, colour.R, colour.G, colour.B))
     });
     FIRST_SHOWN.with(|shown| shown.borrow_mut().insert(key(hwnd), colour));
+}
+
+/// A widget's controller reference in the thread's table. It is always taken
+/// out of the table before it is released: a release can send the widget a
+/// message, whose procedure reads the table. Tests only: a release made while
+/// the table is borrowed is counted.
+struct Held(ICoreWebView2Controller);
+
+#[cfg(test)]
+thread_local! {
+    static RELEASED_IN_BORROW: Cell<u32> = const { Cell::new(0) };
+}
+
+#[cfg(test)]
+impl Drop for Held {
+    fn drop(&mut self) {
+        if WIDGETS.try_with(|widgets| widgets.try_borrow_mut().is_err()).unwrap_or(false) {
+            RELEASED_IN_BORROW.with(|count| count.set(count.get() + 1));
+        }
+    }
 }
 
 fn key(hwnd: HWND) -> isize {
@@ -186,7 +206,7 @@ extern "system" fn window_moved(_hook: HWINEVENTHOOK, _event: u32, hwnd: HWND, o
                         // SAFETY: two handle values; the call reads no memory through them.
                         widget == hwnd || unsafe { IsChild(hwnd, widget) }.as_bool()
                     })
-                    .filter_map(|(_, (_, controller))| controller.clone())
+                    .filter_map(|(_, (_, controller))| controller.as_ref().map(|held| held.0.clone()))
                     .collect()
             })
             .unwrap_or_default();
@@ -245,7 +265,7 @@ fn fill(widget: HWND, parent: HWND) {
 }
 
 fn size_controller(hwnd: HWND) {
-    let controller = WIDGETS.try_with(|widgets| widgets.borrow().get(&key(hwnd)).and_then(|(_, c)| c.clone())).ok().flatten();
+    let controller = WIDGETS.try_with(|widgets| widgets.borrow().get(&key(hwnd)).and_then(|(_, c)| c.as_ref().map(|held| held.0.clone()))).ok().flatten();
     let (Some(controller), Some(client)) = (controller, client_rect(hwnd)) else { return };
     // SAFETY: `controller` is a COM reference this frame owns; the rectangle is passed by value.
     let _ = unsafe { controller.SetBounds(client) };
@@ -315,7 +335,7 @@ impl Widget {
     fn set_controller(&self, controller: &ICoreWebView2Controller) {
         WIDGETS.with(|widgets| {
             if let Some(entry) = widgets.borrow_mut().get_mut(&key(self.hwnd)).filter(|(n, _)| *n == self.number) {
-                entry.1 = Some(controller.clone());
+                entry.1 = Some(Held(controller.clone()));
             }
         });
     }
@@ -877,6 +897,26 @@ mod tests {
         drop(widget);
         drop(environment);
         super::super::environment::release_shared();
+    }
+
+    // X3: a widget's controller reference is released only once the thread's table is no longer
+    // borrowed (a release can send the widget a message, whose procedure reads the table): when
+    // the webview drops, and when the widget goes with its parent first.
+    #[test]
+    fn a_controller_reference_is_released_outside_the_widget_table() {
+        use tao::event_loop::EventLoopBuilder;
+        use tao::platform::windows::EventLoopBuilderExtWindows;
+        let event_loop = EventLoopBuilder::new().with_any_thread(true).build();
+        let before = RELEASED_IN_BORROW.with(Cell::get);
+        let parent = tao::window::WindowBuilder::new().with_visible(false).build(&event_loop).expect("parent");
+        let webview = Webview::create(&BorrowedWindow::of(&parent), Layout::Fill, false, None).expect("webview");
+        drop(webview);
+        let other = tao::window::WindowBuilder::new().with_visible(false).build(&event_loop).expect("parent");
+        let orphaned = Webview::create(&BorrowedWindow::of(&other), Layout::Fill, false, None).expect("webview");
+        sweetview_platform_window::destroy_now(other);
+        drop(orphaned);
+        assert_eq!(RELEASED_IN_BORROW.with(Cell::get), before, "every release was made outside the table's borrow");
+        drop(parent);
     }
 
     // W3: a failure after WebView2 has handed the controller over and before the `Webview`
