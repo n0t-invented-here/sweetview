@@ -204,7 +204,7 @@ mod tests {
     use crate::engine::{Engine, Host, SizeHint};
     crate::loop_tests::use_test_webview_profile();
     on_ui_thread(|runtime| {
-      let engine = Engine::create(false, Host::Own).expect("webview");
+      let engine = Engine::create(false, Host::Own, None).expect("webview");
       engine.set_title("rt hook own foreground webview");
       engine.set_html("<!doctype html><p>hook own foreground</p>");
       engine.set_size(420, 300, SizeHint::None);

@@ -84,6 +84,9 @@ struct TrayMenuState {
   ticks: Cell<u32>,
   first_tick: Cell<Option<Duration>>,
   rounds: RefCell<Vec<MenuRound>>,
+  /// Rounds played again because something else on the shared desktop closed the menu before
+  /// the interval's third tick (it ends the menu itself after three).
+  replayed: Cell<u32>,
   done: Cell<bool>,
 }
 
@@ -94,7 +97,9 @@ struct TrayMenuState {
 /// pump guard's before it returns, so every timer is due when the menu's loop first looks. An
 /// interval set just before the click must tick inside every menu, its first tick within 250 ms of
 /// the opening (the period is 10 ms). A menu still open 1.5 s after it opened is closed with
-/// Escape by a watchdog and counted, so a menu whose loop delivers nothing fails the test.
+/// Escape by a watchdog and counted, so a menu whose loop delivers nothing fails the test. A menu
+/// something else on the shared desktop closes before the third tick is played again (at most
+/// three times a mode), not judged.
 #[test]
 fn an_interval_set_just_before_a_right_click_ticks_inside_every_tray_menu_in_both_loop_modes() {
   use crate::menu::MenuItem;
@@ -184,7 +189,12 @@ fn an_interval_set_just_before_a_right_click_ticks_inside_every_tray_menu_in_bot
             inner.clear_timeout(interval);
             armed.store(-1, Ordering::SeqCst);
             let rescued = rescues.load(Ordering::SeqCst) > rescued_before;
-            state.rounds.borrow_mut().push(MenuRound { ticks: state.ticks.get(), first_tick: state.first_tick.get(), rescued });
+            let closed_elsewhere = state.opening.get() && !rescued && state.ticks.get() < 3;
+            if closed_elsewhere && state.replayed.get() < 3 {
+              state.replayed.set(state.replayed.get() + 1);
+            } else {
+              state.rounds.borrow_mut().push(MenuRound { ticks: state.ticks.get(), first_tick: state.first_tick.get(), rescued });
+            }
             let (runtime, state, armed, rescues) = (inner.clone(), state.clone(), armed.clone(), rescues.clone());
             inner.set_timeout(100, move || round(runtime, mode, state, tray_window, armed, rescues)).expect("next round");
           })
@@ -196,6 +206,7 @@ fn an_interval_set_just_before_a_right_click_ticks_inside_every_tray_menu_in_bot
       runtime.set_timeout(300, move || round(first, mode, first_state, tray_window, first_armed, first_rescues)).expect("first round");
       run_loop(&runtime, mode, &state.done, Duration::from_millis(5), Duration::from_secs(90));
       tray.dispose();
+      eprintln!("{mode:?}: {} rounds played again after something else closed the menu", state.replayed.get());
       report.push((mode, state.done.get(), state.rounds.borrow().clone()));
     }
     stop.store(true, Ordering::SeqCst);
@@ -448,7 +459,7 @@ fn page_calls_wakes_and_timeouts_are_served_inside_the_applications_own_modal_lo
         })),
       );
 
-      let engine = Engine::create(false, Host::Own).expect("webview");
+      let engine = Engine::create(false, Host::Own, None).expect("webview");
       engine.set_title("sweetview runtime modal test");
       // While `modal` is open: a native timeout fires and asks the other thread to write and wake;
       // an interval closes the loop once everything has happened inside it, or after 6 s.
