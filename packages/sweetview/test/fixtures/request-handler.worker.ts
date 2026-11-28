@@ -6,9 +6,10 @@ let pending = () => {};
 let streamEof = () => {};
 
 // "pace" mode. /live writes its next part only once the page has acknowledged the one before
-// (or 3 s have passed): `liveAcks` records, per part, whether the page had it in time. /bulk is
+// (or 2 s have passed): `liveAcks` records, per part, whether the page had it in time. /bulk is
 // BULK_BYTES of a pattern, produced as fast as the stream is read; the page reports how much it
-// has read, and `maxAhead` is the most the worker has produced beyond that.
+// has read, and `maxAhead` is the most the worker has produced beyond that (bytes held by the
+// ring, the binding or WebView2).
 const BULK_BYTES = 24 * 1024 * 1024 + 4321;
 const BULK_PART = 256 * 1024;
 const liveAcks: boolean[] = [];
@@ -22,7 +23,7 @@ const waitForAck = (n: number) =>
     const timer = setTimeout(() => {
       ackWaiter = undefined;
       resolve(false);
-    }, 3000);
+    }, 2000);
     const check = () => {
       if (acked < n) return;
       clearTimeout(timer);

@@ -246,20 +246,24 @@ test.if(live)("returns clean errors for synchronous Promises and absent worker h
   expect((await runLive("request-only")).report).toEqual({ status: 200, body: "<!doctype html><p id=dynamic>worker HTML</p>" });
 }, 70_000);
 
-// D44. A worker's streamed body on a live WebView2: each chunk reaches the page while the
-// response is open (the worker writes the next only once the page has acknowledged the last),
-// and a worker that produces far faster than the page reads is held back per response, so what
-// it has produced beyond what the page has read stays bounded, with every byte arriving in order.
-test.if(live && process.platform === "win32")("a worker's streamed body reaches the page as it is written, and a fast worker is held to a slow page", async () => {
-  const { report } = await runLive("pace");
+// D44. A worker's streamed body on a live WebView2: every byte reaches the page in order, and the
+// binding holds at most its backlog limit plus what was in flight for the page. WebView2 reads
+// each chunk out of the binding as it is written but hands the page none of the body before it
+// ends (WebView2Feedback #3519), so the page cannot acknowledge a part before the next is written,
+// and the whole body waits in WebView2 until the end. Both are asserted as measured: if a WebView2
+// Runtime starts handing the page bytes before the end, this fails, streaming works, and D44, the
+// docs and these assertions are updated.
+test.if(live && process.platform === "win32")("a worker's streamed body arrives whole and in order, the binding's backlog stays bounded, and WebView2 hands the page the body at its end", async () => {
+  const { report, maxBacklog } = await runLive("pace");
   expect(report.live).toBe("live one;live two;live three;");
-  // Per part: the page had it within 3 s, before the worker wrote the next part or ended.
-  expect(report.pacing.liveAcks).toEqual([true, true, true]);
   const bulkBytes = 24 * 1024 * 1024 + 4321;
   expect(report.bulk).toEqual({ total: bulkBytes, bad: null });
   expect(report.pacing.produced).toBe(bulkBytes);
-  // What can be ahead of the page's last report: the native backlog (1 MiB, plus what the ring
-  // held when the pause was sent: 1 MiB), one 256 KiB part, the 1 MiB between the page's
-  // reports, and what WebView2 itself has read and the page has not.
-  expect(report.pacing.maxAhead).toBeLessThan(8 * 1024 * 1024);
+  // The binding: its 1 MiB limit, plus what the 1 MiB ring held when the worker was paused, plus one 256 KiB part.
+  console.log(`request-handler.test: the binding held at most ${maxBacklog} bytes; the worker was at most ${report.pacing.maxAhead} bytes ahead of the page`);
+  expect(maxBacklog).toBeLessThanOrEqual(2 * 1024 * 1024 + 256 * 1024);
+  // WebView2 (measured, the canary): no part reached the page before the next was written...
+  expect(report.pacing.liveAcks).toEqual([false, false, false]);
+  // ...and the page read nothing of the body before the worker had produced all of it.
+  expect(report.pacing.maxAhead).toBe(bulkBytes);
 }, 30_000);

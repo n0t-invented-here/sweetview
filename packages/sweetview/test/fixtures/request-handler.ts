@@ -1,4 +1,5 @@
 import { ASSET_ORIGIN, FRAMES_ORIGIN, createApp, type NativeResponse } from "@n1h/sweetview";
+import { scheduleNativeTimeout, webviewResponseBacklog } from "@n1h/sweetview-native/internal";
 
 const mode = process.env.SWEETVIEW_REQUEST_TEST;
 const isWorkerCase = mode === "worker";
@@ -144,6 +145,21 @@ const app = await createApp<{
     },
   },
 });
+// "pace": the most bytes the binding held unread for the page at once, over every response, looked
+// at every 5 ms (request ids count up from 1 in this process, and the fixture makes few requests).
+let maxBacklog = 0;
+let stopLooking = () => {};
+if (mode === "pace") {
+  const look = () => {
+    const handle = app.webview?.raw.unsafeHandle ?? null;
+    if (handle === null) return;
+    let held = 0;
+    for (let id = 1n; id <= 64n; id++) held += webviewResponseBacklog(handle, id);
+    maxBacklog = Math.max(maxBacklog, held);
+    stopLooking = scheduleNativeTimeout(5, look);
+  };
+  stopLooking = scheduleNativeTimeout(5, look);
+}
 app.onEvent(({ name }) => {
   if (name === "streamEof") streamEof = true;
   if (name === "pending") {
@@ -154,7 +170,8 @@ app.onEvent(({ name }) => {
 
 try {
   app.run();
-  console.log("RESULT " + JSON.stringify({ report, pending, timedOut, escaped, assetOrigin: ASSET_ORIGIN, framesOrigin: FRAMES_ORIGIN }));
+  stopLooking();
+  console.log("RESULT " + JSON.stringify({ report, pending, timedOut, escaped, maxBacklog, assetOrigin: ASSET_ORIGIN, framesOrigin: FRAMES_ORIGIN }));
 } finally {
   app.dispose();
 }

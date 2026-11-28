@@ -1,7 +1,16 @@
-//! Whether a streamed response streams: on a real WebView2, the page reads a
-//! response's body with a `ReadableStream` reader while the response is still
-//! open, and each chunk must reach it before the next is written and before
-//! the end. Written from the UI thread and from another thread.
+//! What a streamed response does on a real WebView2 (DECISIONS D44): the page
+//! reads the body with a `ReadableStream` reader while the response is open,
+//! written from the UI thread and from another thread, small chunks and a
+//! large fast body. Every byte arrives, in order; the binding never holds more
+//! than the backlog limit and one chunk for a writer off the UI thread; the UI
+//! thread's writes never wait.
+//!
+//! And what WebView2 does with it: the binding's `Read` hands each chunk over
+//! as soon as it is written (WebView2 reads it at once), but WebView2 gives the
+//! page none of the body before the response has ended (WebView2Feedback
+//! #3519). That is asserted as measured, so a WebView2 Runtime that starts
+//! handing the page bytes before the end fails here: then streaming works, and
+//! D44, `docs/webview-library.md` and these assertions are updated.
 #![cfg(windows)]
 
 mod common;
@@ -45,6 +54,7 @@ fn bulk_reader_js(url: &str) -> String {
         const i = total + k;
         if (value[k] !== (((i % 251) ^ (Math.floor(i / 65536) % 256)) & 255)) bad = i;
       }}
+      if (total === 0) post({{ tag: 'bulk-first' }});
       total += value.length;
       if (total >= nextPause) {{
         nextPause += 262144;
@@ -119,7 +129,8 @@ fn hold_request(view: &View, path: &'static str) -> Rc<Cell<Option<u64>>> {
 }
 
 #[test]
-fn a_chunk_reaches_the_page_while_the_response_is_open() {
+fn a_streamed_body_arrives_whole_and_in_order_and_webview2_gives_it_to_the_page_at_its_end() {
+    eprintln!("-- WebView2 Runtime {}", wry::webview_version().unwrap_or_default());
     let mut ctx = Ctx::new();
     let view = ctx.view();
     ctx.load_index(&view);
@@ -133,7 +144,8 @@ fn a_chunk_reaches_the_page_while_the_response_is_open() {
     assert_eq!(responder.begin(id, 200, Some(r#"{"Content-Type":"text/plain; charset=utf-8"}"#)), ErrorCode::Ok);
     assert_eq!(responder.write_chunk(id, b"chunk one;"), ErrorCode::Ok);
     let first = wait_for_text(&mut ctx, &view, "ui", "chunk one;");
-    eprintln!("   chunk 1 reached the page while open: {first:?}");
+    let head_before_end = view.take("ui-head").is_some();
+    eprintln!("   chunk 1 reached the page while open: {first:?}; fetch() had resolved: {head_before_end}");
     assert_eq!(responder.write_chunk(id, b"chunk two;"), ErrorCode::Ok);
     let second = wait_for_text(&mut ctx, &view, "ui", "chunk two;");
     eprintln!("   chunk 2 reached the page while open: {second:?}");
@@ -141,8 +153,6 @@ fn a_chunk_reaches_the_page_while_the_response_is_open() {
     let done = ctx.wait(&view, "ui-done");
     eprintln!("   after the end: {done}");
     assert_eq!(done["text"], "chunk one;chunk two;", "every byte, in order: {done}");
-    assert!(first.is_some(), "chunk 1 reached the page's reader within {BOUND:?} while the response was open");
-    assert!(second.is_some(), "chunk 2 reached the page's reader within {BOUND:?} while the response was open");
 
     eprintln!("-- written from another thread, each chunk after the page has the one before");
     let held = hold_request(&view, "/live-thread");
@@ -187,15 +197,16 @@ fn a_chunk_reaches_the_page_while_the_response_is_open() {
     eprintln!("   each chunk reached the page before the next was written: {acked:?}; at the end: {done:?}");
     let done = done.expect("the page read to the end");
     assert_eq!(done["text"], "first;second;third;", "every byte, in order: {done}");
-    assert_eq!(acked, vec![true, true, true], "each chunk reached the page within {BOUND:?}, before the next and before the end");
 
     eprintln!("-- a fast writer on another thread, a slow reader: the backlog stays bounded, nothing lost or reordered");
     let held = hold_request(&view, "/bulk");
     view.eval(&bulk_reader_js("/bulk"));
     assert!(ctx.pump(Some(&view), Duration::from_secs(10), || held.get().is_some()), "the request reached the handler");
     let id = held.get().unwrap();
+    let ended = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let writer = {
         let responder = responder.clone();
+        let ended = ended.clone();
         thread::spawn(move || {
             assert_eq!(responder.begin(id, 200, Some(r#"{"Content-Type":"application/octet-stream"}"#)), ErrorCode::Ok);
             let (mut sent, mut max_backlog, mut held_back) = (0usize, 0usize, 0u32);
@@ -211,10 +222,20 @@ fn a_chunk_reaches_the_page_while_the_response_is_open() {
                 sent += n;
             }
             assert_eq!(responder.end(id), ErrorCode::Ok);
+            ended.store(true, std::sync::atomic::Ordering::SeqCst);
             (sent, max_backlog, held_back)
         })
     };
-    let done = ctx.wait_for(&view, "bulk-done", Duration::from_secs(120));
+    let mut bulk_first_before_end = None;
+    let mut done = None;
+    ctx.pump(Some(&view), Duration::from_secs(120), || {
+        if bulk_first_before_end.is_none() && view.take("bulk-first").is_some() {
+            bulk_first_before_end = Some(!ended.load(std::sync::atomic::Ordering::SeqCst));
+        }
+        done = done.take().or_else(|| view.take("bulk-done"));
+        done.is_some()
+    });
+    let done = done.expect("the page read the fast writer's body to the end");
     let (sent, max_backlog, held_back) = writer.join().expect("the writer thread");
     eprintln!("   wrote {sent} bytes; most unread at once {max_backlog}; writes held back {held_back}; the page: {done}");
     assert_eq!(done["error"], Value::Null, "{done}");
@@ -247,4 +268,11 @@ fn a_chunk_reaches_the_page_while_the_response_is_open() {
 
     drop(view);
     ctx.settle(None, Duration::from_millis(200));
+
+    // Whether the page saw anything before the end, asserted once every scenario has run and printed.
+    eprintln!("-- the page saw bytes before the end: UI thread {first:?} {second:?} (fetch resolved {head_before_end}); another thread {acked:?}; the fast writer's body {bulk_first_before_end:?}");
+    let flipped = "WebView2 handed the page a response before its end: streaming works now; update D44, docs/webview-library.md and these assertions";
+    assert_eq!((first, second, head_before_end), (None, None, false), "{flipped}");
+    assert_eq!(acked, vec![false, false, false], "{flipped}");
+    assert_eq!(bulk_first_before_end, Some(false), "{flipped}");
 }
