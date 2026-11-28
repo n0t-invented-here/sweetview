@@ -49,9 +49,6 @@ pub fn outer_size_for_content(content: Dips, scale: f64, edges: (i32, i32)) -> (
   (width.saturating_add(edges.0.max(0)), height.saturating_add(edges.1.max(0)))
 }
 
-/// A `width` x `height` rectangle centred in `area`. A side larger than the
-/// area's is cut to it, so the whole window, its title bar included, is on
-/// the screen.
 /// A `width` x `height` rectangle centred in `area`, keeping its size: one
 /// wider than the area overhangs both sides equally, one taller keeps its top
 /// at the area's top. The tab frame's default placement (no bounds, no
@@ -62,6 +59,9 @@ pub fn centred_keeping_size(width: i32, height: i32, area: Rect) -> Rect {
   Rect::new(x, y, width, height)
 }
 
+/// A `width` x `height` rectangle centred in `area`. A side larger than the
+/// area's is cut to it, so the whole window, its title bar included, is on
+/// the screen.
 pub fn centred(width: i32, height: i32, area: Rect) -> Rect {
   let width = width.min(area.width).max(1);
   let height = height.min(area.height).max(1);
