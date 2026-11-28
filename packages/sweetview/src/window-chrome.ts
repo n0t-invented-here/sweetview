@@ -80,7 +80,9 @@ export function windowChromeMethods(
   // that does nothing. This module loads in pages too, so it asks the platform itself rather than
   // the native package's macosKeepsTagPath().
   if (typeof process !== "undefined" && process.platform === "darwin") return table as WindowChromeMethodTable;
-  return { ...table, "window.systemMenu": () => window.showSystemMenu?.() };
+  // A window object without showSystemMenu gets no window.systemMenu: an application's own method of that name stays its own.
+  if (window.showSystemMenu === undefined) return table as WindowChromeMethodTable;
+  return { ...table, "window.systemMenu": () => window.showSystemMenu!() };
 }
 
 /**
