@@ -260,6 +260,29 @@ describe.skipIf(!onWindows)("Windows behaviour an application notices", () => {
     const failed = await runChild(fixture("native-path.ts"), [], { SWEETVIEW_NATIVE_PATH: missing });
     expect(String(failed.error)).toStartWith(`sweetview: the native binding could not be loaded from ${missing} (SWEETVIEW_NATIVE_PATH): `);
   }, 60_000);
+
+  // "What changed for every application", the macOS engine: with @n1h/sweetview-webview-bun installed
+  // (this workspace has it, for macOS), a compile for Windows bundles none of it, and one for macOS
+  // bundles its sources and its native library. The bundled inputs are read from the metafile.
+  test("a Windows executable leaves the installed macOS engine out; a macOS one keeps it", () => {
+    const dir = tempDir("engine");
+    const inputs = (target: string) => {
+      const meta = join(dir, `${target}.json`);
+      const built = Bun.spawnSync([process.execPath, "build", "--compile", `--target=${target}`, "--minify", `--metafile=${meta}`, "app.ts", "--outfile", join(dir, target)], {
+        cwd: join(root, "demos", "menubar-only"),
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: 120_000,
+      });
+      expect({ target, exit: built.exitCode, stderr: built.exitCode === 0 ? "" : built.stderr.toString() }).toEqual({ target, exit: 0, stderr: "" });
+      return Object.keys(JSON.parse(readFileSync(meta, "utf8")).inputs as Record<string, unknown>)
+        .filter((input) => input.includes("sweetview-webview-bun"))
+        .map((input) => input.replace(/^.*sweetview-webview-bun\//, ""))
+        .sort();
+    };
+    expect(inputs("bun-windows-x64")).toEqual([]);
+    expect(inputs("bun-darwin-arm64")).toEqual(["build/libwebview.dylib", "src/ffi.ts", "src/index.ts", "src/input-hooks.ts", "src/keyboard-hook.ts", "src/mouse-hook.ts", "src/permissions.ts", "src/webview.ts"]);
+  }, 300_000);
 });
 
 // Part A, "Scripts run by path" and the subpaths of `@n1h/sweetview-native`: what an installed
