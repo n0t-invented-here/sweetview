@@ -62,13 +62,9 @@ The Rust exists. The proof is a simulated message, a test hook, a test that did 
 | A real change of display scale; a second monitor | The tab frame is sent the message with the scale unchanged. Nothing else. |
 | Tab keyboard shortcuts | Only Ctrl+T and Ctrl+W are typed for real; the other eleven go through a test hook. |
 | Snap and shadow of the tabbed frame | No test. |
-| Per-pixel transparency of a `transparent` window | No pixel is read. |
 | "No click-through flip while a mouse button is down" | Pure logic only; never with a held button. |
-| Requests from a shared worker; an external drop being refused | No test. |
-| UI-thread calls throwing from a `Worker` for windows, screens, tray and menus | Tested for the loop functions only. |
+| An external drop being refused (`allowExternalDrop: false`) | The setting is read back from WebView2 (`allows_external_drop`, in `sweetview-platform-webview`'s `tests/requests.rs`); no real drag from outside the application is made: that needs an OLE drag driven by real input, from another application or a COM drag source in the test, which is not built. |
 | The name a toast shows with no identity | Pure logic; the toast is not read. |
-| A whole application compiled to one executable | Tested on a copied loader; the demos' compile recipes are not in the test run. |
-| `writeIconFiles` | No test. |
 
 ## 4. Ported, with a test that reads the real OS or drives real input, and the run passed
 
@@ -88,6 +84,11 @@ The Rust exists. The proof is a simulated message, a test hook, a test that did 
 | Native tabs | Frame styles and metrics; the strip; one webview per tab; open, select, rename, reorder, close; the last-tab rule; tear-off and merge keeping the page; popups as tabs; the failed-load page; the tab menu and system menu; strip drag and resize with real input; minimum size; dark mode |
 | Packaging | The binding loading; the missing-file and wrong-platform errors; `refreshWindowsIcons` reaching the shell |
 | A person closing a window | A real click on the title bar's close button and a real Alt+F4 (injected input) close a framed window with no `onClose` listener, and reach a listener once with the window kept: `person_tests::a_person_closes_a_framed_window_with_its_close_button_and_with_alt_f4` |
+| Per-pixel transparency of a `transparent` window | The screen read through a frameless `transparent` window whose webview has a transparent background, over a window of a known colour: the page's opaque square shows its own colour and the window behind shows through everywhere else: `person_tests::a_transparent_window_shows_its_pages_opaque_shape_and_the_window_behind_everywhere_else` |
+| `writeIconFiles` | Writes `app.ico` and `AppIcon.icns` byte for byte into a folder it makes, returns their paths in that order, and writes only the files it is given: `build.test.ts` "writeIconFiles writes app.ico and AppIcon.icns into a folder it makes, ..." |
+| UI-thread calls from a `Worker` | `new Window`, `Window.fromHandle`, `Screen.all`, `Screen.primary`, `Screen.at`, `Screen.cursor`, `createTray` and `Menu.popup`, called from a `Worker`, throw `sweetview: this call must be made on the UI thread`: `binding.test.ts` "the public window, screen, tray and menu calls made from a Worker throw that they must be made on the UI thread" |
+| Requests from a shared worker | A shared worker's own script and a `fetch` it makes are both answered by the request handler: `sweetview-platform-webview` `tests/shared_worker.rs` `requests_from_a_shared_worker_reach_the_request_handler` |
+| A whole application compiled to one executable | The web-app demo built by its own recipe (`just demos web-app compile-win`), its executable copied alone into a new empty folder under the system temp directory and started there, shows its window: `compiled-app.test.ts` "the web-app demo's compile recipe gives one executable that, copied alone into an empty folder and started there, shows its window" |
 
 ## The Rust itself
 

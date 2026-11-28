@@ -146,6 +146,30 @@ describe("makeMacApp", () => {
   });
 });
 
+describe("writeIconFiles", () => {
+  // Section 3 row "writeIconFiles": the files a build embeds, written byte for byte.
+  test("writes app.ico and AppIcon.icns into a folder it makes, returns their paths in that order, and writes only the files it is given", async () => {
+    const { writeIconFiles } = await import("./build");
+    const root = mkdtempSync(join(tmpdir(), "sweetview-icons-"));
+    try {
+      const dir = join(root, "build", "icons");
+      const ico = new Uint8Array([0, 0, 1, 0, 1, 0, 16, 16]);
+      const icns = new Uint8Array([0x69, 0x63, 0x6e, 0x73, 0, 0, 0, 8]);
+      expect(writeIconFiles(dir, { ico, icns })).toEqual([join(dir, "app.ico"), join(dir, "AppIcon.icns")]);
+      expect([...readFileSync(join(dir, "app.ico"))]).toEqual([...ico]);
+      expect([...readFileSync(join(dir, "AppIcon.icns"))]).toEqual([...icns]);
+      const only = join(root, "only-ico");
+      expect(writeIconFiles(only, { ico })).toEqual([join(only, "app.ico")]);
+      expect(readdirSync(only)).toEqual(["app.ico"]);
+      const none = join(root, "none");
+      expect(writeIconFiles(none, {})).toEqual([]);
+      expect(readdirSync(none)).toEqual([]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("refreshWindowsIcons", () => {
   test("goes through the native binding, with no bun:ffi in the build package", () => {
     for (const file of ["build.ts", "refresh-icons.ts", "make-app.ts", "index.ts"]) {
