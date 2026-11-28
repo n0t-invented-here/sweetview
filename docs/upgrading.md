@@ -45,8 +45,34 @@ this page: it imports each new form and checks that it is what the row says.
   code is one file per target in `@n1h/sweetview-native`:
   `prebuilt/sweetview.win32-x64-msvc.node`. It is loaded with `require`, so
   `bun build --compile` embeds it in the executable. On Windows the package
-  `@n1h/sweetview-webview-bun` is not needed and not loaded. On macOS it is
+  `@n1h/sweetview-webview-bun` is not needed and never loaded. On macOS it is
   still the engine until the macOS goal of the rewrite.
+- **The macOS engine in a Windows executable.** When
+  `@n1h/sweetview-webview-bun` is installed, as an application that also
+  builds for macOS keeps it, `bun build --compile --target=bun-windows-x64`
+  still embeds it, because the native package's macOS loader imports it: its
+  sources and its `build/libwebview.dll` go into the Windows executable and
+  never run there. For `demos/menubar-only` that is 136,704 bytes and 8
+  bundled files (118,432,768 bytes with the package installed, 118,296,064
+  without). To leave it out, add `--external @n1h/sweetview-webview-bun` to
+  the Windows build only: the import is then left for run time, which only
+  macOS reaches, and the executable is the size of one built without the
+  package. The macOS build must not have the flag.
+- **Closing a window.** A close request (the frame's X, Alt+F4) on a
+  `Window` with no `onClose` listener disposes the window, and `createApp`
+  then ends `run()` when no other window is visible. In 0.x the window of
+  `createOverlayWindow` hid itself instead. A listener keeps the window open
+  and decides; to hide it as before, pass
+  `createApp({ …, onClose: () => app.window.hide() })` or
+  `new Window({ …, onClose: () => win.hide() })`, and quit from your own menu
+  (`app.quit()`, `quitEventLoop()`).
+- **Showing and sizing a window.** `createApp` and `new Window` make the
+  window hidden: call `app.window.show()` once it is wired, or pass
+  `showOnReady: true`. (0.x's `createWebviewApp` without `window` showed the
+  library's window at once.) `bounds` is the outer frame in physical pixels,
+  320 x 240 centred on the primary work area by default; 0.x's `width` and
+  `height` were the page's client size in DIPs, 1100 x 800 by default. See
+  the [`width` row](#webviewappoptions-members-that-changed).
 - **Environment variables.** `WEBVIEW_PATH`, which named a custom build of
   the C++ webview library, has no effect on Windows. `SWEETVIEW_NATIVE_PATH`
   names a custom build of the Rust binding (a `.node` file); it is read once,
@@ -79,11 +105,27 @@ this page: it imports each new form and checks that it is what the row says.
   standard `WM_DPICHANGED` handling.
 - **Menus, the tray and the folder dialog.** A popup menu chooses an item
   on a left or right click or from the keyboard, as before. The tray menu
-  opens upward from the cursor, as before. Menu item icons are drawn at 16 px. Tray
+  opens upward from the cursor, as before. `Menu.popup` opens a menu
+  downward from its point and has no option to open upward; a menu of your
+  own that opens upward from the cursor, as the tray's does, is
+  `popupMenuAtCursor` of `@n1h/sweetview-native/win32/menu`, as it was in
+  0.x. Menu item icons are drawn at 16 px. Tray
   click handlers run one loop turn after the click. A tray icon that is not a
   valid `.ico` throws `sweetview: the tray icon could not be decoded: …`.
   `pickFolder` returns `null` for a virtual folder such as "This PC" and when
   the dialog fails, where before it disabled OK or threw.
+- **Notifications on Windows.** A `Notifier` shows a WinRT toast and needs
+  no `Tray`. 0.x showed the balloon of the application's tray icon (and threw
+  without a tray), which Windows shows under the name of the running
+  executable. A toast is shown under the identity the notifier is given:
+  `identity` (its `appId` and `appName`) or `appId`; with neither, under
+  Sweetview's own, the id `Sweetview.DesktopApp` shown as "Sweetview". Pass
+  the application's:
+  `createNotifier({ identity: defineAppIdentity({ appId: "com.example.my-app", appName: "My App" }), onClick })`
+  (`defineAppIdentity` is exported by `@n1h/sweetview/native`). The first
+  toast registers the id under `HKCU\Software\Classes\AppUserModelId`. Each
+  notifier gets the clicks of its own notifications, and a notification's
+  default `id` is `sweetview-<n>` (it was `sweetnative-<n>`).
 - **The WebView2 profile folder** is the same as before:
   `%APPDATA%\<exe file name>` (for example `%APPDATA%\bun.exe` under `bun`,
   or `%APPDATA%\my-app.exe` for a compiled executable), so cookies, storage
@@ -103,40 +145,72 @@ this page: it imports each new form and checks that it is what the row says.
 ### A. Published 0.1.x or 0.2.x
 
 1. In `package.json`, move `@n1h/sweetview` to this version. On Windows,
-   drop `@n1h/sweetview-webview-bun`; keep it (`^2.7.0`) for macOS.
+   drop `@n1h/sweetview-webview-bun`; keep it (`^2.7.0`) for macOS, and
+   build the Windows executable with `--external @n1h/sweetview-webview-bun`
+   so that it is not embedded there. Add, as dependencies of the application
+   itself, `@n1h/sweetview-build` when a build recipe runs `make-app.ts` (or
+   `refresh-icons.ts`) by path, and `@n1h/sweetview-native` when the
+   application imports one of its subpaths (`@n1h/sweetview-native/win32/menu`,
+   `/win32/window`, …): with Bun's isolated installs an application's
+   `node_modules` holds only the packages it names, so a package that
+   `@n1h/sweetview` depends on is not reachable from the application.
+   Everything under `@n1h/sweetview` itself needs nothing more.
 2. Replace `createWebviewApp(options)` with `createApp(options)` from
-   `@n1h/sweetview`. It makes the window as well, so `width` and `height`
-   become `bounds`, and window options (`frame`, `transparent`, `topmost`,
-   `icon`, …) go in the same object. What it returns is an `App`: `call` is
-   `notify`, `windowHandle` is `app.window.handle`, `webview.raw` is the
-   webview class.
-3. Replace `nativeWindow(handle)` with `Window.fromHandle(handle)`, or use
+   `@n1h/sweetview`. It makes the window as well, and window options
+   (`frame`, `transparent`, `topmost`, `icon`, …) go in the same object. What
+   it returns is an `App`: `call` is `notify`, `windowHandle` is
+   `app.window.handle`, `webview.raw` is the webview class.
+3. Sizes: `width` and `height` were the page's client size in DIPs; `bounds`
+   is the window's outer frame in physical pixels. Drop them when the window
+   already has its bounds (an overlay made with `createOverlayWindow`'s
+   `bounds`). To keep a page of `width` x `height` DIPs in a framed window,
+   set it after `createApp`:
+   `app.webview.raw.size = { width, height, hint: SizeHint.NONE }`
+   (`SizeHint.FIXED` for a window that is not resizable).
+4. Showing: the window is created hidden. Call `app.window.show()` once it
+   is wired, or pass `showOnReady: true`.
+5. Closing: a close request on a window with no `onClose` listener disposes
+   it and ends `run()`. A window that hid on a close request, as
+   `createOverlayWindow`'s did, passes
+   `onClose: () => app.window.hide()` (or `onClose: () => win.hide()` on
+   `new Window`).
+6. Replace `nativeWindow(handle)` with `Window.fromHandle(handle)`, or use
    `app.window`; `onCloseRequest` is `onClose`.
-4. An overlay: replace `makeOverlay` and `createOverlayWindow` with window
+7. An overlay: replace `makeOverlay` and `createOverlayWindow` with window
    options on `createApp` (or on `new Window(...)` and then
    `WebView.attach(win, options)`). `topmost`, `hideFromTaskbar` and
    `noActivate` default to `false` now, so an overlay names them:
-   `createApp({ frame: false, transparent: true, topmost: true, hideFromTaskbar: true, noActivate: true, … })`.
+   `createApp({ frame: false, transparent: true, topmost: true, hideFromTaskbar: true, noActivate: true, onClose: () => app.window.hide(), … })`.
    The screen questions the overlay answered (`cursor()`, `screen()`,
    `workArea()`, …) are on `Screen`.
-5. Renames: `dotIcon` is `dotIco`, `installAppMenu` is `setAppMenu`,
-   `maximized()` is `isMaximized()`, `HitRelay.enabled()` is `isEnabled()`,
-   the `close` option of `windowChromeMethods` is `onClose`, and a WebSocket
-   host's or transport's `close()` is `dispose()`.
-6. If you set `WEBVIEW_PATH`, set `SWEETVIEW_NATIVE_PATH` to a binding you
-   built instead, or nothing to use the one in the package.
-7. Check what an overlay application notices, in [What changed for every
-   application](#what-changed-for-every-application): the opaque
-   `unsafeHandle`, the error messages, the UI-thread checks, the frameless
-   style.
-8. Look up each remaining import in [Part A](#part-a-published-0x-packages).
+8. Notifications: pass the application's identity, or its toasts show as
+   "Sweetview":
+   `createNotifier({ identity: defineAppIdentity({ appId: "com.example.my-app", appName: "My App" }), onClick })`.
+   The tray no longer has to exist first.
+9. A build recipe that ran `bun node_modules/@n1h/sweetview/src/make-app.ts …`
+   runs `bun node_modules/@n1h/sweetview-build/src/make-app.ts …`, with the
+   same flags ([Scripts run by path](#scripts-run-by-path)).
+10. Renames: `dotIcon` is `dotIco`, `installAppMenu` is `setAppMenu`,
+    `maximized()` is `isMaximized()`, `HitRelay.enabled()` is `isEnabled()`,
+    the `close` option of `windowChromeMethods` is `onClose`, and a WebSocket
+    host's or transport's `close()` is `dispose()`.
+11. If you set `WEBVIEW_PATH`, set `SWEETVIEW_NATIVE_PATH` to a binding you
+    built instead, or nothing to use the one in the package.
+12. Check what an overlay application notices, in [What changed for every
+    application](#what-changed-for-every-application): the opaque
+    `unsafeHandle`, the error messages, the UI-thread checks, the frameless
+    style.
+13. Look up each remaining import in [Part A](#part-a-published-0x-packages).
 
 ### B. The `v1-drafting` API
 
 1. In `package.json`, move the Sweetview packages to this version. On
-   Windows, drop `@n1h/sweetview-webview-bun`; keep it (`^2.7.0`) for macOS.
+   Windows, drop `@n1h/sweetview-webview-bun`; keep it (`^2.7.0`) for macOS,
+   and build the Windows executable with
+   `--external @n1h/sweetview-webview-bun` so that it is not embedded there.
    `@n1h/sweetview-build` now depends on `@n1h/sweetview-native`, which the
-   package manager installs with it.
+   package manager installs with it; an application that imports
+   `@n1h/sweetview-native` itself names it in its own dependencies.
 2. The public entry points are unchanged: every export of every entry point
    still exists under the same name. Check the rows marked other than
    `unchanged` in [Part B](#part-b-the-v1-drafting-api).
@@ -159,7 +233,10 @@ this page: it imports each new form and checks that it is what the row says.
 1. In `package.json`, replace `@n1h/sweetview-webview-bun` with
    `@n1h/sweetview-native` (or with `@n1h/sweetview`, and import from
    `@n1h/sweetview/native`). On macOS keep `@n1h/sweetview-webview-bun`
-   installed as well: `@n1h/sweetview-native` loads it there.
+   installed as well: `@n1h/sweetview-native` loads it there. Build the
+   Windows executable with `--external @n1h/sweetview-webview-bun`, or it is
+   embedded there too ([What changed for every
+   application](#what-changed-for-every-application)).
 2. Change the module name in each import; every name is the same:
    `import { Webview, installMouseHook, permissions } from "@n1h/sweetview-native"`.
 3. Treat `Webview.unsafeHandle` as an opaque number: pass it to
@@ -196,7 +273,7 @@ cover old types and classes whose members have new names.
 | `WindowChromeMethods` | `import type { WindowChromeMethods } from "@n1h/sweetview"` | unchanged |
 | `WindowChromeOptions` | `import type { WindowChromeOptions } from "@n1h/sweetview"` | the `close` option is `onClose` |
 | `assetMime` | `import { assetMime } from "@n1h/sweetview"`; `assetMime(…)` | unchanged |
-| `createWebviewApp` | `import { createApp } from "@n1h/sweetview"`; `createApp(options)` | renamed; it makes the window too, so window options (`bounds`, `frame`, `transparent`, …) go in the same object |
+| `createWebviewApp` | `import { createApp } from "@n1h/sweetview"`; `createApp(options)` | renamed; it makes the window too, so window options (`bounds`, `frame`, `transparent`, …) go in the same object; the window is created hidden (`app.window.show()`, or `showOnReady: true`), and a close request with no `onClose` listener disposes it and ends `run()`; `width` and `height` are in the table below |
 | `indexHtml` | `import { indexHtml } from "@n1h/sweetview"`; `indexHtml({ title, js = "main.js", css = "main.css", head = "", body = '<div id="root"></div>' })` | unchanged |
 | `indexHtmlText` | `import { indexHtmlText } from "@n1h/sweetview"`; `indexHtmlText({ title, js = "main.js", css = "main.css", head = "", body = '<div id="root"></div>' })` | unchanged |
 | `windowChromeMethods` | `import { windowChromeMethods } from "@n1h/sweetview"`; `windowChromeMethods(window, options)` | takes the `Window`; the `close` option is `onClose` |
@@ -322,12 +399,12 @@ cover old types and classes whose members have new names.
 | `MenuSource` | `import type { MenuSource } from "@n1h/sweetview/native"` | unchanged |
 | `MenuTemplate` | `import type { MenuTemplate } from "@n1h/sweetview/native"` | unchanged |
 | `NativeWindow` | `import { Window } from "@n1h/sweetview/native"`; `Window.fromHandle(handle)` | a `Window` (`app.window` for a window of `createApp`); members in the table below |
-| `NotificationOptions` | `import type { NotificationOptions } from "@n1h/sweetview/native"` | unchanged |
-| `Notifier` | `import { Notifier } from "@n1h/sweetview/native"`; `new Notifier(…)` | a class now: `new Notifier(…)`; `createNotifier(options)` still returns one |
-| `NotifierOptions` | `import type { NotifierOptions } from "@n1h/sweetview/native"` | 0.1.x: `onClick` is called with `{ id, data }` of the clicked notification |
-| `Overlay` | `import { Window } from "@n1h/sweetview/native"`; `new Window(options)` | a `Window`; members in the table below |
+| `NotificationOptions` | `import type { NotificationOptions } from "@n1h/sweetview/native"` | the same fields; the default `id` is `sweetview-<n>` (it was `sweetnative-<n>`) |
+| `Notifier` | `import { Notifier } from "@n1h/sweetview/native"`; `new Notifier(…)` | a class now: `new Notifier(…)`; `createNotifier(options)` still returns one; Windows: a toast under the notifier's `identity` or `appId`, Sweetview's own without them (see `createNotifier`) |
+| `NotifierOptions` | `import type { NotifierOptions } from "@n1h/sweetview/native"` | new `identity` and `appId`, the Windows toast identity: pass `identity` for toasts under the application's own name; 0.1.x: `onClick` is called with `{ id, data }` of the clicked notification |
+| `Overlay` | `import { Window } from "@n1h/sweetview/native"`; `new Window(options)` | a `Window`; members in the table below; a close request disposes it unless an `onClose` listener keeps it (`onClose: () => win.hide()` is what the overlay window did) |
 | `OverlayOptions` | `import type { WindowOptions } from "@n1h/sweetview/native"`; `WindowOptions#topmost`; `WindowOptions#hideFromTaskbar`; `WindowOptions#noActivate` | the same option names; `topmost`, `hideFromTaskbar` and `noActivate` default to `false` now, so name them |
-| `OverlayWindowOptions` | `import type { WindowOptions } from "@n1h/sweetview/native"`; `WindowOptions#frame`; `WindowOptions#appearance` | the same option names but `dark` (use `appearance`); members in the table below |
+| `OverlayWindowOptions` | `import type { WindowOptions } from "@n1h/sweetview/native"`; `WindowOptions#frame`; `WindowOptions#appearance` | the same option names but `dark` (use `appearance`); members in the table below; a `frame: true` window's close button disposes it now, where it hid it: pass `onClose: () => win.hide()` |
 | `Point` | `import type { Point } from "@n1h/sweetview/native"` | unchanged |
 | `Rect` | `import type { Rect } from "@n1h/sweetview/native"` | unchanged |
 | `ResizeEdge` | `import type { ResizeEdge } from "@n1h/sweetview/native"` | unchanged |
@@ -337,8 +414,8 @@ cover old types and classes whose members have new names.
 | `WindowHandle` | `import type { WindowHandle } from "@n1h/sweetview/native"` | unchanged |
 | `convexHull` | `import { convexHull } from "@n1h/sweetview/native"`; `convexHull(points)` | unchanged |
 | `createHitRelay` | `import { createHitRelay } from "@n1h/sweetview/native"`; `createHitRelay(window, probe)` | takes the `Window` (anything with `setHitRegions`) |
-| `createNotifier` | `import { createNotifier } from "@n1h/sweetview/native"`; `createNotifier(options)` | unchanged |
-| `createOverlayWindow` | `import { Window } from "@n1h/sweetview/native"`; `new Window(options)` | pass `frame: false, topmost: true, hideFromTaskbar: true, noActivate: true` (their old defaults); host the page with `WebView.attach(win, options)` |
+| `createNotifier` | `import { createNotifier } from "@n1h/sweetview/native"`; `createNotifier(options)` | Windows: it needs no tray (it threw without one) and shows a WinRT toast, where it showed the balloon of the tray's icon, which Windows shows under the running executable's name; the toast is under `identity` (or `appId`), and with neither under Sweetview's own, shown as "Sweetview": pass `createNotifier({ identity: defineAppIdentity({ appId: "com.example.my-app", appName: "My App" }), onClick })`; each notifier gets the clicks of its own notifications |
+| `createOverlayWindow` | `import { Window } from "@n1h/sweetview/native"`; `new Window(options)` | pass `frame: false, topmost: true, hideFromTaskbar: true, noActivate: true` (their old defaults), and `onClose: () => win.hide()`: its window hid on a close request, and a `Window` with no `onClose` listener is disposed; host the page with `WebView.attach(win, options)` |
 | `createTray` | `import { createTray } from "@n1h/sweetview/native"`; `createTray(options)` | unchanged |
 | `decodePng` | `import { decodePng } from "@n1h/sweetview/native"`; `decodePng(bytes)` | unchanged |
 | `dotIcns` | `import { dotIcns } from "@n1h/sweetview/native"`; `dotIcns(opts)` | unchanged |
@@ -354,7 +431,7 @@ cover old types and classes whose members have new names.
 | `icoFromPng` | `import { icoFromPng } from "@n1h/sweetview/native"`; `icoFromPng(png, sizes)` | unchanged |
 | `icoFromRgba` | `import { icoFromRgba } from "@n1h/sweetview/native"`; `icoFromRgba(size, rgba, sizes)` | unchanged |
 | `installAppMenu` | `import { setAppMenu } from "@n1h/sweetview/native"`; `setAppMenu(options)` | renamed |
-| `makeOverlay` | `import { createApp } from "@n1h/sweetview"`; `createApp(options)` | the overlay is made with its page: `createApp({ frame: false, transparent: true, topmost: true, hideFromTaskbar: true, noActivate: true, … })` |
+| `makeOverlay` | `import { createApp } from "@n1h/sweetview"`; `createApp(options)` | the overlay is made with its page: `createApp({ frame: false, transparent: true, topmost: true, hideFromTaskbar: true, noActivate: true, … })`; a close request (Alt+F4) disposes it and ends `run()`, as the webview's own window it restyled did; to hide it instead, as an overlay made with `createOverlayWindow` did, add `onClose: () => app.window.hide()` |
 | `nativeWindow` | `import { Window } from "@n1h/sweetview/native"`; `Window.fromHandle(handle)` | wraps a window by handle; for a window of `createApp` use `app.window` |
 | `packRegions` | `import { packRegions } from "@n1h/sweetview/native"`; `packRegions(polygons)` | unchanged |
 | `pickFolder` | `import { pickFolder } from "@n1h/sweetview/native"`; `pickFolder(owner, title)` | unchanged; `owner` may be a `Window` or a handle |
@@ -429,7 +506,7 @@ The same names come from `@n1h/sweetview/native` now. Part C has the details of 
 | `emit(name, payload)` | `import type { App } from "@n1h/sweetview"`; `App#emit` | unchanged |
 | `call(method, params)` | `import type { App } from "@n1h/sweetview"`; `App#notify` | renamed `notify` |
 | `onEvent(fn)` | `import type { App } from "@n1h/sweetview"`; `App#onEvent` | unchanged |
-| `run()` | `import type { App } from "@n1h/sweetview"`; `App#run` | unchanged |
+| `run()` | `import type { App } from "@n1h/sweetview"`; `App#run` | unchanged; a close request ends it, as before, unless an `onClose` listener keeps the window |
 | `quit()` | `import type { App } from "@n1h/sweetview"`; `App#quit` | unchanged |
 | `dispose()` | `import type { App } from "@n1h/sweetview"`; `App#dispose` | unchanged |
 
@@ -439,11 +516,11 @@ Every other option (`page`, `title`, `assets`, `index`, `worker`, `debug`, `uiMe
 
 | Old | Write now | Change |
 |---|---|---|
-| `width` | `import type { AppOptions } from "@n1h/sweetview"`; `AppOptions#bounds` | `bounds: { x, y, width, height }`, the outer frame |
-| `height` | `import type { AppOptions } from "@n1h/sweetview"`; `AppOptions#bounds` | `bounds: { x, y, width, height }`, the outer frame |
-| `window` | `import { WebView } from "@n1h/sweetview"`; `WebView.attach(window, options)` | mount the page in a window you made: `WebView.attach(win, options)` |
+| `width` | `import type { AppOptions } from "@n1h/sweetview"`; `AppOptions#bounds` | not the same quantity: `width` was the page's client width in DIPs (1100 by default), which the library applied to the window, its own or the one given as `window`; `bounds: { x, y, width, height }` is the window's outer frame in physical pixels (320 by default). With `window`, drop it: the window already has its bounds (for a frameless overlay, the same size). To keep a page `width` DIPs wide in a framed window, set it after `createApp`: `app.webview.raw.size = { width, height, hint: SizeHint.NONE }` (`SizeHint.FIXED` for a window that is not resizable); it sizes the frame around that client area, as the library did, without moving or showing the window |
+| `height` | `import type { AppOptions } from "@n1h/sweetview"`; `AppOptions#bounds` | not the same quantity: `height` was the page's client height in DIPs (800 by default); `bounds` is the outer frame in physical pixels (240 by default); drop it, or set the client size with `app.webview.raw.size`, as for `width` |
+| `window` | `import { WebView } from "@n1h/sweetview"`; `WebView.attach(window, options)` | mount the page in a window you made: `WebView.attach(win, options)`; it keeps the window's size (the library resized it to `width` x `height`), and showing the window and what a close request does are yours, as before |
 | `transparent` | `import type { AppOptions } from "@n1h/sweetview"`; `AppOptions#transparent` | a window option now; it makes the window and the page background transparent |
-| `resizable` | `import type { AppOptions } from "@n1h/sweetview"`; `AppOptions#resizable` | a window option; defaults to `true` for a framed window |
+| `resizable` | `import type { AppOptions } from "@n1h/sweetview"`; `AppOptions#resizable` | a window option; defaults to `true` for a framed window (with `window` it defaulted to `false`) |
 
 #### `NativeWindow` members (the result of `nativeWindow`)
 
@@ -456,11 +533,14 @@ Every other option (`page`, `title`, `assets`, `index`, `worker`, `debug`, `uiMe
 | `hide()` | `import { Window } from "@n1h/sweetview/native"`; `Window#hide()` | unchanged |
 | `toggle()` | `import { Window } from "@n1h/sweetview/native"`; `Window#toggle()` | unchanged |
 | `setIcon(icon)` | `import { Window } from "@n1h/sweetview/native"`; `Window#setIcon(icon)` | unchanged |
-| `onCloseRequest(handler)` | `import { Window } from "@n1h/sweetview/native"`; `Window#onClose(handler)` | renamed `onClose`; returns the function that unsubscribes |
+| `onCloseRequest(handler)` | `import { Window } from "@n1h/sweetview/native"`; `Window#onClose(handler)` | renamed `onClose`; returns the function that unsubscribes; listeners add up (a second call no longer replaces the first), and once none is left a close request disposes a window Sweetview made |
 
 #### `Overlay` members (the result of `makeOverlay` and `createOverlayWindow`)
 
 A `Window` has the window members; the screen questions are `Screen`'s.
+The overlay window of `createOverlayWindow` hid itself on a close request
+(its frame's X, Alt+F4); a `Window` with no `onClose` listener is disposed
+instead, so pass `onClose: () => win.hide()` to keep the old behaviour.
 
 | Old | Write now | Change |
 |---|---|---|
@@ -550,12 +630,36 @@ What crosses `postMessage` between the UI thread and the worker. `hostService` a
 
 #### `src/native/event-loop.ts`, `src/native/win32/color-ref.ts`
 
-The other `src/native/win32/*.ts` files map as `@n1h/sweetview-native/win32/*` does in Part B.
+The other `src/native/win32/*.ts` files map as `@n1h/sweetview-native/win32/*` does in Part B
+(`popupMenuAtCursor` of `win32/menu.ts`, say, is the `@n1h/sweetview-native/win32/menu` row).
+A row whose import is from `@n1h/sweetview-native` or one of its subpaths names a package a 0.x
+application did not depend on: add `"@n1h/sweetview-native": "^1.0.0"` to the application's own
+`dependencies`. With Bun's isolated installs an application's `node_modules` holds only the
+packages it names, so the copy `@n1h/sweetview` depends on cannot be imported from the
+application. A row whose import is from `@n1h/sweetview` or its subpaths needs nothing more.
 
 | Old | Write now | Change |
 |---|---|---|
 | `discardQuit` | `import type { App } from "@n1h/sweetview"`; `App#dispose` | `app.dispose()` takes back the quit itself |
 | `colorRef` | `import { Window } from "@n1h/sweetview/native"`; `new Window(options)` | pass `colorKey: "#rrggbb"` |
+
+### Scripts run by path
+
+The 0.x package shipped `src/make-app.ts`, which a build recipe ran by path
+(`bun node_modules/@n1h/sweetview/src/make-app.ts …`). It is in the build
+package now, `@n1h/sweetview-build`, with the same flags and a new
+`--url-scheme` ([make-app command line](build.md#make-app-command-line));
+`@n1h/sweetview` has no such file. The path exists only when the
+application depends on `@n1h/sweetview-build` itself
+(`"@n1h/sweetview-build": "^1.0.0"` in `dependencies`): with Bun's isolated
+installs the copy `@n1h/sweetview` depends on is not in the application's
+`node_modules`. The same holds for `src/refresh-icons.ts`, new in that
+package (`bun node_modules/@n1h/sweetview-build/src/refresh-icons.ts`, on
+Windows after a compile, refreshes Explorer's icon cache).
+
+| Old | Write now | Change |
+|---|---|---|
+| `src/make-app.ts` | `import { makeMacApp } from "@n1h/sweetview-build"`; `makeMacApp(options)` | the script is `makeMacApp` as a command: run `bun node_modules/@n1h/sweetview-build/src/make-app.ts --name … --bundle-id … --binary … --out …` (it was `node_modules/@n1h/sweetview/src/make-app.ts`), with `@n1h/sweetview-build` in the application's own `dependencies` |
 
 ## Part B: the `v1-drafting` API
 
@@ -1216,8 +1320,8 @@ engine of the webview moves, shows, hides and re-parents it.
 | `buildMenu` | `import { buildMenu } from "@n1h/sweetview-native/win32/menu"`; `buildMenu(template)` | unchanged: `{ hmenu, commands, bitmaps }` for your own `TrackPopupMenu`, command ids from 1 in template order; `bitmaps` is empty, as `destroyMenu` frees the item bitmaps itself |
 | `destroyMenu` | `import { destroyMenu } from "@n1h/sweetview-native/win32/menu"`; `destroyMenu(built)` | unchanged: frees the menu, its submenus and its item bitmaps; safe to call twice |
 | `escapeLabel` | `import { Menu } from "@n1h/sweetview-native"`; `Menu.popup(owner, menu, at)` | nothing to call: the native layer doubles `&` in a label itself |
-| `popupMenu` | `import { popupMenu } from "@n1h/sweetview-native/win32/menu"`; `popupMenu(owner, template, at)` | unchanged (internal; the public form is `Menu.popup(owner, menu, at)`) |
-| `popupMenuAtCursor` | `import { popupMenuAtCursor } from "@n1h/sweetview-native/win32/menu"`; `popupMenuAtCursor(owner, template)` | unchanged (internal; the public form is `Menu.popup(owner, menu, at)`) |
+| `popupMenu` | `import { popupMenu } from "@n1h/sweetview-native/win32/menu"`; `popupMenu(owner, template, at)` | unchanged (internal): the menu's top-left corner at `at`, or at the cursor without it, so it opens downward; `Menu.popup(owner, menu, at)` is the public call that does the same |
+| `popupMenuAtCursor` | `import { popupMenuAtCursor } from "@n1h/sweetview-native/win32/menu"`; `popupMenuAtCursor(owner, template)` | unchanged (internal): the menu's bottom-left corner at the cursor, so it opens upward, as the tray's menu does; no public call does this: `Menu.popup(owner, menu)` opens the menu downward from the cursor and takes no alignment, so an application that wants the upward menu keeps this call, with `@n1h/sweetview-native` in its own dependencies |
 
 ### `@n1h/sweetview-native/win32/message-window`
 

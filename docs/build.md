@@ -193,8 +193,10 @@ bun packages/sweetview-build/src/make-app.ts --name "My App" --bundle-id com.exa
 
 From an app folder inside the checkout, such as `demos/hello/`, the path is
 `../../packages/sweetview-build/src/make-app.ts`, as the demos' justfiles
-use. Once 1.0.0 is published and `@n1h/sweetview-build` is installed, the
-script is in `node_modules`:
+use. Once 1.0.0 is published and the application depends on
+`@n1h/sweetview-build` itself (in its own `dependencies`; with Bun's
+isolated installs the copy that `@n1h/sweetview` depends on is not in the
+application's `node_modules`), the script is in `node_modules`:
 
 ```sh
 bun node_modules/@n1h/sweetview-build/src/make-app.ts --name "My App" --bundle-id com.example.my-app --binary dist/my-app-macos-arm64 --out dist
