@@ -395,6 +395,41 @@ fn a_swallowed_key_does_not_reach_the_system() {
   assert_eq!(kinds, [KeyEventKind::Down, KeyEventKind::Down, KeyEventKind::Up], "the key was never held, so no repeat");
 }
 
+/// `input-hooks.test.ts` "a handler returning true swallows per event: the swallowed press never
+/// reaches the system, so the next press is a down again, not a repeat": the same hook swallows the
+/// first press and lets the second through, and the system's key state says so after each.
+#[test]
+fn a_swallowed_press_never_reaches_the_system_and_the_same_hook_lets_the_next_one_through() {
+  let _serial = serial();
+  let _keys_up = KeysUp(&[F24]);
+  let seen: Seen<KeyEvent> = Rc::default();
+  let swallow = Rc::new(Cell::new(true));
+  let (sink, deciding) = (seen.clone(), swallow.clone());
+  let _hook = KeyboardHook::install(move |event| {
+    if event.raw != F24 {
+      return false;
+    }
+    sink.borrow_mut().push(*event);
+    deciding.get() && event.kind != KeyEventKind::Up
+  })
+  .expect("keyboard hook");
+  send(&[key_down_input(F24)]);
+  assert!(pump_until(|| seen.borrow().len() == 1));
+  pump_for(30);
+  let down_after_swallowed = is_down(F24);
+  // The same press, now let through: the system sees a first press, and the hook a down.
+  swallow.set(false);
+  send(&[key_down_input(F24)]);
+  assert!(pump_until(|| seen.borrow().len() == 2 && is_down(F24)));
+  let down_after_passed = is_down(F24);
+  send(&[key_up_input(F24)]);
+  assert!(pump_until(|| seen.borrow().len() == 3 && !is_down(F24)));
+  assert_eq!((down_after_swallowed, down_after_passed), (false, true), "swallowed: up for the system; let through: down");
+  let kinds: Vec<KeyEventKind> = seen.borrow().iter().map(|e| e.kind).collect();
+  assert_eq!(kinds, [KeyEventKind::Down, KeyEventKind::Down, KeyEventKind::Up]);
+  assert!(!is_down(F24));
+}
+
 /// W3.2: the modifiers after the event: a modifier's own down has its bit, its
 /// own up has it clear, and other keys see what is held.
 #[test]
