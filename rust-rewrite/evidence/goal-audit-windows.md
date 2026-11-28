@@ -256,10 +256,6 @@ Measured, then changed, on WebView2 Runtime 158.0.4370.45 (`crates/sweetview-pla
 
 What streaming guarantees is in D45 and `docs/webview-library.md` "Streaming responses". Real-time push on Windows stays IPC events. A writer on the UI thread, Sweetview's own worker path included, has no way to pace itself: listed for the owner.
 
-### 13, the Explorer drop (this branch's part)
-
-Driven for real: an Explorer window opened on a scratch folder with one file, its item found through UI Automation, the left button pressed on the icon, the cursor moved in 40 steps onto the Sweetview webview in another process, the button released, all with `SendInput`. OLE drag and drop ran between the two processes: the file drop handler received exactly the file's real path (`...\sweetview-real-drop-<pid>\sweetview real drop.txt`), once. The Explorer window was closed afterwards. Not driven: a drop onto a part of a native window that the webview does not cover (`Window.onFileDrop` through `WM_DROPFILES`): in this test the webview fills the window.
-
 ### 11
 
 Agreed, and macOS is put back on the tag's path where the Windows goal changed what runs there (decision D42; `rust-rewrite/HANDOFF-macos.md` section 8 lists every seam for the macOS goal).
@@ -271,3 +267,7 @@ Agreed, and macOS is put back on the tag's path where the Windows goal changed w
 - Also found: a request the library hands over that cannot be read is answered with the tag's 500 again; `just check`, `pack`, `link` and `publish` need `cargo` on a Mac (left as D34 made them, and handed over).
 
 One predicate, `macosKeepsTagPath()` in `packages/sweetview-native/src/platform.ts`, marks each library seam. Windows runs the same code as before. `packages/sweetview-native/src/macos-seam.test.ts` and `packages/sweetview/src/macos-seam.test.ts` decide the seams on Windows with `process.platform` set to `darwin` and a stand-in for the bindings package; they show the old code's import error, release and bigint handle, and the new code's absence of them. None of it runs AppKit, and the right thing the finding names stands: `bun test` and each demo on a Mac before this reaches a Mac user.
+
+### 13, the Explorer drop (this branch's part)
+
+Driven for real: an Explorer window opened on a scratch folder with one file, its item found through UI Automation, the left button pressed on the icon, the cursor moved in 40 steps onto the Sweetview webview in another process, the button released, all with `SendInput`. OLE drag and drop ran between the two processes: the file drop handler received exactly the file's real path (`...\sweetview-real-drop-<pid>\sweetview real drop.txt`), once. The Explorer window was closed afterwards. Not driven: a drop onto a part of a native window that the webview does not cover (`Window.onFileDrop` through `WM_DROPFILES`): in this test the webview fills the window.
