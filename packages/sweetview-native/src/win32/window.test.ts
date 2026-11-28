@@ -246,6 +246,14 @@ describe.if(onWindows)("win32 Window", () => {
     }
   });
 
+  test("the probe's screenPixel throws for a point no screen shows, rather than reading it as white", async () => {
+    // Review N10: GetPixel's CLR_INVALID became "#ffffff". app.test.ts and its fixtures read the screen with it.
+    const { screenPixel } = await import("../../test/win32-os");
+    const { Screen } = await import("../screen");
+    const far = Screen.bounds();
+    expect(() => screenPixel(far.x - 10_000, far.y - 10_000)).toThrow("GetPixel");
+  });
+
   test("bounds with contentSize throws; a malformed backgroundColor throws; a transparent window keeps no backgroundColor", () => {
     expect(() => new Window({ bounds: { x: 0, y: 0, width: 100, height: 100 }, contentSize: { width: 100, height: 100 } })).toThrow("sweetview: bounds and contentSize cannot both be given");
     expect(() => new Window({ backgroundColor: "red" })).toThrow("sweetview: background color must be #rrggbb, got red");

@@ -491,6 +491,54 @@ fn an_applications_own_popup_window_wrapped_after_maximise_and_minimise_reads_as
   });
 }
 
+/// `window-native.test.ts` "a window the application made, maximised and minimised before
+/// Window.fromHandle wraps it, reports nothing when restored to maximised": a framed window of the
+/// application's own (`WS_OVERLAPPEDWINDOW`), driven with the system's own `WM_SYSCOMMAND`s.
+#[test]
+fn an_applications_own_framed_window_wrapped_while_minimised_from_maximised_reports_only_the_real_change() {
+  on_ui_thread(|_runtime| {
+    let own = os::OwnWindow::framed("rt os own framed wrapped minimised", (60, 60, 300, 200), |_| {}).expect("the application's own framed window");
+    let command = |sc: usize| os::send(own.handle_value(), WM_SYSCOMMAND, sc, 0);
+    command(SC_MAXIMIZE);
+    command(SC_MINIMIZE);
+    let wrapped = Window::adopt(own.handle_value()).expect("adopt");
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    let sink = seen.clone();
+    wrapped.on_maximize_change(wrapped.id, Some(Rc::new(move |m| sink.borrow_mut().push(m)))).expect("listener");
+    command(SC_RESTORE); // back to maximised
+    assert_eq!((wrapped.is_maximized(), seen.borrow().clone()), (true, vec![]), "restored to maximised: no change");
+    command(SC_RESTORE);
+    assert_eq!((wrapped.is_maximized(), seen.borrow().clone()), (false, vec![false]), "restored: one change");
+    wrapped.dispose();
+  });
+}
+
+/// `window-native.test.ts` "onMaximizeChange arrives for a window the application made:
+/// maximised, minimised and restored to maximised (nothing), restored", and nothing after the
+/// listener is removed.
+#[test]
+fn an_applications_own_framed_window_reports_each_maximise_change_of_the_systems_commands_until_unsubscribed() {
+  on_ui_thread(|_runtime| {
+    let own = os::OwnWindow::framed("rt os own framed maximise", (60, 60, 300, 200), |_| {}).expect("the application's own framed window");
+    let wrapped = Window::adopt(own.handle_value()).expect("adopt");
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    let sink = seen.clone();
+    wrapped.on_maximize_change(wrapped.id, Some(Rc::new(move |m| sink.borrow_mut().push(m)))).expect("listener");
+    let command = |sc: usize| os::send(own.handle_value(), WM_SYSCOMMAND, sc, 0);
+    command(SC_MAXIMIZE);
+    assert_eq!((wrapped.is_maximized(), seen.borrow().clone()), (true, vec![true]));
+    command(SC_MINIMIZE);
+    command(SC_RESTORE); // back to maximised
+    assert_eq!((wrapped.is_maximized(), seen.borrow().clone()), (true, vec![true]), "minimised and restored to maximised: nothing");
+    command(SC_RESTORE);
+    assert_eq!((wrapped.is_maximized(), seen.borrow().clone()), (false, vec![true, false]));
+    wrapped.on_maximize_change(wrapped.id, None).expect("removed");
+    command(SC_MAXIMIZE);
+    assert_eq!(*seen.borrow(), [true, false], "nothing after the listener is removed");
+    wrapped.dispose();
+  });
+}
+
 /// `window-native.test.ts` "onResize, onMove, onClose and onFileDrop arrive; dispose leaves the
 /// window alive", and `window.test.ts` "Window.fromHandle intercepts events non-mutatingly and
 /// dispose does not destroy the external HWND".

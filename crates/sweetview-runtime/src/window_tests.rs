@@ -44,6 +44,7 @@ fn hidden_windows_take_their_exact_outer_bounds_and_dispose_destroys_them() {
     assert!(alive(h2));
     frameless.dispose();
     assert!(!alive(h2));
+    assert_eq!(tracked_count(h2), 0, "the frameless window is released too");
   });
 }
 

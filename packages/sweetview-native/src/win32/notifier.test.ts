@@ -71,6 +71,11 @@ describe.if(process.platform === "win32")("Windows notifier", () => {
       expect(displayName(unused)).toBeNull();
 
       native.debugForcePath("balloonOnly");
+      // A click with no payload gives no data.
+      const plain = cookieOf(native.debugShow("plain", "Plain", "", true, null), "balloon");
+      expect(native.debugSimulateBalloonEvent(plain, "clicked")).toBe(true);
+      pumpUntil(() => clicks.length === 1);
+      expect(clicks.splice(0)).toEqual([{ id: "plain", data: undefined }]);
       // Balloon uIDs count up process-wide, so each notification's below is the next one.
       const uid = cookieOf(native.debugShow("probe", "Probe", "", true, null), "balloon");
       const data = { index: 1, list: ["different", 2] };
