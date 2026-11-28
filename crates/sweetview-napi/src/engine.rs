@@ -121,6 +121,10 @@ impl Engine {
     self.inner.move_focus();
   }
 
+  pub fn follow_window_activation(&self) {
+    self.inner.follow_window_activation();
+  }
+
   pub fn notify_moved(&self) {
     self.inner.notify_moved();
   }

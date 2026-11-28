@@ -188,6 +188,9 @@ struct Inner {
   /// How many times the webview was told its window moved (a test hook: the
   /// position WebView2 keeps for its window is not readable from outside).
   moves_told: Cell<u32>,
+  /// Whether the window this webview fills gives the page the focus on activation
+  /// ([`Engine::follow_window_activation`]).
+  follows_activation: Cell<bool>,
 }
 
 /// Something the host asked of the page that must happen after the scripts
@@ -307,11 +310,10 @@ impl Engine {
       init_scripts: RefCell::new(Vec::new()),
       held: RefCell::new(VecDeque::new()),
       moves_told: Cell::new(0),
+      follows_activation: Cell::new(false),
     });
     *slot.borrow_mut() = Rc::downgrade(&inner);
-    if let Some(value) = filled {
-      inner.follow_window_activation(value);
-    }
+    let _ = filled;
 
     // Held navigations and evaluations run on a later turn, once every script is registered and
     // the navigation sent before them has started: the handlers run inside WebView2's callbacks.
@@ -433,6 +435,19 @@ impl Engine {
     self.inner.with_live(|live| live.webview.set_visible(visible));
   }
 
+  /// From now on, each activation of the window this webview fills gives the
+  /// page the keyboard focus, as the C++ library's own window gave it. Asked
+  /// for by `createApp` for the window it makes itself (at the tag that window
+  /// was the webview's own); a window the application gave gets nothing, as
+  /// under the C++ library.
+  pub fn follow_window_activation(&self) {
+    let filled = self.inner.with_live(|live| matches!(live.window, HostWindow::Filled(_))) == Some(true);
+    if filled {
+      self.inner.follows_activation.set(true);
+      self.inner.follow_window_activation(self.inner.window_value.get());
+    }
+  }
+
   /// Gives the page the keyboard focus.
   pub fn move_focus(&self) {
     // `MoveFocus` with the programmatic reason, as the tabs library calls it.
@@ -464,7 +479,9 @@ impl Engine {
         if filled {
           crate::window::set_page_focus(previous, None);
           self.inner.with_live(|live| live.webview.fill_parent());
-          self.inner.follow_window_activation(window);
+          if self.inner.follows_activation.get() {
+            self.inner.follow_window_activation(window);
+          }
         }
         self.inner.with_live_mut(|live| match &mut live.window {
           HostWindow::Filled(value) | HostWindow::Foreign(value) => *value = window,

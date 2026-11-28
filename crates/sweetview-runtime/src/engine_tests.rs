@@ -302,17 +302,25 @@ fn the_focus_moves_into_the_page_only_where_the_cpp_fork_moved_it() {
       checked.push("own window".into());
     }
     own.destroy();
-    // 4. A runtime window a page fills (createApp's) gives the page the focus on activation.
-    let (filled, windows) = make("given window", |_| ());
-    load(&runtime, &filled, PAGE);
-    let window = windows[0].handle();
-    BorrowedWindow::with_handle_value(window, test_support::focus_window);
-    BorrowedWindow::with_handle_value(window, test_support::send_activate);
-    let activated = pump_until(&runtime, Duration::from_secs(3), || webview_of(&filled, test_support::focus_is_inside));
-    eprintln!("-- given window: the page has the focus after the window's activation {activated}");
-    assert!(activated, "the page of a runtime window it fills gets the focus when the window is activated");
-    checked.push("activation of a filled window".into());
-    filled.destroy();
+    // 4. A Sweetview window a page fills gives the page nothing on activation unless asked
+    //    (a window the application gave, as under the C++ library); the window createApp makes
+    //    asks (follow_window_activation), as the tag's createApp window was the webview's own.
+    for asked in [false, true] {
+      let (filled, windows) = make("given window", |_| ());
+      load(&runtime, &filled, PAGE);
+      if asked {
+        filled.follow_window_activation();
+      }
+      let window = windows[0].handle();
+      BorrowedWindow::with_handle_value(window, test_support::focus_window);
+      BorrowedWindow::with_handle_value(window, test_support::send_activate);
+      let activated = pump_until(&runtime, Duration::from_secs(3), || webview_of(&filled, test_support::focus_is_inside));
+      eprintln!("-- given window, asked {asked}: the page has the focus after the window's activation {activated}");
+      assert_eq!(activated, asked, "the page of a filled window gets the focus on activation only when asked (createApp's)");
+      checked.push(format!("activation of a filled window, asked {asked}"));
+      filled.destroy();
+      settle(&runtime, Duration::from_millis(100));
+    }
     eprintln!("-- checked: {checked:?}");
     assert!(checked.len() >= 4, "too little could be checked on this desktop to say anything: {checked:?}");
   });
