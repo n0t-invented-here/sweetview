@@ -211,6 +211,10 @@ struct Core {
   /// Set while the window is shown and kept off the screen until its page has drawn
   /// (`show_cloaked`, D49); `uncloak`, `show()` and `hide()` let it go.
   cloak: RefCell<Option<platform::Cloak>>,
+  /// Whether the application gave the window a `backgroundColor`, which wins over
+  /// `WEBVIEW2_DEFAULT_BACKGROUND_COLOR`; without one the variable wins over the appearance's
+  /// page colour (D49).
+  background_given: Cell<bool>,
   icons: RefCell<Option<WindowIcons>>,
   /// Live wrappers of this window.
   wrappers: Cell<usize>,
@@ -230,12 +234,28 @@ thread_local! {
   static NEXT_WRAPPER: Cell<u64> = const { Cell::new(1) };
 }
 
+/// `WEBVIEW2_DEFAULT_BACKGROUND_COLOR` as WebView2 reads it (`AARRGGBB` hex), when it names a
+/// colour that is not transparent: red, green, blue.
+fn webview2_default_background() -> Option<(u8, u8, u8)> {
+  let text = std::env::var("WEBVIEW2_DEFAULT_BACKGROUND_COLOR").ok()?;
+  let text = text.trim();
+  let value = u32::from_str_radix(text.strip_prefix("0x").or_else(|| text.strip_prefix("0X")).unwrap_or(text), 16).ok()?;
+  let [alpha, red, green, blue] = value.to_be_bytes();
+  (alpha != 0).then_some((red, green, blue))
+}
+
 /// The `backgroundColor` of the Sweetview window `handle` names (a wrapper of
 /// one shares it), for a webview made in it to start with; `None` for any
 /// other window, or one without a colour.
 pub fn background_of(handle: isize) -> Option<(u8, u8, u8)> {
   let core = core_of(handle)?;
   if !core.alive.get() {
+    return None;
+  }
+  // What the developer set wins over a default nobody set (D49): the window's `backgroundColor`,
+  // then `WEBVIEW2_DEFAULT_BACKGROUND_COLOR` (`None` here: WebView2 starts the webview with it
+  // itself), then the appearance's page colour.
+  if !core.background_given.get() && webview2_default_background().is_some() {
     return None;
   }
   match &core.tab {
@@ -291,6 +311,7 @@ impl Core {
       maximize_telling: Cell::new(0),
       background: Cell::new(None),
       cloak: RefCell::new(None),
+      background_given: Cell::new(false),
       icons: RefCell::new(None),
       page_focus: RefCell::new(None),
       wrappers: Cell::new(0),
@@ -776,10 +797,12 @@ impl Window {
     // client area nothing paints (D49). A transparent window, and a colour-keyed one given no
     // colour, show through there instead, as they always have. Set here, on the window still
     // hidden, for `System` to read the theme `tao` gave it. A tab frame paints its own (`TabState`).
+    // The window's own fill follows the same order as its webview's start colour (D49): its
+    // `backgroundColor`, then `WEBVIEW2_DEFAULT_BACKGROUND_COLOR`, then its appearance's.
     let backdrop = if tabbed {
       None
     } else {
-      background.or_else(|| (!init.transparent && color_key.is_none()).then(|| backdrop_for(init.appearance, &tao)))
+      background.or_else(|| (!init.transparent && color_key.is_none()).then(|| webview2_default_background().unwrap_or_else(|| backdrop_for(init.appearance, &tao))))
     };
     if let Some((red, green, blue)) = backdrop {
       tao.set_background_color(Some((red, green, blue, 0xff)));
@@ -789,6 +812,7 @@ impl Window {
     let min_options = (init.min_width, init.min_height);
     let core = Core::new(handle, Some(tao), Chrome { frame, resizable }, init.no_activate, min, init.topmost, tab);
     core.background.set(backdrop);
+    core.background_given.set(background.is_some());
     WINDOWS.with(|w| w.borrow_mut().insert(core.handle, core.clone()));
     // From here on a failure must not leave a half-made window behind.
     let made = Self::finish(&core, &init, color_key, bounds, min_options);
