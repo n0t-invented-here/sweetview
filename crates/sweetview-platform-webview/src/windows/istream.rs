@@ -43,11 +43,17 @@ impl StreamingIStream {
         if pv.is_null() {
             return E_POINTER;
         }
-        // SAFETY: `pv` is non-null, and the `ISequentialStream::Read` contract makes
-        // it a writable buffer of at least `cb` bytes for the duration of the call;
-        // the slice does not outlive this function.
-        let out = unsafe { std::slice::from_raw_parts_mut(pv.cast::<u8>(), cb as usize) };
-        let (end, n) = self.state.read(out);
+        // The caller's buffer may hold uninitialised bytes (WebView2 lends its own
+        // storage), so no `&mut [u8]` is formed over it: each piece is copied to it by pointer.
+        let out = pv.cast::<u8>();
+        let (end, n) = self.state.read_with(cb as usize, |offset, bytes| {
+            // SAFETY: the `ISequentialStream::Read` contract makes `pv` (non-null, checked
+            // above) writable for `cb` bytes for the call, and `read_with` keeps
+            // `offset + bytes.len()` within `cb`, so the destination range is inside it;
+            // `bytes` borrows the stream's own buffer, a different allocation, so the two
+            // do not overlap. `wrapping_add` stays inside the same allocation.
+            unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), out.wrapping_add(offset), bytes.len()) };
+        });
         if end == ReadEnd::Aborted {
             return E_ABORT; // *pcbread is already 0
         }
@@ -256,6 +262,26 @@ mod tests {
         };
         assert_eq!(read(&stream, &mut buf), (E_ABORT, 0), "aborted while waiting: nothing counts as read");
         aborter.join().unwrap();
+    }
+
+    // A COM caller may hand `Read` writable storage it has not initialised (WebView2's own
+    // buffer is such storage). Run under Miri with `-Zmiri-recursive-validation`, which checks
+    // what a reference points at, so a `&mut [u8]` formed over these bytes is reported.
+    #[test]
+    fn a_read_into_uninitialised_storage_writes_only_the_bytes_read() {
+        let state = Arc::new(StreamState::new());
+        let stream = StreamingIStream::create(state.clone());
+        assert!(state.push(b"abc"));
+        state.finish();
+        let mut storage = [std::mem::MaybeUninit::<u8>::uninit(); 8];
+        let mut n = 99u32;
+        // SAFETY: `storage` is 8 writable bytes owned by this frame for the call, and `n` a local
+        // u32 for the count; `Read` writes at most `cb` bytes and initialises what it reports.
+        let hr = unsafe { stream.Read(storage.as_mut_ptr().cast(), 8, Some(&mut n)) };
+        assert_eq!((hr, n), (S_FALSE, 3));
+        // SAFETY: `Read` reported 3 bytes written, so the first 3 are initialised.
+        let read = unsafe { std::slice::from_raw_parts(storage.as_ptr().cast::<u8>(), 3) };
+        assert_eq!(read, b"abc");
     }
 
     // Nothing unwinds out of the last `Release`: a panic in what the stream's release runs

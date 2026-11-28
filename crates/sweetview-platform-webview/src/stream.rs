@@ -143,13 +143,23 @@ impl StreamState {
     /// unless the stream ends first, in which case it returns what was left.
     /// Nothing counts as read once the stream is aborted. A zero-byte read
     /// never waits.
+    #[cfg(test)]
     pub(crate) fn read(&self, out: &mut [u8]) -> (ReadEnd, usize) {
-        if out.is_empty() {
+        self.read_with(out.len(), |offset, bytes| out[offset..offset + bytes.len()].copy_from_slice(bytes))
+    }
+
+    /// [`read`](Self::read) of `wanted` bytes into storage the caller owns and
+    /// this function never sees: `put(offset, bytes)` is called with each piece
+    /// in order, `offset` counting from 0, and `offset + bytes.len()` is never
+    /// more than `wanted`. Lets a COM `Read` copy into a caller's buffer whose
+    /// bytes may not be initialised, without forming a slice over it.
+    pub(crate) fn read_with(&self, wanted: usize, mut put: impl FnMut(usize, &[u8])) -> (ReadEnd, usize) {
+        if wanted == 0 {
             return (ReadEnd::Filled, 0);
         }
         let mut total = 0;
         let mut inner = self.lock();
-        while total < out.len() && !inner.aborted {
+        while total < wanted && !inner.aborted {
             if inner.read_pos == inner.buffer.len() {
                 if inner.eof {
                     break;
@@ -161,9 +171,9 @@ impl StreamState {
                 continue;
             }
             let available = inner.buffer.len() - inner.read_pos;
-            let n = (out.len() - total).min(available);
+            let n = (wanted - total).min(available);
             let start = inner.read_pos;
-            out[total..total + n].copy_from_slice(&inner.buffer[start..start + n]);
+            put(total, &inner.buffer[start..start + n]);
             inner.read_pos += n;
             total += n;
             if inner.read_pos == inner.buffer.len() {
@@ -174,7 +184,7 @@ impl StreamState {
         if inner.aborted {
             return (ReadEnd::Aborted, 0);
         }
-        if total == out.len() {
+        if total == wanted {
             (ReadEnd::Filled, total)
         } else {
             (ReadEnd::Ended, total)
