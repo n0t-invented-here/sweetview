@@ -9,7 +9,7 @@
 
 import { binding } from "./binding";
 import { reportCallbackError } from "./callback-errors";
-import { describeThrown, isErrorValue, isThenable, messageOf } from "./thrown";
+import { isErrorValue } from "./thrown";
 import type { Engine } from "../prebuilt/binding";
 import { releaseAtEnd } from "./lifetime";
 import type { WindowHandle } from "./types";
@@ -223,15 +223,32 @@ export function endWebviewResponse(handle: WebviewHandle, id: bigint) {
 
 /** How a binding's thrown or rejected value reaches the page (see {@link Webview.bind}). */
 export function serializeBindingError(err: unknown): string {
+  // As the main branch for every value it could read. Where it threw (a Proxy whose
+  // `getPrototypeOf` throws, an `Error` whose `message` getter throws), the page's call is
+  // rejected all the same: such an `Error` is described as any other value.
   if (err === undefined) return "";
-  if (isErrorValue(err)) return JSON.stringify(messageOf(err));
+  if (isErrorValue(err)) {
+    try {
+      return JSON.stringify(err.message);
+    } catch {
+      return describedForPage(err);
+    }
+  }
   try {
     const json = JSON.stringify(err);
     if (json !== undefined) return json;
   } catch {
-    // Falls through to its description.
+    // Falls through to String().
   }
-  return JSON.stringify(describeThrown(err));
+  return describedForPage(err);
+}
+
+function describedForPage(err: unknown): string {
+  try {
+    return JSON.stringify(String(err));
+  } catch {
+    return JSON.stringify("binding failed");
+  }
 }
 
 const instances = new Set<Webview>();
@@ -505,18 +522,27 @@ export class Webview {
           reportCallbackError("webview.setRequestHandler", err, null);
           return;
         }
-        if (isThenable(result)) {
-          Promise.resolve(result).then(
-            (response) => {
-              if (response) this.#completeQuietly(request.id, response);
-            },
-            (err: unknown) => {
-              this.#completeQuietly(request.id, { status: 500 });
-              reportCallbackError("webview.setRequestHandler", err, null);
-            },
-          );
-        } else if (result) {
-          this.#completeQuietly(request.id, result);
+        // As the main branch: a Promise is awaited, through its own `then`, and anything else
+        // that is truthy (a thenable that is no Promise included) is the response. The checks are
+        // part of the call: a value whose `instanceof` or `then` throws fails it, as a handler
+        // that throws does, with 500.
+        try {
+          if (result instanceof Promise) {
+            result.then(
+              (response) => {
+                if (response) this.#completeQuietly(request.id, response);
+              },
+              (err: unknown) => {
+                reportCallbackError("webview.setRequestHandler", err, null);
+                this.#completeQuietly(request.id, { status: 500 });
+              },
+            );
+          } else if (result) {
+            this.#completeQuietly(request.id, result);
+          }
+        } catch (err) {
+          reportCallbackError("webview.setRequestHandler", err, null);
+          this.#completeQuietly(request.id, { status: 500 });
         }
       }),
     );
@@ -750,8 +776,10 @@ export class Webview {
         return;
       }
       try {
-        if (isThenable(result)) {
-          Promise.resolve(result).then(fulfill, failed);
+        // As the main branch: a value whose `then` is a function is awaited. Reading `then` is
+        // part of the call: a getter that throws fails it, and the page's call is rejected.
+        if (result !== null && (typeof result === "object" || typeof result === "function") && typeof (result as PromiseLike<unknown>).then === "function") {
+          Promise.resolve(result as PromiseLike<unknown>).then(fulfill, failed);
         } else {
           fulfill(result);
         }

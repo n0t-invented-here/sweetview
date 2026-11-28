@@ -1429,13 +1429,31 @@ describe.if(onWindows)("onCallbackError and the raw webview class", () => {
   test("a bound function, a raw binding, a request handler and a file drop handler: each fault arrives once with its kind, and the page still gets its failure", async () => {
     const { r, exitCode } = await runFixture("webview-errors.ts");
     expect({ exitCode, timedOut: r.timedOut }).toEqual({ exitCode: 0, timedOut: undefined });
-    expect(r.page).toEqual({ bindThrows: "rejected", bindRejects: "rejected", bindProxy: "rejected", bindBadMessage: "rejected", throws: 500, rejects: 500, proxy: 200 });
+    expect(r.page).toEqual({
+      bindThrows: "rejected",
+      bindRejects: "rejected",
+      bindProxy: "rejected",
+      bindBadMessage: "rejected",
+      bindThenGetter: "rejected",
+      bindThenThrows: "rejected",
+      throws: 500,
+      rejects: 500,
+      proxy: 500,
+      promiseThenGetter: 500,
+      promiseThenThrows: 500,
+      thenable: 200,
+    });
     expect(r.told).toEqual(
       [
         "webview.bind (bindThrows): bind throws",
         "webview.bind (bindRejects): bind rejects",
         "webview.bind (bindProxy): [object Object]",
         "webview.bind (bindBadMessage): (its message throws)",
+        "webview.bind (bindThenGetter): then getter",
+        "webview.bind (bindThenThrows): then throws",
+        "webview.setRequestHandler: returned getPrototypeOf trap",
+        "webview.setRequestHandler: request then getter",
+        "webview.setRequestHandler: request then throws",
         "webview.bindRaw (rawThrows): raw throws",
         "webview.bindRaw (save): shared [the thrown object]",
         "webview.bindRaw (load): shared [the thrown object]",

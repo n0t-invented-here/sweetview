@@ -47,6 +47,20 @@ Object.defineProperty(badMessage, "message", {
   },
 });
 webview.bind("bindBadMessage", () => Promise.reject(badMessage));
+// A returned value whose `then` cannot be read, and a Promise whose `then` throws (review 3,
+// item 1): as on the main branch, each fails the call and the page's call is rejected.
+webview.bind("bindThenGetter", () => ({
+  get then() {
+    throw new Error("then getter");
+  },
+}));
+webview.bind("bindThenThrows", () => {
+  const promise = Promise.resolve(1);
+  promise.then = () => {
+    throw new Error("then throws");
+  };
+  return promise;
+});
 webview.bindRaw("rawThrows", () => {
   throw new Error("raw throws");
 });
@@ -59,14 +73,37 @@ webview.bindRaw("load", () => {
 webview.setRequestHandler((request) => {
   if (request.url.endsWith("/throws")) throw new Error("request throws");
   if (request.url.endsWith("/rejects")) return Promise.reject(new Error("request rejects"));
-  // A returned value whose prototype cannot be read (review 2, P1): it is an empty response, and
-  // inspecting it stays in TypeScript: answered 200, nothing reaches the binding's own catch.
+  // A returned value whose prototype cannot be read (review 2, P1; review 3, item 1): the check
+  // for a Promise throws, which fails the call: answered 500, and nothing reaches the binding's
+  // own catch, where the main branch let it escape.
   if (request.url.endsWith("/proxy")) {
     return new Proxy({}, {
       getPrototypeOf() {
         throw new Error("returned getPrototypeOf trap");
       },
     }) as never;
+  }
+  // A Promise whose `then` getter throws, and one whose `then` throws (review 3, item 1): 500.
+  if (request.url.endsWith("/promise-then-getter")) {
+    const promise = Promise.resolve({ status: 204 });
+    Object.defineProperty(promise, "then", {
+      get() {
+        throw new Error("request then getter");
+      },
+    });
+    return promise;
+  }
+  if (request.url.endsWith("/promise-then-throws")) {
+    const promise = Promise.resolve({ status: 204 });
+    promise.then = () => {
+      throw new Error("request then throws");
+    };
+    return promise;
+  }
+  // A thenable that is no Promise (review 3): as on the main branch it is not awaited; it is the
+  // response itself, which names no status: 200.
+  if (request.url.endsWith("/thenable")) {
+    return { then: (resolve: (r: unknown) => void) => resolve({ status: 201 }) } as never;
   }
   return { status: 404 };
 });
@@ -89,12 +126,17 @@ webview.setAsset(
       try { await bindRejects(); seen.bindRejects = "resolved"; } catch (e) { seen.bindRejects = "rejected"; }
       try { await bindProxy(); seen.bindProxy = "resolved"; } catch (e) { seen.bindProxy = "rejected"; }
       try { await bindBadMessage(); seen.bindBadMessage = "resolved"; } catch (e) { seen.bindBadMessage = "rejected"; }
+      try { await bindThenGetter(); seen.bindThenGetter = "resolved"; } catch (e) { seen.bindThenGetter = "rejected"; }
+      try { await bindThenThrows(); seen.bindThenThrows = "resolved"; } catch (e) { seen.bindThenThrows = "rejected"; }
       rawThrows();
       save();
       load();
       seen.throws = (await fetch("/throws")).status;
       seen.rejects = (await fetch("/rejects")).status;
       seen.proxy = (await fetch("/proxy")).status;
+      seen.promiseThenGetter = (await fetch("/promise-then-getter")).status;
+      seen.promiseThenThrows = (await fetch("/promise-then-throws")).status;
+      seen.thenable = (await fetch("/thenable")).status;
       await done(seen);
     })();
   </script></body>`,

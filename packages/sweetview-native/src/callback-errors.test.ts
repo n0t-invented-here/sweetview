@@ -122,7 +122,7 @@ describe("the reporter is not an entry point", () => {
       privateValues.set(native.setCallbackErrorSink, "the binding's setCallbackErrorSink");
     }
     const privateNames = new Set([...[...privateValues.values()].map((what) => what.split(" ").at(-1)!), "setBindingSink", "binding"]);
-    expect(privateNames.size).toBeGreaterThan(8);
+    expect([...privateNames]).toEqual(expect.arrayContaining(["reportCallbackError", "kindOfBindingCallback", "setBindingSink", "isErrorValue", "describeThrown", "asError"]));
 
     const offering: string[] = [];
     const checked: string[] = [];
