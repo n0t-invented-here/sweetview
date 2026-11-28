@@ -52,6 +52,8 @@ this page: it imports each new form and checks that it is what the row says.
   window and lock, and notifications it showed stay for the user to read. A
   timer or server of the application's own still keeps the process running
   after Quit: `unref()` or clear it ([the end of the application](app.md#the-end-of-the-application)).
+  On macOS, until the macOS goal of the rewrite, keep those lines: macOS still
+  runs the code it ran before 1.0, which releases nothing at exit.
 - **The engine on Windows.** The webview is WebView2 driven by Rust (`wry`
   and Sweetview's own additions), and windows, the tray, menus, dialogs,
   notifications, input hooks and the event loop are Rust too. The native

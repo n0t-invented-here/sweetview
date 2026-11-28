@@ -196,7 +196,7 @@ the menu bar. See [`setActivationPolicy`](menus-and-tray.md#setactivationpolicy)
 | `onResize(fn)`, `onMove(fn)` | Called with the new outer `Rect`. |
 | `onClose(fn)`, `onFileDrop(fn)` | See [Closing](#closing) and [File drops](#file-drops). |
 | `onNewTab(fn: (origin: Window) => void)`, `onTabSelect(fn)`, `onTabClose(fn)` | Tab events; see [Tabbed](#tabbed). |
-| `dispose()` | Destroys an owned window, or detaches a wrapper's hooks. Releases timers, subclass hooks, observers and icons. A webview attached to an owned window is torn down with it ([lifecycle](../app.md#lifecycle)). Every window is disposed when the application ends ([the end of the application](../app.md#the-end-of-the-application)); call it for one that should go before that. Safe to call twice. |
+| `dispose()` | Destroys an owned window, or detaches a wrapper's hooks. Releases timers, subclass hooks, observers and icons. A webview attached to an owned window is torn down with it ([lifecycle](../app.md#lifecycle)). On Windows every window is disposed when the application ends ([the end of the application](../app.md#the-end-of-the-application)); call it for one that should go before that. Safe to call twice. |
 
 Every `on*` method accepts any number of listeners and returns a function
 that removes that one subscription. A listener that throws is logged with
