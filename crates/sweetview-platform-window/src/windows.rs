@@ -28,7 +28,7 @@ use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetActiveWindow, GetAsyncKeyState, ReleaseCapture, VK_LBUTTON, VK_MBUTTON, VK_RBUTTON};
 use windows::Win32::UI::Shell::{DefSubclassProc, DragFinish, DragQueryFileW, RemoveWindowSubclass, SetWindowSubclass, HDROP};
 use windows::Win32::UI::WindowsAndMessaging::{
-  CreateIconFromResourceEx, DestroyIcon, DestroyWindow, GetClientRect, GetSystemMetrics, GetWindow, GetWindowLongPtrW,
+  CreateIconFromResourceEx, DestroyIcon, DestroyWindow, GetClientRect, GetForegroundWindow, GetSystemMetrics, GetWindow, GetWindowLongPtrW,
   GetWindowPlacement, GetWindowRect, WINDOWPLACEMENT, WPF_RESTORETOMAXIMIZED, GetWindowThreadProcessId, IsIconic, IsWindow, IsWindowVisible, IsZoomed, LoadIconW, MoveWindow,
   PostMessageW, SendMessageTimeoutW, SendMessageW, SetForegroundWindow, SetLayeredWindowAttributes, SetWindowLongPtrW, SetWindowPos,
   SetWindowTextW, SMTO_ABORTIFHUNG, SMTO_BLOCK,
@@ -699,6 +699,24 @@ pub fn mouse_buttons_down() -> bool {
 /// True while the left mouse button is down.
 pub fn left_button_down() -> bool {
   key_down(VK_LBUTTON)
+}
+
+/// The handle value of the foreground window; 0 when there is none.
+pub fn foreground_handle_value() -> isize {
+  // SAFETY: takes nothing and reads no memory of ours.
+  unsafe { GetForegroundWindow() }.0 as isize
+}
+
+/// Gives the foreground to `to` when `holder` still holds it and `to` still names a window: the
+/// end of a popup menu tracked by a stand-in owner (`holder`) for an owner that must not take the
+/// foreground. True when it was asked for; the OS may still refuse it, and then `holder` keeps it.
+pub fn pass_foreground_back(holder: isize, to: isize) -> bool {
+  let (holder, to) = (HWND(holder as *mut core::ffi::c_void), HWND(to as *mut core::ffi::c_void));
+  if to.is_invalid() || to == holder || !is_window_handle(to) || foreground_handle_value() != holder.0 as isize {
+    return false;
+  }
+  set_foreground(to);
+  true
 }
 
 /// The one of `monitors` the OS has the window on (`MonitorFromWindow`): the one its frame overlaps
