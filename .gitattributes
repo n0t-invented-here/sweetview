@@ -1,0 +1,4 @@
+# `just native build` regenerates the binding's declarations, and napi-rs writes them with LF line
+# endings on every OS. The checkout keeps LF too, whatever core.autocrlf says, so a build leaves the
+# file as git expects it instead of listing it as modified.
+packages/sweetview-native/prebuilt/binding.d.ts text eol=lf
