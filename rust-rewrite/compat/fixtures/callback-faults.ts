@@ -19,7 +19,17 @@ import { createApp } from "@n1h/sweetview";
 import { Menu, Tray, Window, onCallbackError, type CallbackErrorSource } from "@n1h/sweetview/native";
 import { binding } from "../../../packages/sweetview-native/src/binding";
 import { currentTray } from "../../../packages/sweetview-native/src/win32/tray";
-import { TRAY, VK, WM_CLOSE, doubleClickTime, openPopupMenu, postTrayMouse, pressKeys, user32 } from "../../../packages/sweetview-native/test/win32-os";
+import { TRAY, VK, WM_CLOSE, doubleClickTime, endMenu, openPopupMenu, postTrayMouse, pressKeys, user32 } from "../../../packages/sweetview-native/test/win32-os";
+
+/**
+ * Ends a menu still open `ms` after it opened, from a native timeout its own modal loop dispatches:
+ * a menu the posted keys did not close is not left on the shared desktop (review 4, C4). Returns
+ * the function that disarms it.
+ */
+function closeMenuLater(ms = 1500): () => void {
+  const closer = native.scheduleTimeout(ms, () => void (openPopupMenu() !== 0n && endMenu()));
+  return () => native.cancelTimeout(closer);
+}
 
 const native = binding();
 const mode = process.argv[2] ?? "report";
@@ -41,15 +51,18 @@ async function pumpUntil(done: () => boolean, ms = 5000): Promise<boolean> {
 /** Opens the tray's menu as a right click on its icon does, and chooses its first item with keys posted to the menu. */
 async function chooseFirstItem(trayWindow: bigint, chosen: () => boolean): Promise<boolean> {
   for (let attempt = 1; attempt <= 3 && !chosen(); attempt++) {
+    let disarm = () => {};
     const watcher = native.scheduleInterval(10, () => {
       const menu = openPopupMenu();
       if (menu === 0n) return;
       native.cancelTimeout(watcher);
+      disarm = closeMenuLater();
       pressKeys(menu, VK.DOWN, VK.RETURN);
     });
     postTrayMouse(trayWindow, TRAY.RBUTTONDOWN, TRAY.RBUTTONUP);
     await pumpUntil(chosen, 3000);
     native.cancelTimeout(watcher);
+    disarm();
     await pumpUntil(() => openPopupMenu() === 0n, 1000);
   }
   return chosen();
@@ -174,10 +187,12 @@ report.withListener = { ...(await throwFromEach("with")), arrivals: arrivals.spl
   const owner = new Window({ title: "sweetview compat faults popup", noActivate: true });
   let thrownFromPopup = "";
   for (let attempt = 1; attempt <= 3 && !thrownFromPopup; attempt++) {
+    let disarm = () => {};
     const watcher = native.scheduleInterval(10, () => {
       const menu = openPopupMenu();
       if (menu === 0n) return;
       native.cancelTimeout(watcher);
+      disarm = closeMenuLater();
       pressKeys(menu, VK.DOWN, VK.RETURN);
     });
     try {
@@ -186,6 +201,7 @@ report.withListener = { ...(await throwFromEach("with")), arrivals: arrivals.spl
       thrownFromPopup = (err as Error).message;
     }
     native.cancelTimeout(watcher);
+    disarm();
   }
   owner.dispose();
   report.menuPopup = { thrownFromPopup, arrivals: arrivals.splice(0) };

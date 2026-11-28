@@ -119,6 +119,9 @@ pub fn mouse_buttons_down() -> bool {
 pub fn left_button_down() -> bool {
   false
 }
+pub fn monitor_of(_window: &impl NativeWindow, _monitors: impl IntoIterator<Item = tao::monitor::MonitorHandle>) -> Option<tao::monitor::MonitorHandle> {
+  None
+}
 pub fn work_area(_monitor: &tao::monitor::MonitorHandle) -> Option<Rect> {
   None
 }
@@ -161,6 +164,7 @@ impl WindowSubclass {
   }
   pub fn set_policy(&self, _policy: ExStylePolicy) {}
   pub fn set_hold_visibility(&self, _on: bool) {}
+  pub fn set_listen_first(&self, _on: bool) {}
   pub fn set_fill_child(&self, _on: bool) {}
   pub fn force_style(&self, _bits: u32) {}
 }

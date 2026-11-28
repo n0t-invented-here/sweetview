@@ -741,6 +741,8 @@ export const winTabsDriver: TabsDriver = {
     };
     const hooks: TabAttachHooks = {
       fileDropHost: () => logicalHost().window,
+      // `tab.webview.window` is the window the tab is in now, never the frame it opened in (gone after a merge).
+      window: () => logicalHost().window,
       // Hidden until present() shows it as the selected tab.
       // A tab is a page of the frame: it starts with the tabbed window's backgroundColor, as the frame's page area shows.
       mountChild: () => ({ window: host.frame.hwnd, bounds: host.frame.pageRect(), visible: false, pageBackground: true }),

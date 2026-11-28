@@ -296,11 +296,10 @@ impl TabFrame {
     }
   }
 
-  /// Shows the window's system menu at the cursor, as a right-click on a title bar does.
+  /// Shows the window's system menu at the cursor, as `windowMenu` does for every window.
   pub fn show_system_menu(&self) -> Result<()> {
     if self.is_live() {
-      let at = screen::cursor()?;
-      self.core.show_system_menu(at)?;
+      crate::menu::window_menu(self.core.handle)?;
     }
     Ok(())
   }
