@@ -67,6 +67,12 @@ impl Window {
     self.0.uncloak(generation)
   }
 
+  /// Whether a reveal keeps the window off the screen now (DWM's cloak, D49).
+  #[napi(catch_unwind)]
+  pub fn is_cloaked(&self) -> bool {
+    self.0.is_cloaked()
+  }
+
   /// The outer frame.
   #[napi(catch_unwind)]
   pub fn bounds(&self) -> Rect {

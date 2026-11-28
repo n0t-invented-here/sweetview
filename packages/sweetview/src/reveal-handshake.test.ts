@@ -34,6 +34,17 @@ describe.if(process.platform === "win32")("the reveal on the ready signal (win32
     });
   }, 60_000);
 
+  test("toggle() of a window a reveal keeps cloaked puts it on the screen, as it is not on the screen yet", async () => {
+    // T6 of the second review.
+    expect(await run("toggle")).toEqual({
+      seen: [
+        { at: "before the bound", visible: true, cloaked: true },
+        { at: "toggled", visible: true, cloaked: false },
+        { at: "after the bound", visible: true, cloaked: false },
+      ],
+    });
+  }, 60_000);
+
   test("an application's own method named __sweetview.drawn is the application's: the host takes only the answers to its own requests", async () => {
     expect(await run("route")).toEqual({ routed: ["mine"], answer: "the application's" });
   }, 60_000);

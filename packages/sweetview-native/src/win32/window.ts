@@ -139,8 +139,9 @@ function wrap(native: NativeWindow, owned: boolean, tabbed = false): WindowBacke
     uncloak: (generation: number) => {
       if (live()) native.uncloak(generation);
     },
+    // A window a reveal keeps cloaked is not on the screen yet: toggle() puts it there (D49, T6).
     toggle: () => {
-      if (self.isVisible()) self.hide();
+      if (self.isVisible() && !native.isCloaked()) self.hide();
       else self.show();
     },
 

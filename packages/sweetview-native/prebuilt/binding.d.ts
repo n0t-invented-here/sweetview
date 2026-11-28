@@ -343,6 +343,8 @@ export declare class Window {
   showCloaked(): number
   /** Puts a window cloaked by the show numbered `generation` on the screen; nothing for another. */
   uncloak(generation: number): void
+  /** Whether a reveal keeps the window off the screen now (DWM's cloak, D49). */
+  isCloaked(): boolean
   /** The outer frame. */
   bounds(): Rect
   setBounds(rect: Rect): void

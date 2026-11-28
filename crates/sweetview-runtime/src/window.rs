@@ -1008,6 +1008,11 @@ impl Window {
     }
   }
 
+  /// Whether a reveal keeps the window cloaked now: visible to itself and off the screen.
+  pub fn is_cloaked(&self) -> bool {
+    self.live() && self.core.cloak.borrow().is_some()
+  }
+
   fn show_now(&self, no_activate: bool) -> Result<()> {
     let core = &self.core;
     // Shown the way `show()` always has: `tao`'s own show activates the window (D9).

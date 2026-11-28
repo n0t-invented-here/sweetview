@@ -111,6 +111,10 @@ impl Window {
     self.inner.uncloak(generation);
   }
 
+  pub fn is_cloaked(&self) -> bool {
+    self.inner.is_cloaked()
+  }
+
   pub fn bounds(&self) -> Rect {
     self.inner.bounds()
   }

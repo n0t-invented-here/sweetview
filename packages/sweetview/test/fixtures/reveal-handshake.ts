@@ -23,7 +23,7 @@ const cloaked = (hwnd: bigint) => {
   return value[0] !== 0;
 };
 
-if (mode === "bound") {
+if (mode === "bound" || mode === "toggle") {
   // Sent before the host asks: every drawn request the host makes after the ready signal is dropped.
   const page = `const rpc = window.__sweetview_rpc;
 window.__sweetview_rpc = (method, params) => (method === "__sweetview.drawn" ? new Promise(() => {}) : rpc(method, params));
@@ -31,7 +31,14 @@ rpc("__sweetview.ready", null);`;
   const app = await createApp({ title: "reveal bound", bounds, noActivate: true, showOnReady: true, assets: { "index.html": indexHtml({ title: "reveal bound" }), "main.js": new Blob([page]) } });
   const hwnd = BigInt(app.window.handle as bigint | number);
   const seen: { at: string; visible: boolean; cloaked: boolean }[] = [];
-  scheduleNativeTimeout(REVEAL_BOUND_MS / 2, () => seen.push({ at: "before the bound", visible: user32.IsWindowVisible(hwnd) !== 0, cloaked: cloaked(hwnd) }));
+  scheduleNativeTimeout(REVEAL_BOUND_MS / 2, () => {
+    seen.push({ at: "before the bound", visible: user32.IsWindowVisible(hwnd) !== 0, cloaked: cloaked(hwnd) });
+    // A cloaked window is not on the screen: toggle() puts it there, it does not hide it (T6).
+    if (mode === "toggle") {
+      app.window.toggle();
+      seen.push({ at: "toggled", visible: user32.IsWindowVisible(hwnd) !== 0, cloaked: cloaked(hwnd) });
+    }
+  });
   scheduleNativeTimeout(REVEAL_BOUND_MS + 1_000, () => {
     seen.push({ at: "after the bound", visible: user32.IsWindowVisible(hwnd) !== 0, cloaked: cloaked(hwnd) });
     app.quit();
