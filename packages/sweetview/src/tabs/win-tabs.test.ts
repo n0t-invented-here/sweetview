@@ -63,6 +63,8 @@ const CHECKS = [
   "shortcut Alt+F4 closes the window",
   "last tab: an onClose listener intercepts, the tab stays",
   "last tab: with no listener the window closes with it",
+  "forcing the last tab closed with no onClose listener (tab.dispose()): the window leaves the screen before the page goes",
+  "forcing the last tab closed with no onClose listener (tab.webview.dispose()): the window leaves the screen before the page goes",
   "a popup opens as a tab after its opener",
   "the popup tab's title follows its page",
   "a popup to another scheme is dropped",

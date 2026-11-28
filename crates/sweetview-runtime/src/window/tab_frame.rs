@@ -33,8 +33,10 @@ const DEFAULT_MIN_PAGE: (f64, f64) = (560.0, 420.0);
 /// across the top, the page's below, light or dark (red, green, blue).
 const STRIP_LIGHT: (u8, u8, u8) = (0xe9, 0xea, 0xee);
 const STRIP_DARK: (u8, u8, u8) = (0x29, 0x2a, 0x30);
-const PAGE_LIGHT: (u8, u8, u8) = (0xf9, 0xf9, 0xfb);
-const PAGE_DARK: (u8, u8, u8) = (0x15, 0x16, 0x1a);
+/// Also what a window without tabs paints where no webview covers it (its backdrop).
+pub(super) const PAGE_LIGHT: (u8, u8, u8) = (0xf9, 0xf9, 0xfb);
+pub(super) const PAGE_DARK: (u8, u8, u8) = (0x15, 0x16, 0x1a);
+
 
 /// Called with `true` when the frame becomes the active window, `false` when it stops being it.
 pub type ActivateListener = Rc<dyn Fn(bool)>;

@@ -150,6 +150,8 @@ impl Runtime {
   /// Drops this thread's runtime. Tests only: a process keeps its runtime for life.
   #[doc(hidden)]
   pub fn shutdown_for_tests() {
+    // The webviews go while the thread is still in its apartment.
+    crate::engine::release_all();
     crate::window::destroy_all();
     *WAKER.lock().unwrap_or_else(PoisonError::into_inner) = None;
     // Before the runtime, whose apartment the environment belongs to.

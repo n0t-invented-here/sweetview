@@ -134,6 +134,20 @@ after them give every export its row.
   close request and disposes the others, and the application quits from its
   tray menu (`app.quit()`, `quitEventLoop()`). Any other `onClose` listener
   keeps the window open and decides what a close request means.
+- **The window's background.** On Windows a window with no
+  `backgroundColor`, neither `transparent` nor colour-keyed (`colorKey`),
+  paints the page colour of its `appearance` where nothing covers it
+  (`#15161a` dark, `#f9f9fb` light): before its page paints, and where its
+  webview was once it has gone. It painted white before. Pass
+  `backgroundColor` for another colour
+  ([`WindowOptions`](native/windows.md#windowoptions)).
+- **The window after `run()`.** As `run()` returns, the window is hidden
+  before its webview goes, and it stays a window: `isVisible()` is `false`
+  and it is not in `Window.visibleWindows()`, where it stayed on the screen
+  with its page gone before. The next webview attached to it that runs shows
+  it again, as does `show()`; a window the application hid itself stays
+  hidden ([`run()`](app.md#run-the-blocking-loop)). macOS keeps the behaviour
+  it had before 1.0 until the macOS goal of the rewrite.
 - **Showing and sizing a window.** `createApp` and `new Window` make the
   window hidden, and the page says when it is ready: pass
   `showOnReady: true`, and call `signalReady()` from `@n1h/sweetview/page`

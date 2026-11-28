@@ -141,6 +141,11 @@ fn container(webview: &Webview) -> Option<HWND> {
     Some(parent)
 }
 
+/// The handle value of the webview's widget window, while its controller answers.
+pub fn container_value(webview: &Webview) -> Option<isize> {
+    container(webview).map(|window| window.0 as isize)
+}
+
 /// Whether the webview is still in place: its controller answers and its
 /// widget window exists.
 pub fn container_alive(webview: &Webview) -> bool {

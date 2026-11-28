@@ -1,14 +1,14 @@
 # Unsafe ledger
 
-Rewritten by `bun rust-rewrite/verify.ts <platform> --ledger`. 459 uses in 24 files.
+Rewritten by `bun rust-rewrite/verify.ts <platform> --ledger`. 469 uses in 25 files.
 
 | File | Uses of `unsafe` |
 |---|---|
 | `crates/sweetview-platform-input/src/windows.rs` | 8 |
 | `crates/sweetview-platform-input/tests/windows_hooks.rs` | 7 |
-| `crates/sweetview-platform-loop/src/com.rs` | 4 |
+| `crates/sweetview-platform-loop/src/com.rs` | 7 |
 | `crates/sweetview-platform-loop/src/windows.rs` | 41 |
-| `crates/sweetview-platform-notify/src/windows.rs` | 11 |
+| `crates/sweetview-platform-notify/src/windows.rs` | 10 |
 | `crates/sweetview-platform-shell/src/clipboard.rs` | 13 |
 | `crates/sweetview-platform-shell/src/icons.rs` | 1 |
 | `crates/sweetview-platform-shell/src/single_instance.rs` | 9 |
@@ -25,9 +25,10 @@ Rewritten by `bun rust-rewrite/verify.ts <platform> --ledger`. 459 uses in 24 fi
 | `crates/sweetview-platform-window/src/size_hint.rs` | 1 |
 | `crates/sweetview-platform-window/src/tab_frame.rs` | 13 |
 | `crates/sweetview-platform-window/src/tab_frame_tests.rs` | 12 |
-| `crates/sweetview-platform-window/src/test_support.rs` | 81 |
-| `crates/sweetview-platform-window/src/windows.rs` | 41 |
+| `crates/sweetview-platform-window/src/test_support.rs` | 86 |
+| `crates/sweetview-platform-window/src/windows.rs` | 42 |
 | `crates/sweetview-platform-window/src/windows_tests.rs` | 11 |
+| `crates/sweetview-platform-window/tests/winrt_own_apartments.rs` | 2 |
 
 ## Reasons
 
@@ -48,10 +49,12 @@ Shared types every platform crate uses, all in `sweetview-platform-loop`: `Messa
 - **Handle counts** (4: `GetCurrentProcess`, `GetGuiResources` twice, `GetProcessHandleCount`). Looked for: `std::process` (https://doc.rust-lang.org/std/process/index.html) has no handle count, and the `windows` 0.62.2 declarations of all three (`windows-0.62.2/src/Windows/Win32/System/Threading/mod.rs`) are `unsafe fn` with no safe wrapper; `sysinfo` and the other process-statistics crates are not in the policy's list. The pseudo-handle is a constant that needs no closing; the out-parameter is a local.
 - Tests (12): `IsWindow` (the window still exists after a posted `WM_CLOSE`), `DestroyWindow` (destroys a window out from under its owner), `RegisterClassExW` with a `DefWindowProcW` procedure (a class of the same name registered by other code), `PostMessageW` twice (a `WM_CLOSE` and a `WM_NCDESTROY` posted past the `Poster`'s range, as another process can) and `SendMessageW` (a `WM_NCDESTROY` sent from another thread), `SetWindowsHookExW`, `CallNextHookEx`, `UnhookWindowsHookEx` and `GetCurrentThreadId` for the `WH_CBT` hook that plants a stale entry under a new window's handle value, and one `PostMessageW` that fills the thread's queue to its limit.
 
-### `crates/sweetview-platform-loop/src/com.rs` (4: 2 source, 2 test)
+### `crates/sweetview-platform-loop/src/com.rs` (7: 4 source, 3 test)
 
 - **The UI thread's STA** (2: `CoInitializeEx`, `CoUninitialize`). Looked for: `windows` 0.62.2 / `windows-core` 0.62.2 have no safe COM initialisation (`windows-core-0.62.2/src`: none); `wry` initialises COM inside `build` only (`wry-0.58.2/src/webview2/mod.rs`). Contained by `ComApartment`: made only after a successful initialise, not `Send`, balanced once in `Drop`.
+- **The process's MTA usage** (2: `CoIncrementMTAUsage`, `CoDecrementMTAUsage`; D49). Keeps COM loaded while no thread is in an apartment, so the agile WinRT factories `windows-core` caches for the process (`windows-core-0.62.2/src/imp/factory_cache.rs`, `FactoryCache`) never outlive their DLLs. Looked for: no safe wrapper in `windows` 0.62.2 (`windows-0.62.2/src/Windows/Win32/System/Com/mod.rs`, `pub unsafe fn CoIncrementMTAUsage`); `windows-core` calls the same function itself when COM is not initialised (`load_factory`). Contained by `MtaUsage`, which owns the cookie (an opaque number, never dereferenced) and gives it back in `Drop`; its one value lives in a static, taken once, for the life of the process.
 - Test `entering_twice_and_leaving_is_balanced` (2): makes a thread multi-threaded with `CoInitializeEx` and leaves it with `CoUninitialize`, to prove an STA is then refused.
+- Test `once_an_apartment_is_entered_a_thread_with_no_com_of_its_own_is_in_the_implicit_mta` (1): `CoGetApartmentType` on a thread that never initialised COM, to read what the process's MTA usage changes for it.
 
 `loop_host.rs` has none: `LoopHost` keeps a clone of `tao`'s `EventLoopWindowTarget`, which is `Clone` in 0.38.0 (`tao-0.38.0/src/event_loop.rs`, `#[derive(Clone)] pub struct EventLoopWindowTarget`).
 
@@ -69,11 +72,11 @@ Drives the hooks with real input: `SetProcessDpiAwarenessContext` (physical pixe
 
 ## sweetview-platform-notify
 
-### `crates/sweetview-platform-notify/src/windows.rs` (11: 9 source, 2 test)
+### `crates/sweetview-platform-notify/src/windows.rs` (10: 8 source, 2 test)
 
 - **The balloon's icon** (4: `GetSystemMetrics`, `CreateIconFromResourceEx`, `LoadIconW`, `DestroyIcon`). Looked for: `tray-icon` 0.27.0 `Icon` (https://docs.rs/tray-icon/0.27.0/tray_icon/struct.Icon.html) and `muda` 0.22.0 `Icon` keep their `HICON` private, and `Shell_NotifyIconW` needs one. Contained by `OwnedIcon` (an icon made from `.ico` bytes, destroyed in `Drop` after the shell's icon is deleted); the stock icon is `BalloonIcon::Stock`, which stores no handle (it is shared by the system and never destroyed, and `stock_icon` asks for it when a struct is built).
 - **The hidden notification-area icon** (2: `Shell_NotifyIconW` add and delete). Looked for: `tray-icon` 0.27.0 `TrayIcon` (https://docs.rs/tray-icon/0.27.0/tray_icon/struct.TrayIcon.html) has no balloon (`NIF_INFO`) call, and the fallback must not need the application's tray. Contained by `NotifyWindow`: every icon is deleted in `Drop` before its `MessageWindow` goes; `NOTIFYICONDATAW` is the `windows` crate's struct, built in the frame.
-- **WinRT on this thread** (3: `RoInitialize`, `RoUninitialize`, `CoIncrementMTAUsage`). Looked for: `windows` 0.62.2 activates WinRT types safely but has no safe initialisation. Contained by `RoInit` (not `Send`, balanced in `Drop` on the same thread) and `keep_com_loaded` (once per process, through a `OnceLock`).
+- **WinRT on this thread** (2: `RoInitialize`, `RoUninitialize`). Looked for: `windows` 0.62.2 activates WinRT types safely but has no safe initialisation. Contained by `RoInit` (not `Send`, balanced in `Drop` on the same thread). The process's hold on COM, which keeps the toast classes' cached factories valid, is `sweetview-platform-loop`'s one owner (`hold_com_for_the_process`, see `com.rs`; D49), no longer a copy here.
 
 - Tests (2: `Shell_NotifyIconW(NIM_MODIFY)` and `Shell_NotifyIconGetRect`): read back from the shell that the fallback's icon exists and is hidden, with the same icon shown for one reading as the control. No safe API reads a notification-area icon's state.
 
@@ -170,6 +173,7 @@ What `wry::WebViewBuilder::build` and `wry::WebView`'s methods did, done as `win
 - **Naming a window** (5: `WindowHandle::borrow_raw`, `IsWindow`, `GetWindowThreadProcessId`, `GetCurrentThreadId`, `PostMessageW`). `raw-window-handle` 0.6.2 `borrow_raw` (https://docs.rs/raw-window-handle/0.6.2/raw_window_handle/struct.WindowHandle.html#method.borrow_raw) is `unsafe`. A `BorrowedWindow` is lent for one call by `with_handle_value` (after `IsWindow`) or for the borrow of a `tao` window by `of`; it carries that lifetime, is not `Send`, and its handle is checked with `IsWindow` again when lent through `HasWindowHandle`. What holds is what the OS gives: it validates the handle on every call, so a window destroyed meanwhile makes the calls fail, and no memory is read through the handle. Identity is checked where an action could land on a later window with the same value: the subclass and the frame procedure compare the state they installed. A handle that crosses to JavaScript is an integer validated each time it is lent.
 - **Reading a window** (9: `IsWindowVisible`, `GetActiveWindow`, one `IsIconic` in `is_iconic`, `IsZoomed`, one `GetWindowPlacement` in `restores_maximized`, `GetWindowRect`, one `GetDpiForWindow` in `dpi_of`, `GetWindowLongPtrW`, one `MonitorFromWindow` in `monitor_of`). `monitor_of` is the screen a window is on, as at tag `pre-rust-rewrite`: for a minimised window the OS answers with the monitor of its restored position, which no rectangle Sweetview can read gives in screen coordinates, and `tao`'s `current_monitor` exists only for its own windows. `restores_maximized` is whether a minimised window goes back to maximised (`WPF_RESTORETOMAXIMIZED`), which a window Sweetview wraps while it is minimised needs (review round 2, finding 5): `IsZoomed` reads false while it is iconic, `tao`'s `is_maximized` exists only for its own windows, and `windows` 0.62.2 has no safe wrapper of `GetWindowPlacement` (https://docs.rs/windows/0.62.2/windows/Win32/UI/WindowsAndMessaging/fn.GetWindowPlacement.html). `tao`'s readers exist only for its own windows; its `outer_position` and `outer_size` read the rectangle twice and panic when the window was destroyed by other code, and its `is_maximized` and `scale_factor` read its own flags, not the OS's state. Out-structs are locals.
 - **Changing a window** (11: one `SetWindowLongPtrW` in `set_style_of`, which writes `GWL_STYLE` or `GWL_EXSTYLE` only, one `SetWindowPos` in `set_window_pos` (behind `set_placement`, which replaces the five near-identical position, size and band functions), `ShowWindow` (behind `show` and `show_as`, which replaces three), one `SetForegroundWindow` in `set_foreground`, `SetWindowTextW`, `ReleaseCapture` and `SendMessageW` for the frame press in `press_frame` (the caption or any edge; it replaces three), `GetWindow`, one `GetClientRect` in `client_size`, `MoveWindow`, `SetLayeredWindowAttributes`). `tao` sets an outer position (with `SWP_ASYNCWINDOWPOS`) and an inner size as two calls, shows with `SW_SHOW`, rewrites the extended style from its own flags, posts its drag press instead of waiting for the move loop, and has no layered attributes (README of this crate).
+- **Cloaking a window** (1: `DwmSetWindowAttribute` with `DWMWA_CLOAK`, in `set_cloak`, behind `Cloak`, D49). Sweetview's reveal of a window whose page has to draw first shows it cloaked: WebView2 draws only into a window that is visible, and its render window is on the screen before its first frame, which shows light. `Cloak` is the one owner of the state: made by `Cloak::new`, which cloaks, and its `Drop` uncloaks; the runtime's window holds it until the page has drawn, and lets it go on `show()` and `hide()`. `tao` 0.38.0 and `windows` 0.62.2 have no safe call for a window attribute (https://docs.rs/windows/0.62.2/windows/Win32/Graphics/Dwm/fn.DwmSetWindowAttribute.html). The attribute is a `BOOL` local read for the length of the call, and DWM validates the handle: a window destroyed meanwhile makes the call fail.
 - **Destroying a `tao` window now** (1: `DestroyWindow` in `destroy_now`): `tao` destroys later, from its own loop. `destroy_now` takes the `tao` window by value and drops it, so nothing names the handle through it afterwards.
 - **Window icons** (6: `CreateIconFromResourceEx`, `LoadIconW`, `DestroyIcon`, one `GetSystemMetrics` in `metric`, one `SendMessageW` in `icon_message`, for `WM_SETICON` and `WM_GETICON`, and one `SendMessageTimeoutW` in `shown_icon`, the parked windows' `WM_GETICON`, with `SMTO_ABORTIFHUNG | SMTO_BLOCK` and 100 ms, so a parked window of another process that stops answering holds nothing up and keeps its icons parked, D41). Looked for: `tao` 0.38.0 `Window::set_window_icon` sets `ICON_SMALL` and `WindowExtWindows::set_taskbar_icon` sets `ICON_BIG` (https://docs.rs/tao/0.38.0/tao/platform/windows/trait.WindowExtWindows.html#tymethod.set_taskbar_icon; `tao-0.38.0/src/platform_impl/windows/window.rs`), each from a `tao::window::Icon`, which is made from RGBA pixels at one size (`Icon::from_rgba`, drawn with `CreateIcon`) or from a file or resource (`IconExtWindows::from_path`, `from_resource`), not from `.ico` bytes. Using them for `tao`'s windows would mean decoding each `.ico` entry (PNG, or a bitmap with its mask) and scaling the picked one in this project where `CreateIconFromResourceEx` does both now, and `None` would clear the icons where Sweetview sets the stock one; an adopted window has no `tao` window, so the calls here stay for it in any case. Contained by `OwnedIcon` (destroyed in `Drop`) and `WindowIcons`, whose `Drop` destroys only icons no live window shows (`IsWindow`, then `WM_GETICON`); icons a window still shows (an adopted window that is released) are parked by handle value and destroyed at the next `WindowIcons::set` after the window is gone or shows others.
 - **Buttons and work area** (2: `GetAsyncKeyState`, `GetMonitorInfoW`). `tao`'s `MonitorHandle` has no work area; button state outside `tao`'s handler has no API.
@@ -207,6 +211,7 @@ Compiled only for tests (this crate's, and the runtime's through the `test-suppo
 - **The application's own modal loops**: `message_box`, `own_popup_menu`.
 - **A window of the application's own**: `OwnWindow`, a window class and window the test registers and makes itself.
 - **The test process**: `keep_com_loaded_for_the_test_process`.
+- **The order a teardown runs in and DWM's cloak** (D49): `watch_destroy` (`SetWindowSubclass`, and `RemoveWindowSubclass` in `Drop` and on `WM_NCDESTROY`) runs a test's closure inside a window's `WM_DESTROY`; `first_child` (`GetWindow` with `GW_CHILD`) finds WebView2's own window under a webview's widget; `post_close` posts `WM_CLOSE`; `is_cloaked` (`DwmGetWindowAttribute` with `DWMWA_CLOAKED`) reads whether DWM keeps a window off the screen.
 - **Read back from the OS**: `send`, `title_of`, `client_size`, `client_to_screen`, `min_track_size`, `uses_dark_title_bar`, `screen_pixel`, `in_move_size`, `this_thread_sees_left_down`, `move_cursor_as_input`, `shell_drop`, `send_file_drop`.
 - **Menus**: `popup_menus_open`, `open_popup_menu`, `menu_of_window`, `read_menu` (each line a `MenuEntry`), `press_keys`, `menu_item_rect`, `menu_item_id`, `sub_menu`, `is_menu`, `track_menu`, `send_right_button`, `registered_message`, `dpi_of`, `frame_edge`.
 
