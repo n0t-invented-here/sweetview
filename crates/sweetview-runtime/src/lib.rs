@@ -33,6 +33,8 @@ mod window_os_tests;
 mod menu_tray_os_tests;
 #[cfg(all(test, windows))]
 mod reentry_tests;
+#[cfg(all(test, windows))]
+mod person_tests;
 
 pub use error::{Error, Result};
 pub use sweetview_window_logic::{Point, Rect, ResizeEdge};

@@ -23,7 +23,14 @@ const messageOf = (error: Error) => {
 const shared = new Error("shared");
 // `bun webview-errors.ts none`: no listener, for the lines printed with none (review 4, C1).
 const listening = process.argv[2] !== "none";
-if (listening) onCallbackError((error, source) => void told.push(`${source.kind}${source.name ? ` (${source.name})` : ""}: ${messageOf(error)}${error === shared ? " [the thrown object]" : ""}`));
+// `bun webview-errors.ts throwing`: the listener records each fault, then throws (review 5, E1).
+const throwing = process.argv[2] === "throwing";
+if (listening) {
+  onCallbackError((error, source) => {
+    told.push(`${source.kind}${source.name ? ` (${source.name})` : ""}: ${messageOf(error)}${error === shared ? " [the thrown object]" : ""}`);
+    if (throwing) throw new Error("listener boom");
+  });
+}
 
 const webview = new Webview(false, { width: 360, height: 240, hint: SizeHint.NONE });
 webview.title = `sweetview webview-errors ${process.pid}`;

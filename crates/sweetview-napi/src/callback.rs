@@ -114,6 +114,8 @@ const GUARD_SCRIPT: &str = r#"(() => {
   const create = Object.create;
   const toText = String;
   const encode = encodeURIComponent;
+  // An unpaired surrogate makes encodeURIComponent throw: each becomes U+FFFD first, so only it is lost.
+  const toWellFormed = String.prototype.toWellFormed;
   const state = { sink: null, guard: null };
   const textOf = (value) => {
     try {
@@ -124,7 +126,7 @@ const GUARD_SCRIPT: &str = r#"(() => {
   };
   const encoded = (text) => {
     try {
-      return encode(text);
+      return encode(apply(toWellFormed, text, []));
     } catch {
       return encode("(text that is not well-formed)");
     }
