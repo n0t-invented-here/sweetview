@@ -1,10 +1,14 @@
 // macOS only, until the macOS goal of the Rust rewrite replaces it: the webview is the
-// library of @n1h/sweetview-webview-bun, and `../webview.ts` hands every call to it.
+// library of @n1h/sweetview-webview-bun, and `raw-webview.ts` of @n1h/sweetview hands every call to it.
 // The handle that names a webview is the library's pointer here; it travels as a number.
 // Each function reaches the package when called (see ./library), not when this module loads.
 
 import { library } from "./library";
-import type { Size, WebviewResponse, WebviewResponseHead } from "../webview";
+
+// The shapes `RawWebview` of @n1h/sweetview passes, as the library takes them.
+type Size = { width: number; height: number; hint: number };
+type WebviewResponse = object;
+type WebviewResponseHead = object;
 import type { WindowHandle } from "../types";
 
 type AnyThread<Args extends unknown[]> = (handle: number, id: bigint, ...rest: Args) => void;

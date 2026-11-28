@@ -1,0 +1,31 @@
+// The binding of `@n1h/sweetview`: every call of `@n1h/sweetview-native`'s binding and the
+// webview's (D48). It is handed to the native package when this module loads, so one binding is
+// loaded in the process, this one; an application that imports only the native package loads that
+// package's own, which has no webview.
+
+import { binding as loadedBinding, provideBinding, type NativeBinding } from "@n1h/sweetview-native/internal";
+import type * as Binding from "../prebuilt/binding";
+
+export type WebviewBinding = typeof Binding;
+
+const NOT_BUILT =
+  "The file is not there. In a checkout of the sweetview repository it is built from the Rust source: " +
+  "run `just native build`, which builds it with the native package's binding. In an application that " +
+  "installed @n1h/sweetview the file ships with the package, so its absence means a broken install: install the package again.";
+
+function load(): WebviewBinding {
+  try {
+    if (process.platform === "win32") return require("../prebuilt/sweetview-webview.win32-x64-msvc.node") as WebviewBinding;
+    throw new Error(`the Windows binding does not load on ${process.platform}`);
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    const missing = (err as { code?: unknown } | null)?.code === "MODULE_NOT_FOUND";
+    throw new Error(`sweetview: the binding of @n1h/sweetview could not be loaded from @n1h/sweetview/prebuilt/sweetview-webview.win32-x64-msvc.node: ${reason}${missing ? `\n${NOT_BUILT}` : ""}`);
+  }
+}
+
+// Windows only: on macOS, until its goal, the webview is the library of @n1h/sweetview-webview-bun.
+if (process.platform === "win32") provideBinding(load as unknown as () => NativeBinding);
+
+/** The loaded binding, with the webview's calls. */
+export const binding = (): WebviewBinding => loadedBinding() as unknown as WebviewBinding;

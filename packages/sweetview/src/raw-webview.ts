@@ -1,17 +1,19 @@
 // The low-level webview: one native web view, in a window of its own or
 // mounted inside a window you give it. This is the class the package
 // `@n1h/sweetview-webview-bun` exported as `Webview`; `@n1h/sweetview` builds
-// `WebView.attach` and `createApp` on it and re-exports it as `RawWebview`.
+// `WebView.attach` and `createApp` on it and exports it as `RawWebview`. It lives here, not in
+// `@n1h/sweetview-native`, so an application of the native package alone takes no webview (D48).
 //
 // Windows: the Rust binding (`wry` on WebView2, plus Sweetview's own request
 // handler). macOS: the webview library of `@n1h/sweetview-webview-bun`, until
-// the macOS goal of the rewrite replaces it; `./darwin/webview` is that seam.
+// the macOS goal of the rewrite replaces it; the native package's `darwin/webview` is that seam.
 
+import { unload, type WindowHandle } from "@n1h/sweetview-native";
+import { loadDarwinWebview, onUnload, releaseAtEnd, reportCallbackError } from "@n1h/sweetview-native/internal";
 import { binding } from "./binding";
-import { reportCallbackError } from "./callback-errors";
 import type { Engine } from "../prebuilt/binding";
-import { releaseAtEnd } from "./lifetime";
-import type { WindowHandle } from "./types";
+
+export { unload };
 
 /**
  * Names a live webview. Pass it to the functions a `Worker` calls
@@ -133,9 +135,9 @@ const headersJson = (headers: WebviewResponse["headers"]): string | null => (hea
 
 // The macOS seam: these four and the class fall through to the webview library there.
 // The library is loaded with `import()`, not `require`: it has a top-level await of its own.
-type DarwinWebview = typeof import("./darwin/webview");
+type DarwinWebview = Awaited<ReturnType<typeof loadDarwinWebview>>;
 const onDarwin = process.platform === "darwin";
-const darwinModule: DarwinWebview | undefined = onDarwin ? await import("./darwin/webview") : undefined;
+const darwinModule: DarwinWebview | undefined = onDarwin ? await loadDarwinWebview() : undefined;
 const darwin = (): DarwinWebview => darwinModule!;
 
 /**
@@ -295,15 +297,11 @@ export function createChildWebview(debug: boolean, window: bigint, bounds: { x: 
   return new Webview(debug, new ChildMount(bounds, pageBackground) as unknown as Size, window);
 }
 
-/**
- * Destroys every webview this process created through {@link Webview} that
- * is still alive. Installed mouse or keyboard hooks are not removed; dispose
- * them first.
- */
-export function unload() {
+// What the native package's `unload()` releases: every webview made here that is still alive.
+onUnload(() => {
   if (onDarwin) return darwin().unload();
   for (const instance of [...instances]) instance.destroy();
-}
+});
 
 /** An instance of a webview window. */
 export class Webview {
@@ -868,3 +866,5 @@ export class Webview {
     this.#engine?.init(source);
   }
 }
+
+export { Webview as RawWebview };
