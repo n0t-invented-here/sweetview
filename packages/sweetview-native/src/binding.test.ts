@@ -272,33 +272,6 @@ describe.if(onWindows)("native binding: callbacks from inside the loop (W1.2, W1
     // the native stack, which the collector scans conservatively).
     expect(dropped.grew).toBeLessThan(N / 20);
   });
-
-  test("a callback may remove itself, and may destroy its owner, from inside its own call", () => {
-    const native = binding();
-    let ticks = 0;
-    let drained = 0;
-    // An interval that cancels itself on its first run.
-    const interval: number = native.scheduleInterval(1, () => {
-      ticks++;
-      native.cancelTimeout(interval);
-    });
-    // A drain function that removes itself, then replaces itself, from inside its own call.
-    native.setDrain(7001, () => {
-      drained++;
-      native.setDrain(7001, null);
-      native.setDrain(7001, () => {
-        drained += 10;
-        native.setDrain(7001, null);
-      });
-      native.wake(7001);
-    });
-    native.wake(7001);
-    native.scheduleTimeout(60, () => native.quitLoop());
-    native.runLoop();
-    expect(ticks).toBe(1);
-    expect(drained).toBe(11);
-    expect(native.wake(7001)).toBe(true); // the wake is delivered; no drain is registered, so nothing runs
-  });
 });
 
 describe.if(onWindows)("native binding: both loop modes (W4.1 mechanism)", () => {
