@@ -222,7 +222,9 @@ const offMaximize = win.onMaximizeChange(boom("onMaximizeChange"));
 const offChrome = windowChromeEvents(win, { emit: boom("window chrome emit") });
 win.show(); // noActivate: shown without taking the foreground
 win.toggleMaximize();
-await pumpUntil(() => arrivals.some((a) => a.kind === "windowChromeEvents") && arrivals.some((a) => a.kind === "window.onMaximizeChange"));
+// Both arrive as window.onMaximizeChange (review 3, Q3: the wait is for what the code produces).
+const maximized = (message: string) => arrivals.some((a) => a.kind === "window.onMaximizeChange" && a.message === message);
+await pumpUntil(() => maximized("onMaximizeChange boom") && maximized("window chrome emit boom"));
 offMaximize();
 offChrome();
 win.toggleMaximize();
