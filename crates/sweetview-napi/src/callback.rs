@@ -15,18 +15,29 @@
 //!   has an `onCallbackError` listener, the sink it registered on this thread
 //!   (`set_error_sink`).
 //!
+//! The function is held through a guard, a small JavaScript function made by
+//! this thread's [`GUARD_SCRIPT`] that calls it and catches what it throws, in
+//! JavaScript. While a sink is set, the guard hands the sink the value thrown,
+//! as it is, and throws `undefined` on to napi instead. napi turns a thrown
+//! value into an `Error` by making a reference to it (which Bun refuses for a
+//! primitive below Node-API 10), by calling its `toString` and by reading its
+//! `cause`: none of that is done to an application's value while a listener
+//! is set. With no sink the guard throws the value on, and napi turns it into
+//! the stderr line as it always did.
+//!
 //! A callback is held in an `Rc` by its owner and cloned for the duration of
 //! each call, so it may remove itself, replace itself or destroy its owner
 //! from inside its own call.
 
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::rc::Rc;
 
-use napi::bindgen_prelude::{FnArgs, FromNapiValue, Function, FunctionRef, JsValuesTupleIntoVec};
-use napi::Env;
+use napi::bindgen_prelude::{FnArgs, FromNapiValue, Function, FunctionRef, JsObjectValue, JsValuesTupleIntoVec, Null, Object, ObjectRef, Unknown};
+use napi::{Env, JsValue};
 
 pub(crate) struct JsCallback<Args: JsValuesTupleIntoVec, Return: FromNapiValue> {
   env: Env,
+  /// The guard around the application's function (see the module's comment).
   function: FunctionRef<Args, Return>,
   /// What the function is, for the log line of a thrown exception.
   kind: &'static str,
@@ -36,13 +47,13 @@ pub(crate) struct JsCallback<Args: JsValuesTupleIntoVec, Return: FromNapiValue> 
 
 impl<Args: JsValuesTupleIntoVec, Return: FromNapiValue> JsCallback<Args, Return> {
   pub(crate) fn new(env: Env, function: &Function<'_, Args, Return>, kind: &'static str) -> napi::Result<Rc<Self>> {
-    Ok(Rc::new(Self { env, function: function.create_ref()?, kind, label: None }))
+    Ok(Rc::new(Self { env, function: guarded(env, function, kind, None)?, kind, label: None }))
   }
 
   /// The same, with the name the application gave the function (a binding's name), which the
   /// sink is handed with an exception it throws.
   pub(crate) fn named(env: Env, function: &Function<'_, Args, Return>, kind: &'static str, label: &str) -> napi::Result<Rc<Self>> {
-    Ok(Rc::new(Self { env, function: function.create_ref()?, kind, label: Some(label.to_owned()) }))
+    Ok(Rc::new(Self { env, function: guarded(env, function, kind, Some(label))?, kind, label: Some(label.to_owned()) }))
   }
 
   /// Calls the function. `None` when it threw, or returned a value of the wrong type.
@@ -51,6 +62,18 @@ impl<Args: JsValuesTupleIntoVec, Return: FromNapiValue> JsCallback<Args, Return>
     match outcome {
       Ok(value) => Some(value),
       Err(error) => {
+        match taken(&self.env) {
+          // The guard handed what was thrown to the sink: the `undefined` it threw on is no fault.
+          Taken::HandedOn => return None,
+          // The sink threw: both lines, the callback's (napi's text of the stand-in the guard
+          // threw on, as with no sink) and the sink's.
+          Taken::SinkThrew(sink_text) => {
+            eprintln!("sweetview: {} threw: {}", self.kind, error.reason);
+            eprintln!("sweetview: the callback error sink threw: {sink_text}");
+            return None;
+          }
+          Taken::Nothing => {}
+        }
         // The TypeScript layer wraps every application handler and reports
         // its exception with that handler's own kind; this is the backstop
         // for anything that gets past it.
@@ -61,79 +84,202 @@ impl<Args: JsValuesTupleIntoVec, Return: FromNapiValue> JsCallback<Args, Return>
   }
 }
 
-/// The application's sink for the exceptions caught here, with the env of the thread that set it.
-/// `onCallbackError` of `@n1h/sweetview-native` sets one while it has a listener, on the UI thread
-/// only (`set_callback_error_sink` checks it).
-struct ErrorSink {
+/// Run once per thread that makes a callback: the guard, and the state it shares with this file.
+/// `sink` is the application's sink or `null`; `handedOn` counts the values handed to it whose
+/// `undefined` napi has not yet returned to [`JsCallback::call`] (one per guard on the stack);
+/// `sinkThrew` holds the text of what the sink threw, when it threw, until that call takes it.
+/// Nothing outside this file can reach the state.
+///
+/// With no sink, what napi is given in place of the value: a primitive other than a symbol as it
+/// is (napi keeps no reference to one below Node-API 10, and that refusal is the line's text, as
+/// it always was); anything else as a stand-in that carries the text napi made of it, its
+/// `String()` form or nothing when that throws, and has no `cause` to follow. So the line reads as
+/// it did, while napi's conversion runs no application code, leaves no exception pending (a
+/// symbol's, or a `toString` that throws) and follows no `cause` (one that is itself overflowed
+/// the stack).
+const GUARD_SCRIPT: &str = r#"(() => {
+  "use strict";
+  const apply = Reflect.apply;
+  const create = Object.create;
+  const toText = String;
+  const state = { sink: null, handedOn: 0, sinkThrew: null, guard: null };
+  const textOf = (value) => {
+    try {
+      return toText(value);
+    } catch {
+      return "";
+    }
+  };
+  const onward = (thrown) => {
+    const type = typeof thrown;
+    if (thrown === null || (type !== "object" && type !== "function" && type !== "symbol")) return thrown;
+    let text = "";
+    if (type !== "symbol") {
+      try {
+        text = toText(thrown);
+      } catch {
+        text = "";
+      }
+    }
+    const standIn = create(null);
+    standIn.toString = () => text;
+    standIn.cause = undefined;
+    return standIn;
+  };
+  state.guard = (fn, kind, label) =>
+    function () {
+      try {
+        return apply(fn, this, arguments);
+      } catch (thrown) {
+        const sink = state.sink;
+        if (sink === null) throw onward(thrown);
+        try {
+          sink(kind, label, thrown);
+        } catch (sinkError) {
+          state.sinkThrew = textOf(sinkError);
+          throw onward(thrown);
+        }
+        state.handedOn += 1;
+        throw undefined;
+      }
+    };
+  return state;
+})()"#;
+
+/// The thread's guard state, with the env of the thread that made it, and whether a sink is set.
+struct Guard {
   env: Env,
-  function: Rc<FunctionRef<SinkArgs, ()>>,
+  state: ObjectRef<false>,
+  sink_set: bool,
 }
 
-/// The thread's sink. The reference is released by the environment's cleanup hook
-/// (`set_error_sink` adds it), while the environment is alive. If the slot still holds a sink
-/// when the thread's storage is destroyed, the environment is gone and the reference cannot be
-/// deleted any more: it is left as it is, and a line says the release was missed.
-struct SinkSlot(RefCell<Option<ErrorSink>>);
+/// The thread's guard state. The reference is released by the environment's cleanup hook (added
+/// when the state is made), while the environment is alive. If the slot still holds it when the
+/// thread's storage is destroyed, the environment is gone and the reference cannot be deleted any
+/// more: it is left as it is, and, when a sink was still set, a line says its release was missed.
+struct GuardSlot(RefCell<Option<Guard>>);
 
-impl Drop for SinkSlot {
+impl Drop for GuardSlot {
   fn drop(&mut self) {
-    if let Some(sink) = self.0.get_mut().take() {
-      std::mem::forget(sink);
-      eprintln!("sweetview: the callback error sink outlived its JavaScript environment");
+    if let Some(guard) = self.0.get_mut().take() {
+      if guard.sink_set {
+        eprintln!("sweetview: the callback error sink outlived its JavaScript environment");
+      }
+      // An ObjectRef<false> dropped undeleted: nothing is called on the gone environment.
+      drop(guard.state);
     }
   }
 }
 
 thread_local! {
-  static ERROR_SINK: SinkSlot = const { SinkSlot(RefCell::new(None)) };
-  /// Whether the cleanup hook that releases the sink is added for this thread's environment.
-  static RELEASED_AT_CLEANUP: Cell<bool> = const { Cell::new(false) };
+  static GUARD: GuardSlot = const { GuardSlot(RefCell::new(None)) };
 }
 
-/// Makes `sink` where a caught exception's kind and reason go on this thread, in place of the
-/// stderr line, or puts the stderr line back with `None`. The first sink a thread sets adds the
-/// environment cleanup hook that releases it when the environment ends, whatever else the
-/// application made.
-pub(crate) fn set_error_sink(env: Env, sink: Option<&Function<'_, SinkArgs, ()>>) -> napi::Result<()> {
-  let sink = match sink {
-    Some(function) => Some(ErrorSink { env, function: Rc::new(function.create_ref()?) }),
-    None => None,
-  };
-  if sink.is_some() && !RELEASED_AT_CLEANUP.get() {
-    env.add_env_cleanup_hook((), |()| clear_error_sink())?;
-    RELEASED_AT_CLEANUP.set(true);
+/// This thread's guard state, made on first use.
+fn state(env: &Env) -> napi::Result<Object<'_>> {
+  if let Some(state) = GUARD.with(|slot| slot.0.borrow().as_ref().map(|guard| guard.state.get_value(env))) {
+    return state;
   }
-  let previous = ERROR_SINK.with(|slot| slot.0.replace(sink));
-  drop(previous);
-  Ok(())
+  let state: Object<'_> = env.run_script(GUARD_SCRIPT)?;
+  let reference = state.create_ref::<false>()?;
+  env.add_env_cleanup_hook(*env, release_guard)?;
+  GUARD.with(|slot| *slot.0.borrow_mut() = Some(Guard { env: *env, state: reference, sink_set: false }));
+  Ok(state)
 }
 
-/// Releases this thread's sink, when its environment ends (the cleanup hook).
-fn clear_error_sink() {
-  let sink = ERROR_SINK.with(|slot| slot.0.borrow_mut().take());
-  drop(sink);
+/// Releases this thread's guard state, and the sink it holds, when its environment ends (the cleanup hook).
+fn release_guard(_env: Env) {
+  if let Some(guard) = GUARD.with(|slot| slot.0.borrow_mut().take()) {
+    let _ = guard.state.unref(&guard.env);
+  }
 }
 
-/// What the sink is called with: the callback's kind, the application's name for it (or
-/// `undefined`), the exception's text (for the line printed when the sink fails), and the exception
-/// itself. napi's `Error` keeps a reference to the exception the function threw, so on the
-/// JavaScript side it is that value, not a copy.
-pub type SinkArgs = FnArgs<(String, Option<String>, String, napi::Error)>;
+/// The guard maker: `(function, kind, label)` to the function inside its guard.
+type GuardFunction<'scope, Args, Return> = Function<'scope, FnArgs<(Unknown<'scope>, String, Option<String>)>, Function<'scope, Args, Return>>;
 
-/// Hands a caught exception to the sink, or prints the line when there is none. When the sink
-/// itself throws, both lines are printed.
+/// `function` inside this thread's guard, with the names the sink is handed.
+fn guarded<Args: JsValuesTupleIntoVec, Return: FromNapiValue>(env: Env, function: &Function<'_, Args, Return>, kind: &'static str, label: Option<&str>) -> napi::Result<FunctionRef<Args, Return>> {
+  env.run_in_scope(|| {
+    let state = state(&env)?;
+    let guard: GuardFunction<'_, Args, Return> = state.get_named_property("guard")?;
+    guard.call((function.to_unknown(), kind.to_owned(), label.map(str::to_owned)).into())?.create_ref()
+  })
+}
+
+/// What the guard did with the exception a call just returned.
+enum Taken {
+  /// It handed the value to the sink, and threw `undefined` on.
+  HandedOn,
+  /// The sink threw (its text): the guard threw the value on as it does with no sink.
+  SinkThrew(String),
+  /// Nothing: the value (or the stand-in for it) reached napi with no sink set, or the failure is
+  /// napi's own (a value of the wrong type returned).
+  Nothing,
+}
+
+/// Takes what the guard left for the call that just returned an error: one count of `handedOn`,
+/// or the text of what the sink threw.
+fn taken(env: &Env) -> Taken {
+  let outcome = env.run_in_scope(|| {
+    let mut state = state(env)?;
+    if let Some(text) = state.get_named_property::<Option<String>>("sinkThrew")? {
+      state.set_named_property("sinkThrew", Null)?;
+      return Ok(Taken::SinkThrew(text));
+    }
+    let pending: u32 = state.get_named_property("handedOn")?;
+    if pending == 0 {
+      return Ok(Taken::Nothing);
+    }
+    state.set_named_property("handedOn", pending - 1)?;
+    Ok(Taken::HandedOn)
+  });
+  outcome.unwrap_or(Taken::Nothing)
+}
+
+/// Makes `sink` where a caught exception goes on this thread, in place of the stderr line, or puts
+/// the stderr line back with `None`. The first use of the guard on a thread adds the environment
+/// cleanup hook that releases it, and the sink with it, when the environment ends.
+pub(crate) fn set_error_sink(env: Env, sink: Option<&Function<'_, SinkArgs, ()>>) -> napi::Result<()> {
+  env.run_in_scope(|| {
+    let mut state = state(&env)?;
+    match sink {
+      Some(function) => state.set_named_property("sink", function.to_unknown())?,
+      None => state.set_named_property("sink", Null)?,
+    }
+    GUARD.with(|slot| {
+      if let Some(guard) = slot.0.borrow_mut().as_mut() {
+        guard.sink_set = sink.is_some();
+      }
+    });
+    Ok(())
+  })
+}
+
+/// What the sink is called with: the callback's kind, the application's name for it (or `null`),
+/// and what was thrown. From the guard that is the value itself, whatever it is; from here (a
+/// value of the wrong type returned, a failure of napi's own) it is an `Error` with napi's text.
+pub type SinkArgs = FnArgs<(String, Option<String>, napi::Error)>;
+
+/// Hands a caught exception the guard did not hand on to the sink, or prints the line when there
+/// is none. When the sink itself throws, both lines are printed.
 fn report(kind: &'static str, label: Option<&str>, error: napi::Error) {
   let reason = error.reason.clone();
-  let reason = reason.as_str();
-  // Cloned out of the slot, so the sink may replace or remove itself from inside its own call.
-  let sink = ERROR_SINK.with(|slot| slot.0.borrow().as_ref().map(|sink| (sink.env, Rc::clone(&sink.function))));
-  let Some((env, function)) = sink else {
-    eprintln!("sweetview: {kind} threw: {reason}");
-    return;
-  };
-  let outcome = env.run_in_scope(|| function.borrow_back(&env)?.call((kind.to_owned(), label.map(str::to_owned), reason.to_owned(), error).into()));
-  if let Err(sink_error) = outcome {
-    eprintln!("sweetview: {kind} threw: {reason}");
-    eprintln!("sweetview: the callback error sink threw: {}", sink_error.reason);
+  let env = GUARD.with(|slot| slot.0.borrow().as_ref().map(|guard| guard.env));
+  let outcome = env.map(|env| {
+    env.run_in_scope(|| {
+      let state = state(&env)?;
+      match state.get_named_property::<Option<Function<'_, SinkArgs, ()>>>("sink")? {
+        Some(sink) => sink.call((kind.to_owned(), label.map(str::to_owned), error).into()).map(|()| true),
+        None => Ok(false),
+      }
+    })
+  });
+  match outcome {
+    Some(Ok(true)) => {}
+    Some(Err(sink_error)) => {
+      eprintln!("sweetview: {kind} threw: {reason}");
+      eprintln!("sweetview: the callback error sink threw: {}", sink_error.reason);
+    }
+    Some(Ok(false)) | None => eprintln!("sweetview: {kind} threw: {reason}"),
   }
 }

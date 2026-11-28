@@ -95,6 +95,65 @@ if (mode === "after-release") {
   result.told = told;
 }
 
+if (mode === "values" || mode === "values-listen") {
+  // Every kind of value thrown from a callback that reaches the binding's own catch (a raw
+  // binding's timeout: no TypeScript catch is in the way), one at a time, with no listener and
+  // with one (review 3, item 2 and Q1). After each, the pump returned normally and the next call
+  // into the binding works: nothing is left pending on the environment.
+  const { binding } = await import("../../src/binding");
+  const native = binding();
+  const values: [string, () => unknown][] = [
+    ["string", () => "disconnected"],
+    ["number", () => 42],
+    ["null", () => null],
+    ["undefined", () => undefined],
+    ["symbol", () => Symbol("thrown")],
+    ["no prototype", () => Object.create(null)],
+    ["toString throws", () => ({ toString() { throw new Error("toString throws"); } })],
+    ["plain object", () => ({ a: 1 })],
+    ["error", () => new Error("boom")],
+    ["error whose cause is itself", () => { const e = new Error("loop") as Error & { cause?: unknown }; e.cause = e; return e; }],
+  ];
+  const told: { name?: string; kind: string; message: string; isThrown: boolean; causeIsThrown: boolean }[] = [];
+  let off = () => {};
+  if (mode === "values-listen") {
+    const { onCallbackError } = await import("../../src/callback-errors");
+    off = onCallbackError((error, source) => {
+      const thrown = current;
+      told.push({ name: source.name, kind: source.kind, message: error.message, isThrown: error === thrown, causeIsThrown: error.cause === thrown });
+    });
+  }
+  let current: unknown;
+  const after: string[] = [];
+  for (const [label, make] of values) {
+    let ran = false;
+    native.scheduleTimeout(1, () => {
+      ran = true;
+      current = make();
+      throw current;
+    });
+    let outcome = "returned";
+    try {
+      for (let i = 0; i < 400 && !ran; i++) {
+        native.pumpEvents();
+        await Bun.sleep(5);
+      }
+      native.pumpEvents();
+    } catch (err) {
+      outcome = `the pump threw ${String(err)}`;
+    }
+    try {
+      native.isLoopBlocking();
+    } catch (err) {
+      outcome += `; the next call threw ${String(err)}`;
+    }
+    after.push(`${label}: ${ran ? "ran" : "did not run"}, ${outcome}`);
+  }
+  off();
+  result.after = after;
+  result.told = told;
+}
+
 if (mode === "at-end") {
   const { onCallbackError } = await import("../../src/callback-errors");
   onCallbackError(() => {});

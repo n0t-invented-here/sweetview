@@ -1345,6 +1345,52 @@ describe.if(onWindows)("onCallbackError's sink in the binding", () => {
     return { r: line ? JSON.parse(line.slice("RESULT ".length)) : undefined, stderr, exitCode };
   };
 
+  // What the binding's own catch does with each kind of thrown value (review 3, item 2 and Q1): it
+  // reads nothing of the value, leaves nothing pending, and follows no cause.
+  const VALUES = ["string", "number", "null", "undefined", "symbol", "no prototype", "toString throws", "plain object", "error", "error whose cause is itself"];
+  test("every kind of value thrown past the TypeScript catches reaches a listener as it is, and the next call into the binding works", async () => {
+    const { r, exitCode, stderr } = await spawnSink("values-listen");
+    expect(exitCode).toBe(0);
+    expect(r.after).toEqual(VALUES.map((v) => `${v}: ran, returned`));
+    const wrapped = (message: string) => ({ name: "a native timeout", kind: "internal", message, isThrown: false, causeIsThrown: true });
+    expect(r.told).toEqual([
+      wrapped("disconnected"),
+      wrapped("42"),
+      wrapped("null"),
+      wrapped("undefined"),
+      wrapped("Symbol(thrown)"),
+      wrapped("[object Object]"),
+      wrapped("[object Object]"),
+      wrapped("[object Object]"),
+      { name: "a native timeout", kind: "internal", message: "boom", isThrown: true, causeIsThrown: false },
+      { name: "a native timeout", kind: "internal", message: "loop", isThrown: true, causeIsThrown: true },
+    ]);
+    expect(stderr).toBe("");
+  });
+
+  test("with no listener, each kind of value thrown past the TypeScript catches prints the main branch's line, leaves nothing pending, and a cause that is itself is not followed", async () => {
+    const { r, exitCode, stderr } = await spawnSink("values");
+    expect(exitCode).toBe(0);
+    expect(r.after).toEqual(VALUES.map((v) => `${v}: ran, returned`));
+    // The main branch's lines: napi keeps no reference to a primitive below Node-API 10, which is
+    // the text for the first four; a value whose String() throws gives none. The main branch left
+    // the symbol's exception pending (the pump then threw it) and overflowed the stack on the error
+    // whose cause is itself; here each prints its line and the pump returns.
+    const line = (reason: string) => `sweetview: a native timeout threw: ${reason}`;
+    expect(stderr.split(/\r?\n/).filter(Boolean)).toEqual([
+      line("Create Error reference failed"),
+      line("Create Error reference failed"),
+      line("Create Error reference failed"),
+      line("Create Error reference failed"),
+      line(""),
+      line(""),
+      line(""),
+      line("[object Object]"),
+      line("Error: boom"),
+      line("Error: loop"),
+    ]);
+  });
+
   test("a Worker that calls onCallbackError first is refused, loads nothing, and the main thread stays the UI thread", async () => {
     const { r, exitCode } = await spawnSink("worker-first");
     expect({ exitCode, worker: r.worker, windowOnThisThread: r.windowOnThisThread }).toEqual({ exitCode: 0, worker: UI_THREAD, windowOnThisThread: null });

@@ -15,7 +15,7 @@
 import { isMainThread } from "node:worker_threads";
 import { binding } from "./binding";
 import { macosKeepsTagPath } from "./platform";
-import { asError } from "./thrown";
+import { asError, describeThrown } from "./thrown";
 
 /**
  * Where an exception came from: the public API the application wrote the handler for. `internal` is
@@ -189,10 +189,13 @@ function setBindingSink(on: boolean): void {
   // SWEETVIEW_NATIVE_PATH), throws here, as any call of the package does in that case.
   binding().setCallbackErrorSink(
     on
-      ? (bindingKind: string, label: string | undefined | null, reason: string, thrown: unknown) =>
-          // `thrown` is the value the callback threw itself; `label` the application's name for the
-          // callback (a binding's), else the binding's own name for it is the source's name.
-          reportCallbackError(kindOfBindingCallback(bindingKind), thrown, () => console.error(`sweetview: ${bindingKind} threw: ${reason}`), label ?? bindingKind)
+      ? (bindingKind: string, label: string | undefined | null, thrown: unknown) =>
+          // `thrown` is the value the callback threw, as it is: the binding's guard caught it in
+          // JavaScript and read nothing of it. `label` is the application's name for the callback
+          // (a binding's), else the binding's own name for it is the source's name. The line,
+          // printed only when a listener throws or a report is nested, reads the value here,
+          // after the reporter took its listeners and set its guard.
+          reportCallbackError(kindOfBindingCallback(bindingKind), thrown, () => console.error(`sweetview: ${bindingKind} threw: ${describeThrown(thrown)}`), label ?? bindingKind)
       : null,
   );
   sinkRegistered = on;
