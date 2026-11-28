@@ -114,3 +114,48 @@ describe("the reporter is not an entry point", () => {
     expect(offering).toEqual([]);
   });
 });
+
+describe("reporting never throws (review F2, N1)", () => {
+  const unreadable = () => [
+    Object.create(null) as object, // String() throws: no toString
+    new Proxy({}, {
+      get() {
+        throw new Error("get trap");
+      },
+      getPrototypeOf() {
+        throw new Error("getPrototypeOf trap");
+      },
+    }),
+  ];
+
+  test("with a listener, a thrown value that cannot be converted or inspected is reported, and reporting returns", () => {
+    const told: { message: string; cause: unknown }[] = [];
+    listen((error) => void told.push({ message: error.message, cause: error.cause }));
+    const values = unreadable();
+    for (const value of values) expect(() => reportCallbackError("onOpenUrl", value, "sweetview: onOpenUrl handler threw:")).not.toThrow();
+    expect(told.length).toBe(2);
+    expect(told[0]!.cause).toBe(values[0]);
+    expect(told[1]!.cause).toBe(values[1]);
+    for (const { message } of told) expect(typeof message).toBe("string");
+  });
+
+  test("an onOpenUrl listener that throws such a value does not stop the next one", async () => {
+    const { onOpenUrl, signalReady, emitActivationUrl, _resetActivationForTest } = await import("./activation");
+    _resetActivationForTest();
+    listen(() => {});
+    const seen: string[] = [];
+    const offFirst = onOpenUrl(() => {
+      throw Object.create(null);
+    });
+    const offSecond = onOpenUrl((url) => void seen.push(url));
+    try {
+      signalReady();
+      expect(() => emitActivationUrl("svtest://after")).not.toThrow();
+    } finally {
+      offFirst();
+      offSecond();
+      _resetActivationForTest();
+    }
+    expect(seen).toEqual(["svtest://after"]);
+  });
+});

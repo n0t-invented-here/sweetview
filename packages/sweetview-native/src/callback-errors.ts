@@ -75,7 +75,30 @@ const taggedKind = (error: unknown): CallbackKind | undefined => {
   return typeof tag === "string" && KINDS_TAGGED.has(tag) ? (tag as CallbackKind) : undefined;
 };
 
-const asError = (error: unknown): Error => (error instanceof Error ? error : new Error(String(error), { cause: error }));
+/** Text for a thrown value that is not an `Error`. Any value: one whose conversion throws (an object
+ * with no prototype, a `Proxy` whose traps throw) is described by its type instead. */
+function describeThrown(value: unknown): string {
+  try {
+    return String(value);
+  } catch {
+    try {
+      return Object.prototype.toString.call(value);
+    } catch {
+      return `a thrown ${typeof value}`;
+    }
+  }
+}
+
+/** The thrown value as an `Error`: itself when it is one, else wrapped with the value as its `cause`. Never throws. */
+function asError(error: unknown): Error {
+  let isError = false;
+  try {
+    isError = error instanceof Error;
+  } catch {
+    // A Proxy whose getPrototypeOf trap throws: not an Error to rely on.
+  }
+  return isError ? (error as Error) : new Error(describeThrown(error), { cause: error });
+}
 
 function printDefault(kind: CallbackKind, error: unknown, fallback: DefaultReport): void {
   if (typeof fallback === "function") fallback(error);
@@ -84,7 +107,8 @@ function printDefault(kind: CallbackKind, error: unknown, fallback: DefaultRepor
 
 /**
  * Hands an exception a catch at a callback boundary caught to the application's listeners, or does
- * what that catch did before when there are none. Never throws.
+ * what that catch did before when there are none (and on macOS, until its goal). With a listener
+ * set it never throws, whatever was thrown, so the catch's fallback always follows.
  */
 export function reportCallbackError(kind: CallbackKind, error: unknown, fallback: DefaultReport, name?: string): void {
   // macOS keeps the main branch's path until its goal (D42): no listener is called there.
@@ -92,7 +116,12 @@ export function reportCallbackError(kind: CallbackKind, error: unknown, fallback
     if (fallback !== null) printDefault(kind, error, fallback);
     return;
   }
-  const reported = taggedKind(error) ?? kind;
+  let reported = kind;
+  try {
+    reported = taggedKind(error) ?? kind;
+  } catch {
+    // A value whose property cannot be read carries no kind.
+  }
   const source: CallbackErrorSource = name === undefined ? { kind: reported } : { kind: reported, name };
   const wrapped = asError(error);
   for (const listener of [...listeners]) {
