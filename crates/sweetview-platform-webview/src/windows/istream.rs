@@ -5,7 +5,7 @@
 //! WebView2; when the last one goes, its `Drop` tells the [`StreamState`] its
 //! reader is gone. Objects made with `#[implement]` are agile (they report
 //! `IAgileObject` and aggregate the free-threaded marshaler), so COM never
-//! marshals `Read` back to the UI thread, which would deadlock a waiting
+//! marshals `Read` back to the UI thread, which would deadlock the blocking
 //! read against the thread that feeds it.
 
 use std::ffi::c_void;
@@ -56,11 +56,10 @@ impl StreamingIStream {
             // most `cb`, so it fits.
             unsafe { pcbread.write(n as u32) };
         }
-        // A short read of a stream still open is S_OK: S_FALSE tells WebView2 the body has ended.
-        if end == ReadEnd::Ended {
-            S_FALSE
-        } else {
+        if end == ReadEnd::Filled {
             S_OK
+        } else {
+            S_FALSE
         }
     }
 }
@@ -85,12 +84,11 @@ impl Drop for StreamingIStream {
 }
 
 impl ISequentialStream_Impl for StreamingIStream_Impl {
-    /// Waits only while nothing is unread and the stream is open, then copies
-    /// what there is into `pv`, up to `cb` bytes: `S_OK` while the stream is
-    /// open (fewer than `cb` bytes is a short read, and more may follow), and
-    /// `S_FALSE` once it has ended and `cb` was not filled (possibly 0 bytes).
-    /// `E_ABORT`, nothing read, once the stream is aborted. A zero-byte read
-    /// never waits.
+    /// Fills `pv` with exactly `cb` bytes (`S_OK`), waiting for them as needed,
+    /// unless the stream ends first: then what was left (`S_FALSE`, possibly 0
+    /// bytes). `E_ABORT`, nothing read, once the stream is aborted. A zero-byte
+    /// read never waits. As `ISequentialStream::Read` is documented: `S_OK`
+    /// only when every byte asked for was read.
     fn Read(&self, pv: *mut c_void, cb: u32, pcbread: *mut u32) -> HRESULT {
         catch_unwind(AssertUnwindSafe(|| self.read(pv, cb, pcbread))).unwrap_or(E_UNEXPECTED)
     }
@@ -209,6 +207,55 @@ mod tests {
         assert!(aborted.push(b"kept?"));
         aborted.abort();
         assert_eq!(read(&stream, &mut buf), (E_ABORT, 0));
+    }
+
+    // Every result `Read` gives, through the COM vtable. Each data supplier is another thread,
+    // so a `Read` that returned early (a short read of an open stream) fails here instead of
+    // hanging: `S_OK` means every byte asked for, as `ISequentialStream::Read` is documented.
+    #[test]
+    fn every_read_result_at_the_com_surface() {
+        let later = |state: &Arc<StreamState>, bytes: &'static [u8], end: bool| {
+            let state = state.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+                assert!(state.push(bytes));
+                if end {
+                    state.finish();
+                }
+            })
+        };
+        let mut buf = [0u8; 8];
+
+        let state = Arc::new(StreamState::new());
+        let stream = StreamingIStream::create(state.clone());
+        assert!(state.push(b"12345678"));
+        assert_eq!(read(&stream, &mut buf), (S_OK, 8), "filled from what is there");
+        assert_eq!(&buf, b"12345678");
+
+        assert!(state.push(b"ab"));
+        let supplier = later(&state, b"cdefghij", false);
+        assert_eq!(read(&stream, &mut buf), (S_OK, 8), "filled once the rest is written, never short while open");
+        supplier.join().unwrap();
+        assert_eq!(&buf, b"abcdefgh");
+
+        let supplier = later(&state, b"k", true);
+        assert_eq!(read(&stream, &mut buf), (S_FALSE, 3), "the end comes first: what was left");
+        supplier.join().unwrap();
+        assert_eq!(&buf[..3], b"ijk");
+        assert_eq!(read(&stream, &mut buf), (S_FALSE, 0), "after the end: nothing");
+
+        let cut = Arc::new(StreamState::new());
+        let stream = StreamingIStream::create(cut.clone());
+        assert!(cut.push(b"abc"));
+        let aborter = {
+            let cut = cut.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+                cut.abort();
+            })
+        };
+        assert_eq!(read(&stream, &mut buf), (E_ABORT, 0), "aborted while waiting: nothing counts as read");
+        aborter.join().unwrap();
     }
 
     // Nothing unwinds out of the last `Release`: a panic in what the stream's release runs

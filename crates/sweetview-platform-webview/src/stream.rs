@@ -5,9 +5,6 @@
 //! The state is shared (`Arc`) between the webview's table of open responses
 //! and the `IStream` handed to WebView2, so whichever lets go last frees it.
 //! Only bytes not yet read are held.
-//!
-//! One thing differs from the C++ fork, whose `Read` waited until the caller's
-//! whole buffer was full: a read returns what is there as soon as anything is.
 
 use std::sync::{Condvar, Mutex, MutexGuard};
 
@@ -16,9 +13,6 @@ use std::sync::{Condvar, Mutex, MutexGuard};
 pub(crate) enum ReadEnd {
     /// Every byte asked for was read (`S_OK`).
     Filled,
-    /// Fewer bytes than asked for, at least one, were read and the stream is
-    /// still open: everything written so far (`S_OK`, a short read).
-    Partial,
     /// The stream ended first; fewer bytes were read, possibly none (`S_FALSE`).
     Ended,
     /// The stream was aborted; nothing counts as read (`E_ABORT`).
@@ -38,14 +32,6 @@ struct Inner {
 }
 
 impl Inner {
-    fn unread(&self) -> usize {
-        self.buffer.len() - self.read_pos
-    }
-
-    fn closed(&self) -> bool {
-        self.eof || self.aborted
-    }
-
     fn abort(&mut self) {
         self.aborted = true;
         self.buffer = Vec::new();
@@ -101,7 +87,7 @@ impl StreamState {
         }
         {
             let mut inner = self.lock();
-            if inner.closed() {
+            if inner.eof || inner.aborted {
                 return false;
             }
             inner.compact();
@@ -143,7 +129,8 @@ impl StreamState {
     /// Bytes pushed and not yet read.
     #[cfg(test)]
     pub(crate) fn buffered(&self) -> usize {
-        self.lock().unread()
+        let inner = self.lock();
+        inner.buffer.len() - inner.read_pos
     }
 
     /// True once the consumer has been released for good, so nobody will read
@@ -152,37 +139,46 @@ impl StreamState {
         self.lock().consumer_released
     }
 
-    /// `ISequentialStream::Read`: waits (blocked, not spinning) only while
-    /// nothing is unread and the stream is open, then returns at once with as
-    /// much as is there, up to `out.len()`: [`ReadEnd::Filled`] when that fills
-    /// `out`, [`ReadEnd::Partial`] (a short read) when it does not and the
-    /// stream is still open, [`ReadEnd::Ended`] when it does not and the
-    /// stream has ended (possibly 0 bytes). Nothing counts as read once the
-    /// stream is aborted. A zero-byte read never waits.
+    /// `ISequentialStream::Read`: fills `out` (waiting for bytes as needed)
+    /// unless the stream ends first, in which case it returns what was left.
+    /// Nothing counts as read once the stream is aborted. A zero-byte read
+    /// never waits.
     pub(crate) fn read(&self, out: &mut [u8]) -> (ReadEnd, usize) {
         if out.is_empty() {
             return (ReadEnd::Filled, 0);
         }
-        let mut inner = self.cv.wait_while(self.lock(), |i| !i.closed() && i.unread() == 0).unwrap_or_else(|e| e.into_inner());
+        let mut total = 0;
+        let mut inner = self.lock();
+        while total < out.len() && !inner.aborted {
+            if inner.read_pos == inner.buffer.len() {
+                if inner.eof {
+                    break;
+                }
+                inner = self
+                    .cv
+                    .wait_while(inner, |i| !(i.aborted || i.eof || i.read_pos < i.buffer.len()))
+                    .unwrap_or_else(|e| e.into_inner());
+                continue;
+            }
+            let available = inner.buffer.len() - inner.read_pos;
+            let n = (out.len() - total).min(available);
+            let start = inner.read_pos;
+            out[total..total + n].copy_from_slice(&inner.buffer[start..start + n]);
+            inner.read_pos += n;
+            total += n;
+            if inner.read_pos == inner.buffer.len() {
+                inner.buffer.clear();
+                inner.read_pos = 0;
+            }
+        }
         if inner.aborted {
             return (ReadEnd::Aborted, 0);
         }
-        let n = out.len().min(inner.unread());
-        let start = inner.read_pos;
-        out[..n].copy_from_slice(&inner.buffer[start..start + n]);
-        inner.read_pos += n;
-        if inner.read_pos == inner.buffer.len() {
-            inner.buffer.clear();
-            inner.read_pos = 0;
-        }
-        let end = if n == out.len() {
-            ReadEnd::Filled
-        } else if inner.eof {
-            ReadEnd::Ended
+        if total == out.len() {
+            (ReadEnd::Filled, total)
         } else {
-            ReadEnd::Partial
-        };
-        (end, n)
+            (ReadEnd::Ended, total)
+        }
     }
 
     /// The consumer is gone for good. Unless the stream already ended, nobody
@@ -270,9 +266,7 @@ mod tests {
         assert_eq!(dropped.read(&mut buf), (ReadEnd::Aborted, 0));
     }
 
-    // C++: "Streaming IStream: Read contract", with the read returning what is
-    // there instead of waiting for the whole buffer (DECISIONS D45): it waits
-    // only while nothing is unread.
+    // C++: "Streaming IStream: Read contract"
     #[test]
     fn read_contract() {
         let state = Arc::new(StreamState::new());
@@ -281,42 +275,32 @@ mod tests {
         assert_eq!(state.read(&mut buf[..0]), (ReadEnd::Filled, 0));
         assert!(start.elapsed() < Duration::from_millis(500));
 
-        // What is there comes back at once, as a short read.
         assert!(state.push(b"ab"));
-        let start = Instant::now();
-        assert_eq!(state.read(&mut buf), (ReadEnd::Partial, 2));
-        assert_eq!(&buf[..2], b"ab");
-        assert!(start.elapsed() < Duration::from_millis(40), "a read with bytes there does not wait");
-        // With nothing there, the read waits for the next push and returns that.
         let writer = {
             let state = state.clone();
             thread::spawn(move || {
                 sleep(50);
                 state.push(b"cde");
                 sleep(50);
-                state.push(b"fghXYZ");
+                state.push(b"fghXY");
             })
         };
-        let start = Instant::now();
-        assert_eq!(state.read(&mut buf), (ReadEnd::Partial, 3));
-        assert!(start.elapsed() >= Duration::from_millis(30), "it waited for the push");
-        assert_eq!(&buf[..3], b"cde");
-        assert_eq!(state.read(&mut buf[..4]), (ReadEnd::Filled, 4));
+        assert_eq!(state.read(&mut buf), (ReadEnd::Filled, 8));
         writer.join().unwrap();
-        assert_eq!(&buf[..4], b"fghX");
+        assert_eq!(&buf, b"abcdefgh");
         assert_eq!(state.buffered(), 2);
 
         let ender = {
             let state = state.clone();
             thread::spawn(move || {
                 sleep(50);
+                state.push(b"Z");
                 state.finish();
             })
         };
-        assert_eq!(state.read(&mut buf), (ReadEnd::Partial, 2), "unread bytes come back before the end is known");
-        assert_eq!(&buf[..2], b"YZ");
-        assert_eq!(state.read(&mut buf), (ReadEnd::Ended, 0), "then the read waits for the end");
+        assert_eq!(state.read(&mut buf), (ReadEnd::Ended, 3));
         ender.join().unwrap();
+        assert_eq!(&buf[..3], b"XYZ");
         assert_eq!(state.read(&mut buf), (ReadEnd::Ended, 0));
         assert_eq!(state.read(&mut buf[..0]), (ReadEnd::Filled, 0));
 
@@ -327,14 +311,8 @@ mod tests {
         assert_eq!(&buf, b"12345678");
         assert_eq!(exact.read(&mut buf), (ReadEnd::Ended, 0));
 
-        let rest = StreamState::new();
-        assert!(rest.push(b"abc"));
-        rest.finish();
-        assert_eq!(rest.read(&mut buf), (ReadEnd::Ended, 3), "what is left after the end is a short S_FALSE read");
-
         let cut = Arc::new(StreamState::new());
         assert!(cut.push(b"abc"));
-        assert_eq!(cut.read(&mut buf), (ReadEnd::Partial, 3));
         let aborter = {
             let cut = cut.clone();
             thread::spawn(move || {
@@ -342,7 +320,7 @@ mod tests {
                 cut.abort();
             })
         };
-        assert_eq!(cut.read(&mut buf), (ReadEnd::Aborted, 0), "a waiting read ends when the stream is aborted");
+        assert_eq!(cut.read(&mut buf), (ReadEnd::Aborted, 0));
         aborter.join().unwrap();
     }
 
