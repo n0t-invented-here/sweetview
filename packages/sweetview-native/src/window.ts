@@ -197,6 +197,13 @@ export interface WindowBackend {
   onFileDrop(handler: (paths: string[]) => void): () => void;
   /** Internal: whether an `onClose` listener is registered, so a close request would not destroy the window. */
   hasCloseListeners?(): boolean;
+  /**
+   * Internal, for the end of a blocking `run()` (D46): hides the window and marks it hidden by
+   * Sweetview. Any `show()`, `hide()` or `toggle()` of the application's own clears the mark.
+   */
+  hideAtRunEnd?(): void;
+  /** Internal: whether the mark of `hideAtRunEnd` is still there, nothing else having shown or hidden the window since; clears it. */
+  takeHiddenAtRunEnd?(): boolean;
   /** Internal: lets Window wire default native close -> outer Window.dispose(). */
   setOwnerDispose?(fn: () => void): void;
   /** Internal: snapshots native window styles and outer bounds before WebView attach and returns a restore thunk. */

@@ -11,7 +11,7 @@ import { createFrameAssembler, type AnyEvent, type EventMap, type MethodMap, typ
 import { RequestResponseAssembler, requestError, runNativeRequest, type NativeRequestResponse, type StreamingResponseFrame } from "./request-response";
 import type { HttpRequestMessage, InitMessage, NativeRequest, NativeResponse, WorkerCrashFrame } from "./messages";
 import { RawWebview, SizeHint, Window, quitEventLoop, runEventLoop, signalReady, type Rect, type TabHandle, type WindowOptions } from "@n1h/sweetview-native";
-import { createChildWebview, discardQuit, emitWindowFileDrop, engineOf, getWindowMeta, holdWindowNativeDispose, isWindowDisposed, macosKeepsTagPath, onWindowDispose, onWindowFileDropListenersChange, preserveWindowGeometry, releaseAtEnd, scheduleNativeTimeout, windowFileDropCount } from "@n1h/sweetview-native/internal";
+import { createChildWebview, discardQuit, emitWindowFileDrop, engineOf, getWindowBackend, getWindowMeta, holdWindowNativeDispose, isWindowDisposed, macosKeepsTagPath, onWindowDispose, onWindowFileDropListenersChange, preserveWindowGeometry, releaseAtEnd, scheduleNativeTimeout, windowFileDropCount } from "@n1h/sweetview-native/internal";
 import { Ring } from "./ring";
 import { webviewEngine, type WebviewHost, type WorkerWake } from "./webview-host";
 import { ASSET_ORIGIN } from "./webview-lib";
@@ -165,8 +165,6 @@ export type TabsDriver = {
 };
 
 let tabsDriver: TabsDriver | undefined;
-/** Windows the end of a blocking run() hid before its webview went, to show again when a webview in one runs next (D46). */
-const hiddenAtRunEnd = new WeakSet<Window>();
 export function registerTabsDriver(driver: TabsDriver): void {
   tabsDriver = driver;
 }
@@ -856,7 +854,8 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
           const releaseWindowDispose = meta.owned ? holdWindowNativeDispose(window) : undefined;
           // A window the end of an earlier run() hid (below) is shown again for this one: now,
           // or with showOnReady once this page is ready.
-          if (hiddenAtRunEnd.delete(window) && !isWindowDisposed(window) && !window.isVisible()) {
+          // Only when nothing but Sweetview hid it since: the application's own hide() stands.
+          if (getWindowBackend(window).takeHiddenAtRunEnd?.() && !isWindowDisposed(window) && !window.isVisible()) {
             if (!options.showOnReady || isReady) window.show();
           }
           running = true;
@@ -870,10 +869,7 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
               // which shows it again; the end of the application destroys it. A window disposed
               // inside the loop was hidden by its dispose and is destroyed below.
               // macOS keeps the tag's order until its goal (D42).
-              if (!macosKeepsTagPath() && meta.owned && !child && !isWindowDisposed(window) && window.isVisible()) {
-                window.hide();
-                hiddenAtRunEnd.add(window);
-              }
+              if (!macosKeepsTagPath() && meta.owned && !child && !isWindowDisposed(window)) getWindowBackend(window).hideAtRunEnd?.();
               shutdown();
             } finally {
               releaseWindowDispose?.();

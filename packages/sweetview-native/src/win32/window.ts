@@ -69,6 +69,8 @@ function subscription<T>(register: (listener: ((value: T) => void) | null) => vo
 function wrap(native: NativeWindow, owned: boolean, tabbed = false): WindowBackend {
   let disposed = false;
   let ownerDispose: (() => void) | undefined;
+  // Set when the end of a blocking run() hid the window (D46); the application's own show(), hide() or toggle() clears it.
+  let hiddenAtRunEnd = false;
   const live = () => !disposed;
   const toRect = (fn: (r: Rect) => void) => (x: number, y: number, width: number, height: number) => fn({ x, y, width, height });
 
@@ -84,10 +86,22 @@ function wrap(native: NativeWindow, owned: boolean, tabbed = false): WindowBacke
 
     isVisible: () => live() && native.isVisible(),
     show: () => {
+      hiddenAtRunEnd = false;
       if (live()) native.show();
     },
     hide: () => {
+      hiddenAtRunEnd = false;
       if (live()) native.hide();
+    },
+    hideAtRunEnd: () => {
+      if (!live() || !native.isVisible()) return;
+      native.hide();
+      hiddenAtRunEnd = true;
+    },
+    takeHiddenAtRunEnd: () => {
+      const was = hiddenAtRunEnd;
+      hiddenAtRunEnd = false;
+      return was;
     },
     toggle: () => {
       if (self.isVisible()) self.hide();
