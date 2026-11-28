@@ -11,7 +11,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { RUNNERS, scratch, type DesktopCtx } from "./row-runners";
 import { Webview, Window, installKeyboardHook, installMouseHook, quitEventLoop, runEventLoop } from "@n1h/sweetview-native";
-import { scheduleNativeTimeout } from "@n1h/sweetview-native/internal";
+import { scheduleNativeTimeout } from "../../../packages/sweetview-native/src/internal";
 
 type Job = { key: string; target: string; name: string; spec: string };
 const jobs: Job[] = JSON.parse(readFileSync(process.argv[2]!, "utf8"));

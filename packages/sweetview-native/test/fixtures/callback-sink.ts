@@ -193,6 +193,26 @@ if (mode === "patched-globals") {
   result.told = told;
 }
 
+if (mode === "late-listener") {
+  // No listener when the callback throws; reading the thrown value registers one (review 4, C5).
+  // The listeners told about a fault are those set when it was thrown: this one hears nothing.
+  const { binding } = await import("../../src/binding");
+  const { onCallbackError } = await import("../../src/callback-errors");
+  const native = binding();
+  const told: string[] = [];
+  let ran = false;
+  native.scheduleTimeout(1, () => {
+    ran = true;
+    throw { toString: () => (onCallbackError((error) => void told.push(error.message)), "registers a listener") };
+  });
+  for (let i = 0; i < 400 && !ran; i++) {
+    native.pumpEvents();
+    await Bun.sleep(5);
+  }
+  native.pumpEvents();
+  result.told = told;
+}
+
 if (mode === "at-end") {
   const { onCallbackError } = await import("../../src/callback-errors");
   onCallbackError(() => {});

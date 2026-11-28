@@ -1400,6 +1400,12 @@ describe.if(onWindows)("onCallbackError's sink in the binding", () => {
     expect(stderr.split(/\r?\n/).filter(Boolean)).toEqual(["sweetview: a native timeout threw: Error: first"]);
   });
 
+  test("a listener registered while the binding reads a value thrown with none set hears nothing of that fault, and its line is printed", async () => {
+    const { r, exitCode, stderr } = await spawnSink("late-listener");
+    expect({ exitCode, told: r.told }).toEqual({ exitCode: 0, told: [] });
+    expect(stderr.split(/\r?\n/).filter(Boolean)).toEqual(["sweetview: a native timeout threw: registers a listener"]);
+  });
+
   test("a Worker that calls onCallbackError first is refused, loads nothing, and the main thread stays the UI thread", async () => {
     const { r, exitCode } = await spawnSink("worker-first");
     expect({ exitCode, worker: r.worker, windowOnThisThread: r.windowOnThisThread }).toEqual({ exitCode: 0, worker: UI_THREAD, windowOnThisThread: null });
