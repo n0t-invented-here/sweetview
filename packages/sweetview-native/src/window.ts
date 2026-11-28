@@ -195,6 +195,8 @@ export interface WindowBackend {
   onMove(handler: (bounds: Rect) => void): () => void;
   onClose(handler: () => void): () => void;
   onFileDrop(handler: (paths: string[]) => void): () => void;
+  /** Internal: whether an `onClose` listener is registered, so a close request would not destroy the window. */
+  hasCloseListeners?(): boolean;
   /** Internal: lets Window wire default native close -> outer Window.dispose(). */
   setOwnerDispose?(fn: () => void): void;
   /** Internal: snapshots native window styles and outer bounds before WebView attach and returns a restore thunk. */

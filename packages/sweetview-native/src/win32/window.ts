@@ -164,6 +164,7 @@ function wrap(native: NativeWindow, owned: boolean, tabbed = false): WindowBacke
     onMaximizeChange: (handler: (maximized: boolean) => void) => (live() ? maximize.add(handler) : () => {}),
     onMove: (handler: RectHandler) => (live() ? move.add(handler) : () => {}),
     onClose: (handler: () => void) => (live() ? close.add(handler) : () => {}),
+    hasCloseListeners: () => close.handlers.size > 0,
     onFileDrop: (handler: (paths: string[]) => void) => (live() ? fileDrop.add(handler) : () => {}),
 
     setOwnerDispose(fn) {

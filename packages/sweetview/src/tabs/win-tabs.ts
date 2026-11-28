@@ -26,6 +26,7 @@ import {
   emitWindowTabClose,
   emitWindowTabSelect,
   forwardWindowTabEvents,
+  getWindowBackend,
   getWindowMeta,
   holdWindowNativeDispose,
   isWindowDisposed,
@@ -227,6 +228,18 @@ function unlistTab(record: WinTabRecord): WinTabHost {
  * when one intercepts it (closeToTrayOnLastWindow hiding the window, say) the tab stays.
  * `force` (`tab.dispose()`) tears the tab down regardless.
  */
+/**
+ * Hides the window when `record`, its last tab, is going and its default close will destroy
+ * it (no `onClose` listener can keep it): the window leaves the screen before the page goes,
+ * not after (D46, R2 of its first review).
+ */
+function concealBeforeLastTabGoes(record: WinTabRecord): void {
+  const host = record.window;
+  if (host.closed || host.tabs.length !== 1 || host.tabs[0] !== record) return;
+  if (getWindowBackend(host.window).hasCloseListeners?.() ?? true) return;
+  if (!isWindowDisposed(host.window) && host.window.isVisible()) host.window.hide();
+}
+
 function closeTab(record: WinTabRecord, force = false): void {
   if (record.closed) return;
   const owner = record.window;
@@ -237,6 +250,7 @@ function closeTab(record: WinTabRecord, force = false): void {
     requestClose(owner);
     return;
   }
+  concealBeforeLastTabGoes(record);
   record.closed = true;
   const host = unlistTab(record);
   if (host.tabs.length > 0) present(host);
@@ -262,6 +276,7 @@ function closeTab(record: WinTabRecord, force = false): void {
  */
 function releaseDisposedTab(record: WinTabRecord): void {
   if (record.closed) return;
+  concealBeforeLastTabGoes(record);
   record.closed = true;
   if (!record.window.closed) hideTab(record);
   record.controller = undefined;
