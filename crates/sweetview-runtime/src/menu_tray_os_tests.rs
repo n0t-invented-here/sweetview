@@ -305,7 +305,9 @@ fn a_no_activate_owner_never_takes_the_foreground_for_its_menu() {
     assert_eq!(menu::stand_in_for_tests(), stand_in, "one stand-in for every menu");
     menu::release_all();
     assert_eq!(menu::stand_in_for_tests(), 0, "released with the menus");
-    assert!(BorrowedWindow::with_handle_value(stand_in, |_| ()).is_none(), "its window is gone");
+    // A dropped tao window posts its own destruction, done when the loop next dispatches.
+    pump_until(&runtime, 2000, || BorrowedWindow::with_handle_value(stand_in, |_| ()).is_none());
+    assert!(BorrowedWindow::with_handle_value(stand_in, |_| ()).is_none(), "its window is gone once the loop has turned");
     overlay.dispose();
   });
 }
