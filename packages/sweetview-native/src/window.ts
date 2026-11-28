@@ -455,6 +455,11 @@ export class Window {
   /** Non-mutating wrapper around an existing HWND or NSWindow*. */
   static fromHandle(handle: WindowHandle): Window {
     const inner = impl().fromHandle(handle);
+    // A wrapper of one of Sweetview's own windows shows what that window shows where nothing has
+    // painted: a webview attached through it takes the window's backgroundColor (review finding 5).
+    const value = handle === null ? undefined : BigInt(handle);
+    const own = value === undefined ? undefined : [...ownedWindows].find((win) => win.handle !== null && BigInt(win.handle) === value);
+    const backgroundColor = own ? windowMetaMap.get(own)?.backgroundColor : undefined;
     const meta: WindowMeta = {
       title: "",
       frame: inner.detectedMeta?.frame ?? true,
@@ -463,6 +468,7 @@ export class Window {
       tabs: false,
       appearance: "system",
       owned: false,
+      ...(backgroundColor === undefined ? {} : { backgroundColor }),
     };
     return new Window({ [INTERNAL_CONSTRUCT]: { inner, meta } } as unknown as WindowOptions);
   }

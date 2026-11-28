@@ -301,6 +301,8 @@ function moveTabBetweenHosts(record: WinTabRecord, target: WinTabHost, index: nu
   record.window = target;
   // Drops over the tab's webview now go to the target window only.
   record.hooks.rebindFileDrop?.();
+  // What shows behind its page is now the target window's colour (review finding 5).
+  followBackground(record, target);
   target.tabs.splice(Math.max(0, Math.min(target.tabs.length, index)), 0, record);
   target.selected = record;
   present(target);
@@ -316,6 +318,21 @@ function moveTabBetweenHosts(record: WinTabRecord, target: WinTabHost, index: nu
     if (source.selected) emitWindowTabSelect(source.window, source.selected.api);
   } else {
     disposeHost(source);
+  }
+}
+
+/**
+ * The browser's background of a tab that moved into `host`: the host window's
+ * `backgroundColor`, or WebView2's own white when it has none, as a tab
+ * opened there would have.
+ */
+function followBackground(record: WinTabRecord, host: WinTabHost): void {
+  const colour = getWindowMeta(host.window).backgroundColor;
+  const rgb = colour === undefined ? 0xffffff : Number.parseInt(colour.slice(1), 16);
+  try {
+    record.webview.raw.setBackgroundColor((rgb >> 16) & 0xff, (rgb >> 8) & 0xff, rgb & 0xff, 0xff);
+  } catch (err) {
+    console.error("sweetview: a moved tab's background could not be set:", err);
   }
 }
 
@@ -335,6 +352,7 @@ async function createTearOffHost(from: WinTabHost, bounds?: { x: number; y: numb
     noActivate: meta.noActivate,
     minWidth: meta.minWidth,
     minHeight: meta.minHeight,
+    backgroundColor: meta.backgroundColor,
     bounds: bounds ?? {
       x: srcBounds.x + step,
       y: srcBounds.y + step,

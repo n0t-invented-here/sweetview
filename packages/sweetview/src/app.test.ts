@@ -196,18 +196,21 @@ describe.if(onWindows)("WebView & createApp (win32)", () => {
     const { clientSize, clientToScreen, screenPixel } = await import("../../sweetview-native/test/win32-os");
     const win = new Window({ title: "app.test background", backgroundColor: "#305070", topmost: true, noActivate: true, contentSize: { width: 360, height: 240 } });
     const hwnd = BigInt(win.handle!);
-    const middle = () => {
+    // The page draws a green stripe at its top: seen there, the webview is shown, so the colour below is the browser's.
+    const MARK = "#00ff00";
+    const sampled = () => {
       const size = clientSize(hwnd);
-      return clientToScreen(hwnd, size.width >> 1, size.height >> 1);
+      const top = clientToScreen(hwnd, size.width >> 1, 8);
+      const middle = clientToScreen(hwnd, size.width >> 1, size.height >> 1);
+      return { top: screenPixel(top.x, top.y), middle: screenPixel(middle.x, middle.y) };
     };
-    const settle = (want: string) => {
-      let seen = "";
+    const settle = (want: { top: string; middle: string }) => {
+      let seen = { top: "", middle: "" };
       const deadline = performance.now() + 5000;
       do {
         pumpEvents();
-        const at = middle();
-        seen = screenPixel(at.x, at.y);
-        if (seen === want) break;
+        seen = sampled();
+        if (seen.top === want.top && seen.middle === want.middle) break;
         Bun.sleepSync(20);
       } while (performance.now() < deadline);
       return seen;
@@ -217,16 +220,17 @@ describe.if(onWindows)("WebView & createApp (win32)", () => {
     try {
       // A page with no background of its own: what shows is the browser's background behind it.
       view = await WebView.attach(win, {
-        assets: { "index.html": htmlBytes(`<style>html,body{background:transparent;margin:0}</style><script>window.__sweetview_rpc("loaded", null)</script>`) },
+        assets: { "index.html": htmlBytes(`<style>html,body{background:transparent;margin:0}#m{height:16px;background:${MARK}}</style><div id="m"></div><script>window.__sweetview_rpc("loaded", null)</script>`) },
         uiMethods: { loaded: () => { loaded = true; } },
       });
       win.show();
       pumpUntil(() => loaded, 15_000);
       expect(loaded).toBe(true);
-      expect(settle("#305070")).toBe("#305070");
+      expect(settle({ top: MARK, middle: "#305070" })).toEqual({ top: MARK, middle: "#305070" });
       view.dispose();
       view = undefined;
-      expect(settle("#305070")).toBe("#305070");
+      // The webview is gone (no stripe) and the window shows its colour everywhere.
+      expect(settle({ top: "#305070", middle: "#305070" })).toEqual({ top: "#305070", middle: "#305070" });
     } finally {
       view?.dispose();
       win.dispose();
@@ -270,6 +274,83 @@ describe.if(onWindows)("WebView & createApp (win32)", () => {
       tabbed.dispose();
     }
   }, 90_000);
+
+  test("the browser's background is the colour of the window the page is in: through a wrapper of a coloured window, for a tab moved into another tabbed window, for a tab opened in a torn-off window", async () => {
+    // Review finding 5 and N4. Each page draws a green stripe at its top and leaves the rest
+    // transparent: the stripe shows the webview is there, so the colour below it is the browser's.
+    const { clientSize, clientToScreen, screenPixel } = await import("../../sweetview-native/test/win32-os");
+    const { getWindowMeta } = await import("@n1h/sweetview-native/internal");
+    const { STRIP_HEIGHT } = await import("@n1h/sweetview-native/win32/strip-shared");
+    const MARK = "#00ff00";
+    const loaded = new Set<string>();
+    const page = (name: string) => ({
+      assets: { "index.html": htmlBytes(`<style>html,body{background:transparent;margin:0}#m{height:16px;background:${MARK}}</style><div id="m"></div><script>window.__sweetview_rpc("loaded", "${name}")</script>`) },
+      uiMethods: { loaded: (n: unknown) => void loaded.add(String(n)) },
+    });
+    const painted = (win: Window, top: number, want: string) => {
+      const hwnd = BigInt(win.handle!);
+      let seen = { mark: "", below: "" };
+      const deadline = performance.now() + 8000;
+      do {
+        pumpEvents();
+        const size = clientSize(hwnd);
+        const mark = clientToScreen(hwnd, size.width >> 1, top + 8);
+        const below = clientToScreen(hwnd, size.width >> 1, top + ((size.height - top) >> 1));
+        seen = { mark: screenPixel(mark.x, mark.y), below: screenPixel(below.x, below.y) };
+        if (seen.mark === MARK && seen.below === want) break;
+        Bun.sleepSync(20);
+      } while (performance.now() < deadline);
+      return seen;
+    };
+    const strip = (win: Window) => Math.round(STRIP_HEIGHT * win.scale());
+    const size = { width: 520, height: 340 };
+
+    const own = new Window({ title: "app.test wrapped background", backgroundColor: "#305070", topmost: true, noActivate: true, contentSize: size });
+    const wrapper = Window.fromHandle(own.handle);
+    let view: WebView | undefined;
+    try {
+      expect(getWindowMeta(wrapper).backgroundColor).toBe("#305070");
+      view = await WebView.attach(wrapper, page("wrapped"));
+      own.show();
+      pumpUntil(() => loaded.has("wrapped"), 15_000);
+      expect(painted(own, 0, "#305070")).toEqual({ mark: MARK, below: "#305070" });
+    } finally {
+      view?.dispose();
+      wrapper.dispose();
+      own.dispose();
+    }
+
+    const app = await createApp({ tabs: true, title: "app.test blue", backgroundColor: "#203080", topmost: true, noActivate: true, contentSize: size });
+    const red = new Window({ tabs: true, title: "app.test red", backgroundColor: "#a02020", topmost: true, noActivate: true, contentSize: size });
+    let tornOff: Window | undefined;
+    try {
+      // The blue window has a tab of its own first: a tabbed window takes merged tabs once it has one.
+      await app.openTab({ title: "home", ...page("home") });
+      app.window.show();
+      pumpUntil(() => loaded.has("home"), 15_000);
+      const tab = await WebView.openTab(red, { title: "moved", ...page("moved") });
+      red.show();
+      pumpUntil(() => loaded.has("moved"), 15_000);
+      expect(painted(red, strip(red), "#a02020")).toEqual({ mark: MARK, below: "#a02020" });
+      // Into the blue window, through the public merge.
+      app.mergeAllWindows();
+      app.window.show();
+      expect(tab.window).toBe(app.window);
+      tab.select(); // the merge keeps the window's own tab shown
+      expect(painted(app.window, strip(app.window), "#203080")).toEqual({ mark: MARK, below: "#203080" });
+      // Torn off into a window of its own, which is the window it came from in every option, its colour included.
+      tornOff = await tab.moveToNewWindow();
+      expect(getWindowMeta(tornOff).backgroundColor).toBe("#203080");
+      tornOff.setTopmost(true);
+      await WebView.openTab(tornOff, { title: "second", ...page("second") });
+      pumpUntil(() => loaded.has("second"), 15_000);
+      expect(painted(tornOff, strip(tornOff), "#203080")).toEqual({ mark: MARK, below: "#203080" });
+    } finally {
+      tornOff?.dispose();
+      red.dispose();
+      app.dispose();
+    }
+  }, 120_000);
 
   test("close-to-tray can intercept the default close on a createApp window", async () => {
     const { WM_CLOSE, user32 } = await import("../../sweetview-native/test/win32-os");
