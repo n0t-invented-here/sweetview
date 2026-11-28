@@ -114,6 +114,17 @@ pub fn first_child(window: &impl NativeWindow) -> Option<isize> {
   Some(child.0 as isize)
 }
 
+/// Whether DWM keeps the window off the screen (`DWMWA_CLOAKED` reads any reason: this process's
+/// cloak, the shell's, or another desktop's).
+pub fn is_cloaked(window: &impl NativeWindow) -> bool {
+  let mut cloaked = 0u32;
+  // SAFETY: one call with a handle DWM validates; the out-value is a `u32` local of the size given.
+  let read = unsafe {
+    windows::Win32::Graphics::Dwm::DwmGetWindowAttribute(window.hwnd(), windows::Win32::Graphics::Dwm::DWMWA_CLOAKED, (&raw mut cloaked).cast(), size_of::<u32>() as u32)
+  };
+  read.is_ok() && cloaked != 0
+}
+
 /// Posts `WM_CLOSE` to a window, as a click on its title bar's close button does: the loop
 /// delivers it when it next pumps.
 pub fn post_close(window: &impl NativeWindow) {

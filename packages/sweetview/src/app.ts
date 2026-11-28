@@ -89,8 +89,13 @@ export type TabOptions<M extends MethodMap = MethodMap> = WebViewOptions<M> & {
 export type TabAttachHooks = {
   /** The tab's current logical host: file-drop demand comes from it and drops over the webview are delivered to it. */
   fileDropHost(): Window;
-  /** Replaces `window.show()` on the borrowed child window for `showOnReady` and the ready watchdog. */
-  revealWindow?(): void;
+  /**
+   * Replaces `window.show()` on the borrowed child window for `showOnReady` and the ready
+   * watchdog. `drawn`, for the ready signal's reveal, settles once the tab's page has drawn a
+   * frame since it was asked (D46); `fallbackMs` is the tab's `readyTimeoutMs`. The watchdog's
+   * reveal passes neither, and shows at once.
+   */
+  revealWindow?(drawn?: () => Promise<void>, fallbackMs?: number): void;
   /**
    * Set by `WebView.attach`: re-subscribes file-drop demand to the current
    * `fileDropHost()`. The driver calls it after the tab's logical host
@@ -130,6 +135,41 @@ export type TabAttachHooks = {
 
 /** Internal options key for `TabAttachHooks` (not exported from the package entry). */
 export const tabAttachHooks: unique symbol = Symbol("sweetview.tabAttachHooks");
+
+/**
+ * Asks a webview's page for the frame after next and settles once it is drawn: two animation
+ * frames, the second of which runs once the first has been composed. Settles at once for a
+ * webview with no RPC binding, and when the webview goes first. Inside the package only.
+ */
+const drawnRequests = new WeakMap<RawWebview, () => Promise<void>>();
+export function afterNextDraw(raw: RawWebview): Promise<void> {
+  return drawnRequests.get(raw)?.() ?? Promise.resolve();
+}
+
+/**
+ * Sweetview's reveal of a window whose page has to draw first (D46): the window is shown cloaked
+ * (visible to its webviews, so they draw, and off the screen) and put on the screen once
+ * `drawn` settles: WebView2's render window is otherwise on the screen before its first frame,
+ * which shows light. `fallbackMs` (the page's `readyTimeoutMs`) puts it on the screen if that
+ * never comes. Where DWM refuses the cloak, and on macOS (D42), it is shown at once, as
+ * `show()` shows it. An application's own `show()` is never this.
+ */
+export function revealWhenDrawn(window: Window, drawn: () => Promise<unknown>, fallbackMs: number | undefined): void {
+  const backend = getWindowBackend(window);
+  if (macosKeepsTagPath() || backend.showCloaked === undefined) {
+    window.show();
+    return;
+  }
+  if (!backend.showCloaked()) return;
+  let stopFallback: (() => void) | undefined;
+  const uncloak = () => {
+    stopFallback?.();
+    stopFallback = undefined;
+    backend.uncloak?.();
+  };
+  if (fallbackMs !== undefined && fallbackMs > 0) stopFallback = scheduleNativeTimeout(fallbackMs, uncloak);
+  drawn().then(uncloak, uncloak);
+}
 
 type InternalWebViewOptions<M extends MethodMap> = WebViewOptions<M> & { [tabAttachHooks]?: TabAttachHooks };
 
@@ -571,6 +611,17 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
         cancelWatchdog?.();
         cancelWatchdog = undefined;
       };
+      // The page's frames asked for since the last one drawn (afterNextDraw).
+      const drawnWaiters: (() => void)[] = [];
+      const settleDrawn = () => {
+        for (const resolve of drawnWaiters.splice(0)) resolve();
+      };
+      const requestDrawn = () =>
+        new Promise<void>((resolve) => {
+          if (!isLive()) return resolve();
+          drawnWaiters.push(resolve);
+          if (drawnWaiters.length === 1) raw.eval(`requestAnimationFrame(() => requestAnimationFrame(() => window.__sweetview_rpc("__sweetview.drawn", null)))`);
+        });
       const clearDispatches = () => {
         queue.length = 0;
         cancelDispatch?.();
@@ -650,6 +701,7 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
         unsubscribeWindowDispose();
         cancelStartup();
         clearDispatches();
+        settleDrawn();
         assembler.clear();
         requestResponses.clear();
         // Destroying the webview aborts native streams, including any waiting for their next chunk.
@@ -756,10 +808,14 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
           for (const { seq } of queue.splice(0)) replyError(seq, err);
         }
       };
-      const showWhenReady = () => {
+      // `afterReady`: the ready signal's reveal, put on the screen once the page has drawn since
+      // (D46); the watchdog's shows at once.
+      const showWhenReady = (afterReady: boolean) => {
         if (!isLive() || !options.showOnReady) return;
-        if (tabHooks?.revealWindow) tabHooks.revealWindow();
-        else if (!window.isVisible()) window.show();
+        if (tabHooks?.revealWindow) tabHooks.revealWindow(afterReady ? requestDrawn : undefined, options.readyTimeoutMs);
+        else if (window.isVisible()) return;
+        else if (afterReady) revealWhenDrawn(window, requestDrawn, options.readyTimeoutMs);
+        else window.show();
       };
       const callReadyHook = (name: string, hook: (() => void) | undefined) => {
         try {
@@ -816,6 +872,7 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
           options.showOnReady === true ||
           options.readyTimeoutMs !== undefined ||
           options.onReady !== undefined;
+        if (needsRpc) drawnRequests.set(raw, requestDrawn);
         if (needsRpc) raw.bindRaw("__sweetview_rpc", (seq, req) => {
           if (!isLive()) return;
           try {
@@ -826,8 +883,13 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
                 cancelStartup();
                 signalReady();
                 callReadyHook("onReady", options.onReady);
-                showWhenReady();
+                showWhenReady(true);
               }
+              respond(seq, 0, null);
+              return;
+            }
+            if (method === "__sweetview.drawn") {
+              settleDrawn();
               respond(seq, 0, null);
               return;
             }
@@ -870,7 +932,7 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
             if (!isLive() || isReady) return;
             raw.setHTML(options.readyFallbackHtml ?? startupErrorHtml);
             callReadyHook("onReadyTimeout", options.onReadyTimeout);
-            showWhenReady();
+            showWhenReady(false);
           });
         }
       } catch (err) {

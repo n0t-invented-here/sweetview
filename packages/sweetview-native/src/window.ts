@@ -205,6 +205,15 @@ export interface WindowBackend {
   hideAtRunEnd?(): void;
   /** Internal: whether the mark of `hideAtRunEnd` is still there, nothing else having shown or hidden the window since; clears it. */
   takeHiddenAtRunEnd?(): boolean;
+  /**
+   * Internal, for Sweetview's reveal of a window whose page has to draw first (D46): shows a
+   * hidden window off the screen (DWM's cloak), visible to its webviews so they draw, until
+   * `uncloak`. True when it is cloaked; false when it was shown at once or was already visible.
+   * An application's own `show()` or `hide()` lets the cloak go.
+   */
+  showCloaked?(): boolean;
+  /** Internal: puts a window `showCloaked` cloaked on the screen. */
+  uncloak?(): void;
   /** Internal: lets Window wire default native close -> outer Window.dispose(). */
   setOwnerDispose?(fn: () => void): void;
   /** Internal: snapshots native window styles and outer bounds before WebView attach and returns a restore thunk. */

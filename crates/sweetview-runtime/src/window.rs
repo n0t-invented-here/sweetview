@@ -180,6 +180,9 @@ struct Core {
   /// colour-keyed one given no colour, and a tab frame (its `TabState` has its colours). A
   /// webview made in the window starts with it (`background_of`).
   background: Cell<Option<(u8, u8, u8)>>,
+  /// Set while the window is shown and kept off the screen until its page has drawn
+  /// (`show_cloaked`, D46); `uncloak`, `show()` and `hide()` let it go.
+  cloak: RefCell<Option<platform::Cloak>>,
   icons: RefCell<Option<WindowIcons>>,
   /// Live wrappers of this window.
   wrappers: Cell<usize>,
@@ -259,6 +262,7 @@ impl Core {
       maximize_changes: Cell::new(0),
       maximize_telling: Cell::new(0),
       background: Cell::new(None),
+      cloak: RefCell::new(None),
       icons: RefCell::new(None),
       wrappers: Cell::new(0),
       tab,
@@ -609,6 +613,11 @@ impl Core {
         },
       }
     }
+    // A window going stays cloaked: uncloaking it would put it on the screen for the moment
+    // before it goes. A cloak holds nothing but the window's state, so nothing is kept.
+    if let Some(cloak) = self.cloak.borrow_mut().take() {
+      std::mem::forget(cloak);
+    }
     // Dropped after the window: `WindowIcons` destroys icons no window shows
     // any more, and keeps those an adopted window that lives on still shows.
     self.icons.borrow_mut().take();
@@ -916,6 +925,32 @@ impl Window {
     if !self.live() {
       return Ok(());
     }
+    // On the screen at once, as at the tag: a cloak a reveal left is let go.
+    self.core.cloak.borrow_mut().take();
+    self.show_now()
+  }
+
+  /// Shows a hidden window cloaked (`platform::Cloak`): visible to the webviews in it, so they
+  /// draw, and off the screen until `uncloak`. Sweetview's reveal of a window whose page has to
+  /// draw first (D46). True when it is cloaked; false when it was shown at once (DWM refused the
+  /// cloak) or was already visible, which it leaves as it is.
+  pub fn show_cloaked(&self) -> Result<bool> {
+    if !self.live() || self.core.is_visible() {
+      return Ok(false);
+    }
+    let cloak = self.core.with_native(|window| platform::Cloak::new(window)).flatten();
+    let cloaked = cloak.is_some();
+    *self.core.cloak.borrow_mut() = cloak;
+    self.show_now()?;
+    Ok(cloaked)
+  }
+
+  /// Puts a window `show_cloaked` cloaked on the screen. Nothing for one that is not cloaked.
+  pub fn uncloak(&self) {
+    self.core.cloak.borrow_mut().take();
+  }
+
+  fn show_now(&self) -> Result<()> {
     let core = &self.core;
     // Shown the way `show()` always has: `tao`'s own show activates the window (D9).
     core.with_native(|window| platform::show(window, core.no_activate, core.topmost.get()));
@@ -940,6 +975,8 @@ impl Window {
     if self.core.with_tao(|tao| tao.set_visible(false)).is_none() {
       self.core.with_native(|window| platform::show_as(window, ShowAs::Hidden));
     }
+    // Hidden first, so letting the cloak go puts nothing on the screen.
+    self.core.cloak.borrow_mut().take();
   }
 
   /// The outer frame.

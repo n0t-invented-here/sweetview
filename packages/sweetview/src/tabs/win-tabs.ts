@@ -5,7 +5,7 @@
 // moved to another frame, not reloaded), drop-on-strip, context menus, and
 // Tab / App tab events.
 
-import { WebView, tabAttachHooks, type Tab, type TabAttachHooks, type TabOptions, type TabsDriver, type WebViewOptions } from "../app";
+import { WebView, afterNextDraw, revealWhenDrawn, tabAttachHooks, type Tab, type TabAttachHooks, type TabOptions, type TabsDriver, type WebViewOptions } from "../app";
 import { indexHtml } from "../html";
 import type { EventMap, MethodMap } from "@n1h/sweetview-ipc";
 import { LAST_TAB, shortcutFor, type Key, type Shortcut } from "@n1h/sweetview-native/win32/shortcuts";
@@ -761,9 +761,12 @@ export const winTabsDriver: TabsDriver = {
       // Hidden until present() shows it as the selected tab.
       // A tab is a page of the frame: it starts with the tabbed window's backgroundColor, as the frame's page area shows.
       mountChild: () => ({ window: host.frame.hwnd, bounds: host.frame.pageRect(), visible: false, pageBackground: true }),
-      revealWindow: () => {
+      // The ready signal's reveal waits for the tab's page and the strip to draw (D46).
+      revealWindow: (drawn, fallbackMs) => {
         const h = logicalHost();
-        if (!h.closed && !isWindowDisposed(h.window) && !h.window.isVisible()) h.window.show();
+        if (h.closed || isWindowDisposed(h.window) || h.window.isVisible()) return;
+        if (!drawn) h.window.show();
+        else revealWhenDrawn(h.window, () => Promise.all([drawn(), h.strip ? afterNextDraw(h.strip.raw) : undefined]), fallbackMs);
       },
       // A disposed window abandons the attach before it touches the frame again.
       isCancelled: () => host.closed,

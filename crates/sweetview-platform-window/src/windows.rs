@@ -21,7 +21,9 @@ use raw_window_handle::{DisplayHandle, HandleError, HasDisplayHandle, HasWindowH
 use sweetview_window_logic::ico::{parse_ico, pick_ico_entry};
 use tao::platform::windows::{MonitorHandleExtWindows, WindowExtWindows};
 use windows::core::PCWSTR;
+use windows::core::BOOL;
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, RECT, WPARAM};
+use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_CLOAK};
 use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, HMONITOR, MONITORINFO};
 use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
@@ -351,6 +353,36 @@ pub fn show(window: &impl NativeWindow, no_activate: bool, topmost: bool) {
   if !no_activate && !topmost {
     bring_to_front(window);
   }
+}
+
+/// A window kept off the screen while it is shown (DWM's cloak, `DWMWA_CLOAK`): it is visible
+/// to itself and to what it holds, so a webview in it draws, and DWM puts none of it on the
+/// screen until this guard goes, which uncloaks it. Sweetview reveals a window this way when its
+/// page has to draw first (D46). Only a top-level window of this process can be cloaked.
+pub struct Cloak {
+  hwnd: HWND,
+}
+
+impl Cloak {
+  /// Cloaks the window; `None` when DWM refuses (a child window, another process's).
+  pub fn new(window: &impl NativeWindow) -> Option<Self> {
+    let hwnd = window.hwnd();
+    set_cloak(hwnd, true).then_some(Self { hwnd })
+  }
+}
+
+impl Drop for Cloak {
+  fn drop(&mut self) {
+    // A window destroyed meanwhile makes the call fail, which leaves nothing to undo.
+    set_cloak(self.hwnd, false);
+  }
+}
+
+fn set_cloak(hwnd: HWND, cloaked: bool) -> bool {
+  let value = BOOL::from(cloaked);
+  // SAFETY: a window function on a handle named by `NativeWindow` (or one `Cloak` took from it),
+  // which DWM validates; the attribute is a `BOOL` local, read for the length of the call.
+  unsafe { DwmSetWindowAttribute(hwnd, DWMWA_CLOAK, (&raw const value).cast(), size_of::<BOOL>() as u32) }.is_ok()
 }
 
 /// Puts a window `tao` did not make in a show state (`ShowWindow`). A `tao`

@@ -129,6 +129,14 @@ function wrap(native: NativeWindow, owned: boolean, tabbed = false): WindowBacke
       hiddenAtRunEnd = false;
       return was;
     },
+    showCloaked: () => {
+      if (!live()) return false;
+      hiddenAtRunEnd = false;
+      return native.showCloaked();
+    },
+    uncloak: () => {
+      if (live()) native.uncloak();
+    },
     toggle: () => {
       if (self.isVisible()) self.hide();
       else self.show();
