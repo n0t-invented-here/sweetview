@@ -1,8 +1,8 @@
 # after: head
 # every export of every package.json exports entry at the head, as the TypeScript compiler resolves it
-# 704 symbols, 7147 facts
+# 710 symbols, 7290 facts
 
-## entry @n1h/sweetview [app] packages/sweetview/src/index.ts (46 exports)
+## entry @n1h/sweetview [app] packages/sweetview/src/index.ts (48 exports)
 symbol @n1h/sweetview :: ActivationPolicy
   kind = type
   declared-in = packages/sweetview-native/src/event-loop.ts
@@ -59,8 +59,10 @@ symbol @n1h/sweetview :: AppOptions
   .title = property?: string | undefined
   .title doc.default = the window's title, then the page's `<title>`, else the entry script's name
   .bounds = property?: Rect | undefined
-  .bounds doc.notes = outer-frame
+  .bounds doc.notes = physical-px,points,outer-frame
   .bounds doc.default = 320x240 centered on the primary work area
+  .contentSize = property?: { width: number; height: number; } | undefined
+  .contentSize doc.notes = dip
   .minWidth = property?: number | undefined
   .minWidth doc.notes = outer-frame
   .minHeight = property?: number | undefined
@@ -76,6 +78,8 @@ symbol @n1h/sweetview :: AppOptions
   .transparent = property?: boolean | undefined
   .transparent doc.default = false
   .colorKey = property?: string | undefined
+  .backgroundColor = property?: string | undefined
+  .backgroundColor doc.default = what the system or `appearance` gives
   .opacity = property?: number | undefined
   .topmost = property?: boolean | undefined
   .topmost doc.default = false
@@ -84,6 +88,7 @@ symbol @n1h/sweetview :: AppOptions
   .noActivate = property?: boolean | undefined
   .noActivate doc.default = false
   .onResize = property?: ((bounds: Rect) => void) | undefined
+  .onMaximizeChange = property?: ((maximized: boolean) => void) | undefined
   .onMove = property?: ((bounds: Rect) => void) | undefined
   .onClose = property?: (() => void) | undefined
   .onFileDrop = property?: ((paths: string[]) => void) | undefined
@@ -137,8 +142,10 @@ symbol @n1h/sweetview :: createApp
   call[0].p0{options}.title = property?: string | undefined
   call[0].p0{options}.title doc.default = the window's title, then the page's `<title>`, else the entry script's name
   call[0].p0{options}.bounds = property?: Rect | undefined
-  call[0].p0{options}.bounds doc.notes = outer-frame
+  call[0].p0{options}.bounds doc.notes = physical-px,points,outer-frame
   call[0].p0{options}.bounds doc.default = 320x240 centered on the primary work area
+  call[0].p0{options}.contentSize = property?: { width: number; height: number; } | undefined
+  call[0].p0{options}.contentSize doc.notes = dip
   call[0].p0{options}.minWidth = property?: number | undefined
   call[0].p0{options}.minWidth doc.notes = outer-frame
   call[0].p0{options}.minHeight = property?: number | undefined
@@ -154,6 +161,8 @@ symbol @n1h/sweetview :: createApp
   call[0].p0{options}.transparent = property?: boolean | undefined
   call[0].p0{options}.transparent doc.default = false
   call[0].p0{options}.colorKey = property?: string | undefined
+  call[0].p0{options}.backgroundColor = property?: string | undefined
+  call[0].p0{options}.backgroundColor doc.default = what the system or `appearance` gives
   call[0].p0{options}.opacity = property?: number | undefined
   call[0].p0{options}.topmost = property?: boolean | undefined
   call[0].p0{options}.topmost doc.default = false
@@ -162,6 +171,7 @@ symbol @n1h/sweetview :: createApp
   call[0].p0{options}.noActivate = property?: boolean | undefined
   call[0].p0{options}.noActivate doc.default = false
   call[0].p0{options}.onResize = property?: ((bounds: Rect) => void) | undefined
+  call[0].p0{options}.onMaximizeChange = property?: ((maximized: boolean) => void) | undefined
   call[0].p0{options}.onMove = property?: ((bounds: Rect) => void) | undefined
   call[0].p0{options}.onClose = property?: (() => void) | undefined
   call[0].p0{options}.onFileDrop = property?: ((paths: string[]) => void) | undefined
@@ -739,6 +749,20 @@ symbol @n1h/sweetview :: WebViewOptions
   .readyFallbackHtml = property?: string | undefined
   .readyFallbackHtml doc.default = a built-in error page
   .ringBytes = property?: number | undefined
+symbol @n1h/sweetview :: windowChromeEvents
+  kind = function
+  declared-in = packages/sweetview/src/window-chrome.ts
+  call[0] = (window: Pick<Window, "onMaximizeChange">, view: { emit(name: "window.maximized", payload: { maximized: boolean; }): void; }) => () => void
+  call[0].p0 = window: Pick<Window, "onMaximizeChange">
+  call[0].p1 = view: { emit(name: "window.maximized", payload: { maximized: boolean; }): void; }
+  call[0].p1{view}.emit = method (name: "window.maximized", payload: { maximized: boolean; }) => void
+  call[0].returns = () => void
+symbol @n1h/sweetview :: WindowChromeEvents
+  kind = type
+  declared-in = packages/sweetview/src/window-chrome.ts
+  generics = 
+  type = { "window.maximized": { maximized: boolean; }; }
+  .window.maximized = property: { maximized: boolean; }
 symbol @n1h/sweetview :: WindowChromeInfo
   kind = type
   declared-in = packages/sweetview/src/window-chrome.ts
@@ -756,8 +780,15 @@ symbol @n1h/sweetview :: WindowChromeKind
 symbol @n1h/sweetview :: windowChromeMethods
   kind = function
   declared-in = packages/sweetview/src/window-chrome.ts
-  call[0] = (window: Pick<Window, "hide" | "isMaximized" | "startDrag" | "startResize" | "minimize" | "toggleMaximize">, options?: WindowChromeOptions) => WindowChromeMethodTable
-  call[0].p0 = window: Pick<Window, "hide" | "isMaximized" | "startDrag" | "startResize" | "minimize" | "toggleMaximize">
+  call[0] = (window: Pick<Window, "hide" | "isMaximized" | "startDrag" | "startResize" | "minimize" | "toggleMaximize"> & Partial<Pick<Window, "showSystemMenu">>, options?: WindowChromeOptions) => WindowChromeMethodTable
+  call[0].p0 = window: Pick<Window, "hide" | "isMaximized" | "startDrag" | "startResize" | "minimize" | "toggleMaximize"> & Partial<Pick<Window, "showSystemMenu">>
+  call[0].p0{window}.hide = property: () => void
+  call[0].p0{window}.isMaximized = property: () => boolean
+  call[0].p0{window}.startDrag = property: () => void
+  call[0].p0{window}.startResize = property: (edge: ResizeEdge) => void
+  call[0].p0{window}.minimize = property: () => void
+  call[0].p0{window}.toggleMaximize = property: () => void
+  call[0].p0{window}.showSystemMenu = property?: (() => void) | undefined
   call[0].p1 = options?: WindowChromeOptions = {}
   call[0].p1{options}.chrome = property?: WindowChromeKind | undefined
   call[0].p1{options}.onClose = property?: (() => void) | undefined
@@ -767,23 +798,25 @@ symbol @n1h/sweetview :: WindowChromeMethods
   kind = type
   declared-in = packages/sweetview/src/window-chrome.ts
   generics = 
-  type = { "window.info": [void, WindowChromeInfo]; "window.drag": [void, void]; "window.resize": [ResizeEdge, void]; "window.minimize": [void, void]; "window.maximize": [void, void]; "window.close": [void, void]; }
+  type = { "window.info": [void, WindowChromeInfo]; "window.drag": [void, void]; "window.resize": [ResizeEdge, void]; "window.minimize": [void, void]; "window.maximize": [void, void]; "window.systemMenu": [void, void]; "window.close": [void, void]; }
   .window.info = property: [void, WindowChromeInfo]
   .window.drag = property: [void, void]
   .window.resize = property: [ResizeEdge, void]
   .window.minimize = property: [void, void]
   .window.maximize = property: [void, void]
+  .window.systemMenu = property: [void, void]
   .window.close = property: [void, void]
 symbol @n1h/sweetview :: WindowChromeMethodTable
   kind = type
   declared-in = packages/sweetview/src/window-chrome.ts
   generics = 
-  type = { "window.info": (params: void) => WindowChromeInfo; "window.drag": (params: void) => void; "window.resize": (params: ResizeEdge) => void; "window.minimize": (params: void) => void; "window.maximize": (params: void) => void; "window.close": (params: void) => void; }
+  type = { "window.info": (params: void) => WindowChromeInfo; "window.drag": (params: void) => void; "window.resize": (params: ResizeEdge) => void; "window.minimize": (params: void) => void; "window.maximize": (params: void) => void; "window.systemMenu": (params: void) => void; "window.close": (params: void) => void; }
   .window.info = property: (params: void) => WindowChromeInfo
   .window.drag = property: (params: void) => void
   .window.resize = property: (params: ResizeEdge) => void
   .window.minimize = property: (params: void) => void
   .window.maximize = property: (params: void) => void
+  .window.systemMenu = property: (params: void) => void
   .window.close = property: (params: void) => void
 symbol @n1h/sweetview :: WindowChromeOptions
   kind = type
@@ -1019,7 +1052,7 @@ symbol @n1h/sweetview/settings-store :: SettingsStoreOptions
   .sanitize doc.notes = throws
   .sanitize doc.default = the defaults with the file's
 
-## entry @n1h/sweetview/window-chrome [app] packages/sweetview/src/window-chrome.ts (10 exports)
+## entry @n1h/sweetview/window-chrome [app] packages/sweetview/src/window-chrome.ts (12 exports)
 symbol @n1h/sweetview/window-chrome :: ResizeHandle
   kind = type
   declared-in = packages/sweetview/src/window-chrome.ts
@@ -1047,13 +1080,30 @@ symbol @n1h/sweetview/window-chrome :: WindowChromeControls
   kind = type
   declared-in = packages/sweetview/src/window-chrome.ts
   generics = 
-  type = { info(): Promise<WindowChromeInfo>; onTitlePointerDown(event: { button: number; }): void; onHandlePointerDown(edge: ResizeEdge): (event: { button: number; }) => void; minimize(): void; toggleMaximize(): void; close(): void; }
+  type = { info(): Promise<WindowChromeInfo>; onMaximizeChange(fn: (maximized: boolean) => void): () => void; onTitlePointerDown(event: { button: number; }): void; onHandlePointerDown(edge: ResizeEdge): (event: { button: number; }) => void; minimize(): void; toggleMaximize(): void; showSystemMenu(): void; close(): void; }
   .info = method () => Promise<WindowChromeInfo>
+  .onMaximizeChange = method (fn: (maximized: boolean) => void) => () => void
+  .onMaximizeChange doc.notes = ui-thread
   .onTitlePointerDown = method (event: { button: number; }) => void
   .onHandlePointerDown = method (edge: ResizeEdge) => (event: { button: number; }) => void
   .minimize = method () => void
   .toggleMaximize = method () => void
+  .showSystemMenu = method () => void
   .close = method () => void
+symbol @n1h/sweetview/window-chrome :: windowChromeEvents
+  kind = function
+  declared-in = packages/sweetview/src/window-chrome.ts
+  call[0] = (window: Pick<Window, "onMaximizeChange">, view: { emit(name: "window.maximized", payload: { maximized: boolean; }): void; }) => () => void
+  call[0].p0 = window: Pick<Window, "onMaximizeChange">
+  call[0].p1 = view: { emit(name: "window.maximized", payload: { maximized: boolean; }): void; }
+  call[0].p1{view}.emit = method (name: "window.maximized", payload: { maximized: boolean; }) => void
+  call[0].returns = () => void
+symbol @n1h/sweetview/window-chrome :: WindowChromeEvents
+  kind = type
+  declared-in = packages/sweetview/src/window-chrome.ts
+  generics = 
+  type = { "window.maximized": { maximized: boolean; }; }
+  .window.maximized = property: { maximized: boolean; }
 symbol @n1h/sweetview/window-chrome :: WindowChromeInfo
   kind = type
   declared-in = packages/sweetview/src/window-chrome.ts
@@ -1071,8 +1121,15 @@ symbol @n1h/sweetview/window-chrome :: WindowChromeKind
 symbol @n1h/sweetview/window-chrome :: windowChromeMethods
   kind = function
   declared-in = packages/sweetview/src/window-chrome.ts
-  call[0] = (window: Pick<Window, "hide" | "isMaximized" | "startDrag" | "startResize" | "minimize" | "toggleMaximize">, options?: WindowChromeOptions) => WindowChromeMethodTable
-  call[0].p0 = window: Pick<Window, "hide" | "isMaximized" | "startDrag" | "startResize" | "minimize" | "toggleMaximize">
+  call[0] = (window: Pick<Window, "hide" | "isMaximized" | "startDrag" | "startResize" | "minimize" | "toggleMaximize"> & Partial<Pick<Window, "showSystemMenu">>, options?: WindowChromeOptions) => WindowChromeMethodTable
+  call[0].p0 = window: Pick<Window, "hide" | "isMaximized" | "startDrag" | "startResize" | "minimize" | "toggleMaximize"> & Partial<Pick<Window, "showSystemMenu">>
+  call[0].p0{window}.hide = property: () => void
+  call[0].p0{window}.isMaximized = property: () => boolean
+  call[0].p0{window}.startDrag = property: () => void
+  call[0].p0{window}.startResize = property: (edge: ResizeEdge) => void
+  call[0].p0{window}.minimize = property: () => void
+  call[0].p0{window}.toggleMaximize = property: () => void
+  call[0].p0{window}.showSystemMenu = property?: (() => void) | undefined
   call[0].p1 = options?: WindowChromeOptions = {}
   call[0].p1{options}.chrome = property?: WindowChromeKind | undefined
   call[0].p1{options}.onClose = property?: (() => void) | undefined
@@ -1082,23 +1139,25 @@ symbol @n1h/sweetview/window-chrome :: WindowChromeMethods
   kind = type
   declared-in = packages/sweetview/src/window-chrome.ts
   generics = 
-  type = { "window.info": [void, WindowChromeInfo]; "window.drag": [void, void]; "window.resize": [ResizeEdge, void]; "window.minimize": [void, void]; "window.maximize": [void, void]; "window.close": [void, void]; }
+  type = { "window.info": [void, WindowChromeInfo]; "window.drag": [void, void]; "window.resize": [ResizeEdge, void]; "window.minimize": [void, void]; "window.maximize": [void, void]; "window.systemMenu": [void, void]; "window.close": [void, void]; }
   .window.info = property: [void, WindowChromeInfo]
   .window.drag = property: [void, void]
   .window.resize = property: [ResizeEdge, void]
   .window.minimize = property: [void, void]
   .window.maximize = property: [void, void]
+  .window.systemMenu = property: [void, void]
   .window.close = property: [void, void]
 symbol @n1h/sweetview/window-chrome :: WindowChromeMethodTable
   kind = type
   declared-in = packages/sweetview/src/window-chrome.ts
   generics = 
-  type = { "window.info": (params: void) => WindowChromeInfo; "window.drag": (params: void) => void; "window.resize": (params: ResizeEdge) => void; "window.minimize": (params: void) => void; "window.maximize": (params: void) => void; "window.close": (params: void) => void; }
+  type = { "window.info": (params: void) => WindowChromeInfo; "window.drag": (params: void) => void; "window.resize": (params: ResizeEdge) => void; "window.minimize": (params: void) => void; "window.maximize": (params: void) => void; "window.systemMenu": (params: void) => void; "window.close": (params: void) => void; }
   .window.info = property: (params: void) => WindowChromeInfo
   .window.drag = property: (params: void) => void
   .window.resize = property: (params: ResizeEdge) => void
   .window.minimize = property: (params: void) => void
   .window.maximize = property: (params: void) => void
+  .window.systemMenu = property: (params: void) => void
   .window.close = property: (params: void) => void
 symbol @n1h/sweetview/window-chrome :: WindowChromeOptions
   kind = type
@@ -1849,7 +1908,7 @@ symbol @n1h/sweetview/ipc-tauri/client :: TauriTransport
   .ready = readonly property: Promise<void>
   .dispose = method () => void
 
-## entry @n1h/sweetview/native [app] packages/sweetview/src/native/index.ts (117 exports)
+## entry @n1h/sweetview/native [app] packages/sweetview/src/native/index.ts (118 exports)
 symbol @n1h/sweetview/native :: ActivationPolicy
   kind = type
   declared-in = packages/sweetview-native/src/event-loop.ts
@@ -2040,8 +2099,10 @@ symbol @n1h/sweetview/native :: createWindow
   call[0].p0{options}.identity = property?: AppIdentity | undefined
   call[0].p0{options}.title = property?: string | undefined
   call[0].p0{options}.bounds = property?: Rect | undefined
-  call[0].p0{options}.bounds doc.notes = outer-frame
+  call[0].p0{options}.bounds doc.notes = physical-px,points,outer-frame
   call[0].p0{options}.bounds doc.default = 320x240 centered on the primary work area
+  call[0].p0{options}.contentSize = property?: { width: number; height: number; } | undefined
+  call[0].p0{options}.contentSize doc.notes = dip
   call[0].p0{options}.minWidth = property?: number | undefined
   call[0].p0{options}.minWidth doc.notes = outer-frame
   call[0].p0{options}.minHeight = property?: number | undefined
@@ -2057,6 +2118,8 @@ symbol @n1h/sweetview/native :: createWindow
   call[0].p0{options}.transparent = property?: boolean | undefined
   call[0].p0{options}.transparent doc.default = false
   call[0].p0{options}.colorKey = property?: string | undefined
+  call[0].p0{options}.backgroundColor = property?: string | undefined
+  call[0].p0{options}.backgroundColor doc.default = what the system or `appearance` gives
   call[0].p0{options}.opacity = property?: number | undefined
   call[0].p0{options}.topmost = property?: boolean | undefined
   call[0].p0{options}.topmost doc.default = false
@@ -2065,6 +2128,7 @@ symbol @n1h/sweetview/native :: createWindow
   call[0].p0{options}.noActivate = property?: boolean | undefined
   call[0].p0{options}.noActivate doc.default = false
   call[0].p0{options}.onResize = property?: ((bounds: Rect) => void) | undefined
+  call[0].p0{options}.onMaximizeChange = property?: ((maximized: boolean) => void) | undefined
   call[0].p0{options}.onMove = property?: ((bounds: Rect) => void) | undefined
   call[0].p0{options}.onClose = property?: (() => void) | undefined
   call[0].p0{options}.onFileDrop = property?: ((paths: string[]) => void) | undefined
@@ -2387,14 +2451,23 @@ symbol @n1h/sweetview/native :: KeyMessage
 symbol @n1h/sweetview/native :: Menu
   kind = const
   declared-in = packages/sweetview-native/src/menu.ts
-  type = { popup(owner: WindowRef, menu: MenuSource, at?: Point): boolean; }
-  .popup = method (owner: WindowRef, menu: MenuSource, at?: Point) => boolean
-  .popup doc.default = cursor position)
+  type = { popup(owner: WindowRef, menu: MenuSource, at?: Point, options?: MenuPopupOptions): boolean; }
+  .popup = method (owner: WindowRef, menu: MenuSource, at?: Point, options?: MenuPopupOptions) => boolean
+  .popup doc.notes = points
+  .popup doc.default = cursor position), below the
 symbol @n1h/sweetview/native :: MenuItem
   kind = type
   declared-in = packages/sweetview-native/src/menu.ts
   generics = 
   type = { type?: "item"; label: string; enabled?: boolean; checked?: boolean; icon?: Icon; click?: () => void; } | { type?: "submenu"; label: string; enabled?: boolean; icon?: Icon; submenu: MenuTemplate; } | { type: "separator"; }
+symbol @n1h/sweetview/native :: MenuPopupOptions
+  kind = type
+  declared-in = packages/sweetview-native/src/menu.ts
+  doc.notes = points
+  generics = 
+  type = { above?: boolean; }
+  .above = property?: boolean | undefined
+  .above doc.notes = points
 symbol @n1h/sweetview/native :: MenuSource
   kind = type
   declared-in = packages/sweetview-native/src/menu.ts
@@ -3267,8 +3340,10 @@ symbol @n1h/sweetview/native :: Window
   new[0].p0{options}.identity = property?: AppIdentity | undefined
   new[0].p0{options}.title = property?: string | undefined
   new[0].p0{options}.bounds = property?: Rect | undefined
-  new[0].p0{options}.bounds doc.notes = outer-frame
+  new[0].p0{options}.bounds doc.notes = physical-px,points,outer-frame
   new[0].p0{options}.bounds doc.default = 320x240 centered on the primary work area
+  new[0].p0{options}.contentSize = property?: { width: number; height: number; } | undefined
+  new[0].p0{options}.contentSize doc.notes = dip
   new[0].p0{options}.minWidth = property?: number | undefined
   new[0].p0{options}.minWidth doc.notes = outer-frame
   new[0].p0{options}.minHeight = property?: number | undefined
@@ -3284,6 +3359,8 @@ symbol @n1h/sweetview/native :: Window
   new[0].p0{options}.transparent = property?: boolean | undefined
   new[0].p0{options}.transparent doc.default = false
   new[0].p0{options}.colorKey = property?: string | undefined
+  new[0].p0{options}.backgroundColor = property?: string | undefined
+  new[0].p0{options}.backgroundColor doc.default = what the system or `appearance` gives
   new[0].p0{options}.opacity = property?: number | undefined
   new[0].p0{options}.topmost = property?: boolean | undefined
   new[0].p0{options}.topmost doc.default = false
@@ -3292,6 +3369,7 @@ symbol @n1h/sweetview/native :: Window
   new[0].p0{options}.noActivate = property?: boolean | undefined
   new[0].p0{options}.noActivate doc.default = false
   new[0].p0{options}.onResize = property?: ((bounds: Rect) => void) | undefined
+  new[0].p0{options}.onMaximizeChange = property?: ((maximized: boolean) => void) | undefined
   new[0].p0{options}.onMove = property?: ((bounds: Rect) => void) | undefined
   new[0].p0{options}.onClose = property?: (() => void) | undefined
   new[0].p0{options}.onFileDrop = property?: ((paths: string[]) => void) | undefined
@@ -3355,6 +3433,12 @@ symbol @n1h/sweetview/native :: Window
   #isMaximized = method () => boolean
   #isMaximized(0) = () => boolean
   #isMaximized(0).returns = boolean
+  #isMinimized = method () => boolean
+  #isMinimized(0) = () => boolean
+  #isMinimized(0).returns = boolean
+  #showSystemMenu = method () => void
+  #showSystemMenu(0) = () => void
+  #showSystemMenu(0).returns = void
   #setTopmost = method (on: boolean) => void
   #setTopmost(0) = (on: boolean) => void
   #setTopmost(0).p0 = on: boolean
@@ -3379,6 +3463,10 @@ symbol @n1h/sweetview/native :: Window
   #onResize(0) = (handler: (bounds: Rect) => void) => () => void
   #onResize(0).p0 = handler: (bounds: Rect) => void
   #onResize(0).returns = () => void
+  #onMaximizeChange = method (handler: (maximized: boolean) => void) => () => void
+  #onMaximizeChange(0) = (handler: (maximized: boolean) => void) => () => void
+  #onMaximizeChange(0).p0 = handler: (maximized: boolean) => void
+  #onMaximizeChange(0).returns = () => void
   #onMove = method (handler: (bounds: Rect) => void) => () => void
   #onMove(0) = (handler: (bounds: Rect) => void) => () => void
   #onMove(0).p0 = handler: (bounds: Rect) => void
@@ -3422,12 +3510,14 @@ symbol @n1h/sweetview/native :: WindowOptions
   kind = type
   declared-in = packages/sweetview-native/src/window.ts
   generics = 
-  type = { identity?: AppIdentity; title?: string; bounds?: Rect; minWidth?: number; minHeight?: number; frame?: boolean; resizable?: boolean; appearance?: Appearance; icon?: Icon; tabs?: boolean; transparent?: boolean; colorKey?: string; opacity?: number; topmost?: boolean; hideFromTaskbar?: boolean; noActivate?: boolean; onResize?: (bounds: Rect) => void; onMove?: (bounds: Rect) => void; onClose?: () => void; onFileDrop?: (paths: string[]) => void; onNewTab?: (origin: Window) => void; onTabSelect?: (tab: TabHandle) => void; onTabClose?: (tab: TabHandle) => void; }
+  type = { identity?: AppIdentity; title?: string; bounds?: Rect; contentSize?: { width: number; height: number; }; minWidth?: number; minHeight?: number; frame?: boolean; resizable?: boolean; appearance?: Appearance; icon?: Icon; tabs?: boolean; transparent?: boolean; colorKey?: string; backgroundColor?: string; opacity?: number; topmost?: boolean; hideFromTaskbar?: boolean; noActivate?: boolean; onResize?: (bounds: Rect) => void; onMaximizeChange?: (maximized: boolean) => void; onMove?: (bounds: Rect) => void; onClose?: () => void; onFileDrop?: (paths: string[]) => void; onNewTab?: (origin: Window) => void; onTabSelect?: (tab: TabHandle) => void; onTabClose?: (tab: TabHandle) => void; }
   .identity = property?: AppIdentity | undefined
   .title = property?: string | undefined
   .bounds = property?: Rect | undefined
-  .bounds doc.notes = outer-frame
+  .bounds doc.notes = physical-px,points,outer-frame
   .bounds doc.default = 320x240 centered on the primary work area
+  .contentSize = property?: { width: number; height: number; } | undefined
+  .contentSize doc.notes = dip
   .minWidth = property?: number | undefined
   .minWidth doc.notes = outer-frame
   .minHeight = property?: number | undefined
@@ -3443,6 +3533,8 @@ symbol @n1h/sweetview/native :: WindowOptions
   .transparent = property?: boolean | undefined
   .transparent doc.default = false
   .colorKey = property?: string | undefined
+  .backgroundColor = property?: string | undefined
+  .backgroundColor doc.default = what the system or `appearance` gives
   .opacity = property?: number | undefined
   .topmost = property?: boolean | undefined
   .topmost doc.default = false
@@ -3451,6 +3543,7 @@ symbol @n1h/sweetview/native :: WindowOptions
   .noActivate = property?: boolean | undefined
   .noActivate doc.default = false
   .onResize = property?: ((bounds: Rect) => void) | undefined
+  .onMaximizeChange = property?: ((maximized: boolean) => void) | undefined
   .onMove = property?: ((bounds: Rect) => void) | undefined
   .onClose = property?: (() => void) | undefined
   .onFileDrop = property?: ((paths: string[]) => void) | undefined
@@ -4436,7 +4529,7 @@ symbol @n1h/sweetview-ipc-ws/client :: wsUrl
   call[0].p0 = path?: string = "/ws"
   call[0].returns = string
 
-## entry @n1h/sweetview-native [app] packages/sweetview-native/src/index.ts (117 exports)
+## entry @n1h/sweetview-native [app] packages/sweetview-native/src/index.ts (118 exports)
 symbol @n1h/sweetview-native :: ActivationPolicy
   kind = type
   declared-in = packages/sweetview-native/src/event-loop.ts
@@ -4627,8 +4720,10 @@ symbol @n1h/sweetview-native :: createWindow
   call[0].p0{options}.identity = property?: AppIdentity | undefined
   call[0].p0{options}.title = property?: string | undefined
   call[0].p0{options}.bounds = property?: Rect | undefined
-  call[0].p0{options}.bounds doc.notes = outer-frame
+  call[0].p0{options}.bounds doc.notes = physical-px,points,outer-frame
   call[0].p0{options}.bounds doc.default = 320x240 centered on the primary work area
+  call[0].p0{options}.contentSize = property?: { width: number; height: number; } | undefined
+  call[0].p0{options}.contentSize doc.notes = dip
   call[0].p0{options}.minWidth = property?: number | undefined
   call[0].p0{options}.minWidth doc.notes = outer-frame
   call[0].p0{options}.minHeight = property?: number | undefined
@@ -4644,6 +4739,8 @@ symbol @n1h/sweetview-native :: createWindow
   call[0].p0{options}.transparent = property?: boolean | undefined
   call[0].p0{options}.transparent doc.default = false
   call[0].p0{options}.colorKey = property?: string | undefined
+  call[0].p0{options}.backgroundColor = property?: string | undefined
+  call[0].p0{options}.backgroundColor doc.default = what the system or `appearance` gives
   call[0].p0{options}.opacity = property?: number | undefined
   call[0].p0{options}.topmost = property?: boolean | undefined
   call[0].p0{options}.topmost doc.default = false
@@ -4652,6 +4749,7 @@ symbol @n1h/sweetview-native :: createWindow
   call[0].p0{options}.noActivate = property?: boolean | undefined
   call[0].p0{options}.noActivate doc.default = false
   call[0].p0{options}.onResize = property?: ((bounds: Rect) => void) | undefined
+  call[0].p0{options}.onMaximizeChange = property?: ((maximized: boolean) => void) | undefined
   call[0].p0{options}.onMove = property?: ((bounds: Rect) => void) | undefined
   call[0].p0{options}.onClose = property?: (() => void) | undefined
   call[0].p0{options}.onFileDrop = property?: ((paths: string[]) => void) | undefined
@@ -4974,14 +5072,23 @@ symbol @n1h/sweetview-native :: KeyMessage
 symbol @n1h/sweetview-native :: Menu
   kind = const
   declared-in = packages/sweetview-native/src/menu.ts
-  type = { popup(owner: WindowRef, menu: MenuSource, at?: Point): boolean; }
-  .popup = method (owner: WindowRef, menu: MenuSource, at?: Point) => boolean
-  .popup doc.default = cursor position)
+  type = { popup(owner: WindowRef, menu: MenuSource, at?: Point, options?: MenuPopupOptions): boolean; }
+  .popup = method (owner: WindowRef, menu: MenuSource, at?: Point, options?: MenuPopupOptions) => boolean
+  .popup doc.notes = points
+  .popup doc.default = cursor position), below the
 symbol @n1h/sweetview-native :: MenuItem
   kind = type
   declared-in = packages/sweetview-native/src/menu.ts
   generics = 
   type = { type?: "item"; label: string; enabled?: boolean; checked?: boolean; icon?: Icon; click?: () => void; } | { type?: "submenu"; label: string; enabled?: boolean; icon?: Icon; submenu: MenuTemplate; } | { type: "separator"; }
+symbol @n1h/sweetview-native :: MenuPopupOptions
+  kind = type
+  declared-in = packages/sweetview-native/src/menu.ts
+  doc.notes = points
+  generics = 
+  type = { above?: boolean; }
+  .above = property?: boolean | undefined
+  .above doc.notes = points
 symbol @n1h/sweetview-native :: MenuSource
   kind = type
   declared-in = packages/sweetview-native/src/menu.ts
@@ -5854,8 +5961,10 @@ symbol @n1h/sweetview-native :: Window
   new[0].p0{options}.identity = property?: AppIdentity | undefined
   new[0].p0{options}.title = property?: string | undefined
   new[0].p0{options}.bounds = property?: Rect | undefined
-  new[0].p0{options}.bounds doc.notes = outer-frame
+  new[0].p0{options}.bounds doc.notes = physical-px,points,outer-frame
   new[0].p0{options}.bounds doc.default = 320x240 centered on the primary work area
+  new[0].p0{options}.contentSize = property?: { width: number; height: number; } | undefined
+  new[0].p0{options}.contentSize doc.notes = dip
   new[0].p0{options}.minWidth = property?: number | undefined
   new[0].p0{options}.minWidth doc.notes = outer-frame
   new[0].p0{options}.minHeight = property?: number | undefined
@@ -5871,6 +5980,8 @@ symbol @n1h/sweetview-native :: Window
   new[0].p0{options}.transparent = property?: boolean | undefined
   new[0].p0{options}.transparent doc.default = false
   new[0].p0{options}.colorKey = property?: string | undefined
+  new[0].p0{options}.backgroundColor = property?: string | undefined
+  new[0].p0{options}.backgroundColor doc.default = what the system or `appearance` gives
   new[0].p0{options}.opacity = property?: number | undefined
   new[0].p0{options}.topmost = property?: boolean | undefined
   new[0].p0{options}.topmost doc.default = false
@@ -5879,6 +5990,7 @@ symbol @n1h/sweetview-native :: Window
   new[0].p0{options}.noActivate = property?: boolean | undefined
   new[0].p0{options}.noActivate doc.default = false
   new[0].p0{options}.onResize = property?: ((bounds: Rect) => void) | undefined
+  new[0].p0{options}.onMaximizeChange = property?: ((maximized: boolean) => void) | undefined
   new[0].p0{options}.onMove = property?: ((bounds: Rect) => void) | undefined
   new[0].p0{options}.onClose = property?: (() => void) | undefined
   new[0].p0{options}.onFileDrop = property?: ((paths: string[]) => void) | undefined
@@ -5942,6 +6054,12 @@ symbol @n1h/sweetview-native :: Window
   #isMaximized = method () => boolean
   #isMaximized(0) = () => boolean
   #isMaximized(0).returns = boolean
+  #isMinimized = method () => boolean
+  #isMinimized(0) = () => boolean
+  #isMinimized(0).returns = boolean
+  #showSystemMenu = method () => void
+  #showSystemMenu(0) = () => void
+  #showSystemMenu(0).returns = void
   #setTopmost = method (on: boolean) => void
   #setTopmost(0) = (on: boolean) => void
   #setTopmost(0).p0 = on: boolean
@@ -5966,6 +6084,10 @@ symbol @n1h/sweetview-native :: Window
   #onResize(0) = (handler: (bounds: Rect) => void) => () => void
   #onResize(0).p0 = handler: (bounds: Rect) => void
   #onResize(0).returns = () => void
+  #onMaximizeChange = method (handler: (maximized: boolean) => void) => () => void
+  #onMaximizeChange(0) = (handler: (maximized: boolean) => void) => () => void
+  #onMaximizeChange(0).p0 = handler: (maximized: boolean) => void
+  #onMaximizeChange(0).returns = () => void
   #onMove = method (handler: (bounds: Rect) => void) => () => void
   #onMove(0) = (handler: (bounds: Rect) => void) => () => void
   #onMove(0).p0 = handler: (bounds: Rect) => void
@@ -6009,12 +6131,14 @@ symbol @n1h/sweetview-native :: WindowOptions
   kind = type
   declared-in = packages/sweetview-native/src/window.ts
   generics = 
-  type = { identity?: AppIdentity; title?: string; bounds?: Rect; minWidth?: number; minHeight?: number; frame?: boolean; resizable?: boolean; appearance?: Appearance; icon?: Icon; tabs?: boolean; transparent?: boolean; colorKey?: string; opacity?: number; topmost?: boolean; hideFromTaskbar?: boolean; noActivate?: boolean; onResize?: (bounds: Rect) => void; onMove?: (bounds: Rect) => void; onClose?: () => void; onFileDrop?: (paths: string[]) => void; onNewTab?: (origin: Window) => void; onTabSelect?: (tab: TabHandle) => void; onTabClose?: (tab: TabHandle) => void; }
+  type = { identity?: AppIdentity; title?: string; bounds?: Rect; contentSize?: { width: number; height: number; }; minWidth?: number; minHeight?: number; frame?: boolean; resizable?: boolean; appearance?: Appearance; icon?: Icon; tabs?: boolean; transparent?: boolean; colorKey?: string; backgroundColor?: string; opacity?: number; topmost?: boolean; hideFromTaskbar?: boolean; noActivate?: boolean; onResize?: (bounds: Rect) => void; onMaximizeChange?: (maximized: boolean) => void; onMove?: (bounds: Rect) => void; onClose?: () => void; onFileDrop?: (paths: string[]) => void; onNewTab?: (origin: Window) => void; onTabSelect?: (tab: TabHandle) => void; onTabClose?: (tab: TabHandle) => void; }
   .identity = property?: AppIdentity | undefined
   .title = property?: string | undefined
   .bounds = property?: Rect | undefined
-  .bounds doc.notes = outer-frame
+  .bounds doc.notes = physical-px,points,outer-frame
   .bounds doc.default = 320x240 centered on the primary work area
+  .contentSize = property?: { width: number; height: number; } | undefined
+  .contentSize doc.notes = dip
   .minWidth = property?: number | undefined
   .minWidth doc.notes = outer-frame
   .minHeight = property?: number | undefined
@@ -6030,6 +6154,8 @@ symbol @n1h/sweetview-native :: WindowOptions
   .transparent = property?: boolean | undefined
   .transparent doc.default = false
   .colorKey = property?: string | undefined
+  .backgroundColor = property?: string | undefined
+  .backgroundColor doc.default = what the system or `appearance` gives
   .opacity = property?: number | undefined
   .topmost = property?: boolean | undefined
   .topmost doc.default = false
@@ -6038,6 +6164,7 @@ symbol @n1h/sweetview-native :: WindowOptions
   .noActivate = property?: boolean | undefined
   .noActivate doc.default = false
   .onResize = property?: ((bounds: Rect) => void) | undefined
+  .onMaximizeChange = property?: ((maximized: boolean) => void) | undefined
   .onMove = property?: ((bounds: Rect) => void) | undefined
   .onClose = property?: (() => void) | undefined
   .onFileDrop = property?: ((paths: string[]) => void) | undefined
@@ -6794,8 +6921,10 @@ symbol @n1h/sweetview-native/win32/window :: createWindow
   call[0].p0{options}.identity = property?: AppIdentity | undefined
   call[0].p0{options}.title = property?: string | undefined
   call[0].p0{options}.bounds = property?: Rect | undefined
-  call[0].p0{options}.bounds doc.notes = outer-frame
+  call[0].p0{options}.bounds doc.notes = physical-px,points,outer-frame
   call[0].p0{options}.bounds doc.default = 320x240 centered on the primary work area
+  call[0].p0{options}.contentSize = property?: { width: number; height: number; } | undefined
+  call[0].p0{options}.contentSize doc.notes = dip
   call[0].p0{options}.minWidth = property?: number | undefined
   call[0].p0{options}.minWidth doc.notes = outer-frame
   call[0].p0{options}.minHeight = property?: number | undefined
@@ -6811,6 +6940,8 @@ symbol @n1h/sweetview-native/win32/window :: createWindow
   call[0].p0{options}.transparent = property?: boolean | undefined
   call[0].p0{options}.transparent doc.default = false
   call[0].p0{options}.colorKey = property?: string | undefined
+  call[0].p0{options}.backgroundColor = property?: string | undefined
+  call[0].p0{options}.backgroundColor doc.default = what the system or `appearance` gives
   call[0].p0{options}.opacity = property?: number | undefined
   call[0].p0{options}.topmost = property?: boolean | undefined
   call[0].p0{options}.topmost doc.default = false
@@ -6819,6 +6950,7 @@ symbol @n1h/sweetview-native/win32/window :: createWindow
   call[0].p0{options}.noActivate = property?: boolean | undefined
   call[0].p0{options}.noActivate doc.default = false
   call[0].p0{options}.onResize = property?: ((bounds: Rect) => void) | undefined
+  call[0].p0{options}.onMaximizeChange = property?: ((maximized: boolean) => void) | undefined
   call[0].p0{options}.onMove = property?: ((bounds: Rect) => void) | undefined
   call[0].p0{options}.onClose = property?: (() => void) | undefined
   call[0].p0{options}.onFileDrop = property?: ((paths: string[]) => void) | undefined
@@ -6886,12 +7018,16 @@ symbol @n1h/sweetview-native/win32/menu :: menuData
 symbol @n1h/sweetview-native/win32/menu :: popupMenu
   kind = function
   declared-in = packages/sweetview-native/src/win32/menu.ts
-  call[0] = (owner: WindowHandle, template: MenuTemplate, at?: Point) => boolean
+  doc.notes = points
+  call[0] = (owner: WindowHandle, template: MenuTemplate, at?: Point, options?: MenuPopupOptions) => boolean
   call[0].p0 = owner: WindowHandle
   call[0].p1 = template: MenuTemplate
   call[0].p2 = at?: Point | undefined
   call[0].p2{at}.x = property: number
   call[0].p2{at}.y = property: number
+  call[0].p3 = options?: MenuPopupOptions | undefined
+  call[0].p3{options}.above = property?: boolean | undefined
+  call[0].p3{options}.above doc.notes = points
   call[0].returns = boolean
 symbol @n1h/sweetview-native/win32/menu :: popupMenuAtCursor
   kind = function
@@ -7539,12 +7675,15 @@ symbol @n1h/sweetview-native/darwin/window :: bindDarwinTabGroup
   call[0].p0{backend}.minimize = method () => void
   call[0].p0{backend}.toggleMaximize = method () => void
   call[0].p0{backend}.isMaximized = method () => boolean
+  call[0].p0{backend}.isMinimized = method () => boolean
+  call[0].p0{backend}.showSystemMenu = method () => void
   call[0].p0{backend}.setTopmost = method (on: boolean) => void
   call[0].p0{backend}.startDrag = method () => void
   call[0].p0{backend}.startResize = method (edge: ResizeEdge) => void
   call[0].p0{backend}.setClickThrough = method (on: boolean) => void
   call[0].p0{backend}.setHitRegions = method (polygons: HitPolygon[] | null, refine?: HitRefiner) => void
   call[0].p0{backend}.onResize = method (handler: (bounds: Rect) => void) => () => void
+  call[0].p0{backend}.onMaximizeChange = method (handler: (maximized: boolean) => void) => () => void
   call[0].p0{backend}.onMove = method (handler: (bounds: Rect) => void) => () => void
   call[0].p0{backend}.onClose = method (handler: () => void) => () => void
   call[0].p0{backend}.onFileDrop = method (handler: (paths: string[]) => void) => () => void
@@ -7562,6 +7701,7 @@ symbol @n1h/sweetview-native/darwin/window :: bindDarwinTabGroup
   call[0].p1{controller}.minimize = method () => void
   call[0].p1{controller}.toggleMaximize = method () => void
   call[0].p1{controller}.isMaximized = method () => boolean
+  call[0].p1{controller}.isMinimized = method () => boolean
   call[0].p1{controller}.dispose = method () => void
   call[0].p1{controller}.setFileDropEnabled = method (enabled: boolean) => void
   call[0].p1{controller}.setTopmost = method? 
@@ -7577,8 +7717,10 @@ symbol @n1h/sweetview-native/darwin/window :: createWindow
   call[0].p0{options}.identity = property?: AppIdentity | undefined
   call[0].p0{options}.title = property?: string | undefined
   call[0].p0{options}.bounds = property?: Rect | undefined
-  call[0].p0{options}.bounds doc.notes = outer-frame
+  call[0].p0{options}.bounds doc.notes = physical-px,points,outer-frame
   call[0].p0{options}.bounds doc.default = 320x240 centered on the primary work area
+  call[0].p0{options}.contentSize = property?: { width: number; height: number; } | undefined
+  call[0].p0{options}.contentSize doc.notes = dip
   call[0].p0{options}.minWidth = property?: number | undefined
   call[0].p0{options}.minWidth doc.notes = outer-frame
   call[0].p0{options}.minHeight = property?: number | undefined
@@ -7594,6 +7736,8 @@ symbol @n1h/sweetview-native/darwin/window :: createWindow
   call[0].p0{options}.transparent = property?: boolean | undefined
   call[0].p0{options}.transparent doc.default = false
   call[0].p0{options}.colorKey = property?: string | undefined
+  call[0].p0{options}.backgroundColor = property?: string | undefined
+  call[0].p0{options}.backgroundColor doc.default = what the system or `appearance` gives
   call[0].p0{options}.opacity = property?: number | undefined
   call[0].p0{options}.topmost = property?: boolean | undefined
   call[0].p0{options}.topmost doc.default = false
@@ -7602,6 +7746,7 @@ symbol @n1h/sweetview-native/darwin/window :: createWindow
   call[0].p0{options}.noActivate = property?: boolean | undefined
   call[0].p0{options}.noActivate doc.default = false
   call[0].p0{options}.onResize = property?: ((bounds: Rect) => void) | undefined
+  call[0].p0{options}.onMaximizeChange = property?: ((maximized: boolean) => void) | undefined
   call[0].p0{options}.onMove = property?: ((bounds: Rect) => void) | undefined
   call[0].p0{options}.onClose = property?: (() => void) | undefined
   call[0].p0{options}.onFileDrop = property?: ((paths: string[]) => void) | undefined
@@ -7613,7 +7758,7 @@ symbol @n1h/sweetview-native/darwin/window :: DarwinTabGroupController
   kind = type
   declared-in = packages/sweetview-native/src/darwin/window.ts
   generics = 
-  type = { show(): void; hide(): void; isVisible(): boolean; bounds(): Rect; setBounds(rect: Rect): void; setTitle(title: string): void; minimize(): void; toggleMaximize(): void; isMaximized(): boolean; dispose(): void; setFileDropEnabled(enabled: boolean): void; setTopmost?(on: boolean): void; startDrag?(): void; startResize?(edge: ResizeEdge): void; activeHandle?(): Id | null; }
+  type = { show(): void; hide(): void; isVisible(): boolean; bounds(): Rect; setBounds(rect: Rect): void; setTitle(title: string): void; minimize(): void; toggleMaximize(): void; isMaximized(): boolean; isMinimized(): boolean; dispose(): void; setFileDropEnabled(enabled: boolean): void; setTopmost?(on: boolean): void; startDrag?(): void; startResize?(edge: ResizeEdge): void; activeHandle?(): Id | null; }
   .show = method () => void
   .hide = method () => void
   .isVisible = method () => boolean
@@ -7623,6 +7768,7 @@ symbol @n1h/sweetview-native/darwin/window :: DarwinTabGroupController
   .minimize = method () => void
   .toggleMaximize = method () => void
   .isMaximized = method () => boolean
+  .isMinimized = method () => boolean
   .dispose = method () => void
   .setFileDropEnabled = method (enabled: boolean) => void
   .setTopmost = method? 
@@ -7661,12 +7807,15 @@ symbol @n1h/sweetview-native/darwin/window :: getDarwinTabActiveHandle
   call[0].p0{backend}.minimize = method () => void
   call[0].p0{backend}.toggleMaximize = method () => void
   call[0].p0{backend}.isMaximized = method () => boolean
+  call[0].p0{backend}.isMinimized = method () => boolean
+  call[0].p0{backend}.showSystemMenu = method () => void
   call[0].p0{backend}.setTopmost = method (on: boolean) => void
   call[0].p0{backend}.startDrag = method () => void
   call[0].p0{backend}.startResize = method (edge: ResizeEdge) => void
   call[0].p0{backend}.setClickThrough = method (on: boolean) => void
   call[0].p0{backend}.setHitRegions = method (polygons: HitPolygon[] | null, refine?: HitRefiner) => void
   call[0].p0{backend}.onResize = method (handler: (bounds: Rect) => void) => () => void
+  call[0].p0{backend}.onMaximizeChange = method (handler: (maximized: boolean) => void) => () => void
   call[0].p0{backend}.onMove = method (handler: (bounds: Rect) => void) => () => void
   call[0].p0{backend}.onClose = method (handler: () => void) => () => void
   call[0].p0{backend}.onFileDrop = method (handler: (paths: string[]) => void) => () => void

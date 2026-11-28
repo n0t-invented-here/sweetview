@@ -526,8 +526,7 @@ for (const r of partA) {
 
 // Names rust-rewrite/reference/bindings-exports.txt lists (2.8.0) that the installed package does not export:
 // no source for them is in either checkout, so they are checked by name and guide row only.
-const listed = readFileSync(join(afterRoot, "rust-rewrite", "reference", "bindings-exports.txt"), "utf8").split(/?
-/).map((l) => l.trim()).filter((l) => l && !l.startsWith("#"));
+const listed = readFileSync(join(afterRoot, "rust-rewrite", "reference", "bindings-exports.txt"), "utf8").split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("#"));
 const notInstalled = listed.filter((n) => !bindings.some((b) => b.name === n));
 const listedLines = [`# bindings names listed for 2.8.0 that the installed ${bindingsVersion} does not export (${notInstalled.length}): checked by name and guide row only`, ""];
 for (const n of notInstalled) {
