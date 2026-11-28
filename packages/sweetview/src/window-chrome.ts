@@ -88,8 +88,10 @@ export function windowChromeMethods(
 /**
  * The UI-thread half of the maximise state: sends `window.maximized` to the
  * page each time `window` becomes maximised or is restored (the page's button
- * or a double click on its title bar, the system menu, `toggleMaximize()`
- * from anywhere).
+ * or a double click on its title bar, `toggleMaximize()` from anywhere, a
+ * framed window's system menu; a frameless window's system-menu Maximize is
+ * the OS's and is not reported). It stays on `window`: when a tab moves to
+ * another window, stop it and call it again with the tab's new window.
  * Call it once the webview is attached; returns the function that stops it.
  */
 export function windowChromeEvents(

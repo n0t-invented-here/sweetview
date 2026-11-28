@@ -49,6 +49,21 @@ function fakeTransport() {
 }
 
 describe("window chrome", () => {
+  test("windowChromeEvents stays on the window it was given: a tab moved to another window is told that window's changes once it is subscribed again", () => {
+    // Review round 5, R5-5: docs/window-chrome.md tells a tabbed application to stop and subscribe again.
+    const [first, second] = [fakeWindow(), fakeWindow()];
+    const emitted: unknown[] = [];
+    const view = { emit: (_name: "window.maximized", payload: { maximized: boolean }) => void emitted.push(payload) };
+    const stop = windowChromeEvents(first.window, view);
+    second.change(true);
+    expect(emitted).toEqual([]);
+    stop();
+    windowChromeEvents(second.window, view);
+    second.change(true);
+    first.change(true);
+    expect(emitted).toEqual([{ maximized: true }]);
+  });
+
   test("windowChromeEvents sends window.maximized with each change until stopped", () => {
     const { window, change, listeners } = fakeWindow();
     const emitted: [string, unknown][] = [];
