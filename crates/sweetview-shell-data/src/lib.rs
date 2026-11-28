@@ -9,7 +9,9 @@ pub mod clipboard;
 pub mod error;
 pub mod single_instance;
 pub mod text;
+pub mod toast;
 pub mod url_scheme;
 
 pub use error::ShellError;
 pub use text::js_whitespace;
+pub use toast::NotifyError;
