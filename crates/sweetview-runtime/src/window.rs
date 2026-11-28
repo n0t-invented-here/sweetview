@@ -783,6 +783,19 @@ impl Window {
     }
   }
 
+  /// True while the OS has the window minimised (`IsIconic`), framed or
+  /// frameless; a hidden window that is not minimised reads as false.
+  pub fn is_minimized(&self) -> bool {
+    if !self.live() {
+      return false;
+    }
+    let core = &self.core;
+    match core.with_tao(|tao| tao.is_minimized()) {
+      Some(minimized) => minimized,
+      None => core.with_native(|window| platform::is_minimized(window)).unwrap_or(false),
+    }
+  }
+
   pub fn set_topmost(&self, on: bool) {
     if !self.live() {
       return;

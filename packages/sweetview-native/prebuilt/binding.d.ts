@@ -328,6 +328,8 @@ export declare class Window {
   /** A framed window maximises through the OS; a frameless one fills the work area of its screen. */
   toggleMaximize(): void
   isMaximized(): boolean
+  /** True while the OS has the window minimised (`IsIconic`). */
+  isMinimized(): boolean
   setTopmost(on: boolean): void
   /** Hands the left button's press to the OS move loop. */
   startDrag(): void

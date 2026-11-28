@@ -107,6 +107,12 @@ impl Window {
     self.0.is_maximized()
   }
 
+  /// True while the OS has the window minimised (`IsIconic`).
+  #[napi(catch_unwind)]
+  pub fn is_minimized(&self) -> bool {
+    self.0.is_minimized()
+  }
+
   #[napi(catch_unwind)]
   pub fn set_topmost(&self, on: bool) {
     self.0.set_topmost(on)

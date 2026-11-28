@@ -143,6 +143,10 @@ impl Window {
     self.inner.is_maximized()
   }
 
+  pub fn is_minimized(&self) -> bool {
+    self.inner.is_minimized()
+  }
+
   pub fn set_topmost(&self, on: bool) {
     self.inner.set_topmost(on);
   }

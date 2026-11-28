@@ -191,6 +191,37 @@ fn frameless_maximise_uses_the_work_area_of_its_own_screen() {
 }
 
 #[test]
+fn is_minimized_follows_the_os_for_an_owned_and_an_adopted_window() {
+  on_ui_thread(|runtime| {
+    let window = Window::create(WindowInit { bounds: Some(Rect::new(-2000, -2000, 200, 200)), ..init("rt minimized") }).expect("window");
+    assert!(!window.is_minimized(), "a hidden window is not minimised");
+    window.show().expect("show");
+    runtime.pump();
+    assert!(!window.is_minimized());
+    window.minimize();
+    assert!(window.is_minimized() && native(&window, |w| platform::is_minimized(w)));
+    window.show().expect("restore");
+    assert!(!window.is_minimized() && !native(&window, |w| platform::is_minimized(w)));
+    window.dispose();
+    assert!(!window.is_minimized(), "a disposed window is not minimised");
+
+    // The application's own window, which `tao` made outside `Window::create`: read through the OS.
+    let own = runtime
+      .with_target(|target| tao::window::WindowBuilder::new().with_visible(false).with_title("rt own minimized").build(target))
+      .expect("target")
+      .expect("window");
+    let adopted = Window::adopt(platform::handle_value(&own)).expect("adopt");
+    assert!(!adopted.is_minimized());
+    adopted.minimize();
+    assert!(adopted.is_minimized() && platform::is_minimized(&own));
+    adopted.show().expect("restore");
+    assert!(!adopted.is_minimized() && !platform::is_minimized(&own));
+    adopted.dispose();
+    drop(own);
+  });
+}
+
+#[test]
 fn adopting_a_handle_that_is_not_a_window_fails() {
   on_ui_thread(|_runtime| {
     assert!(Window::adopt(0).is_err());
