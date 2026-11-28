@@ -3,7 +3,7 @@
 // loaded in the process, this one; an application that imports only the native package loads that
 // package's own, which has no webview.
 
-import { connectWebview, type NativeBinding } from "@n1h/sweetview-native/internal";
+import { connectWebview, loadedFile, type NativeBinding } from "@n1h/sweetview-native/internal";
 import type * as Binding from "../prebuilt/binding";
 
 export type WebviewBinding = typeof Binding;
@@ -17,10 +17,11 @@ function load(): WebviewBinding {
   try {
     if (process.platform !== "win32") throw new Error(`the Windows binding does not load on ${process.platform}`);
     const own = require("../prebuilt/sweetview-webview.win32-x64-msvc.node") as WebviewBinding;
-    const file = require.resolve("../prebuilt/sweetview-webview.win32-x64-msvc.node");
+    const file = loadedFile("sweetview-webview.win32-x64-msvc", [import.meta.dir, "..", "prebuilt"].join("/"));
+    if (file === undefined) return own;
     // The process's one runtime is the first binding loaded in it (D50).
     const owner = own.claimProcess(file);
-    if (owner === file) return own;
+    if (owner.toLowerCase() === file.toLowerCase()) return own;
     return require(owner) as WebviewBinding;
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);

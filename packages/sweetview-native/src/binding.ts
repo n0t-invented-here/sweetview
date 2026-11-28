@@ -94,15 +94,35 @@ export function provideBinding(load: () => NativeBinding): void {
 }
 
 /**
+ * The file `require` loaded a binding from, as its cache names it: the path on disk, or inside a
+ * `bun build --compile` executable the embedded file's (`B:/~BUN/root/<name>-<hash>.node`).
+ * Internal: `@n1h/sweetview` names its own binding's file with it too.
+ */
+export function loadedFile(name: string, from?: string): string | undefined {
+  const cached = Object.keys(require.cache).find((key) => {
+    const base = key.split(/[\/]/).pop() ?? "";
+    return base.endsWith(".node") && (base === `${name}.node` || base.startsWith(`${name}-`));
+  });
+  if (cached !== undefined || from === undefined) return cached;
+  // A Worker's cache does not list it: resolved at run time (a computed name, which no bundler resolves).
+  try {
+    return require.resolve([from, `${name}.node`].join("/"));
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * The binding that owns this process (D50): the one just loaded when it is the process's first, else
  * the file the first load recorded, `@n1h/sweetview`'s on a `Worker` of an application of it, so
  * every thread calls one runtime.
  */
 function adopt(own: NativeBinding): NativeBinding {
   if (process.platform !== "win32") return own;
-  const file = customPath ?? require.resolve("../prebuilt/sweetview.win32-x64-msvc.node");
+  const file = customPath ?? loadedFile("sweetview.win32-x64-msvc", [import.meta.dir, "..", "prebuilt"].join("/"));
+  if (file === undefined) return own;
   const owner = own.claimProcess(file);
-  if (owner === file) return own;
+  if (owner.toLowerCase() === file.toLowerCase()) return own;
   try {
     return require(owner) as NativeBinding;
   } catch (err) {

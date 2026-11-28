@@ -3,7 +3,7 @@ export { emitActivationUrl } from "./activation";
 export { releaseAll, releaseAtEnd, type ReleaseKind } from "./lifetime";
 export { macosKeepsTagPath } from "./platform";
 export type { NativeBinding } from "./binding";
-export { connectWebview } from "./webview-connection";
+export { connectWebview, loadedFile } from "./webview-connection";
 export { onUnload } from "./unload";
 /** macOS, until its goal: the webview library's seam, loaded by `@n1h/sweetview` there only. */
 export const loadDarwinWebview = () => import("./darwin/webview");

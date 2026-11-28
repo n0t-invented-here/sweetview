@@ -1,6 +1,6 @@
 // How `@n1h/sweetview`, which holds the webview (D50), connects to this package.
 
-import { provideBinding, type NativeBinding } from "./binding";
+import { loadedFile, provideBinding, type NativeBinding } from "./binding";
 import { reportCallbackError } from "./callback-errors";
 
 /**
@@ -9,6 +9,8 @@ import { reportCallbackError } from "./callback-errors";
  * through, which no entry point exports.
  * @throws {Error} When this package's own binding was loaded already (see `provideBinding`).
  */
+export { loadedFile };
+
 export function connectWebview(load: (() => NativeBinding) | undefined): { reportCallbackError: typeof reportCallbackError } {
   if (load !== undefined) provideBinding(load);
   return { reportCallbackError };
