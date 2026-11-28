@@ -139,8 +139,8 @@ const init = {
 };
 const win = native.Window.create(init);
 const hwnd = win.handle;
-win.onResize(boom("resize boom"));
-win.onMove(boom("move boom"));
+win.onResize(1, boom("resize boom"));
+win.onMove(2, boom("move boom"));
 win.setBounds({ x: -2990, y: -3000, width: 310, height: 200 });
 report.windowAfterEvents = win.bounds().width === 310;
 win.onCloseRequest(boom("close boom"));

@@ -23,8 +23,8 @@ import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import ts from "typescript";
 import { NOT_MODULES, PUBLIC } from "./public-entries";
-import { PUBLIC_SURFACE } from "./public-surface";
-import { publicEntries, surfaceOf } from "./public-surface-of";
+import { PUBLIC_SURFACE, PUBLIC_VALUES } from "./public-surface";
+import { entryFaults, exportEntries, publicEntries, surfaceOf, valueGaps } from "./public-surface-of";
 
 const root = join(import.meta.dir, "..", "..");
 const posix = (p: string) => p.split(sep).join("/");
@@ -281,18 +281,28 @@ const sorted = (r: Record<string, string[]>) =>
   );
 
 /** A tree of its own under the system temp directory, `files` by path; removed after `run`. */
-function withTree(files: Record<string, string | object>, run: (dir: string) => void): void {
+function withTree<T>(files: Record<string, string | object>, run: (dir: string) => T): T {
   const dir = mkdtempSync(join(tmpdir(), "sweetview-boundaries-"));
+  const clean = () => rmSync(dir, { recursive: true, force: true });
+  let result: T;
   try {
     for (const [path, content] of Object.entries(files)) {
       mkdirSync(dirname(join(dir, path)), { recursive: true });
       writeFileSync(join(dir, path), typeof content === "string" ? content : JSON.stringify(content));
     }
-    run(dir);
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
+    result = run(dir);
+  } catch (e) {
+    clean();
+    throw e;
   }
+  if (result instanceof Promise) return result.finally(clean) as T;
+  clean();
+  return result;
 }
+
+/** An entry that is parsed and not loaded here: a script run by path, the types-only entry, or an entry for another OS. */
+const parseOnly = (spec: string): boolean =>
+  NOT_MODULES.has(spec) || (spec.includes("/darwin/") && process.platform !== "darwin") || (spec.includes("/win32/") && process.platform !== "win32");
 
 describe("internals are not public API (D45)", () => {
   const here = scan(root);
@@ -313,14 +323,41 @@ describe("internals are not public API (D45)", () => {
     expect(surfaceOf(root, publicEntries(root))).toEqual(PUBLIC_SURFACE);
   });
 
-  test("every value a public entry module exports at run time is a name of the pinned surface", async () => {
-    const extra: string[] = [];
-    for (const { spec } of publicEntries(root)) {
-      if (NOT_MODULES.has(spec)) continue;
-      const mod = (await import(spec)) as Record<string, unknown>;
-      for (const name of Object.keys(mod)) if (!(PUBLIC_SURFACE[spec] ?? []).includes(name)) extra.push(`${spec}: ${name}`);
-    }
-    expect(extra).toEqual([]);
+  test("every exports target of every package exists and loads; a script, the types-only entry and another OS's entry exist and parse", async () => {
+    expect(await entryFaults(exportEntries(root, "all"), parseOnly)).toEqual([]);
+  });
+
+  test("every public entry module has exactly its pinned values at run time, and each is a name of the pinned surface", async () => {
+    const modules = publicEntries(root).filter((e) => !NOT_MODULES.has(e.spec));
+    expect(Object.keys(PUBLIC_VALUES).sort()).toEqual(modules.map((e) => e.spec).sort());
+    const unpinned = Object.entries(PUBLIC_VALUES).flatMap(([spec, names]) => names.filter((n) => !(PUBLIC_SURFACE[spec] ?? []).includes(n)).map((n) => `${spec}: ${n}`));
+    expect({ gaps: await valueGaps(modules, PUBLIC_VALUES), unpinned }).toEqual({ gaps: [], unpinned: [] });
+  });
+
+  test("counter-examples: a missing target, a script that does not parse, a module that does not load, and a pinned value turned type-only, are found", async () => {
+    const found = await withTree(
+      {
+        "packages/sweetview-build/package.json": { name: "@n1h/sweetview-build", exports: { ".": "./src/index.ts", "./gone": "./src/gone.ts", "./make-app": "./src/make-app.ts", "./broken": "./src/broken.ts" } },
+        "packages/sweetview-build/src/index.ts": 'export type { Tool } from "./tool";\n',
+        "packages/sweetview-build/src/tool.ts": "export class Tool {}\n",
+        "packages/sweetview-build/src/make-app.ts": "const = ;\n",
+        "packages/sweetview-build/src/broken.ts": 'throw new Error("broken at load");\n',
+      },
+      async (dir) => {
+        const all = exportEntries(dir, "all");
+        return {
+          faults: await entryFaults(all, (spec) => spec.endsWith("/make-app")),
+          gaps: await valueGaps(all.filter((e) => e.spec === "@n1h/sweetview-build"), { "@n1h/sweetview-build": ["Tool"] }),
+          // The pin by name alone still passes: the compiler sees `Tool` either way.
+          names: surfaceOf(dir, all.filter((e) => e.spec === "@n1h/sweetview-build"), { module: ts.ModuleKind.ESNext, moduleResolution: ts.ModuleResolutionKind.Bundler })["@n1h/sweetview-build"],
+        };
+      },
+    );
+    expect(found).toEqual({
+      faults: ["@n1h/sweetview-build/gone: its target does not exist", "@n1h/sweetview-build/make-app: its target does not parse", "@n1h/sweetview-build/broken: its target does not load (Error: broken at load)"],
+      gaps: ["@n1h/sweetview-build: Tool is pinned as a value and is not one at run time"],
+      names: ["Tool"],
+    });
   });
 
   test("counter-examples: an internal published under another name, in any of four spellings, changes the pinned surface", () => {

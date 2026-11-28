@@ -380,6 +380,34 @@ describe.if(onWindows)("WebView & createApp (win32)", () => {
     }
   }, 120_000);
 
+  test("windowChromeEvents for a tabbed application: given the tab's WebView, the tab's page is told each maximise change of its window", async () => {
+    // Round 4, P5: docs/window-chrome.md names the tab's WebView as the target for a tabbed App,
+    // whose own emit sends nothing (it logs that it is unavailable).
+    const { windowChromeEvents } = await import("./window-chrome");
+    const app = await createApp({ tabs: true, title: "app.test tabbed chrome", noActivate: true, contentSize: { width: 520, height: 340 } });
+    const told: unknown[] = [];
+    try {
+      const tab = await app.openTab({
+        title: "chrome",
+        uiMethods: { told: (payload: unknown) => void told.push(payload) } as never,
+        assets: {
+          "index.html": htmlBytes(`<script>
+            window.__sweetview_emit = (name, payload) => { if (name === "window.maximized") window.__sweetview_rpc("told", payload); };
+            window.__sweetview_rpc("told", "loaded");
+          </script>`),
+        },
+      });
+      app.window.show();
+      pumpUntil(() => told.includes("loaded"), 15_000);
+      windowChromeEvents(app.window, tab.webview as unknown as { emit(name: "window.maximized", payload: { maximized: boolean }): void });
+      app.window.toggleMaximize();
+      pumpUntil(() => told.length > 1, 10_000);
+      expect(told).toEqual(["loaded", { maximized: true }]);
+    } finally {
+      app.dispose();
+    }
+  }, 60_000);
+
   test("the documented window chrome on a real frameless window and page: window.maximize maximises, windowChromeEvents tells the page, and while window.systemMenu's menu is open a call the page starts is answered and the page acknowledges the answer", async () => {
     // Review N7 (the chrome only ever ran against stand-ins) and finding 1 (the system menu from
     // uiMethods, inside WebView2's message callback: the page's calls still arrive and are answered).
@@ -535,13 +563,14 @@ describe.if(onWindows)("WebView & createApp (win32)", () => {
   }, 90_000);
 
   test("a webview made from inside WebView.attach's creation of another (a native timer fires there) takes nothing of the other's colour", async () => {
-    // Review round 2's finding 2, and round 3's D. The tick that makes the second webview is proved to
-    // run inside the first's creation: the binding's Engine.create or Engine.createChild for the other
-    // window is on the stack (wrapped here, as popup-direction.ts wraps popupMenu). What the second
-    // webview's creation is given is read from the call itself: its own window, and no colour (the
-    // binding reads a webview's start colour from the window it is made in, here one with none).
-    // A pixel cannot show it: the second webview's page paints its own canvas there.
+    // Review round 2's finding 2, round 3's D and round 4's P7. The tick that makes the second webview
+    // is proved to run inside the first's creation: the binding's Engine.create or Engine.createChild
+    // for the other window is on the stack (wrapped here, as popup-direction.ts wraps popupMenu). What
+    // it took is read from the screen: its window has a colour of its own (green), its page is
+    // transparent below a stripe, so the pixel below the stripe is the browser's background the
+    // binding applied, green and never the other window's.
     const { scheduleNativeTimeout } = await import("../../sweetview-native/src/internal");
+    const { clientToScreen, screenPixel, windowAt } = await import("../../sweetview-native/test/win32-os");
     const { binding } = await import("../../sweetview-native/src/binding");
     const native = binding() as unknown as { Engine: Record<string, (...args: unknown[]) => unknown> };
     const RealEngine = native.Engine;
@@ -561,7 +590,7 @@ describe.if(onWindows)("WebView & createApp (win32)", () => {
     for (const key of ["create", "createChild"]) Object.defineProperty(facade, key, { value: during(key) });
     native.Engine = facade;
     const inner = async (open: () => Promise<unknown>) => {
-      const plain = new Window({ title: "app.test plain", noActivate: true, bounds: { x: 700, y: 140, width: 320, height: 220 } });
+      const plain = new Window({ title: "app.test own colour", backgroundColor: "#30a050", topmost: true, noActivate: true, bounds: { x: 700, y: 140, width: 320, height: 220 } });
       let made: RawWebview | undefined;
       calls.length = 0;
       try {
@@ -579,9 +608,30 @@ describe.if(onWindows)("WebView & createApp (win32)", () => {
         scheduleNativeTimeout(1, tick);
         await open();
         done = true;
-        // The call made for the plain window: inside the other's, with its own window and nothing more.
-        const mine = calls.find((c) => c.inside);
-        return { madeInside: mine !== undefined, key: mine?.key, args: mine?.args, plain: String(BigInt(plain.handle!)) };
+        const madeInside = calls.some((c) => c.inside);
+        // What the browser shows below its page's stripe, once the stripe is there.
+        // A data: URL: a page set with setHTML (NavigateToString) paints a canvas of its own in a dark scheme.
+        made?.navigate("data:text/html," + encodeURIComponent(`<style>html,body{background:transparent;margin:0}#m{height:16px;background:#ff00ff}</style><div id="m"></div>`));
+        plain.show();
+        const hwnd = BigInt(plain.handle!);
+        const [mark, below] = [clientToScreen(hwnd, 150, 8), clientToScreen(hwnd, 150, 120)];
+        const read = () => ({ mark: screenPixel(mark.x, mark.y), below: screenPixel(below.x, below.y) });
+        // Judged only once the page has painted its stripe: until then the screen shows the state
+        // before the page (or another window), which says nothing of the browser's background.
+        let seen = read();
+        for (const end = performance.now() + 20_000; seen.mark !== "#ff00ff" && performance.now() < end; Bun.sleepSync(20)) {
+          pumpEvents();
+          seen = read();
+        }
+        if (seen.mark !== "#ff00ff") {
+          const over = windowAt(mark.x, mark.y);
+          throw new Error(`not judged: the page's stripe never showed at ${mark.x},${mark.y} (read ${seen.mark}; the window there is ${over === hwnd ? "the test's own" : `0x${over.toString(16)}, not the test's`})`);
+        }
+        for (const end = performance.now() + 3000; seen.below !== "#30a050" && performance.now() < end; Bun.sleepSync(20)) {
+          pumpEvents();
+          seen = read();
+        }
+        return { madeInside, seen };
       } finally {
         made?.destroy();
         plain.dispose();
@@ -591,14 +641,14 @@ describe.if(onWindows)("WebView & createApp (win32)", () => {
       const blue = new Window({ title: "app.test blue attach", backgroundColor: "#2040a0", noActivate: true, bounds: { x: 100, y: 140, width: 320, height: 220 } });
       try {
         const r = await inner(() => WebView.attach(blue, { url: "about:blank" }));
-        expect({ madeInside: r.madeInside, key: r.key, args: r.args }).toEqual({ madeInside: true, key: "create", args: [false, r.plain] });
+        expect(r).toEqual({ madeInside: true, seen: { mark: "#ff00ff", below: "#30a050" } });
       } finally {
         blue.dispose();
       }
       const red = new Window({ tabs: true, title: "app.test red tab", backgroundColor: "#a02020", noActivate: true, bounds: { x: 100, y: 400, width: 520, height: 340 } });
       try {
         const r = await inner(() => WebView.openTab(red, { title: "tab", url: "about:blank" }));
-        expect({ madeInside: r.madeInside, key: r.key, args: r.args }).toEqual({ madeInside: true, key: "create", args: [false, r.plain] });
+        expect(r).toEqual({ madeInside: true, seen: { mark: "#ff00ff", below: "#30a050" } });
       } finally {
         red.dispose();
       }
@@ -641,7 +691,7 @@ describe.if(onWindows)("WebView & createApp (win32)", () => {
     ]);
   }, 60_000);
 
-  test("a tab moved into a window with no backgroundColor keeps the background its application set, merged or torn off", async () => {
+  test("a tab moved into a window with no backgroundColor keeps the background its application set, merged or torn off, and its webview's window is the window it is in", async () => {
     // Review round 2, finding 7. Class: every move of a tab (a merge into another window, a tear-off
     // into a new one) into a window with no backgroundColor, from a window with none, of a tab whose
     // application set its webview's background: the move carries the live webview with it.
@@ -686,9 +736,10 @@ describe.if(onWindows)("WebView & createApp (win32)", () => {
       expect(painted(other, own)).toEqual(own);
       app.mergeAllWindows();
       tab.select();
-      expect(tab.window).toBe(app.window);
+      for (const named of [tab.window, tab.webview.window]) expect(named).toBe(app.window);
       expect(painted(app.window, own)).toEqual(own);
       tornOff = await tab.moveToNewWindow();
+      for (const named of [tab.window, tab.webview.window]) expect(named).toBe(tornOff);
       tornOff.setTopmost(true);
       expect(painted(tornOff, own)).toEqual(own);
     } finally {

@@ -223,13 +223,13 @@ test.if(live)("returns clean errors for synchronous Promises and absent worker h
   expect((await runLive("request-only")).report).toEqual({ status: 200, body: "<!doctype html><p id=dynamic>worker HTML</p>" });
 }, 70_000);
 
-// D46. A worker's streamed body on a live WebView2: every byte reaches the page, in order.
+// D47. A worker's streamed body on a live WebView2: every byte reaches the page, in order.
 // WebView2 reads each chunk out of the binding as it is written but hands the page none of the
 // body before it ends (WebView2Feedback #3519; Microsoft's ICoreWebView2WebResourceResponse
 // reference requires all content by the time the deferral completes), as the C++ library's own
 // test asserted: the page cannot acknowledge a part before the next is written, and the whole
 // body waits in WebView2 until the end. Both are asserted as measured: if a WebView2 Runtime
-// starts handing the page bytes before the end, this fails, and D46, the docs and these
+// starts handing the page bytes before the end, this fails, and D47, the docs and these
 // assertions change.
 test.if(live && process.platform === "win32")("a worker's streamed body arrives whole and in order, and WebView2 hands it to the page at its end", async () => {
   const { report } = await runLive("pace");

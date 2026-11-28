@@ -22,11 +22,13 @@ sweetview-window-logic.workspace = true
 raw-window-handle.workspace = true
 ico.workspace = true
 muda.workspace = true
-rfd.workspace = true
 tray-icon.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 webview2-com.workspace = true
+
+[target.'cfg(not(windows))'.dependencies]
+rfd.workspace = true
 
 [dev-dependencies]
 sweetview-platform-window = { workspace = true, features = ["test-support"] }

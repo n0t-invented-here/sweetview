@@ -222,7 +222,7 @@ view.run();
 | Member | Meaning |
 |---|---|
 | `raw` | The underlying `RawWebview` instance (the `Webview` class of `@n1h/sweetview-native`). |
-| `window` | The `Window` this webview was attached to. For a tab's webview this is a borrowed wrapper the tab driver made (on Windows, of the frame the tab opened in; on macOS, of the tab's own `NSWindow`), not the logical tabbed window; use `tab.window` for that. |
+| `window` | The `Window` this webview was attached to. For a tab's webview on Windows it is the tabbed window the tab is in now (`tab.window`), which changes on tear-off and merge; on macOS it is a borrowed wrapper of the tab's own `NSWindow`, not the logical tabbed window, which `tab.window` is. |
 | `emit(name, payload)` | Delivers an event to the page by evaluating `__sweetview_emit(name, payload)`. A `payload` of `undefined` is sent as `null`. Listeners registered with `onEvent` do not see it. |
 | `notify(method, ...params)` | Posts a fire-and-forget call (`seq: null`) to the worker, with `params` sent as `null` when omitted. `uiMethods` are not consulted. Without a worker, logs `sweetview: <method>: this window has no worker` with `console.error` and sends nothing. |
 | `onEvent(fn)` | Registers `fn` for every event the worker sends, called before the page receives it. Returns an unsubscribe function. |
@@ -369,7 +369,7 @@ Explorer or Finder. See [file drops](native/windows.md#file-drops).
 |---|---|
 | `after` (`TabOptions`) | Optional `TabHandle` to insert the new tab after. Honored only when that tab is open in the same tabbed window the new tab opens in; otherwise, as when omitted, the tab opens after the selected tab. |
 | `webview` | The `WebView` mounted inside this tab. |
-| `window` | The logical tabbed `Window` (`tabs: true`) currently hosting this tab. It changes when the tab is torn off into a new window or merged into another. Compare `tab.webview.window`, the borrowed window the webview was attached to when the tab opened, which never changes and is rarely what app code wants. |
+| `window` | The logical tabbed `Window` (`tabs: true`) currently hosting this tab. It changes when the tab is torn off into a new window or merged into another. On Windows `tab.webview.window` is the same window; on macOS it is the borrowed window of the tab itself, which never changes and is rarely what app code wants. |
 | `title` | Current tab title. |
 | `setTitle(title)` | Updates the tab's title in the tab strip / title bar. |
 | `select()` | Focuses and activates this tab (and its hosting window). |

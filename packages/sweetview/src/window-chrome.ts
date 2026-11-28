@@ -49,7 +49,9 @@ export type WindowChromeEvents = {
   "window.maximized": { maximized: boolean };
 };
 
-export type WindowChromeMethodTable = { [K in keyof WindowChromeMethods]: (params: WindowChromeMethods[K][0]) => WindowChromeMethods[K][1] };
+type Method<K extends keyof WindowChromeMethods> = (params: WindowChromeMethods[K][0]) => WindowChromeMethods[K][1];
+/** `window.systemMenu` is absent on macOS, whose table is the tag's. */
+export type WindowChromeMethodTable = { [K in Exclude<keyof WindowChromeMethods, "window.systemMenu">]: Method<K> } & { "window.systemMenu"?: Method<"window.systemMenu"> };
 
 export type WindowChromeOptions = {
   /** What `window.info` reports; the page renders bare when it says "os". Default "page". */
@@ -78,7 +80,9 @@ export function windowChromeMethods(
   // that does nothing. This module loads in pages too, so it asks the platform itself rather than
   // the native package's macosKeepsTagPath().
   if (typeof process !== "undefined" && process.platform === "darwin") return table as WindowChromeMethodTable;
-  return { ...table, "window.systemMenu": () => window.showSystemMenu?.() };
+  // A window object without showSystemMenu gets no window.systemMenu: an application's own method of that name stays its own.
+  if (window.showSystemMenu === undefined) return table as WindowChromeMethodTable;
+  return { ...table, "window.systemMenu": () => window.showSystemMenu!() };
 }
 
 /**

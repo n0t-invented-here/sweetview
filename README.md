@@ -395,7 +395,7 @@ codesign --sign - --force --deep "App.app"
 | Path | Contents |
 |---|---|
 | `packages/` | the Sweetview facade, IPC, the WebSocket, Electron and Tauri transports, native helpers, settings and build packages |
-| `crates/` | the Rust native layer on Windows (`tao`, `muda`, `tray-icon`, `rfd` and WebView2 through `webview2-com` behind this project's own crates), compiled by `just native build` into the N-API binding `@n1h/sweetview-native` loads |
+| `crates/` | the Rust native layer on Windows (`tao`, `muda`, `tray-icon` and WebView2 through `webview2-com` behind this project's own crates), compiled by `just native build` into the N-API binding `@n1h/sweetview-native` loads |
 | `docs/` | the reference pages, indexed by the [reference index](docs/README.md) |
 | [`demos/web-app/`](demos/web-app/README.md) | one backend and one React page run two ways: a desktop window with tray and notifications, or `Bun.serve` with WebSockets |
 | [`demos/web-app-electron/`](demos/web-app-electron/README.md) | the web-app page unchanged in an Electron shell, its service in the main process |
