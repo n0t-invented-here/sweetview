@@ -22,7 +22,7 @@ Read these in full before running anything. They are the current truth; where th
 - `rust-rewrite/REQUIREMENTS.md`, R1 and R8 above all ("During the Windows goal, macOS keeps running on the existing code").
 - `rust-rewrite/HANDOFF-macos.md`: in full, the sections on where things stand, the TypeScript seams, the shared files and what must keep passing on Windows, and new behaviour held back from macOS (sections 1, 4, 6 and 8 at the time of writing; find them by title if renumbered). The other sections describe the Rust stand-ins for the later macOS port; consult them only when a finding touches them. The held-back section lists every held-back behaviour, its seam, what macOS does today, and what to run on a Mac before turning it on.
 - `rust-rewrite/DECISIONS.md`: D18, D36, D42, and every later entry that mentions macOS or darwin (`grep -n -i -E 'macos|darwin' rust-rewrite/DECISIONS.md`).
-- `rust-rewrite/evidence/goal-audit-windows.md`: finding 11 and its answer under "Answers".
+- Finding 11 of the goal audit of the Windows work (macOS was changed on a machine that cannot run it) and its answer: the audit is a report kept outside git, so read them as `rust-rewrite/DECISIONS.md` D42 and section 8 of `rust-rewrite/HANDOFF-macos.md` record them.
 - The root `README.md`, `docs/upgrading.md`, `docs/webview-library.md`, `docs/local-checkout.md`, and the pages under `docs/` and `docs/native/` for each capability you exercise.
 - The macOS code: `packages/sweetview-native/src/darwin/`, `packages/sweetview/src/darwin-*.ts`, `packages/sweetview/src/tabs/darwin-*.ts`, and `packages/sweetview-native/src/platform.ts`.
 
@@ -30,7 +30,7 @@ The predicate that holds new behaviour back is `macosKeepsTagPath()` at the time
 
 ## What you deliver
 
-1. A report, `rust-rewrite/evidence/verify-macos.md`, in the shape given under "The report" below.
+1. A report, in the shape given under "The report" below, saved as `rust-rewrite/evidence/verify-macos.md` on the Mac (that folder holds run output and is not in git) and given in full in your reply.
 2. A fix for each regression you can prove and fix inside the authority below, one commit per fix.
 3. All of it on branch `rust-rewrite-macos-verify`, cut from the head of `v1-rust-rewrite`, committed and pushed with `git push -u origin rust-rewrite-macos-verify`. Do not merge it and do not open a pull request; the owner of the repository does that.
 
@@ -169,7 +169,7 @@ Never work around a permission: do not edit TCC databases, disable SIP, or scrip
 
 ## The report
 
-`rust-rewrite/evidence/verify-macos.md`, with these sections in this order:
+The file named above (run output, kept outside git; give it in full in your reply too), with these sections in this order:
 
 1. **Verdict**: one paragraph: does macOS at the head do everything it did at the tag? Name the number of regressions found, fixed, and open, and the number of capabilities not exercised.
 2. **Environment**: macOS version, chip, Bun, Xcode tools, `just`, `pwsh`, and the webview library file used (origin, version or commit, which additions it exports). The commits of `pre-rust-rewrite` and of the `v1-rust-rewrite` head you verified.

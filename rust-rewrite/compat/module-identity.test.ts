@@ -7,15 +7,17 @@ import { expect, test } from "bun:test";
 import { join } from "node:path";
 
 const root = join(import.meta.dir, "..", "..");
-/** [entry, relative path from here, a function it exports, the folder the entry is resolved from]. */
+/** The package that imports these entries, through its own link to the native package. */
+const sweetview = join(root, "packages", "sweetview", "src");
+/** [entry, relative path from here, a function it exports, the folder of the package that imports the entry]. */
 const SAME_FILE: [string, string, string, string][] = [
-  ["@n1h/sweetview-native/internal", "../../packages/sweetview-native/src/internal", "scheduleNativeTimeout", import.meta.dir],
-  ["@n1h/sweetview-native/win32/window", "../../packages/sweetview-native/src/win32/window", "asHwnd", import.meta.dir],
-  ["@n1h/sweetview-native/win32/menu", "../../packages/sweetview-native/src/win32/menu", "buildMenu", import.meta.dir],
+  ["@n1h/sweetview-native/internal", "../../packages/sweetview-native/src/internal", "scheduleNativeTimeout", sweetview],
+  ["@n1h/sweetview-native/win32/window", "../../packages/sweetview-native/src/win32/window", "asHwnd", sweetview],
+  ["@n1h/sweetview-native/win32/menu", "../../packages/sweetview-native/src/win32/menu", "buildMenu", sweetview],
   // It holds state: the tab frames of this process.
-  ["@n1h/sweetview-native/win32/tab-window", "../../packages/sweetview-native/src/win32/tab-window", "getTabFrame", import.meta.dir],
-  ["@n1h/sweetview-native/win32/strip-shared", "../../packages/sweetview-native/src/win32/strip-shared", "dropIndex", import.meta.dir],
-  ["@n1h/sweetview-native/win32/shortcuts", "../../packages/sweetview-native/src/win32/shortcuts", "shortcutFor", import.meta.dir],
+  ["@n1h/sweetview-native/win32/tab-window", "../../packages/sweetview-native/src/win32/tab-window", "getTabFrame", sweetview],
+  ["@n1h/sweetview-native/win32/strip-shared", "../../packages/sweetview-native/src/win32/strip-shared", "dropIndex", sweetview],
+  ["@n1h/sweetview-native/win32/shortcuts", "../../packages/sweetview-native/src/win32/shortcuts", "shortcutFor", sweetview],
   // Imported by @n1h/sweetview-build, through its own link to the native package.
   ["@n1h/sweetview-native/shell-icons", "../../packages/sweetview-native/src/shell-icons", "refreshShellIcons", join(root, "packages", "sweetview-build", "src")],
 ];

@@ -26,10 +26,16 @@ after them give every export its row.
 
 1. **Install.** Move `@n1h/sweetview` to 1.0. On Windows drop
    `@n1h/sweetview-webview-bun`; keep it for macOS, which runs the code it
-   ran before 1.0 until the macOS goal of the rewrite.
-2. **Imports.** Every public name keeps its module and its name. An import of
-   one of Sweetview's internal modules has a row naming its public call, or
-   saying `no public call in 1.0` for that capability.
+   ran before 1.0 until the macOS goal of the rewrite. With Bun's isolated
+   installs, an application that imports `@n1h/sweetview-native` or runs the
+   build scripts names those packages in its own `package.json`
+   ([step 1](#a-published-01x-or-02x)).
+2. **Imports.** A name of the `v1-drafting` API keeps its module and its
+   name. The 0.x names that changed (`createWebviewApp`, the overlay
+   functions, `maximized()`, `close()` and the rest) have their rows in
+   [Part A](#part-a-published-0x-packages). An import of one of Sweetview's
+   internal modules has a row naming its public call, or saying
+   `no public call in 1.0` for that capability.
 3. **Creating the window.** `createWebviewApp(options)` is
    `createApp(options)`, which makes the window too; window options go in the
    same object.
@@ -44,21 +50,34 @@ after them give every export its row.
 7. **The end.** Delete the teardown lines after the loop and, on Windows, any `unload()`:
    the last line is `app.run()`, and Sweetview releases what it made (on
    macOS, until its goal, keep them).
-8. **Notifications.** Pass the application's identity
+8. **Faults in your callbacks.** An exception thrown by a UI-thread callback
+   or an input hook is caught and printed, and no longer reaches
+   `uncaughtException`; a packaged application, which has no console, sees
+   it only through `onCallbackError`
+   ([exceptions](#what-changed-for-every-application)).
+9. **Notifications.** Pass the application's identity
    (`identity: defineAppIdentity({ appId, appName })`), or toasts show as
    "Sweetview"; no tray is needed first.
-9. **Menus and the window's own state.** `Menu.popup(owner, menu, at)` opens
-   downward and, with `{ above: true }`, upward as a tray menu does;
-   `Window#isMinimized()`, `Window#onMaximizeChange(fn)` and
-   `Window#showSystemMenu()` replace an application's own `IsIconic`, a
-   polling timer and the system menu's internal call.
-10. **The loop.** `app.run()`, or `runEventLoop()` to keep Bun's event loop
-    on the UI thread; `pumpEvents()` inside a running loop does nothing.
-11. **Your own native calls.** `Window.handle` is still the real `HWND`, and
-    an application's own `bun:ffi` calls, its dialogs and menus included,
-    run inside Sweetview's loop.
-12. **Environment.** `SWEETVIEW_NATIVE_PATH` replaces `WEBVIEW_PATH`.
-13. **Building.** `make-app.ts` is in `@n1h/sweetview-build`, and
+10. **Menus and the window's own state.** `Menu.popup(owner, menu, at)` opens
+    downward and, with `{ above: true }`, upward as a tray menu does;
+    `Window#isMinimized()`, `Window#onMaximizeChange(fn)` and
+    `Window#showSystemMenu()` replace an application's own `IsIconic`, a
+    polling timer and the system menu's internal call.
+11. **Threads and handles.** `Clipboard`, `singleInstance` and the other
+    UI-thread calls throw from a `Worker`; `Window.fromHandle` throws for a
+    handle that names no window. `Webview.unsafeHandle` is an opaque number,
+    not a pointer. A worker of your own written against the init message gets
+    `wake` in place of its four old fields.
+12. **The loop.** `app.run()`, or `runEventLoop()` to keep Bun's event loop
+    on the UI thread. On Windows, `pumpEvents()` inside a running loop does
+    nothing.
+13. **Your own native calls.** `Window.handle` is the real `HWND` on Windows
+    (the `NSWindow` pointer on macOS), and an application's own `bun:ffi`
+    calls, its dialogs and menus included, run inside Sweetview's loop.
+14. **Environment.** On Windows, `SWEETVIEW_NATIVE_PATH` replaces
+    `WEBVIEW_PATH`; on macOS, until its goal, `WEBVIEW_PATH` still names the
+    webview library.
+15. **Building.** `make-app.ts` is in `@n1h/sweetview-build`, and
     `refreshWindowsIcons()` of `@n1h/sweetview/build` tells the shell a
     rebuilt program's icon changed.
 
@@ -232,7 +251,9 @@ after them give every export its row.
    `bounds` (its outer frame, in points) or the default, so an application
    that also runs on macOS passes `bounds` there, as before.
 4. Showing: the window is created hidden. Pass `showOnReady: true` and call
-   `signalReady()` from `@n1h/sweetview/page` once the page has rendered.
+   `signalReady()` from `@n1h/sweetview/page` once the page has rendered,
+   with `readyTimeoutMs` (15 s, say) so a page that fails first still gets
+   its window, with a start-up error page.
 5. Closing: a close request on a window with no `onClose` listener disposes
    it and ends `run()`. A tray application declares close-to-tray with
    `closeToTrayOnLastWindow(app.window, onHide)`.
@@ -257,15 +278,14 @@ after them give every export its row.
     `maximized()` is `isMaximized()`, `HitRelay.enabled()` is `isEnabled()`,
     the `close` option of `windowChromeMethods` is `onClose`, and a WebSocket
     host's or transport's `close()` is `dispose()`.
-11. If you set `WEBVIEW_PATH`, set `SWEETVIEW_NATIVE_PATH` to a binding you
-    built instead, or nothing to use the one in the package.
-12. Faults: if the application relied on a `process.on("uncaughtException")`
-    listener for faults in its callbacks, set
-    [`onCallbackError`](native.md#exceptions-thrown-by-your-callbacks) once,
-    beside it: `onCallbackError((error) => void process.emit("uncaughtException", error, "uncaughtException"))`
-    hands the native module's faults to that listener, or call the
-    application's own reporter there. A shipped executable has no console, so
-    without it these faults reach nobody. A page's own calls fail in the page:
+11. On Windows, if you set `WEBVIEW_PATH`, set `SWEETVIEW_NATIVE_PATH` to a
+    binding you built instead, or nothing to use the one in the package; on
+    macOS, until its goal, `WEBVIEW_PATH` still applies.
+12. Faults: an exception a callback throws on the UI thread is caught and
+    printed, and no longer reaches `process.on("uncaughtException")`. To see
+    these faults in a shipped executable, which has no console, set
+    [`onCallbackError`](native.md#exceptions-thrown-by-your-callbacks) once and
+    hand each to the application's own reporter there. A page's own calls fail in the page:
     `await` them there. On macOS, until its goal, the listener is not called
     and the faults are printed as before.
 13. Check what an overlay application notices, in [What changed for every
@@ -293,7 +313,8 @@ after them give every export its row.
    `bun:ffi` table modules has a row in their Part B sections naming its
    public call. For your own Win32 calls, declare your own
    `dlopen` table.
-4. If you set `WEBVIEW_PATH`, set `SWEETVIEW_NATIVE_PATH` instead.
+4. On Windows, if you set `WEBVIEW_PATH`, set `SWEETVIEW_NATIVE_PATH` instead;
+   on macOS, until its goal, `WEBVIEW_PATH` still applies.
 5. A worker you wrote against the internal init message (`InitMessage`)
    gets `wake` instead of `webviewHandle`, `drainCallbackPtr`, `drainToken`
    and `libPath`; `hostService` and `hostRequestHandler` handle it for you.
@@ -317,7 +338,8 @@ after them give every export its row.
    yourself through `bun:ffi` with that handle are `Webview` methods now.
 4. The input-hook and permission enums are values now; code that inlined
    their numbers keeps working.
-5. If you set `WEBVIEW_PATH`, set `SWEETVIEW_NATIVE_PATH` instead.
+5. On Windows, if you set `WEBVIEW_PATH`, set `SWEETVIEW_NATIVE_PATH` instead;
+   on macOS, until its goal, `WEBVIEW_PATH` still applies.
 6. Delete the `unload()` call on Windows: the end of the application
    destroys every live webview itself, and there is no library to close.
    On macOS, until the macOS goal, keep it: it still closes the webview
@@ -343,9 +365,11 @@ Each row has three columns:
 - **Change**: what is different, in a few words. `unchanged` means the
   import and the call stay as they are.
 
-A row with a new form is run by `rust-rewrite/compat/upgrade-guide.test.ts`,
-which reads this page: it imports each new form, checks that it is what the
-row says, and runs it. A row that says `no public call in 1.0` is checked by
+`rust-rewrite/compat/upgrade-guide.test.ts` reads this page and checks each
+row by its kind. A row whose new form is a value is imported, checked against what the row says, and run once on Windows.
+A row whose new form is a type is checked by the TypeScript compiler and not run.
+A row of a module that loads only on macOS is checked from its source and not run on Windows.
+A row that says `no public call in 1.0` is checked by
 name: the test pins the list of those rows, checks that no public entry point
 exports what each names, and that each public call its Change column names
 exists.
@@ -592,7 +616,7 @@ The same names come from `@n1h/sweetview/native` now. Part C has the details of 
 | `installMouseHook` | `import { installMouseHook } from "@n1h/sweetview/native"`; `installMouseHook(handler)` | unchanged |
 | `modifiersFrom` | `import { modifiersFrom } from "@n1h/sweetview/native"`; `modifiersFrom(bits)` | unchanged |
 | `permissions` | `import { permissions } from "@n1h/sweetview/native"` | unchanged |
-| `unload` | `import type { App } from "@n1h/sweetview"`; `App#dispose` | On Windows delete the call: the end of the application destroys every live webview itself, and `app.dispose()` destroys one the application is done with earlier; there is no library to unload. On macOS, until the macOS goal, keep it: it still closes the webview library there |
+| `unload` | `import { unload } from "@n1h/sweetview/native"`; `unload()` | On macOS, until the macOS goal, keep the call: it still closes the webview library there. On Windows delete it: the end of the application destroys every live webview itself, and `app.dispose()` (or `Webview#destroy()`) destroys one the application is done with earlier; there is no library to unload |
 
 ### Members
 
@@ -1221,8 +1245,8 @@ Windows and macOS alike, nothing tells an application to keep importing it.
 | `emitWindowTabSelect` | no public call in 1.0 | raising a window's tab-select event from the application's own code: no public call in 1.0; `Window#onTabSelect(handler)` observes the tabs the strip selects |
 | `forwardWindowTabEvents` | no public call in 1.0 | forwarding one window's tab events to another window's listeners: no public call in 1.0; `Window#onNewTab(handler)`, `Window#onTabSelect(handler)` and `Window#onTabClose(handler)` observe each window's own |
 | `getWindowBackend` | no public call in 1.0 | a window's platform backend object: no public call in 1.0; the `Window` methods are what an application calls |
-| `getWindowMeta` | no public call in 1.0 | the options a `Window` was made with, as Sweetview keeps them: no public call in 1.0; of those, a `Window` gives its bounds (`Window#bounds()`) |
-| `holdWindowNativeDispose` | no public call in 1.0 | keeping a window's native window after `Window#dispose()` until a hold is released: no public call in 1.0; `Window#dispose()` releases it at once, except while a `WebView#run()` of the window is in progress, when the release waits until that loop has unwound |
+| `getWindowMeta` | no public call in 1.0 | the options a `Window` was made with, as Sweetview keeps them: no public call in 1.0; `Window#bounds()` reads a window's current frame, not the options it was made with |
+| `holdWindowNativeDispose` | no public call in 1.0 | keeping a window's native window after `Window#dispose()` until a hold is released: no public call in 1.0; `Window#dispose()` releases it at once, except while a webview is being made in the window (`WebView.attach`, while WebView2 creates it) or a `WebView#run()` of the window is in progress: the release then waits until that has finished |
 | `isWindowDisposed` | no public call in 1.0 | whether `Window#dispose()` has run: no public call in 1.0 |
 | `onWindowDispose` | no public call in 1.0 | a function run just before a window is disposed: no public call in 1.0; `Window#onClose(handler)` observes a close request |
 | `onWindowFileDropListenersChange` | no public call in 1.0 | notice that a window's file-drop listeners changed: no public call in 1.0; `Window#onFileDrop(handler)` returns the function that removes its own listener |
@@ -1408,7 +1432,7 @@ strip and page rectangles; the tab API operates the built-in strip.
 | Old | Write now | Change |
 |---|---|---|
 | `_debugTrackedCount` | no public call in 1.0 | what Sweetview keeps for a window, a diagnostic of Sweetview's own tests: no public call in 1.0 |
-| `asHwnd` | no public call in 1.0 | a window handle as a bigint, throwing for NULL: no public call in 1.0; `Window#handle` is a window's handle |
+| `asHwnd` | `import { Window } from "@n1h/sweetview-native"`; `Window#handle` | a window's handle is `Window#handle` (the `HWND` on Windows, the `NSWindow` pointer on macOS); converting a raw handle to the native layer's form, as this did (throwing for NULL), has no public call in 1.0 |
 | `colorRef` | `import { Window } from "@n1h/sweetview-native"`; `new Window(options)` | pass `colorKey: "#rrggbb"`; Sweetview converts the colour itself |
 | `createWindow` | `import { Window } from "@n1h/sweetview-native"`; `new Window(options)` | internal backend; the public window is `new Window(options)` |
 | `fromHandle` | `import { Window } from "@n1h/sweetview-native"`; `Window.fromHandle(handle)` | internal backend; the public wrapper is `Window.fromHandle` |
@@ -1540,7 +1564,7 @@ path follows these rows too.
 | Old | Write now | Change |
 |---|---|---|
 | `DarwinTabGroupController` | no public call in 1.0 | the hold the tabs library keeps on a window's tab group, as the tabs library drives AppKit's window tabbing on macOS: no public call in 1.0; `WebView.openTab(window, options)` opens a tab in a `tabs: true` window |
-| `asNSWindow` | `import { Window } from "@n1h/sweetview-native"`; `Window#handle` | the `NSWindow` pointer of a `Window` on macOS (the `HWND` on Windows) |
+| `asNSWindow` | `import { Window } from "@n1h/sweetview-native"`; `Window#handle` | a window's handle is `Window#handle` (the `HWND` on Windows, the `NSWindow` pointer on macOS); converting a raw handle to the native layer's form, as this did (throwing for NULL), has no public call in 1.0 |
 | `bindDarwinTabGroup` | no public call in 1.0 | binding a window to its tab group, as the tabs library drives AppKit's window tabbing on macOS: no public call in 1.0; `WebView.openTab(window, options)` opens a tab in a `tabs: true` window |
 | `createWindow` | `import { Window } from "@n1h/sweetview-native"`; `new Window(options)` | the public window, the same on macOS and Windows |
 | `darwinTabWindowClass` | no public call in 1.0 | the window class of a tab, as the tabs library drives AppKit's window tabbing on macOS: no public call in 1.0; `WebView.openTab(window, options)` opens a tab in a `tabs: true` window |
@@ -1727,7 +1751,7 @@ for an application that depends on `@n1h/sweetview`.
 | `installMouseHook` | `import { installMouseHook } from "@n1h/sweetview-native"`; `installMouseHook(handler)` | unchanged; installed and disposed of on the UI thread |
 | `modifiersFrom` | `import { modifiersFrom } from "@n1h/sweetview-native"`; `modifiersFrom(bits)` | unchanged |
 | `permissions` | `import { permissions } from "@n1h/sweetview-native"` | unchanged |
-| `unload` | `import type { App } from "@n1h/sweetview"`; `App#dispose` | On Windows delete the call: the end of the application destroys every live webview itself, and `app.dispose()` destroys one the application is done with earlier; there is no library to unload. On macOS, until the macOS goal, keep it: it still closes the webview library there |
+| `unload` | `import { unload } from "@n1h/sweetview-native"`; `unload()` | On macOS, until the macOS goal, keep the call: it still closes the webview library there. On Windows delete it: the end of the application destroys every live webview itself, and `app.dispose()` (or `Webview#destroy()`) destroys one the application is done with earlier; there is no library to unload |
 | `writeWebviewResponseChunk` | `import { writeWebviewResponseChunk } from "@n1h/sweetview-native"`; `writeWebviewResponseChunk(handle, id, chunk)` | `handle` is the opaque number of `Webview.unsafeHandle`, not a pointer; still callable from any thread |
 
 ### `Webview` members that changed

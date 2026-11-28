@@ -2,7 +2,7 @@
 
 Written by the Windows goal for checklist item W10.3. Read it after `rust-rewrite/REQUIREMENTS.md` and before starting `rust-rewrite/CHECKLIST-macos.md`. Every claim about code names its file; line numbers are those of the commit named below. "Not confirmed" marks what was not checked; "suggestion" marks this document's own proposals.
 
-The first thing to run on a Mac, before any macOS work: `rust-rewrite/VERIFY-macos.md`, a prompt for an agent there that checks the head against the tag `pre-rust-rewrite` on macOS and writes `rust-rewrite/evidence/verify-macos.md`.
+The first thing to run on a Mac, before any macOS work: `rust-rewrite/VERIFY-macos.md`, a prompt for an agent there that checks the head against the tag `pre-rust-rewrite` on macOS and writes its report into the run-output folder on that machine, which git ignores (run output is kept outside git).
 
 ## 1. Where things stand
 
@@ -75,9 +75,9 @@ Shared, no gate: `ResourceCounts` (`src/lib.rs` lines 42-51; its fields are docu
 |---|---|---|
 | `SignalWindow::new(handler: impl Fn(Signal) + 'static) -> Result<Self, SignalError>` | a message-only window; wakes and timers arrive as its messages, inside any message loop the thread is in | `Err(SignalError("the signal window is not ported to this platform yet"))` |
 | `SignalWindow::waker(&self) -> Waker` | a `Send` handle that posts to the window | a `Waker` (unreachable) |
-| `SignalWindow::set_timer(&self, interval_ms: u32) -> Result<TimerId, SignalError>` | `SetTimer` on the window | `Err(...)` |
-| `SignalWindow::cancel_timer(&self, TimerId)` | `KillTimer` | no-op |
-| `SignalWindow::dispatch_due_timers(&self)` | serves due timers after a pump (decision D3) | no-op |
+| `SignalWindow::set_timer(&self, interval_ms: u32) -> Result<TimerId, SignalError>` | not `SetTimer` (D38): each tick is a message a thread of the signal window's own posts to it, so it wakes any loop that waits for messages, a modal one included; the period is held to 10 ms and above, the next period starts when the last tick's job has returned, and a tick taken while input waits is posted again shortly after | `Err(...)` |
+| `SignalWindow::cancel_timer(&self, TimerId)` | stops the timer; a tick already posted for it delivers nothing | no-op |
+| `SignalWindow::stop_ticker_if_idle(&self)` | ends the tick thread when no timer is set, as the release at the end of the application leaves it; the next timer starts a new one | no-op |
 | `Waker::wake(&self, token: u64) -> bool` | posts a message carrying the token; false when the window is gone | `false` |
 | `discard_quit() -> bool` | takes back a pending `WM_QUIT` | `false` |
 | `post_quit_for_tests()` (`#[doc(hidden)]`) | `PostQuitMessage(0)` | no-op |
@@ -362,7 +362,7 @@ The `engine` check (`verify.ts` lines 122-126) on `macos` passes only when no `p
 ### 5.3 By item of `CHECKLIST-macos.md`
 
 - M0.1: nothing changes.
-- M0.2 "The three proofs of `rust-rewrite/spike/` pass on this Mac": `rust-rewrite/spike/spike.ts` drives the tray proof with `bun:ffi` calls into `user32` (posted `WM_USER_TRAYICON` messages), so the tray half needs a macOS driver. The spike wakes through `EventLoopProxy`, which on Windows proved insufficient (D3); passing the spike does not settle wakes inside a modal loop. W1.6 (`bun build --compile` embedding the binding in a demo) is ticked on Windows; its evidence is `rust-rewrite/evidence/w1-compiled-alone.txt`.
+- M0.2 "The three proofs of `rust-rewrite/spike/` pass on this Mac": `rust-rewrite/spike/spike.ts` drives the tray proof with `bun:ffi` calls into `user32` (posted `WM_USER_TRAYICON` messages), so the tray half needs a macOS driver. The spike wakes through `EventLoopProxy`, which on Windows proved insufficient (D3); passing the spike does not settle wakes inside a modal loop. W1.6 (`bun build --compile` embedding the binding in a demo) is ticked on Windows; its run output (two demos' executables each run alone in an empty folder) is kept on the Windows machine, outside git.
 - M0.3 "If the timer-pumped loop fails on macOS under `tao`'s `run_return` ...": widen it. Before anything else, port `sweetview-platform-loop` (section 3.1), because `Runtime::new` fails without the signal window (`crates/sweetview-runtime/src/runtime.rs` lines 125-130). Prove, under both loop modes, that a wake from a worker, a deferred job and a native timeout each run while a handler holds an AppKit modal loop open (an `NSAlert` `runModal`, a popup menu, a window resize), as W1.8 did on Windows, and that a pump returns when nothing is queued (D30; section 3.7). Record the mechanism in `DECISIONS.md`.
 - M0.4 CI: `.github/workflows/windows.yml` is the only workflow. Add a macOS job; add both Apple targets to the `napi` block; make `just` run there (`pwsh` shell, root `justfile` line 4). The hosted Windows runner dismissed toasts at once and did not let `SetCursorPos` reach a move loop (D20); expect the hosted macOS runner to differ from a desk machine in notifications, TCC permissions and synthetic input, and write tests that do not depend on them (not confirmed what it does).
 - M0.5: the four rows are as the proposal states. Add: the script message handler is named `__webview__`, because the page bridge already posts to `window.webkit.messageHandlers.__webview__` (`crates/sweetview-runtime/src/bridge.rs` line 17).
@@ -475,7 +475,7 @@ The workflow's Windows job runs the first five, but since D33 (hosted CI is not 
 
 ## 8. New behaviour held back from macOS until its goal
 
-The Windows goal changed shared TypeScript in ways that would run on macOS and that nobody ran on a Mac (`rust-rewrite/evidence/goal-audit-windows.md`, finding 11). Each such change in the library is behind one predicate, `macosKeepsTagPath()` in `packages/sweetview-native/src/platform.ts` (exported from `@n1h/sweetview-native/internal`), so `git grep macosKeepsTagPath` finds every library seam; the demos use one `process.platform === "darwin"` block each. On macOS each seam runs what the tag `pre-rust-rewrite` ran (decision D42). The macOS goal turns each on deliberately, on a Mac, with the check named:
+The Windows goal changed shared TypeScript in ways that would run on macOS and that nobody ran on a Mac (finding 11 of the goal audit of the Windows work (a report kept on the machine with the run output, outside git)). Each such change in the library is behind one predicate, `macosKeepsTagPath()` in `packages/sweetview-native/src/platform.ts` (exported from `@n1h/sweetview-native/internal`), so `git grep macosKeepsTagPath` finds every library seam; the demos use one `process.platform === "darwin"` block each. On macOS each seam runs what the tag `pre-rust-rewrite` ran (decision D42). The macOS goal turns each on deliberately, on a Mac, with the check named:
 
 | What is held back | Seam | On macOS today | Before turning it on, on a Mac |
 |---|---|---|---|

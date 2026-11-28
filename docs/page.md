@@ -101,7 +101,10 @@ await signalReady();                           // 3. tell the host
 
 A window created with `showOnReady: true` stays hidden until the page says it
 is ready, so the user never sees a blank or half-drawn page. Call
-`signalReady()` after installing listeners and rendering the initial UI.
+`signalReady()` after installing listeners and rendering the initial UI. Set
+`readyTimeoutMs` on the window too: the watchdog is off without it, and with it
+a page that fails before it signals still gets its window, with a start-up
+error page.
 
 ### signalReady
 

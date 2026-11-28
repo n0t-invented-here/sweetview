@@ -63,5 +63,8 @@ test("the desktop pet appears when its page has drawn it, off macOS; on macOS it
     showOnReadyOffMac: a.includes("...(MAC_TAG_PATH ? {} : { showOnReady: true, readyTimeoutMs: 15_000 }),"),
     tagShowOnMac: a.includes("if (MAC_TAG_PATH) overlay.show();") && !/^overlay\.show\(\);/m.test(a),
     pageSignalsOffMac: /if \(!macTagPath\) void signalReady\(\);/.test(p),
-  }).toEqual({ macFlag: true, showOnReadyOffMac: true, tagShowOnMac: true, pageSignalsOffMac: true });
+    // Ready once the pet is on the screen: its model loaded and a frame with it drawn. A failed load never
+    // signals, so the watchdog shows the start-up error.
+    signalsWhenThePetIsDrawn: /if \(!drawn && container !== undefined\) \{/.test(p),
+  }).toEqual({ macFlag: true, showOnReadyOffMac: true, tagShowOnMac: true, pageSignalsOffMac: true, signalsWhenThePetIsDrawn: true });
 });

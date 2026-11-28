@@ -404,8 +404,10 @@ function step() {
   root.rotation.y = yaw;
 
   scene.render();
-  if (!drawn) {
-    // The pet is on the canvas: the window made with showOnReady appears now.
+  if (!drawn && container !== undefined) {
+    // The pet is on the canvas (its model loaded and this frame drew it): the window made with
+    // showOnReady appears now. A model that fails to load never gets here, so the watchdog shows
+    // the start-up error page instead of an empty window.
     drawn = true;
     if (!macTagPath) void signalReady();
   }
