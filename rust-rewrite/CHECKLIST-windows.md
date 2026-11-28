@@ -99,6 +99,8 @@ Items name today's API members to say which behaviour is meant. The API may chan
     Ran 487 tests across 45 files. [211.19s]
     ```
 
+    Since decision D34 the recipe this item calls `just native` is the `build` recipe of the `native` module, `just native build`, and `just check` is declared as `check: native::build typecheck test`.
+
 - [x] W0.6 A GitHub Actions workflow builds the binding and runs `cargo test`, `cargo clippy`, `bun run typecheck` and `bun test` on `windows-latest`.
 
     `.github/workflows/windows.yml` (workflow `windows`, job `check`; started by every push to `v1-rust-rewrite` and `main` at the time of the run below, and only by hand since decision D33, the owner having said hosted CI is not approved for use in this project) runs on `windows-latest`: it installs Bun, the stable Rust toolchain and `just`, builds the binding with `just native`, then runs `cargo test --workspace`, `cargo clippy`, `bun run typecheck` and `bun test`, each as its own step. The three steps after `cargo test` still run when an earlier step failed (`if: ${{ !cancelled() }}`); `cargo test` does not run after a failed build. Run 46088815542, on commit `c744c56`, the last commit that changed code or tests at the time. The block below is not output pasted from a command: it is a summary written by hand from that run's job, step results and test totals as they were read then. After that run the workflow file changed in its triggers and its comments only (commit `533d64e`, D33); its steps are the ones that ran. No run of a later commit exists, and under D33 none is started or read by this work: whether this run stands as the item's proof, or the item is unticked with D33 as its reason, is the owner's decision (`rust-rewrite/OWNER-ACTIONS.md`, section 8).

@@ -28,7 +28,6 @@ const view = await WebView.attach<WindowChromeMethods>(win, {
 });
 win.show();
 view.run();
-win.dispose();
 ```
 
 ```html

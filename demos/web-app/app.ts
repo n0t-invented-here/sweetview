@@ -12,9 +12,10 @@ import { createApp, indexHtml, WEBVIEW_VERSION, type App } from "@n1h/sweetview"
 import appCss from "./build/frontend/main.css" with { type: "file" };
 import appJs from "./build/frontend/main.js" with { type: "file" };
 import { APP_ICON, TRAY_ICON } from "./icon";
+import { IDENTITY } from "./identity";
 import { buildTrayMenu } from "./tray-menu";
 
-const APP_NAME = "Web App";
+const APP_NAME = IDENTITY.appName;
 
 // State this thread mirrors so the tray menu can show it without asking anyone.
 let watch: WatchStatus = { watching: false, path: null };
@@ -55,6 +56,7 @@ const bounds = {
 };
 
 const app: App<Methods, Events> = await createApp<Methods, Events>({
+  identity: IDENTITY,
   title: APP_NAME,
   bounds,
   icon: APP_ICON,
@@ -92,7 +94,7 @@ const notifyChanges = (changes: FsChange[]) => {
   sendNotification(folder, body, true);
 };
 
-const tray = createTray({
+createTray({
   tooltip: APP_NAME,
   icon: TRAY_ICON,
   // A left click toggles the window (Windows: after the double-click interval, so a double click toggles once).
@@ -122,7 +124,9 @@ const tray = createTray({
 });
 
 // Clicking a notification brings the window back and the page marks that notification as clicked.
+// The toasts carry the demo's name, not Sweetview's.
 notifier = createNotifier({
+  identity: IDENTITY,
   onClick: ({ id }) => {
     app.window.show();
     app.emit("notify.clicked", { id, at: new Date().toISOString() });
@@ -133,7 +137,7 @@ notifier = createNotifier({
 setAppMenu({
   appName: APP_NAME,
   aboutText: [
-    `${APP_NAME} 0.1.0`,
+    `${APP_NAME} ${IDENTITY.version}`,
     "",
     `Bun ${Bun.version} · webview ${WEBVIEW_VERSION} · ${process.platform}/${process.arch}`,
     "React + Mantine inside sweetview, no server, no child processes.",
@@ -142,8 +146,3 @@ setAppMenu({
 
 app.window.show();
 app.run(); // blocks until Quit
-
-notifier.dispose();
-tray.dispose();
-app.dispose();
-process.exit(0);

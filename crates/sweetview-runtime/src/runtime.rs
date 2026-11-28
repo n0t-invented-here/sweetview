@@ -150,7 +150,7 @@ impl Runtime {
   /// Drops this thread's runtime. Tests only: a process keeps its runtime for life.
   #[doc(hidden)]
   pub fn shutdown_for_tests() {
-    crate::window::destroy_all_for_tests();
+    crate::window::destroy_all();
     *WAKER.lock().unwrap_or_else(PoisonError::into_inner) = None;
     RUNTIME.with(|slot| slot.borrow_mut().take());
   }
@@ -352,6 +352,28 @@ impl Runtime {
       self.signals.cancel_timer(native);
       job();
     }
+  }
+
+  // ---- the end of the application -------------------------------------------------
+
+  /// Lets go of every function the runtime would call: the jobs still deferred, the
+  /// timeouts and intervals (their native timers are cancelled), the drains and the loop's
+  /// listeners. What [`crate::lifetime::release_all`] does last, once everything that
+  /// registered them is gone. The runtime itself stays, so the application may go on.
+  pub(crate) fn release_callbacks(&self) {
+    // Each is taken out first and dropped after its borrow: a job's or a
+    // listener's drop may release the last reference to something that calls back in.
+    let deferred = std::mem::take(&mut *self.deferred.borrow_mut());
+    let timers = std::mem::take(&mut *self.timers.borrow_mut());
+    for timer in timers.values() {
+      self.signals.cancel_timer(timer.native);
+    }
+    let drains = std::mem::take(&mut *self.drains.borrow_mut());
+    let listeners = std::mem::take(&mut *self.listeners.borrow_mut());
+    drop((deferred, timers, drains, listeners));
+    // The thread that posts the timers' ticks (D37) ends with them; a pump in progress keeps
+    // it for its guard, and a timer set afterwards starts it again.
+    self.signals.stop_ticker_if_idle();
   }
 
   // ---- wakes from other threads ---------------------------------------------------
@@ -651,7 +673,7 @@ mod tests {
     MenuRound { ticks, closed, interval }
   }
 
-  /// D34: native timers keep firing inside a popup menu's loop in both loop modes. The menu opens
+  /// D37: native timers keep firing inside a popup menu's loop in both loop modes. The menu opens
   /// from a deferred job, its owner is a hidden `tao` window as the tray menu's is, and every
   /// timer is due when the menu's loop first looks at the queue. With timers on `WM_TIMER`, which
   /// the OS makes only when no paint request is pending, the loop waited with them due and
@@ -823,6 +845,29 @@ mod tests {
       assert_eq!(log[1], "timeout");
       assert!(log.contains(&"drain") && log.contains(&"quit"), "{log:?}");
       assert!(ticks.get() >= 2, "the interval repeated: {}", ticks.get());
+    });
+  }
+
+  /// The release at the end of the application (D36) ends the thread that posts the timers'
+  /// ticks (D37) with the timers, and a timer set afterwards starts it again and fires.
+  #[test]
+  fn the_release_at_the_end_ends_the_tick_thread_and_a_later_timer_starts_it_again() {
+    on_ui_thread(|runtime| {
+      let _interval = runtime.set_interval(10, || {}).expect("interval");
+      assert!(runtime.signals.ticker_running_for_tests());
+      runtime.release_callbacks();
+      assert_eq!(runtime.signals.timers_set_for_tests(), 0);
+      assert!(!runtime.signals.ticker_running_for_tests(), "the tick thread ended with the timers");
+      let fired = Rc::new(Cell::new(false));
+      let seen = fired.clone();
+      runtime.set_timeout(10, move || seen.set(true)).expect("timeout");
+      assert!(runtime.signals.ticker_running_for_tests());
+      let deadline = Instant::now() + Duration::from_secs(5);
+      while !fired.get() && Instant::now() < deadline {
+        runtime.pump();
+        std::thread::sleep(Duration::from_millis(5));
+      }
+      assert!(fired.get(), "a timeout set after the release fires");
     });
   }
 

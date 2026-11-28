@@ -4,8 +4,10 @@ set shell := ["pwsh", "-NoProfile", "-Command", "$ErrorActionPreference = 'Stop'
 
 exe := "menubar-notify"
 name := "Menubar Notify"
-# Bun embeds the exe file icon only when the build host is Windows; a Mac-built Windows exe gets Bun's stock icon (README, "Platforms").
-win_icon := if os() == "windows" { "--windows-icon=build/app.ico" } else { "" }
+app_id := "dev.mrowr.menubar-notify"
+# The demo's app id and name, as identity.ts has them: the macOS bundle's id and name, and the Windows exe's product name and description.
+# Bun writes the exe's icon and version information only when the build host is Windows; a Mac-built Windows exe gets Bun's stock icon and is named "Bun" (README, "Platforms").
+win_meta := if os() == "windows" { "--windows-icon=build/app.ico --windows-title=\"" + name + "\" --windows-description=\"" + name + "\"" } else { "" }
 
 @_default:
     just --justfile "{{module_file()}}" --list
@@ -14,11 +16,15 @@ win_icon := if os() == "windows" { "--windows-icon=build/app.ico" } else { "" }
 install:
     bun install --cwd ../..
 
+# On Windows the app loads the Rust binding: `just native build` builds it first (cargo's no-op when it is current)
+_build-native:
+    @& "{{just_executable()}}" --justfile "{{justfile()}}" native _build-if-windows
+
 frontend: install
     bun build frontend/main.ts --outdir build/frontend --minify
 
 # macOS: a bare binary has no bundle id, so the menu and window work but notifications do not show; use `open`.
-app: frontend
+app: frontend _build-native
     bun run app.ts
 
 compile: frontend compile-win compile-mac mac-app
@@ -26,8 +32,8 @@ compile: frontend compile-win compile-mac mac-app
 icons: install
     bun scripts/write-icons.ts
 
-compile-win: frontend icons
-    bun build --compile --target=bun-windows-x64 --windows-hide-console {{win_icon}} --minify --sourcemap app.ts app-worker.ts --outfile dist/{{exe}}-windows-x64.exe
+compile-win: frontend icons _build-native
+    bun build --compile --target=bun-windows-x64 --windows-hide-console {{win_meta}} --minify --sourcemap app.ts app-worker.ts --outfile dist/{{exe}}-windows-x64.exe
     bun ../../packages/sweetview-build/src/refresh-icons.ts
 
 compile-mac: frontend
@@ -35,7 +41,7 @@ compile-mac: frontend
 
 # Signed ad-hoc by make-app; notifications need that and the bundle id
 mac-app: icons compile-mac
-    bun ../../packages/sweetview-build/src/make-app.ts --name "{{name}}" --bundle-id dev.mrowr.menubar-notify --binary dist/{{exe}}-macos-arm64 --icns build/AppIcon.icns --plist LSUIElement=true --out dist
+    bun ../../packages/sweetview-build/src/make-app.ts --name "{{name}}" --bundle-id {{app_id}} --binary dist/{{exe}}-macos-arm64 --icns build/AppIcon.icns --plist LSUIElement=true --out dist
 
 open: mac-app
     open "dist/{{name}}.app"

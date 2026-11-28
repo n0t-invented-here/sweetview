@@ -1,4 +1,4 @@
-// Native timers inside a tray menu's modal loop, through the binding (decision D34; the second
+// Native timers inside a tray menu's modal loop, through the binding (decision D37; the second
 // review's G1). A tray whose right click is posted to its window opens its menu from a deferred
 // job; a native interval set a moment before the click ticks inside the menu's loop and closes the
 // menu after three ticks. The menu function waits longer than the interval's period and the pump

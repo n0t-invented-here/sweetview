@@ -23,8 +23,10 @@ On Windows the OS entry points are Rust crates (`tao`, `muda`, `tray-icon`,
 `rfd` and this project's own `sweetview-platform-*` crates) compiled into one
 N-API binding, `prebuilt/sweetview.win32-x64-msvc.node`, which ships inside
 `@n1h/sweetview-native` and loads on the first call. `SWEETVIEW_NATIVE_PATH`
-names a binding you built yourself; `just native` builds it from source (see
-[Rebuilding](webview-library.md#rebuilding)). On macOS, until the macOS goal of
+names a binding you built yourself. A clone of this repository does not
+contain the binding: `just native build` builds it from source with the Rust
+toolchain, and the recipes that run the demos and the tests build it first
+(see [Rebuilding](webview-library.md#rebuilding)). On macOS, until the macOS goal of
 the Rust rewrite, they call AppKit through `bun:ffi`. Either way an
 application's own `bun:ffi` calls on the UI thread, its own modal dialogs and
 popup menus included, keep working inside Sweetview's event loop.

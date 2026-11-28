@@ -34,3 +34,10 @@ pub fn on_load() {
 pub fn is_ui_thread() -> bool {
   sweetview_runtime::threads::is_ui_thread()
 }
+
+/// The end of the application: releases everything the binding made on the UI thread that
+/// is still alive (hooks, webviews, trays, notifiers, single-instance locks, menus, windows,
+/// then timers and callbacks), in that order. Does nothing on another thread.
+pub fn release_all() {
+  sweetview_runtime::lifetime::release_all();
+}

@@ -10,6 +10,7 @@ pub mod clipboard;
 pub mod engine;
 mod error;
 pub mod input;
+pub mod lifetime;
 pub mod notify;
 pub mod app;
 pub mod dialogs;

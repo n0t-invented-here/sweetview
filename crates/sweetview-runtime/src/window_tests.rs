@@ -306,3 +306,22 @@ fn a_tab_frame_keeps_the_system_frame_and_lays_out_a_strip_and_a_page() {
     assert!(TabFrame::all().is_empty());
   });
 }
+
+/// A window disposed from inside a call into `tao` (a listener run by `set_bounds`, say) waits for
+/// a later turn to be destroyed. When the application ends in that same turn, the job never
+/// runs: the release must destroy it all the same.
+#[test]
+fn a_window_disposed_while_a_call_holds_it_is_destroyed_by_the_release_in_the_same_turn() {
+  on_ui_thread(|_runtime| {
+    let window = Window::create(WindowInit { no_activate: true, bounds: Some(Rect::new(-2000, -2000, 200, 200)), ..init("rt held") }).expect("window");
+    let handle = window.handle();
+    // What a call into `tao` further up the stack holds while a listener runs.
+    let held = core_of(handle).and_then(|core| core.tao.borrow().clone()).expect("the window's tao window");
+    window.dispose();
+    assert!(alive(handle), "held further up the stack, its destroy waits for a later turn");
+    // The call returns; no turn of the loop runs before the application ends.
+    drop(held);
+    crate::lifetime::release_all();
+    assert!(!alive(handle), "the release destroyed the window whose destroy was waiting");
+  });
+}

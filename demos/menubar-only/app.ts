@@ -33,10 +33,7 @@ const menu = (): MenuTemplate => [
 const tray = createTray({ tooltip: APP_NAME, icon: TRAY_ICON, menu });
 
 // A plain Bun timer on the UI thread: it runs because runEventLoop leaves Bun's event loop in charge.
-const clock = setInterval(() => tray.setTooltip(clockInTooltip ? `${APP_NAME} · ${new Date().toLocaleTimeString()}` : APP_NAME), 1000);
+// unref(): the clock alone does not keep the process alive after Quit.
+setInterval(() => tray.setTooltip(clockInTooltip ? `${APP_NAME} · ${new Date().toLocaleTimeString()}` : APP_NAME), 1000).unref();
 
 await runEventLoop();
-
-clearInterval(clock);
-tray.dispose();
-process.exit(0);

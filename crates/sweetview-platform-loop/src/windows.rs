@@ -546,7 +546,7 @@ impl QueuedMessage {
   pub fn dispatch(self) {
     // The parameters are whatever the poster chose, and any process of the session may post:
     // the window procedure reads them as the message defines, and the OS calls a `WM_TIMER`'s
-    // timer procedure only when this thread registered it with `SetTimer` (measured, D35).
+    // timer procedure only when this thread registered it with `SetTimer` (measured, D38).
     // SAFETY: `self.0` was filled by the OS from this thread's queue (see the type), so its
     // window is one the OS queued it for and validates again here (parameters: above); `self`
     // is consumed, so this message is not dispatched again.
@@ -768,7 +768,7 @@ fn post_ticks(ticks: &Ticks, poster: &Poster) {
 /// Its timers do not use `SetTimer`. A `WM_TIMER` is made only when the
 /// thread's queue holds nothing else, after every paint request, and a modal
 /// loop such as a popup menu's can wait with one already due and never take it
-/// (D34). Each tick is instead a message posted to the window by a thread of
+/// (D37). Each tick is instead a message posted to the window by a thread of
 /// this value's own; posted messages come before input, paint and `WM_TIMER`,
 /// and wake any loop that waits for new messages.
 pub struct SignalWindow {
@@ -857,20 +857,36 @@ impl SignalWindow {
   pub fn timers_set_for_tests(&self) -> usize {
     self.ticks.lock().timers.len()
   }
+
+  /// True while the tick thread runs. For tests of the release at the end of the application.
+  #[doc(hidden)]
+  pub fn ticker_running_for_tests(&self) -> bool {
+    self.ticker.borrow().is_some()
+  }
+
+  /// Ends the tick thread when no timer is set, as the release at the end of the
+  /// application leaves it; the next timer starts a new one.
+  pub fn stop_ticker_if_idle(&self) {
+    if !self.ticks.lock().timers.is_empty() {
+      return;
+    }
+    self.stop_ticker();
+  }
+
+  fn stop_ticker(&self) {
+    let Some(thread) = self.ticker.borrow_mut().take() else { return };
+    self.ticks.lock().stop = true;
+    self.ticks.changed.notify_all();
+    // The thread only posts and waits on the lock; it ends at once.
+    let _ = thread.join();
+    self.ticks.lock().stop = false;
+  }
 }
 
 impl Drop for SignalWindow {
   fn drop(&mut self) {
-    {
-      let mut state = self.ticks.lock();
-      state.timers.clear();
-      state.stop = true;
-    }
-    self.ticks.changed.notify_all();
-    if let Some(thread) = self.ticker.take() {
-      // The thread only posts and waits on the lock taken above; it ends at once.
-      let _ = thread.join();
-    }
+    self.ticks.lock().timers.clear();
+    self.stop_ticker();
     // `self.window` is dropped next: it disarms the wakers and destroys the window.
   }
 }

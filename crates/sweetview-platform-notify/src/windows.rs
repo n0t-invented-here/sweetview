@@ -536,6 +536,20 @@ impl Toasts {
     }
   }
 
+  /// Ends every subscription as [`dispose`](Self::dispose) does, but leaves the toasts shown:
+  /// they stay on the screen and in the notification centre, and report nothing more.
+  fn forget(&self) {
+    if self.disposed.get() {
+      return;
+    }
+    // Removed while not yet disposed, so `remove` hides nothing.
+    let cookies: Vec<u64> = self.pending.borrow().keys().copied().collect();
+    for cookie in cookies {
+      self.remove(cookie);
+    }
+    self.disposed.set(true);
+  }
+
   /// Invokes the handler WinRT holds for `event`, if the toast is still subscribed.
   fn invoke(&self, cookie: u64, event: ToastEvent) -> bool {
     let handler = {
@@ -700,12 +714,23 @@ impl Inner {
   }
 
   fn dispose(&self) {
+    self.end(true);
+  }
+
+  /// Ends the notifier: its toasts' subscriptions, its hidden icons and its window. With
+  /// `withdraw` the toasts still showing are hidden too ([`Notifier::dispose`]); without, they
+  /// stay for the user ([`Notifier::release`]).
+  fn end(&self, withdraw: bool) {
     if self.disposed.replace(true) {
       return;
     }
     let toasts = std::mem::replace(&mut *self.toasts.borrow_mut(), ToastSlot::Unavailable);
     if let ToastSlot::Ready(toasts) = toasts {
-      toasts.dispose();
+      if withdraw {
+        toasts.dispose();
+      } else {
+        toasts.forget();
+      }
     }
     let window = self.window.borrow_mut().take();
     drop(window);
@@ -828,6 +853,16 @@ impl Notifier {
   /// [`pending_balloons`](Self::pending_balloons) may never see it.
   pub fn balloons_shown(&self) -> u32 {
     self.inner.balloons_shown.get()
+  }
+}
+
+impl Notifier {
+  /// Ends the notifier as dropping it does, but leaves the toasts it showed on the screen and in
+  /// the notification centre: their subscriptions end, so they report nothing more. Its hidden
+  /// notification icons are removed with its window, and a balloon goes with its icon. What the
+  /// end of an application does. Dropping it afterwards does nothing more.
+  pub fn release(&self) {
+    self.inner.end(false);
   }
 }
 

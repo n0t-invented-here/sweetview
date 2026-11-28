@@ -190,8 +190,14 @@ export declare class Notifier {
   notify(id: string, title: string, body: string, silent: boolean, dataJson?: string | undefined | null): boolean
   /** Replaces the `.ico` the balloon fallback shows. Throws on bytes that are not an icon. */
   setIcon(iconIco?: Uint8Array | undefined | null): void
-  /** Releases the notifier. Safe to call twice. */
+  /** Releases the notifier: the toasts still showing are hidden, its hidden icons removed. Safe to call twice. */
   dispose(): void
+  /**
+   * Lets go of the notifier as `dispose` does but leaves the toasts it showed on the screen and
+   * in the notification centre, reporting nothing more: what the end of the application does.
+   * Safe to call twice, and after `dispose`.
+   */
+  release(): void
   /** Test hook: `"auto"`, `"balloonOnly"`, `"toastShowFails"` or `"toastHeld"`. */
   debugForcePath(path: string): void
   /** Test hook: `notify`, reporting `"toast:<cookie>"`, `"balloon:<uid>"` or `null`. */
@@ -473,6 +479,15 @@ export declare function refreshShellIcons(): void
 
 /** Registers `scheme` for the current user with the given registry values. Any thread. */
 export declare function registerUrlScheme(scheme: string, appName: string, iconPath: string, command: string): void
+
+/**
+ * The end of the application: releases everything the binding made on the UI thread that is
+ * still alive, in a safe order: the input hooks, the webviews (each before its window), the
+ * tray icons, the notifiers, the single-instance locks, the menus handed out, the windows, then
+ * the timers and callbacks. The TypeScript layer calls it when the blocking loop has returned
+ * and when the process exits. Objects made afterwards work as usual. Does nothing on another thread.
+ */
+export declare function releaseAll(): void
 
 /** Removes the keyboard hook. Returns a `webview_error_t`; 2 when none is installed. */
 export declare function removeKeyboardHook(): number

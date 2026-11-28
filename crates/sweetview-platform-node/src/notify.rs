@@ -43,10 +43,18 @@ impl Notifier {
     self.inner.set_icon(icon_ico.map(|b| b.to_vec()))
   }
 
-  /// Releases the notifier. Safe to call twice.
+  /// Releases the notifier: the toasts still showing are hidden, its hidden icons removed. Safe to call twice.
   #[napi(catch_unwind)]
   pub fn dispose(&mut self) {
     self.inner.dispose()
+  }
+
+  /// Lets go of the notifier as `dispose` does but leaves the toasts it showed on the screen and
+  /// in the notification centre, reporting nothing more: what the end of the application does.
+  /// Safe to call twice, and after `dispose`.
+  #[napi(catch_unwind)]
+  pub fn release(&mut self) {
+    self.inner.release()
   }
 
   /// Test hook: `"auto"`, `"balloonOnly"`, `"toastShowFails"` or `"toastHeld"`.

@@ -115,6 +115,26 @@ thread_local! {
   static ENGINES: RefCell<HashMap<EngineId, Rc<Inner>>> = RefCell::new(HashMap::new());
   /// How many webview-originated callbacks are on the stack. A webview is not dropped while one is.
   static CALLBACK_DEPTH: Cell<u32> = const { Cell::new(0) };
+  /// Webviews destroyed while a callback was on the stack, whose drop waits for a later turn.
+  static UNDROPPED: RefCell<Vec<Weak<Inner>>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Destroys every webview of this thread that is still alive, and drops those whose drop was
+/// waiting for a later turn of the loop, unless a webview's callback is on the stack now (the
+/// process is ending from inside one): those are left to the OS. Each webview goes before the
+/// window it lives in.
+pub(crate) fn release_all() {
+  let live: Vec<Rc<Inner>> = ENGINES.try_with(|engines| engines.borrow().values().cloned().collect()).unwrap_or_default();
+  for inner in live {
+    inner.destroy();
+  }
+  if CALLBACK_DEPTH.with(Cell::get) > 0 {
+    return;
+  }
+  let waiting: Vec<Rc<Inner>> = UNDROPPED.try_with(|all| all.borrow_mut().drain(..).filter_map(|weak| weak.upgrade()).collect()).unwrap_or_default();
+  for inner in waiting {
+    inner.drop_live();
+  }
 }
 
 /// The answering half of webview `id`, from any thread. `None` once it is destroyed.
@@ -735,6 +755,11 @@ impl Inner {
         }
       }
       None if self.live.try_borrow().map(|live| live.is_some()).unwrap_or(true) => {
+        let _ = UNDROPPED.try_with(|all| {
+          let mut all = all.borrow_mut();
+          all.retain(|weak| weak.strong_count() > 0);
+          all.push(Rc::downgrade(self));
+        });
         let inner = self.clone();
         self.runtime.defer(move || inner.drop_live());
       }

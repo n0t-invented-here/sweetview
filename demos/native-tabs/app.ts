@@ -108,7 +108,6 @@ if (import.meta.main) {
   }
   const demo = await startDemoTabs();
   const loop = demo.app.run();
-  let code = 0;
   try {
     const first = await demo.openTab();
     await demo.openTab();
@@ -118,10 +117,8 @@ if (import.meta.main) {
   } catch (err) {
     // Without a window to close, the loop would never end.
     console.error("native-tabs:", err);
-    code = 1;
+    process.exitCode = 1;
     demo.app.quit();
   }
   await loop;
-  demo.app.dispose();
-  process.exit(code);
 }

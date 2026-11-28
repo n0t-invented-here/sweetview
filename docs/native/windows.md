@@ -40,8 +40,7 @@ const win = new Window({
 win.onClose(() => quitEventLoop()); // a listener keeps the window open; this one ends the app
 win.show();
 
-await runEventLoop();
-win.dispose();
+await runEventLoop(); // the script ends here, and Sweetview closes the window
 ```
 
 Attach a page to it with [`WebView.attach`](../app.md#webviewattach).
@@ -197,7 +196,7 @@ the menu bar. See [`setActivationPolicy`](menus-and-tray.md#setactivationpolicy)
 | `onResize(fn)`, `onMove(fn)` | Called with the new outer `Rect`. |
 | `onClose(fn)`, `onFileDrop(fn)` | See [Closing](#closing) and [File drops](#file-drops). |
 | `onNewTab(fn: (origin: Window) => void)`, `onTabSelect(fn)`, `onTabClose(fn)` | Tab events; see [Tabbed](#tabbed). |
-| `dispose()` | Destroys an owned window, or detaches a wrapper's hooks. Releases timers, subclass hooks, observers and icons. A webview attached to an owned window is torn down with it ([lifecycle](../app.md#lifecycle)). Safe to call twice. |
+| `dispose()` | Destroys an owned window, or detaches a wrapper's hooks. Releases timers, subclass hooks, observers and icons. A webview attached to an owned window is torn down with it ([lifecycle](../app.md#lifecycle)). Every window is disposed when the application ends ([the end of the application](../app.md#the-end-of-the-application)); call it for one that should go before that. Safe to call twice. |
 
 Every `on*` method accepts any number of listeners and returns a function
 that removes that one subscription. A listener that throws is logged with
@@ -287,9 +286,7 @@ const tray = new Tray({
 closeToTrayOnLastWindow(win, () => tray.setTooltip("Notes (hidden)"));
 win.show();
 
-await runEventLoop(); // closing the window hides it; Quit ends the loop
-tray.dispose();
-win.dispose();
+await runEventLoop(); // closing the window hides it; Quit ends the loop, and the script
 ```
 
 `closeToTrayOnLastWindow(win, onHide?)` installs an `onClose` listener that
@@ -304,15 +301,13 @@ yourself.
 import { Window, quitEventLoop, runEventLoop } from "@n1h/sweetview/native";
 
 const win = new Window({ title: "Drop files here", bounds: { x: 200, y: 200, width: 480, height: 320 } });
-const stop = win.onFileDrop((paths) => {
+win.onFileDrop((paths) => {
   for (const path of paths) console.log("dropped", path);
 });
 win.onClose(() => quitEventLoop()); // closing a window does not end the loop by itself
 win.show();
 
 await runEventLoop();
-stop();
-win.dispose();
 ```
 
 `onFileDrop(fn)` receives absolute file-system paths of files dropped from

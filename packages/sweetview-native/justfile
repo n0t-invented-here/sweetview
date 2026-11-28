@@ -1,0 +1,25 @@
+# The native package: the Rust binding it loads on Windows, built from the crates under crates/.
+# `just native <recipe>` from the repo root.
+
+set shell := ["pwsh", "-NoProfile", "-Command", "$ErrorActionPreference = 'Stop'; $PSNativeCommandUseErrorActionPreference = $true; trap { if ($_.Exception -is [System.Management.Automation.NativeCommandExitException]) { exit $_.Exception.ExitCode }; break };"]
+
+@_default:
+    just --justfile "{{module_file()}}" --list
+
+
+install:
+    bun install --cwd ../..
+
+# Also regenerates prebuilt/binding.d.ts from the Rust. Needs cargo (the Rust toolchain, from rustup).
+# Builds the Rust binding for this machine into prebuilt/, where the package loads it from
+build: install
+    @if (!(Get-Command cargo -ErrorAction SilentlyContinue)) { [Console]::Error.WriteLine("just native build: cargo is not on PATH. The Rust binding is built from source with the Rust toolchain: install it with rustup (https://rustup.rs; on Windows it also asks for the Visual Studio C++ build tools), open a new terminal, and run this again."); exit 1 }
+    bunx napi build --platform --release --manifest-path ../../crates/sweetview-platform-node/Cargo.toml --output-dir prebuilt --no-js --dts binding.d.ts
+
+# What a recipe that runs code depends on: `build` on Windows, where that code loads the binding
+# (cargo's no-op when it is current); nothing elsewhere, where nothing loads it yet.
+[windows]
+_build-if-windows: build
+
+[unix]
+_build-if-windows:

@@ -37,10 +37,8 @@ overlay.setHitRegions([[
 ]]);
 overlay.show();
 
-const tray = new Tray({ tooltip: "Overlay", menu: [{ label: "Quit", click: () => quitEventLoop() }] });
-await runEventLoop();
-tray.dispose();
-overlay.dispose();
+new Tray({ tooltip: "Overlay", menu: [{ label: "Quit", click: () => quitEventLoop() }] });
+await runEventLoop(); // after Quit the script ends; Sweetview removes the tray and the overlay
 ```
 
 ## setClickThrough
@@ -159,11 +157,9 @@ view = await WebView.attach<Methods, Events>(win, {
 });
 
 // The overlay has no close button: Quit ends run().
-const tray = new Tray({ tooltip: "Pet", menu: [{ label: "Quit", click: () => view?.quit() }] });
+new Tray({ tooltip: "Pet", menu: [{ label: "Quit", click: () => view?.quit() }] });
 win.show();
-view.run(); // blocks until quit(), then tears the webview down
-tray.dispose();
-win.dispose();
+view.run(); // blocks until quit(); the tray and the window go when the script ends
 ```
 
 The page, `pet.html`, is minimal: a `#pet` element and the script.

@@ -11,6 +11,7 @@
 // OS drops a low-level hook's event past its timeout and delivers it unseen.
 
 import { binding } from "./binding";
+import { releaseAtEnd } from "./lifetime";
 
 /** The modifier keys held when an event happened. */
 export type Modifiers = {
@@ -98,6 +99,24 @@ const darwin = (): DarwinInput => darwinModule!;
  * already installed, a permission is missing (macOS), or the platform has none.
  */
 export function installMouseHook(handler: MouseHandler): MouseHook {
+  return removedAtEnd(installMouseHookNow(handler));
+}
+
+/**
+ * A hook removed when the application ends (see `run()`), before anything else: a
+ * system-wide hook that no loop answers holds up the desktop's input.
+ */
+function removedAtEnd(hook: { dispose(): void }): { dispose(): void } {
+  const unregister = releaseAtEnd("hook", () => hook.dispose());
+  return {
+    dispose() {
+      hook.dispose();
+      unregister();
+    },
+  };
+}
+
+function installMouseHookNow(handler: MouseHandler): MouseHook {
   if (onDarwin) return darwin().installMouseHook(handler);
   const native = binding();
   const code = native.installMouseHook((event, x, y, wheel, modifiers) => {
@@ -157,6 +176,10 @@ export type KeyboardHook = { dispose(): void };
  * hook is already installed, a permission is missing (macOS), or the platform has none.
  */
 export function installKeyboardHook(handler: KeyHandler): KeyboardHook {
+  return removedAtEnd(installKeyboardHookNow(handler));
+}
+
+function installKeyboardHookNow(handler: KeyHandler): KeyboardHook {
   if (onDarwin) return darwin().installKeyboardHook(handler);
   const native = binding();
   const code = native.installKeyboardHook((event, key, raw, modifiers) => {

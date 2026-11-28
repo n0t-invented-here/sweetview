@@ -5,7 +5,7 @@
 // WebView2 profile folder, and exit by themselves.
 
 import { afterAll, describe, expect, test } from "bun:test";
-import { copyFileSync, mkdtempSync, rmSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SizeHint as RootSizeHint, windowChromeMethods } from "@n1h/sweetview";
@@ -209,6 +209,49 @@ describe.skipIf(!onWindows)("Windows behaviour an application notices", () => {
     }
   }, 120_000);
 
+  test("a close request disposes a Window with no onClose listener (and ends createApp's run()); onClose: () => win.hide() keeps it, as createOverlayWindow's window did", async () => {
+    expect(await runChild(fixture("close-request.ts"))).toEqual({
+      windowWithoutListener: { disposed: true, osWindowExists: false },
+      windowWithHide: { disposed: false, osWindowExists: true, visible: false },
+      appWithHide: { disposed: false, osWindowExists: true, visible: false, webviewAlive: true },
+      appWithoutListener: { runReturned: true, disposed: true, osWindowExists: false },
+    });
+  }, 120_000);
+
+  test("width and height: bounds is the outer frame; RawWebview#size sets the client size in DIPs on createApp's own window, as 0.x did", async () => {
+    expect(await runChild(fixture("client-size.ts"))).toEqual({
+      framedBoundsAreOuter: true,
+      sizeNoneSetsClientDips: true,
+      sizeNoneKeepsResizable: true,
+      sizeKeepsTopLeft: true,
+      sizeDoesNotShow: true,
+      pageFillsClient: true,
+      sizeFixedSetsClientDips: true,
+      sizeFixedNotResizable: true,
+      framelessClientIsBounds: true,
+    });
+  }, 120_000);
+
+  test("popupMenuAtCursor opens the menu upward from the cursor; Menu.popup and popupMenu open it downward from the point and take no alignment", async () => {
+    expect(await runChild(fixture("popup-direction.ts"))).toEqual({
+      atCursorAsks: { at: null, above: true },
+      menuPopupAtCursorAsks: { at: null, above: false },
+      menuPopupAtPointAsks: true,
+      popupMenuAtPointAsks: true,
+      aboveOpensUpward: true,
+      menuPopupOpensDownward: true,
+    });
+  }, 60_000);
+
+  test("a Notifier needs no tray; with no appId or identity it is Sweetview's toast identity, with identity the application's own", async () => {
+    expect(await runChild(fixture("notifier-identity.ts"))).toEqual({
+      withoutTrayOrIdentity: { appId: null, appName: null },
+      withIdentity: true,
+      registeredUnderOwnName: true,
+      registryCleaned: true,
+    });
+  }, 60_000);
+
   test("SWEETVIEW_NATIVE_PATH names the binding the loader uses", async () => {
     const custom = join(tempDir("binding"), "custom-build.node");
     copyFileSync(join(root, "packages", "sweetview-native", "prebuilt", "sweetview.win32-x64-msvc.node"), custom);
@@ -217,4 +260,75 @@ describe.skipIf(!onWindows)("Windows behaviour an application notices", () => {
     const failed = await runChild(fixture("native-path.ts"), [], { SWEETVIEW_NATIVE_PATH: missing });
     expect(String(failed.error)).toStartWith(`sweetview: the native binding could not be loaded from ${missing} (SWEETVIEW_NATIVE_PATH): `);
   }, 60_000);
+
+  // "What changed for every application", the macOS engine: with @n1h/sweetview-webview-bun installed
+  // (this workspace has it, for macOS), a compile for Windows bundles none of it, and one for macOS
+  // bundles its sources and its native library. The bundled inputs are read from the metafile.
+  test("a Windows executable leaves the installed macOS engine out; a macOS one keeps it", () => {
+    const dir = tempDir("engine");
+    const inputs = (target: string) => {
+      const meta = join(dir, `${target}.json`);
+      const built = Bun.spawnSync([process.execPath, "build", "--compile", `--target=${target}`, "--minify", `--metafile=${meta}`, "app.ts", "--outfile", join(dir, target)], {
+        cwd: join(root, "demos", "menubar-only"),
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: 120_000,
+      });
+      expect({ target, exit: built.exitCode, stderr: built.exitCode === 0 ? "" : built.stderr.toString() }).toEqual({ target, exit: 0, stderr: "" });
+      return Object.keys(JSON.parse(readFileSync(meta, "utf8")).inputs as Record<string, unknown>)
+        .filter((input) => input.includes("sweetview-webview-bun"))
+        .map((input) => input.replace(/^.*sweetview-webview-bun\//, ""))
+        .sort();
+    };
+    expect(inputs("bun-windows-x64")).toEqual([]);
+    expect(inputs("bun-darwin-arm64")).toEqual(["build/libwebview.dylib", "src/ffi.ts", "src/index.ts", "src/input-hooks.ts", "src/keyboard-hook.ts", "src/mouse-hook.ts", "src/permissions.ts", "src/webview.ts"]);
+  }, 300_000);
+});
+
+// Part A, "Scripts run by path" and the subpaths of `@n1h/sweetview-native`: what an installed
+// application can reach. The packages are packed as they would be published and installed into an
+// application that depends on `@n1h/sweetview` alone, then on the two packages as well, with Bun's
+// isolated linker (each project's node_modules holds only what it names) and its hoisted one.
+describe("what an installed application reaches by path", () => {
+  const SCRIPT = "node_modules/@n1h/sweetview-build/src/make-app.ts";
+  const PROBE = `const reach = (s) => { try { Bun.resolveSync(s, process.cwd()); return true; } catch { return false; } };
+const fs = require("node:fs");
+console.log(JSON.stringify({
+  makeApp: fs.existsSync("${SCRIPT}"),
+  refreshIcons: fs.existsSync("node_modules/@n1h/sweetview-build/src/refresh-icons.ts"),
+  makeAppInSweetview: fs.existsSync("node_modules/@n1h/sweetview/src/make-app.ts"),
+  nativeSubpath: reach("@n1h/sweetview-native/win32/menu"),
+  facade: reach("@n1h/sweetview/native"),
+}));`;
+
+  test("make-app.ts is in @n1h/sweetview-build; with isolated installs it and @n1h/sweetview-native/... resolve only when the application depends on those packages itself", () => {
+    const dir = tempDir("install");
+    const tgz = join(dir, "tgz");
+    const names = ["sweetview", "sweetview-native", "sweetview-build", "sweetview-settings", "sweetview-ipc", "sweetview-ipc-ws", "sweetview-ipc-electron", "sweetview-ipc-tauri"];
+    const tarball = new Map<string, string>();
+    for (const name of names) {
+      const pkg = join(root, "packages", name);
+      const packed = Bun.spawnSync([process.execPath, "pm", "pack", "--destination", tgz, "--quiet"], { cwd: pkg, stdout: "pipe", stderr: "pipe" });
+      expect({ name, exit: packed.exitCode }).toEqual({ name, exit: 0 });
+      const version = JSON.parse(readFileSync(join(pkg, "package.json"), "utf8")).version as string;
+      tarball.set(`@n1h/${name}`, `file:${join(tgz, `n1h-${name}-${version}.tgz`).replaceAll("\\", "/")}`);
+    }
+    const install = (label: string, linker: "isolated" | "hoisted", direct: string[]) => {
+      const app = join(dir, label);
+      mkdirSync(app, { recursive: true });
+      const dependencies = Object.fromEntries(["@n1h/sweetview", ...direct].map((name) => [name, tarball.get(name)!]));
+      writeFileSync(join(app, "package.json"), JSON.stringify({ name: "upgrade-probe", private: true, type: "module", dependencies, overrides: Object.fromEntries(tarball) }));
+      writeFileSync(join(app, "probe.js"), PROBE);
+      const installed = Bun.spawnSync([process.execPath, "install", "--linker", linker], { cwd: app, stdout: "pipe", stderr: "pipe", timeout: 120_000 });
+      expect({ label, exit: installed.exitCode, stderr: installed.exitCode === 0 ? "" : installed.stderr.toString() }).toEqual({ label, exit: 0, stderr: "" });
+      const probe = Bun.spawnSync([process.execPath, "probe.js"], { cwd: app, stdout: "pipe", stderr: "pipe" });
+      const script = Bun.spawnSync([process.execPath, SCRIPT, "--help"], { cwd: app, stdout: "pipe", stderr: "pipe" });
+      return { ...JSON.parse(probe.stdout.toString().trim()), makeAppRuns: script.exitCode === 0 && script.stdout.toString().startsWith("usage:") };
+    };
+    const none = { makeApp: false, refreshIcons: false, makeAppInSweetview: false, nativeSubpath: false, facade: true, makeAppRuns: false };
+    const both = { makeApp: true, refreshIcons: true, makeAppInSweetview: false, nativeSubpath: true, facade: true, makeAppRuns: true };
+    expect(install("isolated-sweetview-only", "isolated", [])).toEqual(none);
+    expect(install("isolated-with-both", "isolated", ["@n1h/sweetview-build", "@n1h/sweetview-native"])).toEqual(both);
+    expect(install("hoisted-sweetview-only", "hoisted", [])).toEqual(both);
+  }, 180_000);
 });

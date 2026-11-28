@@ -9,6 +9,7 @@
 
 import { binding } from "./binding";
 import type { Engine } from "../prebuilt/binding";
+import { releaseAtEnd } from "./lifetime";
 import type { WindowHandle } from "./types";
 
 /**
@@ -236,6 +237,8 @@ export function serializeBindingError(err: unknown): string {
 }
 
 const instances = new Set<Webview>();
+/** Takes back the end-of-application destroy of each live native webview, by its handle. */
+const endOfWebview = new Map<WebviewHandle, () => void>();
 const engines = new WeakMap<Webview, Engine>();
 
 /** Internal: the engine of a live webview, for the tabs library; `undefined` once it is destroyed (and always on macOS). */
@@ -347,6 +350,14 @@ export class Webview {
     engines.set(this, this.#engine);
     if (size !== undefined && typeof debugOrHandle === "boolean") this.size = size;
     instances.add(this);
+    // Destroyed when the application ends, before the windows (see lifetime.ts): one entry for
+    // the native webview, however many wrappers `new Webview(handle)` makes of it.
+    const handle = this.#handle;
+    if (!endOfWebview.has(handle)) {
+      endOfWebview.set(handle, releaseAtEnd("webview", () => {
+        for (const instance of [...instances]) if (instance.unsafeHandle === handle) instance.destroy();
+      }));
+    }
   }
 
   // The engine, or the library's answer for a destroyed webview: WEBVIEW_ERROR_INVALID_STATE.
@@ -370,9 +381,15 @@ export class Webview {
     const engine = this.#engine;
     if (!engine) return;
     this.#engine = null;
+    const handle = this.#handle;
     this.#handle = null;
     instances.delete(this);
     engines.delete(this);
+    // Destroying any wrapper destroys the native webview, so its end entry goes.
+    if (handle !== null) {
+      endOfWebview.get(handle)?.();
+      endOfWebview.delete(handle);
+    }
     // Requests still open are released unanswered, open streams are aborted,
     // and every handler and binding goes with the webview.
     engine.destroy();

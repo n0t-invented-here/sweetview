@@ -38,3 +38,13 @@ pub fn on_load(_exports: napi::bindgen_prelude::Object) -> napi::Result<()> {
 pub fn is_ui_thread() -> bool {
   sweetview_napi::is_ui_thread()
 }
+
+/// The end of the application: releases everything the binding made on the UI thread that is
+/// still alive, in a safe order: the input hooks, the webviews (each before its window), the
+/// tray icons, the notifiers, the single-instance locks, the menus handed out, the windows, then
+/// the timers and callbacks. The TypeScript layer calls it when the blocking loop has returned
+/// and when the process exits. Objects made afterwards work as usual. Does nothing on another thread.
+#[napi(catch_unwind)]
+pub fn release_all() {
+  sweetview_napi::release_all();
+}
