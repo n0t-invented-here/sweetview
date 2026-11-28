@@ -139,24 +139,40 @@ const singleInstanceWindow = (appId: string) =>
   user32!.FindWindowExW(-3n, 0n, ptr(wide("SweetviewSingleInstanceWindow")), ptr(wide(`sweetview.instance.${appId}`)));
 
 /**
+ * Menu watchers still armed. Each is cancelled when its test ends: a watcher whose menu never
+ * opened would otherwise stay armed for five seconds and work the next test's menu.
+ */
+const menuWatchers = new Set<() => void>();
+afterEach(() => {
+  for (const cancel of [...menuWatchers]) cancel();
+});
+
+/**
  * Runs `step` from inside the popup menu's own modal loop once a popup menu of
  * this process is open, on a native interval (which the menu loop dispatches).
  * A menu still open 3 s later is closed, so a failing test never leaves one up.
+ * Returns the function that disarms the watcher; it is also disarmed when its test ends.
  */
-async function whenMenuOpens(step: (menuWindow: bigint) => void): Promise<void> {
+async function whenMenuOpens(step: (menuWindow: bigint) => void): Promise<() => void> {
   const { endMenu, openPopupMenu } = await import("../test/win32-os");
   const native = binding();
   const started = Date.now();
+  const cancel = () => {
+    native.cancelTimeout(id);
+    menuWatchers.delete(cancel);
+  };
   const id = native.scheduleInterval(10, () => {
     const menuWindow = openPopupMenu();
     if (menuWindow !== 0n) {
-      native.cancelTimeout(id);
+      cancel();
       native.scheduleTimeout(3000, () => void (openPopupMenu() !== 0n && endMenu()));
       step(menuWindow);
     } else if (Date.now() - started > 5000) {
-      native.cancelTimeout(id);
+      cancel();
     }
   });
+  menuWatchers.add(cancel);
+  return cancel;
 }
 
 /**
@@ -169,13 +185,15 @@ async function chooseFirstTrayItem(trayWindow: bigint, chosen: () => boolean, at
   const { TRAY, VK, openPopupMenu, postTrayMouse, pressKeys } = await import("../test/win32-os");
   for (let attempt = 1; attempt <= attempts; attempt++) {
     let shown = false;
-    await whenMenuOpens((menuWindow) => {
+    const disarm = await whenMenuOpens((menuWindow) => {
       shown = true;
       pressKeys(menuWindow, VK.DOWN, VK.RETURN);
     });
     postTrayMouse(trayWindow, TRAY.RBUTTONDOWN, TRAY.RBUTTONUP);
     await pumpUntil(() => chosen() || (shown && openPopupMenu() === 0n));
     await pumpUntil(() => openPopupMenu() === 0n, 1000);
+    // One watcher per attempt: this one never works the menu of the next.
+    disarm();
     if (chosen()) return attempt;
   }
   return attempts;

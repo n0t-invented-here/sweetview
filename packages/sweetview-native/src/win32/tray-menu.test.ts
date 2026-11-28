@@ -8,7 +8,7 @@
 // overflow flyout with a click. When the desktop is not free they ask again, and then fail saying so.
 // Nothing presses a key system-wide.
 
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { binding } from "../binding";
 import { dotIco, dotPng } from "../icon";
 import { Menu, type MenuTemplate } from "../menu";
@@ -72,23 +72,38 @@ async function pumpFor(ms: number): Promise<void> {
 }
 
 /**
+ * Menu watchers still armed. Each is cancelled when its test ends: a watcher whose menu never
+ * opened would otherwise stay armed for five seconds and work the next test's menu.
+ */
+const menuWatchers = new Set<() => void>();
+afterEach(() => {
+  for (const cancel of [...menuWatchers]) cancel();
+});
+
+/**
  * Runs `step` from inside the popup menu's own modal loop once a popup menu of
  * this process is open, on a native interval (which the menu loop dispatches).
  * A menu still open 3 s later is closed, so a failing test never leaves one up.
+ * The watcher is disarmed when it has seen a menu, after five seconds, and when its test ends.
  */
 function whenMenuOpens(step: (menuWindow: bigint) => void): void {
   const native = binding();
   const started = Date.now();
+  const cancel = () => {
+    native.cancelTimeout(id);
+    menuWatchers.delete(cancel);
+  };
   const id = native.scheduleInterval(10, () => {
     const menuWindow = openPopupMenu();
     if (menuWindow !== 0n) {
-      native.cancelTimeout(id);
+      cancel();
       native.scheduleTimeout(3000, () => void (openPopupMenu() !== 0n && endMenu()));
       step(menuWindow);
     } else if (Date.now() - started > 5000) {
-      native.cancelTimeout(id);
+      cancel();
     }
   });
+  menuWatchers.add(cancel);
 }
 
 const RED = { color: "#ff0000" };
