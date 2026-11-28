@@ -64,9 +64,9 @@ const app: App<Methods, Events> = await createApp<Methods, Events>({
   assets: { "index.html": indexHtml({ title: APP_NAME }), "main.js": appJs, "main.css": appCss },
   worker: new URL("./app-worker.ts", import.meta.url),
   debug: process.env.WEBVIEW_DEBUG === "1",
-  // Shown when the page calls signalReady() (or the ready watchdog fires): no blank frame first.
-  showOnReady: !MAC_TAG_PATH,
-  ...(MAC_TAG_PATH ? { onClose: () => app.window.hide() } : {}),
+  // Shown when the page calls signalReady(): no blank frame first. If the page fails before it
+  // signals, the watchdog shows Sweetview's start-up error page in the window after 15 s.
+  ...(MAC_TAG_PATH ? { onClose: () => app.window.hide() } : { showOnReady: true, readyTimeoutMs: 15_000 }),
   // A modal dialog runs its own message loop, so it runs after the RPC callback returns.
   deferredUiMethods: {
     "pick.folder": () => pickFolder(app.window, "Pick a folder to watch"),

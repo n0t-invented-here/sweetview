@@ -170,7 +170,8 @@ const uiMethods: { [K in keyof UiMethods]: (params: UiMethods[K][0]) => UiMethod
 const MAC_TAG_PATH = process.platform === "darwin";
 const petView: WebView<Methods, Events> = await WebView.attach<Methods, Events>(overlay, {
   title: APP_NAME,
-  showOnReady: !MAC_TAG_PATH,
+  // If the page fails before it signals, the watchdog shows the window with Sweetview's start-up error page.
+  ...(MAC_TAG_PATH ? {} : { showOnReady: true, readyTimeoutMs: 15_000 }),
   assets: petAssets,
   worker: new URL("./app-worker.ts", import.meta.url),
   debug: DEBUG,

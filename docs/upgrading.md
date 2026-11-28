@@ -37,7 +37,8 @@ after them give every export its row.
    the window centred; `bounds` is the outer frame in physical pixels (on
    macOS, until its goal, a window is made from `bounds`).
 5. **Showing it.** Pass `showOnReady: true` and call `signalReady()` from
-   `@n1h/sweetview/page` once the page has rendered.
+   `@n1h/sweetview/page` once the page has rendered, with `readyTimeoutMs`
+   (15 s, say) so a page that fails first still gets a window.
 6. **Closing it.** A close disposes the window. A tray application declares
    close-to-tray: `closeToTrayOnLastWindow(win, onHide)`.
 7. **The end.** Delete the teardown lines after the loop and any `unload()`:
