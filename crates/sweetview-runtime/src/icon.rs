@@ -153,6 +153,23 @@ pub(crate) mod tests {
     }
   }
 
+  /// `tray-menu.test.ts` "a multi-size .ico picks the exact size at each of 16, 20, 24 and 32 px":
+  /// one file, one colour per size, decoded through `IconBytes` as the binding's `decodeIcon` does;
+  /// the colour read back names the image used. An icon with nothing for Windows (an SF Symbol
+  /// only) decodes to nothing.
+  #[test]
+  fn a_multi_size_ico_gives_each_of_16_20_24_and_32_px_its_own_image() {
+    const YELLOW: [u8; 4] = [255, 255, 0, 255];
+    let images = [(16, RED), (20, GREEN), (24, BLUE), (32, YELLOW)];
+    let icon = IconBytes { ico: Some(solid_ico(&images)), ..Default::default() };
+    for (size, colour) in images {
+      let image = icon.rgba(size).expect("decoded").expect("an image");
+      assert_eq!((image.size, centre(&image)), (size, colour), "size {size}");
+    }
+    let symbol = IconBytes { symbol: Some("gearshape".into()), ..Default::default() };
+    assert_eq!(symbol.rgba(16), Ok(None));
+  }
+
   #[test]
   fn a_png_image_inside_the_ico_decodes() {
     let ico = solid_ico(&[(256, GREEN)]);

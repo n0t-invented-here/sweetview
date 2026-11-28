@@ -156,32 +156,22 @@ fn a_popup_menu_at_a_point_shows_check_marks_icons_submenus_separators_and_disab
   });
 }
 
-/// `Menu.popup` leaves the foreground where it found it: the menu's owner is made the foreground
-/// window to track the menu, and once the menu closes the window that was in front before is in
-/// front again, so an owner shown without activation (`noActivate`) is never left active. An owner
-/// that was in front before keeps the foreground, as it always did.
+/// As at the tag, and as before the change that gave the foreground back after every popup menu:
+/// the owner of `Menu.popup`'s menu is made the foreground window to track it, and keeps it after
+/// the menu closes, here dismissed, though another window was in front before (review of
+/// `2a0b808`, F2).
 #[test]
-fn a_popup_menu_gives_the_foreground_back_to_the_window_that_had_it() {
+fn an_ordinary_owner_is_the_foreground_window_after_its_dismissed_menu() {
   on_ui_thread(|runtime| {
     let front = os::OwnWindow::new("rt os window in front", (40, 260, 160, 100), |_| {}).expect("front");
-    // Shown without activation, as a `noActivate` window is.
-    let overlay = os::OwnWindow::new("rt os no-activate owner", (240, 260, 160, 100), |_| {}).expect("overlay");
-    assert!(os::take_foreground(front.handle_value()), "the first window holds the foreground");
-    let data = vec![item(1, "Open"), item(2, "Close")];
-    let popup = |owner: isize| menu::popup(owner, &data, Some((260.0, 280.0)), PopupCorner::TopLeft).expect("popup");
-
+    let owner = os::OwnWindow::new("rt os ordinary owner", (240, 260, 160, 100), |_| {}).expect("owner");
+    if !os::take_foreground(front.handle_value()) {
+      panic!("not run: this desktop's foreground could not be given to the test's window");
+    }
     when_menu_opens(&runtime, |menu_window| os::press_keys(menu_window, &[VK_ESCAPE]));
-    assert_eq!(popup(overlay.handle_value()), None);
-    assert_eq!((os::foreground(), os::active()), (front.handle_value(), front.handle_value()), "dismissed: the first window is in front and active again");
-
-    when_menu_opens(&runtime, |menu_window| os::press_keys(menu_window, &[VK_DOWN, VK_RETURN]));
-    assert_eq!(popup(overlay.handle_value()), Some(1));
-    assert_eq!((os::foreground(), os::active()), (front.handle_value(), front.handle_value()), "chosen: the first window is in front and active again");
-
-    // An ordinary owner that was in front before keeps the foreground.
-    when_menu_opens(&runtime, |menu_window| os::press_keys(menu_window, &[VK_ESCAPE]));
-    assert_eq!(popup(front.handle_value()), None);
-    assert_eq!(os::foreground(), front.handle_value(), "the owner that was in front is in front");
+    let data = vec![item(1, "Open")];
+    assert_eq!(menu::popup(owner.handle_value(), &data, Some((260.0, 280.0)), PopupCorner::TopLeft).expect("popup"), None);
+    assert_eq!(os::foreground(), owner.handle_value(), "the owner holds the foreground after its menu");
   });
 }
 
@@ -224,21 +214,27 @@ fn a_menu_opens_at_the_cursor_or_a_point_below_it_or_above_it() {
       assert_eq!(menu::popup(owner.handle_value(), &data, at, corner).expect("popup"), None);
       read.get()
     };
-    // At the cursor, opening above it, as the tray's menu and `popupMenuAtCursor` do.
-    let mut at_cursor = None;
-    for _ in 0..5 {
-      os::set_cursor(point.0, point.1);
-      let (rect, cursor) = placed(None, PopupCorner::BottomLeft);
-      if cursor == point {
-        at_cursor = Some(rect);
-        break;
+    // At the cursor: opening above it, as the tray's menu and `popupMenuAtCursor` do, and below it,
+    // as `Menu.popup` with no point does.
+    let at_cursor = |corner: PopupCorner| {
+      for _ in 0..5 {
+        os::set_cursor(point.0, point.1);
+        let (rect, cursor) = placed(None, corner);
+        if cursor == point {
+          return Some(rect);
+        }
+        pump_until(&runtime, 400, || false);
       }
-      pump_until(&runtime, 400, || false);
-    }
+      None
+    };
+    let (above, below) = (at_cursor(PopupCorner::BottomLeft), at_cursor(PopupCorner::TopLeft));
     os::set_cursor(saved.0, saved.1);
-    let above = at_cursor.unwrap_or_else(|| panic!("refused to judge: the cursor was moved on the shared desktop while the menu opened; run again"));
+    let refused = || panic!("refused to judge: the cursor was moved on the shared desktop while the menu opened; run again");
+    let (above, below) = (above.unwrap_or_else(refused), below.unwrap_or_else(refused));
     assert_eq!((above.0, above.3), point, "its bottom-left corner at the cursor");
     assert!(above.1 < point.1);
+    assert_eq!((below.0, below.1), point, "with no point and no corner asked: its top-left corner at the cursor");
+    assert!(below.3 > point.1);
     // At a point: above with the bottom-left corner, below with the top-left.
     let above = placed(Some((f64::from(point.0), f64::from(point.1))), PopupCorner::BottomLeft);
     assert_eq!((above.0 .0, above.0 .3), point);
@@ -503,19 +499,68 @@ fn a_right_click_opens_a_menu_built_on_each_open_and_only_while_the_tray_has_one
   });
 }
 
-/// "the icon is re-added when the taskbar is recreated (the registered TaskbarCreated message, as
-/// Explorer broadcasts it)": `tray-icon` delivers a click only while the shell knows the icon.
+/// A tray menu item whose handler shows a window gets that window to the foreground: nothing gives
+/// the foreground away before the chosen item's handler has run, so the process still holds it
+/// (its hidden menu owner does) when the handler asks for it (review of `2a0b808`, F2).
 #[test]
-fn the_icon_is_added_again_when_the_taskbar_is_recreated() {
+fn a_tray_menu_items_handler_that_shows_a_window_gets_it_to_the_foreground() {
+  on_ui_thread(|runtime| {
+    let front = os::OwnWindow::new("rt os window in front", (40, 260, 160, 100), |_| {}).expect("front");
+    let settings = os::OwnWindow::new("rt os window a handler shows", (240, 260, 160, 100), |_| {}).expect("settings");
+    if !os::take_foreground(front.handle_value()) {
+      panic!("not run: this desktop's foreground could not be given to the test's window");
+    }
+    let at_handler = Rc::new(Cell::new(0isize));
+    let chosen = Rc::new(Cell::new(false));
+    let (seen, done, target) = (at_handler.clone(), chosen.clone(), settings.handle_value());
+    let tray = Tray::new(TrayInit {
+      has_menu: true,
+      open_menu: Rc::new(|| vec![item(1, "Settings")]),
+      menu_chosen: Rc::new(move |_| {
+        seen.set(os::foreground());
+        // As a handler's `window.show()` does.
+        BorrowedWindow::with_handle_value(target, |window| platform::show(window, false, false, false));
+        done.set(true);
+      }),
+      ..tray_init(&unique("tray menu foreground"))
+    })
+    .expect("tray");
+    when_menu_opens(&runtime, |menu_window| os::press_keys(menu_window, &[VK_DOWN, VK_RETURN]));
+    post_tray(&tray, &[WM_RBUTTONDOWN, WM_RBUTTONUP]);
+    pump_until(&runtime, 5000, || chosen.get());
+    tray.dispose();
+    assert!(chosen.get(), "the item was chosen");
+    assert_ne!(at_handler.get(), front.handle_value(), "the foreground was not given back before the handler ran");
+    assert_eq!(os::foreground(), settings.handle_value(), "the window the handler showed is in front");
+  });
+}
+
+/// "the icon is re-added when the taskbar is recreated (the registered TaskbarCreated message, as
+/// Explorer broadcasts it)". Restarting Explorer is not safe on a shared desktop: the icon is
+/// deleted from the shell behind the tray's back, as Explorer loses every icon when it restarts,
+/// and read back from Explorer as gone; the broadcast is posted to the tray's window; the shell
+/// holds the icon again, Explorer shows it, and a click arrives (`tray-icon` delivers one only
+/// while the shell knows the icon).
+#[test]
+fn the_icon_lost_by_the_shell_is_added_again_when_the_taskbar_is_recreated() {
   on_ui_thread(|runtime| {
     let clicks = Rc::new(Cell::new(0u32));
     let count = clicks.clone();
-    let tray = Tray::new(TrayInit { on_double_click: Some(Rc::new(move || count.set(count.get() + 1))), ..tray_init(&unique("tray taskbar")) }).expect("tray");
-    assert!(os::post(tray.window_handle_value(), os::registered_message("TaskbarCreated"), 0, 0));
-    pump_until(&runtime, 100, || false);
+    let tooltip = unique("tray taskbar");
+    let tray = Tray::new(TrayInit { on_double_click: Some(Rc::new(move || count.set(count.get() + 1))), ..tray_init(&tooltip) }).expect("tray");
+    let window = tray.window_handle_value();
+    let uid = (1..=64).find(|&uid| os::shell_holds_icon(window, uid)).expect("the shell holds the tray's icon");
+    assert!(matches!(shell_icon(&runtime, &tooltip, true), Shell::Found { .. }), "Explorer shows the icon");
+    assert!(os::delete_shell_icon(window, uid), "the icon is deleted from the shell");
+    assert!(!os::shell_holds_icon(window, uid));
+    assert_eq!(shell_icon(&runtime, &tooltip, false), Shell::Missing, "Explorer shows no icon");
+    assert!(os::post(window, os::registered_message("TaskbarCreated"), 0, 0));
+    pump_until(&runtime, 2000, || os::shell_holds_icon(window, uid));
+    assert!(os::shell_holds_icon(window, uid), "the tray added its icon again");
+    assert!(matches!(shell_icon(&runtime, &tooltip, true), Shell::Found { .. }), "Explorer shows the icon again");
     post_tray(&tray, &[WM_LBUTTONDBLCLK]);
     pump_until(&runtime, 5000, || clicks.get() == 1);
-    assert_eq!(clicks.get(), 1);
+    assert_eq!(clicks.get(), 1, "and a click arrives");
     tray.dispose();
   });
 }

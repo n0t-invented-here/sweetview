@@ -1,6 +1,7 @@
 //! The stand-in for platforms this crate does not serve yet (macOS until its
-//! goal, Linux). The public types are the same; `attach` reports
-//! [`ErrorCode::Unspecified`], so no other method can be reached.
+//! goal, Linux). The public types are the same; `Webview::create` and
+//! `attach` report [`ErrorCode::Unspecified`], so no other method can be
+//! reached.
 //!
 //! `create_environment` and `default_user_data_folder` exist on Windows only:
 //! they hand out a WebView2 type. The macOS goal has no counterpart to add,
@@ -8,6 +9,8 @@
 
 use std::marker::PhantomData;
 use std::rc::Rc;
+
+use sweetview_platform_window::BorrowedWindow;
 
 use crate::{ErrorCode, ExtrasOptions, KeyData, NavigationFailure, RawRequest, Responder};
 
@@ -22,21 +25,85 @@ pub struct WebviewExtras {
     _not_send: PhantomData<Rc<()>>,
 }
 
-/// Sets the colour painted behind the page. Not served on this platform yet.
-#[allow(unused_variables)]
-pub fn set_background_color(webview: &wry::WebView, r: u8, g: u8, b: u8, a: u8) -> ErrorCode {
-    ErrorCode::Unspecified
+/// Where the webview sits in the window it is given.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Layout {
+    /// The whole client area of the window.
+    Fill,
+    /// This rectangle of the window's client area, in physical pixels.
+    Bounds { x: i32, y: i32, width: u32, height: u32 },
+}
+
+/// What receives each message the page posts.
+pub type PageMessageHandler = Rc<dyn Fn(&str)>;
+
+/// One webview. Not served on this platform yet.
+pub struct Webview {
+    _not_send: PhantomData<Rc<()>>,
+}
+
+#[allow(clippy::unused_self, unused_variables)]
+impl Webview {
+    /// Not served on this platform yet.
+    pub fn create(parent: &BorrowedWindow<'_>, layout: Layout, devtools: bool, background: Option<(u8, u8, u8)>) -> Result<Self, ErrorCode> {
+        Err(ErrorCode::Unspecified)
+    }
+
+    /// Navigates to `url`.
+    pub fn navigate(&self, url: &str) -> ErrorCode {
+        ErrorCode::Unspecified
+    }
+
+    /// Shows `html` as the document.
+    pub fn navigate_to_string(&self, html: &str) -> ErrorCode {
+        ErrorCode::Unspecified
+    }
+
+    /// Runs `script` in the current document.
+    pub fn evaluate(&self, script: &str) -> ErrorCode {
+        ErrorCode::Unspecified
+    }
+
+    /// Moves the webview within its window.
+    pub fn set_bounds(&self, x: i32, y: i32, width: u32, height: u32) {}
+
+    /// Sizes the webview to its window's client area.
+    pub fn fill_parent(&self) {}
+
+    /// Shows or hides the webview.
+    pub fn set_visible(&self, visible: bool) {}
+
+    /// Gives the page the keyboard focus.
+    pub fn move_focus(&self) {}
+
+    /// Moves the webview into another window.
+    pub fn reparent(&self, parent: &BorrowedWindow<'_>) -> ErrorCode {
+        ErrorCode::Unspecified
+    }
+
+    /// Sets the colour painted behind the page.
+    pub fn set_background_color(&self, r: u8, g: u8, b: u8, a: u8) -> ErrorCode {
+        ErrorCode::Unspecified
+    }
 }
 
 #[allow(clippy::unused_self, unused_variables)]
 impl WebviewExtras {
     /// Not served on this platform yet.
-    pub fn attach(webview: &wry::WebView, options: ExtrasOptions) -> Result<Self, ErrorCode> {
+    pub fn attach(webview: &Webview, options: ExtrasOptions) -> Result<Self, ErrorCode> {
         Err(ErrorCode::Unspecified)
     }
 
     /// Runs queued cross-thread work; UI thread.
     pub fn drain(&self) {}
+
+    /// Sets or clears the handler of the page's messages.
+    pub fn set_page_message_handler(&self, handler: Option<PageMessageHandler>) {}
+
+    /// Sets or clears the popup handler.
+    pub fn set_new_window_handler(&self, handler: Option<Rc<dyn Fn(String)>>) -> ErrorCode {
+        ErrorCode::Unspecified
+    }
 
     /// Adds a script that runs at document creation in later documents.
     pub fn add_user_script(&self, source: &str) -> Result<UserScript, ErrorCode> {
@@ -98,6 +165,17 @@ impl WebviewExtras {
 
     /// Records that the host is about to navigate.
     pub fn note_host_navigation(&self) {}
+
+    /// Records that a navigation of the host's is sent (or was refused).
+    pub fn note_host_navigation_sent(&self, started: bool) {}
+
+    /// True from a navigation the host sent until it starts.
+    pub fn navigation_starting(&self) -> bool {
+        false
+    }
+
+    /// Sets the handler called when a navigation starts.
+    pub fn set_navigation_started_handler(&self, handler: Option<Rc<dyn Fn()>>) {}
 
     /// Tells the webview its window moved.
     pub fn notify_parent_window_position_changed(&self) {}

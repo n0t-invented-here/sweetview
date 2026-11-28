@@ -629,8 +629,14 @@ fn a_window_closed_with_no_listener_goes_and_the_loop_goes_on() {
 #[test]
 fn both_loop_modes_deliver_a_close_request_and_run_the_hit_region_poll() {
   on_ui_thread(|runtime| {
+    let _back = InputBack::here();
+    let bounds = Rect::new(260, 240, 300, 200);
+    // The left half takes clicks; the poll must follow the cursor across it while each loop runs.
+    let left_half = vec![4, 0, 0, 150, 200, 0, 0, 150, 0, 150, 200, 0, 200];
+    until_desktop_is_ours(runtime.as_ref(), "loop modes: a mouse button is held, which freezes the poll", || !os::buttons_down(), || {});
     for blocking in [true, false] {
-      let window = Window::create(WindowInit { frame: false, no_activate: true, bounds: Some(Rect::new(-3000, -3000, 100, 100)), ..init("rt os loop modes") }).expect("window");
+      let window = Window::create(WindowInit { frame: false, topmost: true, no_activate: true, bounds: Some(bounds), ..init("rt os loop modes") }).expect("window");
+      let handle = window.handle();
       let seen: Rc<RefCell<Vec<&'static str>>> = Rc::default();
       let done = Rc::new(Cell::new(false));
       let (sink, finished, inner) = (seen.clone(), done.clone(), runtime.clone());
@@ -642,11 +648,31 @@ fn both_loop_modes_deliver_a_close_request_and_run_the_hit_region_poll() {
         })))
         .expect("close");
       window.show().expect("show");
-      window.set_hit_regions(Some(Vec::new()), None).expect("no polygon: the whole window lets clicks through");
-      let handle = window.handle();
-      runtime.set_timeout(50, move || {
-        os::post(handle, WM_CLOSE, 0, 0);
-      }).expect("timeout");
+      window.set_hit_regions(Some(left_half.clone()), None).expect("regions");
+      // From inside the loop: the cursor over the polygon, then outside it, each read after the
+      // poll has had its turns; then the close request.
+      let readings: Rc<RefCell<Vec<(&'static str, bool)>>> = Rc::default();
+      let passing = move || ex_style(handle) & WS_EX_TRANSPARENT != 0;
+      os::set_cursor(bounds.x + 250, bounds.y + 50);
+      let (r1, r2, inner) = (readings.clone(), readings.clone(), runtime.clone());
+      runtime
+        .set_timeout(100, move || {
+          os::set_cursor(bounds.x + 50, bounds.y + 50);
+          let next = inner.clone();
+          inner
+            .set_timeout(250, move || {
+              r1.borrow_mut().push(("inside", passing()));
+              os::set_cursor(bounds.x + 250, bounds.y + 50);
+              next
+                .set_timeout(250, move || {
+                  r2.borrow_mut().push(("outside", passing()));
+                  os::post(handle, WM_CLOSE, 0, 0);
+                })
+                .expect("outside");
+            })
+            .expect("inside");
+        })
+        .expect("start");
       if blocking {
         let quitter = runtime.clone();
         let watchdog = runtime.set_timeout(5000, move || quitter.request_exit()).expect("watchdog");
@@ -656,8 +682,9 @@ fn both_loop_modes_deliver_a_close_request_and_run_the_hit_region_poll() {
         pump_until(runtime.as_ref(), 5000, || done.get());
         runtime.discard_quit();
       }
-      assert_eq!(*seen.borrow(), [if blocking { "close in the blocking loop" } else { "close in a pump" }]);
-      assert_eq!(ex_style(handle) & WS_EX_TRANSPARENT, WS_EX_TRANSPARENT, "the poll ran");
+      let mode = if blocking { "close in the blocking loop" } else { "close in a pump" };
+      assert_eq!(*seen.borrow(), [mode]);
+      assert_eq!(*readings.borrow(), [("inside", false), ("outside", true)], "{mode}: the poll followed the cursor into the polygon (solid) and out of it (clicks pass)");
       window.dispose();
     }
   });
@@ -886,6 +913,7 @@ fn a_maximised_frameless_window_dragged_by_start_drag_stays_maximised_and_its_ne
     if during != Some(moved) && !the_os_runs_a_move_loop_here(&runtime, &input) {
       panic!("refused to judge: the session's OS ran no move loop for the control window either; run again");
     }
+    assert_eq!(during, Some(moved), "the window followed the cursor inside the move loop");
     assert_eq!(window.bounds(), moved);
     assert_eq!((window.is_maximized(), seen.borrow().clone()), (true, vec![true]), "still maximised");
     window.toggle_maximize().expect("restore");

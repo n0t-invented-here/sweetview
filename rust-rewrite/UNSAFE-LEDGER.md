@@ -1,6 +1,6 @@
 # Unsafe ledger
 
-Rewritten by `bun rust-rewrite/verify.ts <platform> --ledger`. 343 uses in 22 files.
+Rewritten by `bun rust-rewrite/verify.ts <platform> --ledger`. 451 uses in 24 files.
 
 | File | Uses of `unsafe` |
 |---|---|
@@ -13,18 +13,20 @@ Rewritten by `bun rust-rewrite/verify.ts <platform> --ledger`. 343 uses in 22 fi
 | `crates/sweetview-platform-shell/src/icons.rs` | 1 |
 | `crates/sweetview-platform-shell/src/single_instance.rs` | 9 |
 | `crates/sweetview-platform-shell/src/win.rs` | 2 |
-| `crates/sweetview-platform-webview/src/windows/environment.rs` | 1 |
-| `crates/sweetview-platform-webview/src/windows/handlers.rs` | 16 |
-| `crates/sweetview-platform-webview/src/windows/istream.rs` | 11 |
-| `crates/sweetview-platform-webview/src/windows/mod.rs` | 40 |
+| `crates/sweetview-platform-webview/src/windows/environment.rs` | 2 |
+| `crates/sweetview-platform-webview/src/windows/handlers.rs` | 22 |
+| `crates/sweetview-platform-webview/src/windows/host.rs` | 33 |
+| `crates/sweetview-platform-webview/src/windows/istream.rs` | 13 |
+| `crates/sweetview-platform-webview/src/windows/mod.rs` | 45 |
+| `crates/sweetview-platform-webview/src/windows/test_support.rs` | 60 |
 | `crates/sweetview-platform-window/src/folder_dialog.rs` | 9 |
 | `crates/sweetview-platform-window/src/metrics.rs` | 1 |
 | `crates/sweetview-platform-window/src/popup.rs` | 9 |
 | `crates/sweetview-platform-window/src/size_hint.rs` | 1 |
 | `crates/sweetview-platform-window/src/tab_frame.rs` | 16 |
 | `crates/sweetview-platform-window/src/tab_frame_tests.rs` | 12 |
-| `crates/sweetview-platform-window/src/test_support.rs` | 79 |
-| `crates/sweetview-platform-window/src/windows.rs` | 41 |
+| `crates/sweetview-platform-window/src/test_support.rs` | 81 |
+| `crates/sweetview-platform-window/src/windows.rs` | 40 |
 | `crates/sweetview-platform-window/src/windows_tests.rs` | 11 |
 
 ## Reasons
@@ -105,36 +107,57 @@ The registry is `windows-registry` 0.6.1, and the message-only windows are `Mess
 
 ## sweetview-platform-webview
 
-All of it reaches WebView2 through the objects `wry` 0.58.2 hands out (`WebViewExtWindows::controller`, `webview`, `environment`; https://docs.rs/wry/0.58.2/wry/trait.WebViewExtWindows.html) and the typed interfaces of `webview2-com` 0.39.1 (https://docs.rs/webview2-com/0.39.1/webview2_com/), policy level 3. Each COM object is held by a COM reference (`Inner`'s fields, a frame's `cast`, the event args WebView2 holds for the handler's call); on a closed webview a call returns an error. `wry` 0.58.2 was read for each behaviour (`wry-0.58.2/src/lib.rs`, `src/webview2/mod.rs`): what it offers is used (`WebView::focus` for focus, `webview_version` for the runtime check); the rest is in "What `wry` lacks" in `SWEETVIEW-RESTART-PROPOSAL.md`.
+On Windows this crate makes the webview itself (DECISIONS D48): `wry` 0.58.2, which the proposal chose for it, is not used, because its Windows creation path (`wry-0.58.2/src/webview2/mod.rs`, `new_in_hwnd`, `create_controller`, `init_webview`, `set_webview_settings`, `attach_handlers`) sets and registers what the C++ library never did and gives no way to leave it out (`WebViewAttributes`, where its handlers and settings live, is private: `src/lib.rs:538`). Everything reaches WebView2 through the typed interfaces of `webview2-com` 0.39.1 (https://docs.rs/webview2-com/0.39.1/webview2_com/), policy level 3, on the objects this crate's own `Webview` holds. Each COM object is held by a COM reference (a field, a frame's `cast`, the event args WebView2 holds for the handler's call); on a closed webview a call returns an error.
 
-### `crates/sweetview-platform-webview/src/windows/mod.rs` (40)
+### `crates/sweetview-platform-webview/src/windows/host.rs` (33)
 
-- **Keys held** (1: `GetKeyState`). Looked for: `tao` 0.38.0 `ModifiersState` (https://docs.rs/tao/0.38.0/tao/keyboard/struct.ModifiersState.html) is delivered only to `tao`'s own event handler, which a WebView2 accelerator handler is not; `windows` 0.62.2 declares `GetKeyState` `unsafe` (`windows-0.62.2/src/Windows/Win32/UI/Input/KeyboardAndMouse/mod.rs`) and no other crate in the policy reads a key's state. Takes an integer and reads no memory of ours.
-- **Controller and webview settings** (6: `Stop`, `SetAllowExternalDrop`, `AllowExternalDrop`, `NotifyParentWindowPositionChanged`, `CallDevToolsProtocolMethod`, `Close`). Looked for in `wry` 0.58.2 `WebView` (https://docs.rs/wry/0.58.2/wry/struct.WebView.html) and `WebViewExtWindows` (https://docs.rs/wry/0.58.2/wry/trait.WebViewExtWindows.html): no stop, external-drop, devtools-protocol or parent-moved call; its own drop closes the controller after this crate's teardown needs it closed (`requests.md` order). The background colour goes through `wry`'s safe `WebView::set_background_color` (https://docs.rs/wry/0.58.2/wry/struct.WebView.html#method.set_background_color), with an alpha other than 0 and 255 refused by a comparison before the call.
-- **Scripts** (3: one `AddScriptToExecuteOnDocumentCreated` in `add_script`, `ExecuteScript`, `RemoveScriptToExecuteOnDocumentCreated`). `wry`'s `with_initialization_script` (https://docs.rs/wry/0.58.2/wry/struct.WebViewBuilder.html#method.with_initialization_script) cannot remove a script; `evaluate_script` is on the `wry::WebView`, which `WebviewExtras` does not hold. The request filters are in `handlers.rs`.
-- **Answering a request** (8: `Request`, `Uri`, `Method`, `GetDeferral`, one `CreateWebResourceResponse` in `create_response`, `SHCreateMemStream`, `Complete`, one `SetResponse` in `set_response`). `wry`'s `RequestAsyncResponder::respond` takes the whole body (proposal). `SHCreateMemStream` has no safe wrapper; the body slice is borrowed for the call, which copies it. Contained by `Pending` (the deferral, completed once after removal from the table) and `WebviewExtras::drop` (releases what is still open).
-- **Request headers and body** (7: `Headers`, `GetIterator`, `HasCurrentHeader`, `GetCurrentHeader`, `MoveNext`, `Content`, `Seek`). No `wry` API exposes the request object. Out-strings are freed by `take_pwstr`.
-- Outside the count: `webview2_com::take_pwstr` (eight calls here) and `webview2_com::string_from_pcwstr` (one, in `handlers.rs`) are safe functions of `webview2-com` 0.39.1 (`webview2-com-0.39.1/src/pwstr.rs`) that read a NUL-terminated string through a raw pointer, and `take_pwstr` frees it with `CoTaskMemFree`. Each call reads a pointer the COM call just before it filled (or left null, which reads as empty); a comment at each call says which. They are not `unsafe` blocks, so the count does not include them.
-- **Dropped files** (5: `TryGetWebMessageAsString`, `AdditionalObjects`, `Count`, `GetValueAtIndex`, `Path`). `wry`'s `with_drag_drop_handler` revokes WebView2's drop targets (DECISIONS D17).
-- **Accelerator keys** (3: `KeyEventKind`, `VirtualKey`, `SetHandled`) and **navigation failures** (7: `NavigationId` twice, `Uri`, `IsSuccess`, `WebErrorStatus`, `HttpStatusCode`, `Source`). `wry` has no accelerator or failed-navigation callback (proposal, "API references").
+What `wry::WebViewBuilder::build` and `wry::WebView`'s methods did, done as `win32_edge.hh` does it; each call replaces the `wry` call named.
 
-### `crates/sweetview-platform-webview/src/windows/handlers.rs` (16)
+- **The widget** (9: `DefWindowProcW` in its procedure, `GetClientRect`, `GetModuleHandleW`, `RegisterClassExW`, `CreateWindowExW`, `MoveWindow`, `ShowWindow`, `DestroyWindow`, `GetParent`). Replaces `wry`'s `create_container_hwnd` (class `WRY_WEBVIEW`, no `WS_EX_CONTROLPARENT`, not destroyed when a webview filling a given window is dropped) and `set_bounds`, `set_visible`. Contained by `Widget`: it owns the window it made and destroys it in `Drop` only while the thread's table says that very window still exists (an entry goes at its `WM_NCDESTROY`), so a widget destroyed with its parent is never destroyed again under a reused handle. Its procedure runs inside `catch_unwind`. The class is the fork's `webview_widget`, registered once per process.
+- **The controller** (2: `CreateCoreWebView2Controller`, `CoreWebView2`), with the fork's retry and its answer to a `WM_QUIT`; replaces `wry`'s `create_controller` (no retry, `CreateCoreWebView2ControllerWithOptions` with its own options). The completion handler is `webview2-com`'s, its closure inside `catch_unwind`.
+- **The two settings** (3: `Settings`, `SetAreDevToolsEnabled`, `SetIsStatusBarEnabled`): the fork's only ones; replaces `wry`'s `set_webview_settings`, which also turned off zoom, pinch zoom and swipe navigation, turned on non-client regions and wrote general autofill.
+- **Showing it** (2: `SetIsVisible`, `UpdateWindow`), as `embed` shows it.
+- **Content** (3: `Navigate`, `NavigateToString`, `ExecuteScript`); replaces `wry`'s `load_url`, `load_html`, `evaluate_script`.
+- **Bounds, focus, moving, colour, the end** (6: `SetBounds` in the widget's `WM_SIZE`, `MoveFocus`, `SetParent`, `NotifyParentWindowPositionChanged`, `SetDefaultBackgroundColor`, `Close`); replace `wry`'s parent subclass and `focus`, `reparent` (which re-attached its subclass), `set_background_color` and its drop.
+- **Telling WebView2 its window moved** (5: `GetCurrentThreadId`, `SetWinEventHook`, `UnhookWinEvent`, `IsChild`, `NotifyParentWindowPositionChanged`): an out-of-context WinEvent hook on this thread's windows' location changes, held by `MoveWatch` (unhooked in `Drop`, kept from the thread's first widget on, since hooking again with each webview cost a kernel handle each time); on a move of a window holding a widget, that widget's controller is told. Replaces `wry`'s subclass of the parent, which told WebView2 from the parent's moves; nothing is attached to a window the application gave. The procedure runs inside `catch_unwind` and calls no controller while the widget table is borrowed.
+- **A filling widget follows its window** (2: `GetParent` in `window_moved`, one `MoveWindow` in `fill`): on each location change of a window, a widget filling it is sized to its client area again, whoever resized it, so a page filling a window an application made, an adopted one, a Sweetview one or its own follows it; nothing is attached to the window.
+- **Tests only: the colour at first show** (1: `DefaultBackgroundColor` in `note_first_shown`), compiled only for tests and the `test-support` feature: the widget's `WM_SHOWWINDOW` reads the controller's default background the first time it is shown, so a test proves a window's start colour is set before anything is shown. The out-value is a local for the call to fill.
 
-- **Event registrations** (12: six `add_*` and their six `remove_*`). Looked for: `wry` 0.58.2 `WebViewBuilder` (https://docs.rs/wry/0.58.2/wry/struct.WebViewBuilder.html) takes its handlers at build time and has none for these events (web resource requests with a deferral, raw web messages with additional objects, content loading, navigation starting and completed with their ids, accelerator keys). Contained by `Registration`: it holds a COM reference to the object it registered on and removes its token there in `Drop`, so no handler outlives its registration.
-- **Request filters** (4: `AddWebResourceRequestedFilterWithRequestSourceKinds`, `AddWebResourceRequestedFilter`, and the two matching removes). `wry`'s custom protocols (https://docs.rs/wry/0.58.2/wry/struct.WebViewBuilder.html#method.with_asynchronous_custom_protocol) take whole bodies and register their own origins. Contained by `RequestFilter`: it holds a COM reference to the object it added the filter on and removes the filter there in `Drop`, so a failed `register` or the extras' teardown leaves no filter on a live webview with no handler to answer it.
-- The handler objects are `#[implement(..., Agile = false)]` (`windows-implement` 0.60.2, `src/lib.rs`): they hold `Rc` and `Weak` values of the UI thread and are called and released there.
+### `crates/sweetview-platform-webview/src/windows/mod.rs` (45)
 
-### `crates/sweetview-platform-webview/src/windows/istream.rs` (11: 5 source, 6 test)
+- **Keys held** (1: `GetKeyState`). Looked for: `tao` 0.38.0 `ModifiersState` (https://docs.rs/tao/0.38.0/tao/keyboard/struct.ModifiersState.html) is delivered only to `tao`'s own event handler, which a WebView2 accelerator handler is not; `windows` 0.62.2 declares `GetKeyState` `unsafe` and no other crate in the policy reads a key's state. Takes an integer and reads no memory of ours.
+- **Controller and webview calls** (6: `Stop`, `SetAllowExternalDrop`, `AllowExternalDrop`, `NotifyParentWindowPositionChanged`, `CallDevToolsProtocolMethod`, `Close`). No `wry` API had them; the extras close the controller before releasing deferrals (`requests.md` order).
+- **Scripts** (3: one `AddScriptToExecuteOnDocumentCreated` in `add_script`, `ExecuteScript`, `RemoveScriptToExecuteOnDocumentCreated`). `wry`'s `with_initialization_script` could not remove a script.
+- **Answering a request** (8: `Request`, `Uri`, `Method`, `GetDeferral`, one `CreateWebResourceResponse` in `create_response`, `SHCreateMemStream`, `Complete`, one `SetResponse` in `set_response`). `wry`'s `RequestAsyncResponder::respond` took the whole body. `SHCreateMemStream` has no safe wrapper; the body slice is borrowed for the call, which copies it. Contained by `Pending` and `WebviewExtras::drop`.
+- **Request headers and body** (7: `Headers`, `GetIterator`, `HasCurrentHeader`, `GetCurrentHeader`, `MoveNext`, `Content`, `Seek`). Out-strings are freed by `take_pwstr`.
+- **The page's messages and dropped files** (5: `TryGetWebMessageAsString`, `AdditionalObjects`, `Count`, `GetValueAtIndex`, `Path`); the one `WebMessageReceived` registration carries both, as the fork's did, and replaces `wry`'s IPC handler and the `window.ipc` object it defined in every frame.
+- **The clipboard-read permission** (2: `PermissionKind`, `SetState`), the fork's `PermissionRequested` handler; replaces `wry`'s `with_clipboard`.
+- **Popups** (2: `SetHandled`, `Uri`), only while the tabs library has a popup handler; replaces `wry`'s `NewWindowRequested` handler, which was registered on every webview and took a deferral on every popup.
+- **Accelerator keys** (3: `KeyEventKind`, `VirtualKey`, `SetHandled`) and **navigation failures** (7: `NavigationId` twice, `Uri`, `IsSuccess`, `WebErrorStatus`, `HttpStatusCode`, `Source`), and **the new document of a navigation the host sent** (1: `NavigationId` in `ContentLoading`), so a script asked for after it runs there (D21). `wry` had no accelerator or failed-navigation callback.
+- Outside the count: `webview2_com::take_pwstr` and `webview2_com::string_from_pcwstr` are safe functions of `webview2-com` 0.39.1 (`src/pwstr.rs`) that read a NUL-terminated string through a raw pointer the COM call just before filled (or left null, which reads as empty); a comment at each call says which.
 
-- **The streamed body's `IStream`** (4: the two `pcbread` writes and the slice over `pv` in `Read`, the `STATSTG` write in `Stat`). Looked for: `wry` 0.58.2 `RequestAsyncResponder::respond` (https://docs.rs/wry/0.58.2/wry/struct.RequestAsyncResponder.html) takes a whole body, so it has no streamed body; the `windows` crate's `#[implement]` hands the implementation COM's raw out-pointers. The `ISequentialStream`/`IStream` contracts: each pointer is checked non-null and valid for the call, and the slice does not outlive it.
+### `crates/sweetview-platform-webview/src/windows/handlers.rs` (22)
+
+- **Event registrations** (18: nine `add_*` and their nine `remove_*`: `WebResourceRequested`, `WebMessageReceived`, `ContentLoading`, `NavigationStarting`, `NavigationCompleted`, `AcceleratorKeyPressed`, `PermissionRequested`, `NewWindowRequested`, and `DownloadStarting`, which only the tests' read-back registers). Contained by `Registration`: it holds a COM reference to the object it registered on and removes its token there in `Drop`.
+- **Request filters** (4: `AddWebResourceRequestedFilterWithRequestSourceKinds`, `AddWebResourceRequestedFilter`, and the two matching removes). Contained by `RequestFilter`.
+- The handler objects are `#[implement(..., Agile = false)]` (`windows-implement` 0.60.2): they hold `Rc` and `Weak` values of the UI thread and are called and released there; a test checks each of the ten handler types answers neither `IAgileObject` nor `IMarshal`.
+
+### `crates/sweetview-platform-webview/src/windows/istream.rs` (13: 5 source, 8 test)
+
+- **The streamed body's `IStream`** (4: the two `pcbread` writes and the copy into `pv` in `Read`, the `STATSTG` write in `Stat`). `wry`'s `RequestAsyncResponder::respond` took a whole body. Each pointer is checked non-null and valid for the call; `Read` copies each piece to `pv` plus its offset, which `StreamState::read_with` keeps within `cb`, and never forms a slice over the caller's buffer, whose bytes may not be initialised.
 - **Reading a stream** (1: `Read` in `read_into`), used for the request body. The buffer is lent for the call and its length bounds the read.
-- Tests (6): `Seek`, `Write`, `Clone`, `Stat` and two `Read`s with a null buffer, called through the COM interface so the vtable is what is tested.
+- Tests (8): `Seek`, `Write`, `Clone`, `Stat`, two `Read`s with a null buffer, and a `Read` into uninitialised storage with the slice over the bytes it reports.
 
-### `crates/sweetview-platform-webview/src/windows/environment.rs` (1)
+### `crates/sweetview-platform-webview/src/windows/environment.rs` (2)
 
-- **Creating the environment** (1: `CreateCoreWebView2EnvironmentWithOptions`). `wry` creates its own with options that cannot share a profile with today's (D15); `webview2-com` exposes only the raw function. The folder is an `HSTRING` that outlives the call; the handler is a COM object WebView2 holds until it completes. The default folder is `dirs` 7.0.0 `config_dir` (https://docs.rs/dirs/7.0.0/dirs/fn.config_dir.html; `dirs-sys-0.5.0/src/lib.rs`, `known_folder(FOLDERID_RoamingAppData)`), the runtime check `wry::webview_version`, and the STA the loop's `ComApartment`.
+- **Creating the environment** (1: `CreateCoreWebView2EnvironmentWithOptions`), with null options as the fork passes; replaces `wry`'s `create_environment`, whose browser arguments, language and extensions flag cannot share a profile with the fork's (D15). The folder is an `HSTRING` that outlives the call; the handler is a COM object WebView2 holds until it completes.
+- **Whether a runtime is installed** (1: `GetAvailableCoreWebView2BrowserVersionString` with a null folder, as the fork asks); replaces `wry::webview_version`. The out-string is freed by `take_pwstr`.
 
-`pump.rs` and `tests/teardown.rs` have none: the pump is the loop's `wait_message`, and the teardown test counts through `resource_counts`.
+### `crates/sweetview-platform-webview/src/windows/test_support.rs` (60)
+
+- **Reading back what a person would see**, compiled only for tests and the `test-support` feature, which only dev-dependencies enable, so none of it is in the binding: `Settings` and the sixteen boolean getters (17); `SetIsGeneralAutofillEnabled` (1); `ParentWindow`, `IsWindow`, `GetFocus` twice, `IsChild`, `SetFocus` on a borrowed window (6); `GetWindowLongPtrW` for the widget's extended style, `FindWindowExW` and `GetParent` to count widgets (3); the download watch's `Handled` and `ResultFilePath`, read and never set (2); `Profile`, `DefaultDownloadFolderPath` and `SetDefaultDownloadFolderPath` to point a test's downloads at a scratch folder and back (3); `IsDefaultDownloadDialogOpen`, `CloseDefaultDownloadDialog` (2); `DocumentTitle` (1); `GetAvailableCoreWebView2BrowserVersionString` (1); `SendMessageW` with `WM_ACTIVATE` (1); `ZoomFactor`, `ClientToScreen`, `GetAncestor`, `GetWindowRect`, `GetSystemMetrics` (5); and for keeping a real-input test's window clear of other programs' windows `GetAncestor`, `SetWindowPos` (topmost), `WindowFromPoint`, `GetAncestor`, `GetWindowTextW` (5); and to count the process's visible top-level windows (a popup opened or not) `FindWindowExW`, `GetWindowThreadProcessId`, `IsWindowVisible` (3); and to move a test's top-level window as dragging it would `GetAncestor`, `GetWindowRect`, `SetWindowPos` (3); a bare window of the test's own, as an application makes one, and its resize (`CreateWindowExW`, `SetWindowPos`, `DestroyWindow`, 3); and the sizes of a container, its window's client area and the controller's bounds (`GetClientRect` twice, `GetParent`, `Bounds`, 4). Each reads WebView2's or the OS's own state, so a test asserts what WebView2 has; out-values are locals for the call to fill. No raw handle is in a signature: windows come in as `BorrowedWindow`.
+
+`pump.rs` and the integration tests have none: the pump is the loop's `wait_message`, and the tests read back through `test_support`.
 
 ## sweetview-platform-window
 
