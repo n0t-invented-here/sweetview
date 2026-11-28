@@ -13,9 +13,10 @@ use windows::core::{Interface, BOOL, HSTRING, PWSTR};
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Input::KeyboardAndMouse::GetFocus;
 use windows::Win32::UI::WindowsAndMessaging::{IsChild, IsWindow};
-use wry::WebViewExtWindows;
 
 use super::handlers::{DownloadStarting, Registration};
+use super::host::Webview;
+use sweetview_platform_window::BorrowedWindow;
 
 /// Every boolean setting of `ICoreWebView2Settings` to `ICoreWebView2Settings9`,
 /// as WebView2 reports it. `None` where the runtime lacks the interface.
@@ -73,15 +74,15 @@ fn flag(get: impl FnOnce(&mut BOOL) -> windows::core::Result<()>) -> bool {
     value.as_bool()
 }
 
-fn settings_of(webview: &wry::WebView) -> ICoreWebView2Settings {
-    let core = webview.webview();
+fn settings_of(webview: &Webview) -> ICoreWebView2Settings {
+    let core = webview.core().clone();
     // SAFETY: `core` is a COM reference this frame owns to the live ICoreWebView2 of
     // `webview`; `Settings` takes no arguments and returns an owned reference.
     unsafe { core.Settings() }.expect("Settings")
 }
 
 /// The page settings of `webview`, read from WebView2.
-pub fn page_settings(webview: &wry::WebView) -> PageSettings {
+pub fn page_settings(webview: &Webview) -> PageSettings {
     let s = settings_of(webview);
     // Each getter: `s`, or the interface `cast` from it, is a COM reference this frame owns
     // to the live settings object, and `v` is the BOOL `flag` owns for the call to fill.
@@ -123,7 +124,7 @@ pub fn page_settings(webview: &wry::WebView) -> PageSettings {
 
 /// Sets general autofill on `webview`'s settings, as an application reaching
 /// WebView2 itself (or another program on the same profile) could.
-pub fn set_general_autofill(webview: &wry::WebView, enabled: bool) {
+pub fn set_general_autofill(webview: &Webview, enabled: bool) {
     let s4 = settings_of(webview).cast::<ICoreWebView2Settings4>().expect("ICoreWebView2Settings4");
     // SAFETY: `s4` is a COM reference this frame owns to the live settings object; the flag
     // is passed by value.
@@ -132,8 +133,8 @@ pub fn set_general_autofill(webview: &wry::WebView, enabled: bool) {
 
 /// The window WebView2 is parented to (`wry`'s container window); `None` once
 /// the controller is closed and no longer answers.
-fn container(webview: &wry::WebView) -> Option<HWND> {
-    let controller = webview.controller();
+fn container(webview: &Webview) -> Option<HWND> {
+    let controller = webview.controller().clone();
     let mut parent = HWND::default();
     // SAFETY: `controller` is a COM reference this frame owns to the controller, and
     // `parent` a local HWND for the call to fill; a closed controller returns an error.
@@ -143,7 +144,7 @@ fn container(webview: &wry::WebView) -> Option<HWND> {
 
 /// Whether the webview is still in place: its controller answers and `wry`'s
 /// container window exists.
-pub fn container_alive(webview: &wry::WebView) -> bool {
+pub fn container_alive(webview: &Webview) -> bool {
     let Some(window) = container(webview) else { return false };
     // SAFETY: `IsWindow` takes any handle value, a stale one included, and reads no memory of ours.
     unsafe { IsWindow(Some(window)) }.as_bool()
@@ -151,7 +152,7 @@ pub fn container_alive(webview: &wry::WebView) -> bool {
 
 /// Whether this thread's keyboard focus is in `webview` (its container or a
 /// window inside it).
-pub fn focus_is_inside(webview: &wry::WebView) -> bool {
+pub fn focus_is_inside(webview: &Webview) -> bool {
     let Some(window) = container(webview) else { return false };
     // SAFETY: `GetFocus` takes no arguments and reads the calling thread's input state.
     let focus = unsafe { GetFocus() };
@@ -169,7 +170,7 @@ pub struct DownloadWatch {
 }
 
 impl DownloadWatch {
-    pub fn attach(webview: &wry::WebView, folder: PathBuf) -> Self {
+    pub fn attach(webview: &Webview, folder: PathBuf) -> Self {
         let seen: Rc<RefCell<Vec<bool>>> = Rc::default();
         let record = seen.clone();
         let handler = DownloadStarting::create(move |args| {
@@ -189,7 +190,7 @@ impl DownloadWatch {
             // SAFETY: `args` as above; `path` is an owned HSTRING for the call.
             let _ = unsafe { args.SetResultFilePath(&path) };
         });
-        let webview4 = webview.webview().cast::<ICoreWebView2_4>().expect("ICoreWebView2_4");
+        let webview4 = webview.core().clone().cast::<ICoreWebView2_4>().expect("ICoreWebView2_4");
         let registration = Registration::add_download_starting(&webview4, &handler).expect("add_DownloadStarting");
         Self { seen, _registration: registration }
     }
@@ -202,8 +203,8 @@ impl DownloadWatch {
 
 /// Whether WebView2's own download dialog is open on `webview`; `None` without
 /// `ICoreWebView2_9` (before Runtime 1.0.1072).
-pub fn download_dialog_open(webview: &wry::WebView) -> Option<bool> {
-    let webview9 = webview.webview().cast::<ICoreWebView2_9>().ok()?;
+pub fn download_dialog_open(webview: &Webview) -> Option<bool> {
+    let webview9 = webview.core().clone().cast::<ICoreWebView2_9>().ok()?;
     let mut open = BOOL::default();
     // SAFETY: `webview9` is a COM reference this frame owns, and `open` a local BOOL to fill.
     unsafe { webview9.IsDefaultDownloadDialogOpen(&mut open) }.ok()?;
@@ -211,19 +212,58 @@ pub fn download_dialog_open(webview: &wry::WebView) -> Option<bool> {
 }
 
 /// Closes WebView2's own download dialog on `webview`, if it is open.
-pub fn close_download_dialog(webview: &wry::WebView) {
-    if let Ok(webview9) = webview.webview().cast::<ICoreWebView2_9>() {
+pub fn close_download_dialog(webview: &Webview) {
+    if let Ok(webview9) = webview.core().clone().cast::<ICoreWebView2_9>() {
         // SAFETY: `webview9` is a COM reference this frame owns; no arguments.
         let _ = unsafe { webview9.CloseDefaultDownloadDialog() };
     }
 }
 
-/// Gives this thread's keyboard focus to the window with handle value
-/// `window` (one of this thread's), as a person clicking a native control would.
-pub fn focus_window(window: isize) {
-    // SAFETY: `SetFocus` takes a handle value; one that names no window of this thread
-    // makes the call fail, which the test then sees through `focused_window`.
-    let _ = unsafe { windows::Win32::UI::Input::KeyboardAndMouse::SetFocus(Some(HWND(window as *mut _))) };
+/// Gives this thread's keyboard focus to `window` (one of this thread's), as a
+/// person clicking a native control would.
+pub fn focus_window(window: &BorrowedWindow<'_>) {
+    let hwnd = HWND(sweetview_platform_window::handle_value(window) as *mut _);
+    // SAFETY: `hwnd` is the handle of the borrowed window, alive for the call; a window of
+    // another thread makes the call fail, which the test then sees through `focused_window`.
+    let _ = unsafe { windows::Win32::UI::Input::KeyboardAndMouse::SetFocus(Some(hwnd)) };
+}
+
+/// Whether this thread's keyboard focus is on `window` itself.
+pub fn has_focus(window: &BorrowedWindow<'_>) -> bool {
+    focused_window() == sweetview_platform_window::handle_value(window)
+}
+
+/// The extended style of the webview's own widget window.
+pub fn widget_ex_style(webview: &Webview) -> u32 {
+    use windows::Win32::UI::WindowsAndMessaging::{GetWindowLongPtrW, GWL_EXSTYLE};
+    // SAFETY: `GetWindowLongPtrW` takes a handle value and an index and reads no memory of ours.
+    unsafe { GetWindowLongPtrW(HWND(webview.widget_value() as *mut _), GWL_EXSTYLE) as u32 }
+}
+
+/// How many `webview_widget` windows `window` has as children now.
+pub fn widget_children(window: &BorrowedWindow<'_>) -> usize {
+    use windows::Win32::UI::WindowsAndMessaging::{FindWindowExW, GetParent};
+    let parent = HWND(sweetview_platform_window::handle_value(window) as *mut _);
+    let mut count = 0;
+    let mut after: Option<HWND> = None;
+    loop {
+        // SAFETY: `parent` is the borrowed window's handle and `after` a sibling the last call
+        // returned (or none); the class name is a static wide string.
+        let found = unsafe { FindWindowExW(Some(parent), after, windows::core::w!("webview_widget"), windows::core::PCWSTR::null()) };
+        let Ok(child) = found else { break };
+        // SAFETY: `GetParent` takes a handle value and reads no memory of ours.
+        if unsafe { GetParent(child) }.is_ok_and(|p| p == parent) {
+            count += 1;
+        }
+        after = Some(child);
+    }
+    count
+}
+
+/// Lets go of this thread's shared WebView2 environment, once every webview
+/// on it is gone, while the thread still runs.
+pub fn release_environment() {
+    super::environment::release_shared();
 }
 
 /// The handle value of the window with this thread's keyboard focus, 0 for none.
@@ -233,8 +273,8 @@ pub fn focused_window() -> isize {
 }
 
 /// `ICoreWebView2Controller::ZoomFactor` of `webview`.
-pub fn zoom_factor(webview: &wry::WebView) -> f64 {
-    let controller = webview.controller();
+pub fn zoom_factor(webview: &Webview) -> f64 {
+    let controller = webview.controller().clone();
     let mut factor = 0.0;
     // SAFETY: `controller` is a COM reference this frame owns to the live controller of
     // `webview`, and `factor` a local f64 for the call to fill.
@@ -243,7 +283,7 @@ pub fn zoom_factor(webview: &wry::WebView) -> f64 {
 }
 
 /// Where the top-left corner of `webview`'s area is on the screen, in physical pixels.
-pub fn screen_origin(webview: &wry::WebView) -> (i32, i32) {
+pub fn screen_origin(webview: &Webview) -> (i32, i32) {
     let window = container(webview).expect("a live webview");
     let mut point = windows::Win32::Foundation::POINT::default();
     // SAFETY: `window` is the webview's container, a window of this thread, and `point` a
@@ -254,7 +294,7 @@ pub fn screen_origin(webview: &wry::WebView) -> (i32, i32) {
 
 /// The outer rectangle (left, top, right, bottom) of the top-level window
 /// `webview` is in, in physical pixels.
-pub fn top_level_rect(webview: &wry::WebView) -> (i32, i32, i32, i32) {
+pub fn top_level_rect(webview: &Webview) -> (i32, i32, i32, i32) {
     let window = container(webview).expect("a live webview");
     // SAFETY: `GetAncestor` takes a handle value and a flag, and reads no memory of ours.
     let root = unsafe { windows::Win32::UI::WindowsAndMessaging::GetAncestor(window, windows::Win32::UI::WindowsAndMessaging::GA_ROOT) };
@@ -271,7 +311,7 @@ pub fn screen_width() -> i32 {
     unsafe { windows::Win32::UI::WindowsAndMessaging::GetSystemMetrics(windows::Win32::UI::WindowsAndMessaging::SM_CXSCREEN) }
 }
 
-fn root_of(webview: &wry::WebView) -> HWND {
+fn root_of(webview: &Webview) -> HWND {
     let window = container(webview).expect("a live webview");
     // SAFETY: `GetAncestor` takes a handle value and a flag, and reads no memory of ours.
     unsafe { windows::Win32::UI::WindowsAndMessaging::GetAncestor(window, windows::Win32::UI::WindowsAndMessaging::GA_ROOT) }
@@ -280,7 +320,7 @@ fn root_of(webview: &wry::WebView) -> HWND {
 /// Keeps the top-level window `webview` is in above every window that is not
 /// topmost itself, so other programs' windows on a shared desktop do not cover
 /// it during a test with real input.
-pub fn keep_on_top(webview: &wry::WebView) {
+pub fn keep_on_top(webview: &Webview) {
     use windows::Win32::UI::WindowsAndMessaging::{SetWindowPos, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE};
     let root = root_of(webview);
     // SAFETY: `root` is a top-level window of this thread; the flags keep its position and size.
@@ -289,7 +329,7 @@ pub fn keep_on_top(webview: &wry::WebView) {
 
 /// `None` when the screen point `(x, y)` is on the top-level window `webview`
 /// is in; otherwise the title of the top-level window that is there.
-pub fn covered_at(webview: &wry::WebView, x: i32, y: i32) -> Option<String> {
+pub fn covered_at(webview: &Webview, x: i32, y: i32) -> Option<String> {
     use windows::Win32::UI::WindowsAndMessaging::{GetAncestor, GetWindowTextW, WindowFromPoint, GA_ROOT};
     let ours = root_of(webview);
     // SAFETY: `WindowFromPoint` takes a point by value and reads no memory of ours.
@@ -303,4 +343,28 @@ pub fn covered_at(webview: &wry::WebView, x: i32, y: i32) -> Option<String> {
     // SAFETY: `title` is a local buffer the call fills, its length taken from the slice.
     let n = unsafe { GetWindowTextW(root, &mut title) };
     Some(String::from_utf16_lossy(&title[..n.max(0) as usize]))
+}
+
+/// A webview made on `environment` instead of the thread's shared one.
+pub fn webview_on(environment: &ICoreWebView2Environment, parent: &BorrowedWindow<'_>, layout: super::host::Layout) -> Result<Webview, sweetview_http::ErrorCode> {
+    Webview::create_on(environment, parent, layout, false)
+}
+
+/// The title of the document in `webview` (`ICoreWebView2::DocumentTitle`).
+pub fn document_title(webview: &Webview) -> String {
+    let mut title = PWSTR::null();
+    // SAFETY: `title` is a local PWSTR for the call to fill, freed by `take_pwstr` below.
+    let _ = unsafe { webview.core().DocumentTitle(&mut title) };
+    // `title` was filled by the call just above (or left null, which reads as empty).
+    webview2_com::take_pwstr(title)
+}
+
+/// The version of the installed WebView2 Runtime, empty when there is none.
+pub fn runtime_version() -> String {
+    let mut version = PWSTR::null();
+    // SAFETY: a null browser folder asks for the installed runtime; `version` is a local PWSTR
+    // for the call to fill, freed by `take_pwstr` below.
+    let _ = unsafe { GetAvailableCoreWebView2BrowserVersionString(windows::core::PCWSTR::null(), &mut version) };
+    // `version` was filled by the call just above (or left null, which reads as empty).
+    webview2_com::take_pwstr(version)
 }

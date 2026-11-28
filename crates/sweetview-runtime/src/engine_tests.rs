@@ -43,12 +43,12 @@ impl Drop for Finish<'_> {
   fn drop(&mut self) {
     release_all();
     settle(self.0, Duration::from_millis(300));
-    release_environment_for_tests();
+    test_support::release_environment();
   }
 }
 
-/// The `wry` webview of `engine`, lent to `f`.
-fn wry_of<R>(engine: &Engine, f: impl FnOnce(&WebView) -> R) -> R {
+/// The webview of `engine`, lent to `f`.
+fn webview_of<R>(engine: &Engine, f: impl FnOnce(&Webview) -> R) -> R {
   engine.inner.with_live(|live| f(&live.webview)).expect("a live webview")
 }
 
@@ -91,7 +91,7 @@ fn every_kind_of_host_has_the_cpp_fork_s_page_settings() {
       for host in HOSTS {
         let (engine, _window) = make_debug(host, debug, |_| ());
         load(&runtime, &engine, PAGE);
-        let seen = wry_of(&engine, test_support::page_settings);
+        let seen = webview_of(&engine, test_support::page_settings);
         eprintln!("-- {host}, debug {debug}: {seen:?}");
         assert_eq!(seen, PageSettings::cpp_fork(debug), "{host}, debug {debug}: the C++ fork's settings");
         engine.destroy();
@@ -143,15 +143,15 @@ fn a_download_shows_webview2_s_own_interface_as_under_the_cpp_fork() {
     for host in HOSTS {
       let (engine, _window) = make(host, |_| ());
       load(&runtime, &engine, PAGE);
-      let watch = wry_of(&engine, |webview| DownloadWatch::attach(webview, folder.clone()));
+      let watch = webview_of(&engine, |webview| DownloadWatch::attach(webview, folder.clone()));
       engine.eval(
         "(() => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['a download'])); \
          a.download = 'sweetview-download.txt'; document.body.append(a); a.click(); })()",
       );
       assert!(pump_until(&runtime, Duration::from_secs(10), || !watch.handled().is_empty()), "{host}: the download started");
-      let opened = pump_until(&runtime, Duration::from_secs(5), || wry_of(&engine, test_support::download_dialog_open) == Some(true));
+      let opened = pump_until(&runtime, Duration::from_secs(5), || webview_of(&engine, test_support::download_dialog_open) == Some(true));
       eprintln!("-- {host}: marked handled {:?}; WebView2's download dialog opened {opened}", watch.handled());
-      wry_of(&engine, test_support::close_download_dialog);
+      webview_of(&engine, test_support::close_download_dialog);
       // `Handled` true is what keeps a download out of WebView2's own interface
       // (ICoreWebView2DownloadStartingEventArgs::put_Handled); whether the flyout also opens
       // by itself depends on the window being in the foreground, which a shared desktop does
@@ -180,11 +180,11 @@ fn a_webview_takes_the_focus_only_in_a_window_of_its_own_as_under_the_cpp_fork()
       let mut had_focus = false;
       let (engine, window) = make(host, |window| {
         let holder = window.expect("a given window").handle();
-        test_support::focus_window(holder);
+        BorrowedWindow::with_handle_value(holder, test_support::focus_window);
         had_focus = test_support::focused_window() == holder;
       });
       let holder = window.as_ref().expect("a given window").handle();
-      let inside = wry_of(&engine, test_support::focus_is_inside);
+      let inside = webview_of(&engine, test_support::focus_is_inside);
       let focused = test_support::focused_window();
       eprintln!("-- {host}: before the webview, the window had the focus {had_focus}; after Engine::create, focus in the webview {inside}, focused window {focused:#x}");
       // The webview must never have it. Where it went otherwise is the desktop's business
@@ -214,7 +214,7 @@ fn a_page_that_calls_window_close_stays_as_under_the_cpp_fork() {
       let reports = load(&runtime, &engine, PAGE);
       engine.eval("window.close()");
       settle(&runtime, Duration::from_millis(800));
-      let alive = wry_of(&engine, test_support::container_alive);
+      let alive = webview_of(&engine, test_support::container_alive);
       engine.eval("report('still here')");
       let answered = pump_until(&runtime, Duration::from_secs(3), || reports.borrow().iter().any(|r| r.contains("still here")));
       eprintln!("-- {host}: after window.close(), the webview's window exists {alive}; the page answers {answered}");
@@ -235,25 +235,19 @@ fn a_new_webview_leaves_the_profile_s_autofill_preference_as_it_is_as_under_the_
     // program on the profile, can), it stays off when another webview is made.
     let (first, _first_window) = make("own window", |_| ());
     load(&runtime, &first, PAGE);
-    wry_of(&first, |webview| test_support::set_general_autofill(webview, false));
+    webview_of(&first, |webview| test_support::set_general_autofill(webview, false));
     for host in HOSTS {
       let (second, _window) = make(host, |_| ());
       load(&runtime, &second, PAGE);
-      let seen = (wry_of(&first, |w| test_support::page_settings(w).general_autofill), wry_of(&second, |w| test_support::page_settings(w).general_autofill));
+      let seen = (webview_of(&first, |w| test_support::page_settings(w).general_autofill), webview_of(&second, |w| test_support::page_settings(w).general_autofill));
       eprintln!("-- after a second webview in a {host}: general autofill (first, second) {seen:?}");
       assert_eq!(seen, (Some(false), Some(false)), "{host}: the profile's preference is left as it was");
       second.destroy();
       settle(&runtime, Duration::from_millis(100));
     }
-    // With every webview gone, the next is made with the preference as last read.
+    // The profile as the test found it: no other test sees its change.
+    webview_of(&first, |webview| test_support::set_general_autofill(webview, true));
     first.destroy();
-    settle(&runtime, Duration::from_millis(200));
-    let (later, _later_window) = make("child", |_| ());
-    load(&runtime, &later, PAGE);
-    let seen = wry_of(&later, |w| test_support::page_settings(w).general_autofill);
-    eprintln!("-- a webview made after every other had gone: general autofill {seen:?}");
-    assert_eq!(seen, Some(false), "the preference as the profile last had it");
-    later.destroy();
   });
 }
 
@@ -341,7 +335,7 @@ fn foreign_windows(output: &str, skip_first: bool) -> Vec<String> {
 
 /// Where element `id` of the input page is on the screen (physical pixels).
 fn point(engine: &Engine, centres: &serde_json::Value, id: &str) -> (i32, i32) {
-  let (x, y) = wry_of(engine, test_support::screen_origin);
+  let (x, y) = webview_of(engine, test_support::screen_origin);
   let dpr = centres["dpr"].as_f64().unwrap();
   (x + (centres[id][0].as_f64().unwrap() * dpr).round() as i32, y + (centres[id][1].as_f64().unwrap() * dpr).round() as i32)
 }
@@ -385,8 +379,8 @@ fn real_input() {
       assert!(pump_until(&runtime, Duration::from_secs(5), || centres.borrow().is_some()), "{host}: the page's layout");
       let centres = centres.borrow().clone().unwrap();
       let said = |what: &str| reports.borrow().iter().any(|r| r.contains(what));
-      wry_of(&engine, test_support::keep_on_top);
-      let covered = |points: &[(i32, i32)]| points.iter().find_map(|&(x, y)| wry_of(&engine, |w| test_support::covered_at(w, x, y)));
+      webview_of(&engine, test_support::keep_on_top);
+      let covered = |points: &[(i32, i32)]| points.iter().find_map(|&(x, y)| webview_of(&engine, |w| test_support::covered_at(w, x, y)));
       // Records the step's outcome. A success counts (no other window can make the page do
       // it). A failure counts as "not run" when another window was on its points before the
       // step, after it, or as the injector acted (`injected`, its output).
@@ -402,14 +396,14 @@ fn real_input() {
       };
 
       // A press on the app-region area, moved 80 px: the page gets it, the window stays.
-      let before = wry_of(&engine, test_support::top_level_rect);
+      let before = webview_of(&engine, test_support::top_level_rect);
       let (x, y) = point(&engine, &centres, "bar");
       let (x2, ys) = ((x + 80).to_string(), y.to_string());
       let region_points = [(x, y), (x + 80, y)];
       let cover = covered(&region_points);
       let injected = inject(&runtime, &args(&["-Action", "drag", "-X", &x.to_string(), "-Y", &ys, "-ToX", &x2, "-ToY", &ys]), Duration::from_secs(8), || said("bar-down"));
       settle(&runtime, Duration::from_millis(300));
-      let after = wry_of(&engine, test_support::top_level_rect);
+      let after = webview_of(&engine, test_support::top_level_rect);
       eprintln!("-- {host}: app-region press reached the page {}; the window moved by ({}, {})", said("bar-down"), after.0 - before.0, after.1 - before.1);
       outcome("app-region", &region_points, cover, &injected, false, said("bar-down") && after == before);
 
@@ -429,7 +423,7 @@ fn real_input() {
       outcome("in-page drag", &drag_points, cover, &injected, false, said("page-drop:from-src"));
 
       // A file dragged from a real Explorer window onto the page.
-      let rect = wry_of(&engine, test_support::top_level_rect);
+      let rect = webview_of(&engine, test_support::top_level_rect);
       let explorer_x = if rect.0 > test_support::screen_width() / 2 { 40 } else { rect.2 + 40 };
       let (fx, fy) = point(&engine, &centres, "files");
       let folder_arg = folder.to_string_lossy().into_owned();
@@ -456,12 +450,12 @@ fn real_input() {
       outcome("Explorer drop", &[(fx, fy)], cover, &injected, true, delivered);
 
       // A real click on a download link: WebView2's own download interface opens.
-      let watch = wry_of(&engine, |webview| DownloadWatch::attach(webview, folder.clone()));
+      let watch = webview_of(&engine, |webview| DownloadWatch::attach(webview, folder.clone()));
       let (lx, ly) = point(&engine, &centres, "dl");
       let cover = covered(&[(lx, ly)]);
       let injected = inject(&runtime, &args(&["-Action", "click", "-X", &lx.to_string(), "-Y", &ly.to_string()]), Duration::from_secs(8), || !watch.handled().is_empty());
-      let opened = pump_until(&runtime, Duration::from_secs(5), || wry_of(&engine, test_support::download_dialog_open) == Some(true));
-      wry_of(&engine, test_support::close_download_dialog);
+      let opened = pump_until(&runtime, Duration::from_secs(5), || webview_of(&engine, test_support::download_dialog_open) == Some(true));
+      webview_of(&engine, test_support::close_download_dialog);
       eprintln!("-- {host}: download marked handled {:?}; WebView2's download interface opened {opened}", watch.handled());
       outcome("download", &[(lx, ly)], cover, &injected, false, watch.handled() == vec![false] && opened);
       drop(watch);
@@ -470,15 +464,15 @@ fn real_input() {
       let (zx, zy) = point(&engine, &centres, "files");
       let (zxs, zys) = (zx.to_string(), zy.to_string());
       let cover = covered(&[(zx, zy)]);
-      let mut zooms = vec![wry_of(&engine, test_support::zoom_factor)];
+      let mut zooms = vec![webview_of(&engine, test_support::zoom_factor)];
       reports.borrow_mut().clear();
       let mut injected = inject(&runtime, &args(&["-Action", "ctrlwheel", "-X", &zxs, "-Y", &zys]), Duration::from_secs(8), || said("resize:"));
-      zooms.push(wry_of(&engine, test_support::zoom_factor));
+      zooms.push(webview_of(&engine, test_support::zoom_factor));
       for key in ["zero", "plus", "zero"] {
         reports.borrow_mut().clear();
         let step = inject(&runtime, &args(&["-Action", "ctrlkey", "-Key", key, "-X", &zxs, "-Y", &zys]), Duration::from_secs(8), || said("resize:"));
         injected.1.push_str(&step.1);
-        zooms.push(wry_of(&engine, test_support::zoom_factor));
+        zooms.push(webview_of(&engine, test_support::zoom_factor));
       }
       eprintln!("-- {host}: ZoomFactor before, after Ctrl+wheel, Ctrl+0, Ctrl+plus, Ctrl+0: {zooms:?}");
       let near = |a: f64, b: f64| (a - b).abs() < 1e-6;

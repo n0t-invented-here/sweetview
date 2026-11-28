@@ -1,10 +1,9 @@
-//! The webview engine: one `wry` webview and everything Sweetview adds to it.
-//!
-//! `wry` creates the webview, runs scripts and carries the page's messages.
-//! Assets, the request handler, streamed responses, drops and the tab hooks
-//! come from `sweetview-platform-webview`. This module is the glue: it owns
-//! both, keeps the bindings (`bind`, `unbind`, `return`), and decides when a
-//! webview is really dropped.
+//! The webview engine: one webview of `sweetview-platform-webview` (made as
+//! the C++ library's `win32_edge.hh` makes it) and everything Sweetview adds
+//! to it: assets, the request handler, streamed responses, drops and the tab
+//! hooks. This module is the glue: it owns both, lays the webview out and
+//! focuses it as the C++ library did, keeps the bindings (`bind`, `unbind`,
+//! `return`), and decides when a webview is really dropped.
 //!
 //! Two rules shape it:
 //!
@@ -23,13 +22,12 @@ use std::rc::{Rc, Weak};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
-use sweetview_platform_webview::{ErrorCode, ExtrasOptions, Responder, UserScript, WebviewExtras};
+use sweetview_platform_webview::{ErrorCode, ExtrasOptions, Layout, Responder, UserScript, Webview, WebviewExtras};
 pub use sweetview_platform_webview::{KeyData, NavigationFailure, RawRequest};
 use sweetview_platform_window::BorrowedWindow;
-use tao::dpi::{LogicalSize, PhysicalPosition, PhysicalSize};
+use tao::dpi::LogicalSize;
 use tao::event::{Event, WindowEvent};
 use tao::window::{Window as TaoWindow, WindowBuilder};
-use wry::{NewWindowResponse, WebView, WebViewBuilder};
 
 use crate::bridge::{self, BridgeCall};
 use crate::error::{Error, Result};
@@ -80,8 +78,6 @@ pub enum Host {
 }
 
 type BindingFn = Rc<dyn Fn(&str, &str)>;
-/// The popup handler, shared with the closure `wry` calls for a new-window request.
-type NewWindowSlot = Rc<RefCell<Option<Rc<dyn Fn(String)>>>>;
 
 struct Binding {
   /// Distinguishes this registration from a later one under the same name.
@@ -102,7 +98,7 @@ enum HostWindow {
 /// was added to the webview, the webview, then its own window.
 struct Live {
   extras: WebviewExtras,
-  webview: WebView,
+  webview: Webview,
   window: HostWindow,
 }
 
@@ -117,20 +113,6 @@ thread_local! {
   static CALLBACK_DEPTH: Cell<u32> = const { Cell::new(0) };
   /// Webviews destroyed while a callback was on the stack, whose drop waits for a later turn.
   static UNDROPPED: RefCell<Vec<Weak<Inner>>> = const { RefCell::new(Vec::new()) };
-  /// The profile's general autofill preference as last read from one of its webviews, for
-  /// a webview made when none is left.
-  static AUTOFILL: Cell<Option<bool>> = const { Cell::new(None) };
-}
-
-/// The profile's general autofill preference as it is now: read from a live webview of
-/// this thread (they all share one environment, so one profile), or as last read.
-fn profile_autofill() -> Option<bool> {
-  let live: Vec<Rc<Inner>> = ENGINES.try_with(|engines| engines.borrow().values().cloned().collect()).unwrap_or_default();
-  let read = live.iter().find_map(|inner| inner.with_live(|live| sweetview_platform_webview::general_autofill(&live.webview)).flatten());
-  if read.is_some() {
-    AUTOFILL.with(|cell| cell.set(read));
-  }
-  read.or_else(|| AUTOFILL.with(Cell::get))
 }
 
 /// Destroys every webview of this thread that is still alive, and drops those whose drop was
@@ -199,7 +181,6 @@ struct Inner {
   bind_script: RefCell<Option<UserScript>>,
   /// Scripts added with `init`; kept so they stay registered.
   init_scripts: RefCell<Vec<UserScript>>,
-  new_window: NewWindowSlot,
   /// Navigations and evaluations asked for while a script added by `init` or
   /// `bind` was not yet registered, in the order asked; carried out once
   /// every script is.
@@ -231,75 +212,56 @@ impl Engine {
     let runtime = Runtime::get()?;
     let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
     let slot: Rc<RefCell<Weak<Inner>>> = Rc::new(RefCell::new(Weak::new()));
-    let new_window: NewWindowSlot = Rc::new(RefCell::new(None));
 
-    let message_slot = slot.clone();
-    let popup_handler = new_window.clone();
-    let popup_runtime = Rc::downgrade(&runtime);
-    // WebView2's own zoom, pinch zoom and swipe navigation, which the C++ library left on and
-    // `wry` turns off; CSS `app-region`, which `wry` turns on, is turned off by `WebviewExtras::attach`.
-    let builder = sweetview_platform_webview::with_page_behaviour(WebViewBuilder::new())
-      .with_devtools(debug)
-      // How `wry` grants the clipboard-read permission the C++ library granted.
-      .with_clipboard(true)
-      .with_ipc_handler(move |request| {
-        let inner = message_slot.borrow().upgrade();
-        if let Some(inner) = inner {
-          inner.on_page_message(request.body());
-        }
-      })
-      .with_new_window_req_handler(move |url, _features| {
-        // With no handler the engine's default applies. With one, the popup is
-        // reported instead of opened, on a later turn of the loop.
-        let handler = popup_handler.borrow().clone();
-        match (handler, popup_runtime.upgrade()) {
-          (Some(handler), Some(runtime)) => {
-            runtime.defer(move || handler(url));
-            NewWindowResponse::Deny
-          }
-          _ => NewWindowResponse::Allow,
-        }
-      });
-    // The page takes the focus only in a window the engine makes itself, as under the C++
-    // library (`owns_window()` in `win32_edge.hh`); `wry` would move it into every webview.
-    let builder = builder.with_focused(matches!(host, Host::Own));
-    // `wry` writes general autofill into the profile on every build (true unless told); the
-    // C++ library never set it, so the value written is the one the profile already has.
-    let builder = match profile_autofill() {
-      Some(enabled) => builder.with_general_autofill_enabled(enabled),
-      None => builder,
+    let mount = |code: ErrorCode| {
+      let detail = format!("webview_error_t {}", code.code());
+      match code {
+        ErrorCode::MissingDependency => Error::os("the WebView2 environment could not be created (is the WebView2 runtime installed?)", detail),
+        _ => Error::os("the webview could not be created (is the WebView2 runtime installed?)", detail),
+      }
     };
-    let builder = configure_for_platform(builder)?;
-
-    let mount = |error: wry::Error| Error::os("the webview could not be created (is the WebView2 runtime installed?)", error);
     let no_window = || Error::state("sweetview: the window handle given for the webview names no window");
+    let filled = if let Host::Fill(value) = &host { Some(*value) } else { None };
     let (webview, window, window_value) = match host {
       Host::Own => {
         let window = runtime
           .with_target(|target| WindowBuilder::new().with_visible(false).with_inner_size(LogicalSize::new(640.0, 480.0)).build(target))?
           .map_err(|e| Error::os("the webview's window could not be created", e))?;
-        let webview = builder.build(&window).map_err(mount)?;
+        let webview = Webview::create(&BorrowedWindow::of(&window), Layout::Fill, debug).map_err(mount)?;
+        // The C++ library focused the page of a window it made itself, at creation and on
+        // each activation of that window (`owns_window()`, `WM_ACTIVATE`), and kept the page
+        // the size of the window (`WM_SIZE`).
+        webview.move_focus();
         let value = window_value_of(&window);
         let window_id = window.id();
-        let close_slot = slot.clone();
+        let event_slot = slot.clone();
         let listener = runtime.add_event_listener(Rc::new(move |event, _target| {
-          if let Event::WindowEvent { window_id: id, event: WindowEvent::CloseRequested, .. } = event {
-            if *id == window_id {
-              let inner = close_slot.borrow().upgrade();
-              if let Some(inner) = inner {
-                inner.own_window_closed();
-              }
+          let Event::WindowEvent { window_id: id, event, .. } = event else { return };
+          if *id != window_id {
+            return;
+          }
+          let inner = event_slot.borrow().upgrade();
+          let Some(inner) = inner else { return };
+          match event {
+            WindowEvent::CloseRequested => inner.own_window_closed(),
+            WindowEvent::Resized(_) => {
+              inner.with_live(|live| live.webview.fill_parent());
             }
+            WindowEvent::Focused(true) => {
+              inner.with_live(|live| live.webview.move_focus());
+            }
+            _ => {}
           }
         }));
         (webview, HostWindow::Own { window, listener }, value)
       }
       Host::Fill(value) => {
-        let webview = crate::window::with_mount_target(value, |parent| builder.build(parent)).ok_or_else(no_window)?.map_err(mount)?;
+        let webview = crate::window::with_mount_target(value, |parent| Webview::create(parent, Layout::Fill, debug)).ok_or_else(no_window)?.map_err(mount)?;
         (webview, HostWindow::Filled(value), value)
       }
       Host::Child(value, bounds) => {
-        let built = crate::window::with_mount_target(value, |parent| builder.with_bounds(wry_rect(bounds)).build_as_child(parent));
+        let layout = Layout::Bounds { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height };
+        let built = crate::window::with_mount_target(value, |parent| Webview::create(parent, layout, debug));
         (built.ok_or_else(no_window)?.map_err(mount)?, HostWindow::Foreign(value), value)
       }
     };
@@ -309,6 +271,13 @@ impl Engine {
       runtime::wake(token);
     }) })
     .map_err(|code| Error::os("the webview's request handling could not be set up", format!("webview_error_t {}", code.code())))?;
+    let message_slot = slot.clone();
+    extras.set_page_message_handler(Some(Rc::new(move |message: &str| {
+      let inner = message_slot.borrow().upgrade();
+      if let Some(inner) = inner {
+        inner.on_page_message(message);
+      }
+    })));
     let responder = extras.responder();
 
     let inner = Rc::new(Inner {
@@ -322,11 +291,13 @@ impl Engine {
       next_generation: Cell::new(1),
       bind_script: RefCell::new(None),
       init_scripts: RefCell::new(Vec::new()),
-      new_window,
       held: RefCell::new(VecDeque::new()),
       moves_told: Cell::new(0),
     });
     *slot.borrow_mut() = Rc::downgrade(&inner);
+    if let Some(value) = filled {
+      inner.follow_window_activation(value);
+    }
 
     // Held navigations and evaluations run on a later turn, once every script is registered:
     // the handler runs inside WebView2's completion callback.
@@ -439,21 +410,17 @@ impl Engine {
 
   /// Moves a child webview inside its host window.
   pub fn set_bounds(&self, bounds: Bounds) {
-    self.inner.with_live(|live| {
-      let _ = live.webview.set_bounds(wry_rect(bounds));
-    });
+    self.inner.with_live(|live| live.webview.set_bounds(bounds.x, bounds.y, bounds.width, bounds.height));
   }
 
   pub fn set_visible(&self, visible: bool) {
-    self.inner.with_live(|live| {
-      let _ = live.webview.set_visible(visible);
-    });
+    self.inner.with_live(|live| live.webview.set_visible(visible));
   }
 
   /// Gives the page the keyboard focus.
   pub fn move_focus(&self) {
-    // `wry`'s focus is `MoveFocus` with the programmatic reason, as the tabs library calls it.
-    self.inner.with_live(|live| live.webview.focus());
+    // `MoveFocus` with the programmatic reason, as the tabs library calls it.
+    self.inner.with_live(|live| live.webview.move_focus());
   }
 
   /// Tells the webview its host window moved, so its popups follow.
@@ -469,16 +436,27 @@ impl Engine {
     self.inner.moves_told.get()
   }
 
-  /// Moves the webview into another window without reloading it.
+  /// Moves the webview into another window without reloading it. A webview
+  /// that filled its window fills the new one; a child keeps its bounds.
   pub fn reparent(&self, window: isize) -> Result<()> {
-    let moved = crate::window::with_mount_target(window, |parent| self.inner.with_live(|live| reparent(&live.webview, parent)))
+    let moved = crate::window::with_mount_target(window, |parent| self.inner.with_live(|live| live.webview.reparent(parent)))
       .ok_or_else(|| Error::state("sweetview: the window handle given to reparent names no window"))?;
     match moved {
-      Some(Ok(())) => {
-        self.inner.window_value.set(window);
+      Some(ErrorCode::Ok) => {
+        let previous = self.inner.window_value.replace(window);
+        let filled = self.inner.with_live(|live| matches!(live.window, HostWindow::Filled(_))) == Some(true);
+        if filled {
+          crate::window::set_page_focus(previous, None);
+          self.inner.with_live(|live| live.webview.fill_parent());
+          self.inner.follow_window_activation(window);
+        }
+        self.inner.with_live_mut(|live| match &mut live.window {
+          HostWindow::Filled(value) | HostWindow::Foreign(value) => *value = window,
+          HostWindow::Own { .. } => {}
+        });
         Ok(())
       }
-      Some(Err(error)) => Err(Error::os("the webview could not be moved to the window", error)),
+      Some(code) => Err(Error::os("the webview could not be moved to the window", format!("webview_error_t {}", code.code()))),
       None => Err(Error::state("sweetview: the webview is destroyed")),
     }
   }
@@ -555,7 +533,7 @@ impl Engine {
   }
 
   pub fn set_background_color(&self, r: u8, g: u8, b: u8, a: u8) -> ErrorCode {
-    self.inner.with_live(|live| sweetview_platform_webview::set_background_color(&live.webview, r, g, b, a)).unwrap_or(ErrorCode::InvalidState)
+    self.inner.with_live(|live| live.webview.set_background_color(r, g, b, a)).unwrap_or(ErrorCode::InvalidState)
   }
 
   pub fn set_allow_external_drop(&self, allow: bool) -> ErrorCode {
@@ -610,9 +588,20 @@ impl Engine {
     self.inner.with_extras(|extras| extras.call_devtools_protocol_method(method, params_json))
   }
 
-  /// With a handler set, a popup (`window.open`, `target="_blank"`) is reported and not opened.
+  /// With a handler set, a popup (`window.open`, `target="_blank"`) is reported, on a later
+  /// turn of the loop, and not opened. With none, WebView2 opens it itself, as under the C++
+  /// library, and nothing is registered for it.
   pub fn set_new_window_handler(&self, handler: Option<Rc<dyn Fn(String)>>) {
-    *self.inner.new_window.borrow_mut() = handler;
+    let runtime = Rc::downgrade(&self.inner.runtime);
+    let handler = handler.map(|handler| -> Rc<dyn Fn(String)> {
+      Rc::new(move |url| {
+        let handler = handler.clone();
+        if let Some(runtime) = runtime.upgrade() {
+          runtime.defer(move || handler(url));
+        }
+      })
+    });
+    self.inner.with_extras(|extras| extras.set_new_window_handler(handler));
   }
 
   // ---- the loop and the end -----------------------------------------------------------
@@ -694,18 +683,18 @@ impl Inner {
       let _ = match op {
         PageOp::Url(url) => {
           live.extras.note_host_navigation();
-          live.webview.load_url(url)
+          live.webview.navigate(url)
         }
         PageOp::Html(html) => {
           live.extras.note_host_navigation();
-          live.webview.load_html(html)
+          live.webview.navigate_to_string(html)
         }
-        PageOp::Script(source) => live.webview.evaluate_script(source),
+        PageOp::Script(source) => live.webview.evaluate(source),
       };
     });
   }
 
-  /// A message from the page. Called by `wry` from inside WebView2's own callback.
+  /// A message from the page. Called from inside WebView2's own `WebMessageReceived`.
   fn on_page_message(self: &Rc<Self>, message: &str) {
     let Some(call) = bridge::parse_call(message) else { return };
     // The registration this call was made against: a binding removed (or
@@ -757,7 +746,6 @@ impl Inner {
     forget_responder(self.id);
     ENGINES.with(|engines| engines.borrow_mut().remove(&self.id));
     self.runtime.set_drain(drain_token(self.id), None);
-    *self.new_window.borrow_mut() = None;
     self.bindings.borrow_mut().clear();
     self.drop_live();
   }
@@ -769,10 +757,10 @@ impl Inner {
     let taken = if in_callback { None } else { self.live.try_borrow_mut().ok().and_then(|mut live| live.take()) };
     match taken {
       Some(live) => {
-        if let Some(enabled) = sweetview_platform_webview::general_autofill(&live.webview) {
-          AUTOFILL.with(|cell| cell.set(Some(enabled)));
-        }
         let Live { extras, webview, window } = live;
+        if let HostWindow::Filled(value) = window {
+          crate::window::set_page_focus(value, None);
+        }
         drop(extras);
         drop(webview);
         if let HostWindow::Own { window, listener } = window {
@@ -806,55 +794,6 @@ fn given_hint(hint: SizeHint) -> sweetview_platform_window::GivenWindowSizeHint 
   }
 }
 
-fn wry_rect(bounds: Bounds) -> wry::Rect {
-  wry::Rect {
-    position: PhysicalPosition::new(bounds.x, bounds.y).into(),
-    size: PhysicalSize::new(bounds.width, bounds.height).into(),
-  }
-}
-
-#[cfg(windows)]
-thread_local! {
-  /// The process's WebView2 environment, made once on the UI thread and shared
-  /// by every webview, as the C++ library's webviews shared theirs.
-  static ENVIRONMENT: RefCell<Option<webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Environment>> =
-    const { RefCell::new(None) };
-}
-
-/// Tests only: lets go of this thread's WebView2 environment once its webviews
-/// are gone, so it is released while the thread still runs. A test's thread
-/// ends right after its body, and WebView2 faults (`0xc000041d`) when an
-/// environment is released by the thread's own teardown.
-#[cfg(all(test, windows))]
-pub(crate) fn release_environment_for_tests() {
-  drop(ENVIRONMENT.with(|cell| cell.borrow_mut().take()));
-}
-
-/// The WebView2 environment, created the way the C++ library created it: the
-/// profile in `%APPDATA%\<executable file name>` (`WEBVIEW2_USER_DATA_FOLDER`
-/// overrides it), no extra browser arguments, so a process on the old library
-/// can share the profile. A failure is not kept: the next webview tries again.
-#[cfg(windows)]
-fn configure_for_platform(builder: WebViewBuilder<'_>) -> Result<WebViewBuilder<'_>> {
-  use wry::WebViewBuilderExtWindows;
-  let environment = ENVIRONMENT.with(|cell| {
-    if let Some(environment) = cell.borrow().as_ref() {
-      return Ok(environment.clone());
-    }
-    let folder = sweetview_platform_webview::default_user_data_folder();
-    let environment = sweetview_platform_webview::create_environment(folder.as_deref()).map_err(|code| {
-      Error::os("the WebView2 environment could not be created (is the WebView2 runtime installed?)", format!("webview_error_t {}", code.code()))
-    })?;
-    Ok(cell.borrow_mut().get_or_insert(environment).clone())
-  })?;
-  Ok(builder.with_environment(environment))
-}
-
-#[cfg(not(windows))]
-fn configure_for_platform(builder: WebViewBuilder<'_>) -> Result<WebViewBuilder<'_>> {
-  Ok(builder)
-}
-
 #[cfg(windows)]
 fn window_value_of(window: &TaoWindow) -> isize {
   use tao::platform::windows::WindowExtWindows;
@@ -866,17 +805,31 @@ fn window_value_of(_window: &TaoWindow) -> isize {
   0
 }
 
-#[cfg(windows)]
-fn reparent(webview: &WebView, parent: &BorrowedWindow<'_>) -> std::result::Result<(), wry::Error> {
-  use wry::WebViewExtWindows;
-  webview.reparent(sweetview_platform_window::handle_value(parent))
-}
-
-#[cfg(not(windows))]
-fn reparent(_webview: &WebView, _parent: &BorrowedWindow<'_>) -> std::result::Result<(), wry::Error> {
-  Ok(())
-}
-
 #[cfg(all(test, windows))]
 #[path = "engine_tests.rs"]
 mod tests;
+
+impl Inner {
+  /// For a webview filling a window Sweetview knows: on each activation of that window the
+  /// page gets the keyboard focus, as a page of the C++ library's own window did.
+  fn follow_window_activation(self: &Rc<Self>, value: isize) {
+    let weak = Rc::downgrade(self);
+    crate::window::set_page_focus(
+      value,
+      Some(Rc::new(move || {
+        if let Some(inner) = weak.upgrade() {
+          inner.with_live(|live| live.webview.move_focus());
+        }
+      })),
+    );
+  }
+
+  fn with_live_mut<R>(&self, f: impl FnOnce(&mut Live) -> R) -> Option<R> {
+    if self.destroyed.get() {
+      return None;
+    }
+    let mut live = self.live.try_borrow_mut().ok()?;
+    live.as_mut().map(f)
+  }
+}
+

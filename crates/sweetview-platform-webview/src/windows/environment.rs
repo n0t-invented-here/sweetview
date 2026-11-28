@@ -1,8 +1,8 @@
 //! The WebView2 environment created as the C++ fork's `embed()` creates it,
-//! for `wry::WebViewBuilderExtWindows::with_environment`.
+//! for [`super::Webview::create`].
 //!
-//! `wry` creates its own environment with extra browser arguments, an explicit
-//! language and the extensions flag; the C++ passes no options at all. Two
+//! The C++ passes no options at all (`wry`, not used on Windows, would add
+//! browser arguments, a language and the extensions flag). Two
 //! environments on one user data folder with different options cannot run at
 //! once (`HRESULT_FROM_WIN32(ERROR_BUSY)`), so a process sharing a folder with
 //! today's product must create it the C++'s way.
@@ -29,6 +29,10 @@ const MAX_ATTEMPTS: u32 = 60;
 const RETRY_WAIT: Duration = Duration::from_millis(200);
 
 thread_local! {
+    /// This thread's WebView2 environment, made once on the first webview and
+    /// shared by every later one, as the C++ library's webviews shared one
+    /// browser process. A failure is not kept: the next webview tries again.
+    static SHARED: RefCell<Option<ICoreWebView2Environment>> = const { RefCell::new(None) };
     /// This thread's single-threaded apartment, entered by the first
     /// `create_environment` on the thread that succeeds in entering it and left
     /// when the thread ends, after the thread's later-made values (the runtime's
@@ -80,10 +84,37 @@ pub fn default_user_data_folder() -> Option<PathBuf> {
 }
 
 /// Whether a WebView2 Runtime is installed (the C++ `is_webview2_available`):
-/// `wry::webview_version` is `GetAvailableCoreWebView2BrowserVersionString`
-/// with a null browser folder, as the C++ calls it.
+/// `GetAvailableCoreWebView2BrowserVersionString` with a null browser folder,
+/// as the C++ calls it, and a version string that is not empty.
 fn is_webview2_available() -> bool {
-    wry::webview_version().is_ok_and(|version| !version.is_empty())
+    let mut version = windows::core::PWSTR::null();
+    // SAFETY: a null browser folder asks for the installed runtime; `version` is a local PWSTR
+    // for the call to fill, freed by `take_pwstr` below.
+    let found = unsafe { webview2_com::Microsoft::Web::WebView2::Win32::GetAvailableCoreWebView2BrowserVersionString(PCWSTR::null(), &mut version) };
+    // `version` was filled by the call just above (or left null, which reads as empty).
+    let version = webview2_com::take_pwstr(version);
+    found.is_ok() && !version.is_empty()
+}
+
+/// This thread's shared environment, created as [`create_environment`]
+/// creates it on [`default_user_data_folder`] (`WEBVIEW2_USER_DATA_FOLDER`
+/// overrides the folder) the first time it is asked for.
+pub(super) fn shared() -> Result<ICoreWebView2Environment, ErrorCode> {
+    if let Some(environment) = SHARED.with(|cell| cell.borrow().clone()) {
+        return Ok(environment);
+    }
+    let environment = create_environment(default_user_data_folder().as_deref())?;
+    SHARED.with(|cell| *cell.borrow_mut() = Some(environment.clone()));
+    Ok(environment)
+}
+
+/// Tests only: lets go of this thread's shared environment once its webviews
+/// are gone, so it is released while the thread still runs (a test's thread
+/// ends right after its body, and WebView2 faults with `0xc000041d` when an
+/// environment is released by the thread's own teardown).
+#[cfg(any(test, feature = "test-support"))]
+pub(super) fn release_shared() {
+    drop(SHARED.with(|cell| cell.borrow_mut().take()));
 }
 
 /// Creates a WebView2 environment exactly as the C++ fork's `embed()` does:

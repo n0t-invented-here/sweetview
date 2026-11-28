@@ -20,7 +20,6 @@ serde_json = { workspace = true, features = ["raw_value"] }
 tao.workspace = true
 sweetview-window-logic.workspace = true
 raw-window-handle.workspace = true
-wry.workspace = true
 ico.workspace = true
 muda.workspace = true
 rfd.workspace = true

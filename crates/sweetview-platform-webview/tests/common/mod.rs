@@ -1,5 +1,7 @@
-//! A real `tao` window and a real `wry` WebView with the extras attached,
-//! pumped with `run_return`; the page reports back through `wry`'s IPC handler.
+//! A real `tao` window and a real webview of this crate in it with the
+//! extras attached, pumped with `run_return`; the page reports back through
+//! `window.chrome.webview.postMessage`, received by the extras' page message
+//! handler.
 #![allow(dead_code)]
 
 use std::cell::RefCell;
@@ -10,20 +12,20 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
-use sweetview_platform_webview::{ExtrasOptions, WebviewExtras};
+use sweetview_platform_webview::{ExtrasOptions, Layout, Webview, WebviewExtras};
+use sweetview_platform_window::BorrowedWindow;
 use tao::dpi::LogicalSize;
 use tao::event_loop::{ControlFlow, EventLoop, EventLoopBuilder};
 use tao::platform::run_return::EventLoopExtRunReturn;
 use tao::platform::windows::EventLoopBuilderExtWindows;
 use tao::window::{Window, WindowBuilder};
-use wry::{WebContext, WebView, WebViewBuilder};
 
 /// The page every test loads first. `post` reports to the test.
 pub const INDEX_HTML: &str = r#"<!doctype html>
 <html><head><meta charset="utf-8"><title>extras test</title></head>
 <body style="background: transparent">
 <script>
-  window.post = (o) => window.ipc.postMessage(JSON.stringify(o));
+  window.post = (o) => window.chrome.webview.postMessage(JSON.stringify(o));
   post({
     tag: 'ready',
     path: location.pathname,
@@ -51,7 +53,7 @@ pub struct Ctx {
 /// extras, then webview, then window.
 pub struct View {
     pub extras: Option<WebviewExtras>,
-    pub webview: Option<WebView>,
+    pub webview: Option<Webview>,
     pub window: Option<Window>,
     pub messages: Rc<RefCell<Vec<String>>>,
     pub wakes: Arc<AtomicUsize>,
@@ -62,12 +64,17 @@ impl View {
         self.extras.as_ref().expect("extras")
     }
 
-    pub fn webview(&self) -> &WebView {
+    pub fn webview(&self) -> &Webview {
         self.webview.as_ref().expect("webview")
     }
 
     pub fn eval(&self, js: &str) {
-        self.webview().evaluate_script(js).expect("evaluate_script");
+        assert_eq!(self.webview().evaluate(js).code(), 0, "evaluate");
+    }
+
+    /// Navigates the webview to `url`.
+    pub fn navigate(&self, url: &str) {
+        assert_eq!(self.webview().navigate(url).code(), 0, "navigate");
     }
 
     /// Takes the first message with `tag`, if one arrived.
@@ -85,71 +92,48 @@ impl View {
     }
 }
 
+impl Drop for Ctx {
+    /// Every view is gone by now (declared after the context, dropped before it): the
+    /// thread's shared WebView2 environment goes while the thread still runs, on a failed
+    /// assertion too. Released by the thread's own teardown, WebView2 faults (0xc000041d).
+    fn drop(&mut self) {
+        sweetview_platform_webview::test_support::release_environment();
+    }
+}
+
 impl Ctx {
     pub fn new() -> Self {
         Self { el: EventLoopBuilder::new().with_any_thread(true).build() }
     }
 
-    /// A visible 480x360 window with a webview whose IPC messages are kept,
+    /// A visible 480x360 window with a webview whose page messages are kept,
     /// the extras attached, and `index.html` set as an asset (not yet loaded).
     pub fn view(&self) -> View {
-        self.view_built(|builder| builder, true)
+        self.view_debug(false)
     }
 
-    /// A webview exactly as `wry` builds one with nothing set: its own
-    /// environment (on a data folder of this process's own), no extras, only
-    /// the IPC handler that lets the page report.
-    pub fn plain_wry_view(&self) -> View {
-        let window = WindowBuilder::new()
-            .with_title("sweetview-platform-webview test: wry alone")
-            .with_inner_size(LogicalSize::new(480.0, 360.0))
-            .build(&self.el)
-            .expect("window");
-        let messages = Rc::new(RefCell::new(Vec::new()));
-        let sink = messages.clone();
-        let mut context = WebContext::new(Some(
-            std::env::temp_dir().join(format!("sweetview-platform-webview-wry-{}", std::process::id())),
-        ));
-        let webview = WebViewBuilder::new_with_web_context(&mut context)
-            .with_ipc_handler(move |request| sink.borrow_mut().push(request.into_body()))
-            .build(&window)
-            .expect("webview");
-        View { extras: None, webview: Some(webview), window: Some(window), messages, wakes: Arc::new(AtomicUsize::new(0)) }
-    }
-
-    /// [`view`](Self::view), with `customize` applied to the builder after the
-    /// harness's own options, and the extras attached only when `attach`.
-    pub fn view_built(&self, customize: impl FnOnce(WebViewBuilder<'_>) -> WebViewBuilder<'_>, attach: bool) -> View {
+    /// [`view`](Self::view), with the developer tools as `devtools`.
+    pub fn view_debug(&self, devtools: bool) -> View {
         let window = WindowBuilder::new()
             .with_title("sweetview-platform-webview test")
             .with_inner_size(LogicalSize::new(480.0, 360.0))
             .build(&self.el)
             .expect("window");
+        let webview = Webview::create(&BorrowedWindow::of(&window), Layout::Fill, devtools).expect("webview");
         let messages = Rc::new(RefCell::new(Vec::new()));
-        let sink = messages.clone();
-        // A data folder of this process's own, so a WebView2 left over from another
-        // run, or another session's test, never holds it.
-        let mut context = WebContext::new(Some(
-            std::env::temp_dir().join(format!("sweetview-platform-webview-test-{}", std::process::id())),
-        ));
-        // Built as the runtime builds its webviews: the C++ library's page behaviour.
-        let webview = sweetview_platform_webview::with_page_behaviour(WebViewBuilder::new_with_web_context(&mut context))
-            .with_ipc_handler(move |request| sink.borrow_mut().push(request.into_body()));
-        let webview = customize(webview).build(&window).expect("webview");
         let wakes = Arc::new(AtomicUsize::new(0));
         let counter = wakes.clone();
-        let extras = attach.then(|| {
-            let extras = WebviewExtras::attach(
-                &webview,
-                ExtrasOptions { wake_ui: Arc::new(move || {
-                    counter.fetch_add(1, Ordering::SeqCst);
-                }) },
-            )
-            .expect("attach");
-            assert_eq!(extras.set_asset("index.html", "text/html; charset=utf-8", INDEX_HTML.as_bytes().to_vec()).code(), 0);
-            extras
-        });
-        View { extras, webview: Some(webview), window: Some(window), messages, wakes }
+        let extras = WebviewExtras::attach(
+            &webview,
+            ExtrasOptions { wake_ui: Arc::new(move || {
+                counter.fetch_add(1, Ordering::SeqCst);
+            }) },
+        )
+        .expect("attach");
+        let sink = messages.clone();
+        extras.set_page_message_handler(Some(Rc::new(move |message: &str| sink.borrow_mut().push(message.to_owned()))));
+        assert_eq!(extras.set_asset("index.html", "text/html; charset=utf-8", INDEX_HTML.as_bytes().to_vec()).code(), 0);
+        View { extras: Some(extras), webview: Some(webview), window: Some(window), messages, wakes }
     }
 
     /// Pumps the loop (and the extras' queue) until `done` or `timeout`.
@@ -215,7 +199,7 @@ impl Ctx {
 
     /// Loads `index.html` and waits for its `ready` message.
     pub fn load_index(&mut self, view: &View) -> Value {
-        view.webview().load_url(INDEX_URL).expect("load_url");
+        view.navigate(INDEX_URL);
         self.wait(view, "ready")
     }
 }

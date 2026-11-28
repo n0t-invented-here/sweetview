@@ -1,16 +1,17 @@
-//! Windows: everything added to `wry`'s WebView2 through
-//! `WebViewExtWindows::controller()`, `webview()` and `environment()`.
-//! Ported from the C++ fork's `win32_edge.hh` and the tabs library's
-//! `win-webview2.ts`.
+//! Windows: the webview made as the C++ fork's `win32_edge.hh` makes it
+//! (`host.rs`), and everything added to it. Ported from the C++ fork's
+//! `win32_edge.hh` and the tabs library's `win-webview2.ts`.
 
 mod environment;
 mod handlers;
+mod host;
 mod istream;
 mod pump;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
 
 pub use self::environment::{create_environment, default_user_data_folder};
+pub use self::host::{Layout, Webview};
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -29,18 +30,17 @@ use windows::Win32::Foundation::{E_NOTIMPL, E_OUTOFMEMORY, STG_E_INVALIDFUNCTION
 use windows::Win32::System::Com::{IStream, STREAM_SEEK_SET};
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VIRTUAL_KEY, VK_CONTROL, VK_MENU, VK_SHIFT};
 use windows::Win32::UI::Shell::SHCreateMemStream;
-use wry::WebViewExtWindows;
 
 use self::handlers::{
-    AcceleratorKeyPressed, ContentLoading, DownloadStarting, MessageReceived, NavigationCompleted, NavigationStarting,
-    Registration, RequestFilter, ResourceRequested, ScriptAdded,
+    AcceleratorKeyPressed, ContentLoading, MessageReceived, NavigationCompleted, NavigationStarting, NewWindowRequested,
+    PermissionRequested, Registration, RequestFilter, ResourceRequested, ScriptAdded,
 };
 use self::istream::StreamingIStream;
 use crate::shared::{next_request_id, Job, Responder, Shared};
 use crate::stream::StreamState;
 use crate::{
     failure_reason, file_drop_flag_script, is_file_drop_message, ExtrasOptions, KeyData, NavigationFailure, RawRequest,
-    FILE_DROP_SCRIPT, KEEP_OPEN_SCRIPT,
+    FILE_DROP_SCRIPT,
 };
 
 /// A request handed to the request handler and not yet answered.
@@ -62,6 +62,9 @@ type RequestHandler = Rc<dyn Fn(RawRequest)>;
 type FileDropHandler = Rc<dyn Fn(Vec<String>)>;
 type AcceleratorHandler = Rc<dyn Fn(KeyData) -> bool>;
 type NavigationFailedHandler = Rc<dyn Fn(NavigationFailure)>;
+/// What receives each message the page posts.
+pub type PageMessageHandler = Rc<dyn Fn(&str)>;
+type NewWindowHandler = Rc<dyn Fn(String)>;
 
 struct Inner {
     shared: Arc<Shared>,
@@ -75,6 +78,12 @@ struct Inner {
     file_drop_enabled: Cell<bool>,
     accelerator_handler: RefCell<Option<AcceleratorHandler>>,
     navigation_failed_handler: RefCell<Option<NavigationFailedHandler>>,
+    page_message_handler: RefCell<Option<PageMessageHandler>>,
+    /// The popup handler, and its `NewWindowRequested` registration, which
+    /// exists only while there is a handler: with none, WebView2 opens the
+    /// popup itself, as under the C++ fork.
+    new_window_handler: RefCell<Option<NewWindowHandler>>,
+    new_window_registration: RefCell<Option<Registration>>,
     navigations: RefCell<Navigations>,
     host_epoch: Cell<u64>,
     registrations: RefCell<Vec<Registration>>,
@@ -113,64 +122,13 @@ struct ScriptState {
 /// Dropping it unregisters every handler it registered, aborts open streams,
 /// closes the WebView2 controller, and releases open requests unanswered (the
 /// teardown order of `requests.md`), so it is dropped as part of dropping the
-/// webview, right before the `wry::WebView`.
+/// webview, right before the [`Webview`].
 pub struct WebviewExtras {
     inner: Rc<Inner>,
 }
 
 fn hstring(s: &str) -> HSTRING {
     HSTRING::from(s)
-}
-
-/// The colour WebView2 paints behind the page (`ICoreWebView2Controller2::DefaultBackgroundColor`),
-/// through `wry`'s safe `WebView::set_background_color`. WebView2 takes only an alpha of 0 or 255;
-/// `wry` turns any other non-zero alpha into 255, and this refuses it instead, as the C++ library
-/// did. Any other alpha, or a runtime without the interface, is [`ErrorCode::Unspecified`].
-pub fn set_background_color(webview: &wry::WebView, r: u8, g: u8, b: u8, a: u8) -> ErrorCode {
-    if a != 0 && a != 255 {
-        return ErrorCode::Unspecified;
-    }
-    match webview.set_background_color((r, g, b, a)) {
-        Ok(()) => ErrorCode::Ok,
-        Err(_) => ErrorCode::Unspecified,
-    }
-}
-
-/// The page behaviour the C++ fork's webview had, as far as `wry` has a builder
-/// option for it. The fork left these WebView2 settings at their defaults (it
-/// set only the developer tools and the status bar, off, in `win32_edge.hh`);
-/// `wry` turns them off unless asked:
-///
-/// * `with_hotkeys_zoom(true)`: `IsZoomControlEnabled` and `IsPinchZoomEnabled`
-///   on (Ctrl+wheel, Ctrl+plus, Ctrl+minus, Ctrl+0 and touch pinch zoom the page);
-/// * `with_back_forward_navigation_gestures(true)`: `IsSwipeNavigationEnabled`
-///   on (a horizontal swipe on a touch screen goes back and forward).
-///
-/// CSS `app-region` support, which `wry` turns on with no option, is turned
-/// off again by [`WebviewExtras::attach`]. The status bar `wry` turns off with
-/// no option was off under the fork too.
-pub fn with_page_behaviour(builder: wry::WebViewBuilder<'_>) -> wry::WebViewBuilder<'_> {
-    builder.with_hotkeys_zoom(true).with_back_forward_navigation_gestures(true)
-}
-
-/// The profile's general autofill preference (`ICoreWebView2Settings4`), read
-/// from a live webview of the profile; `None` without the interface. The
-/// setting is the profile's, shared by all its webviews, and `wry` writes its
-/// own value into it whenever it builds one; the caller hands this to
-/// `wry::WebViewBuilder::with_general_autofill_enabled` so that what `wry`
-/// writes is what the profile already had, as under the C++ fork, which
-/// never set it.
-pub fn general_autofill(webview: &wry::WebView) -> Option<bool> {
-    let core = webview.webview();
-    // SAFETY: `core` is a COM reference this frame owns to the live ICoreWebView2 of
-    // `webview`; `Settings` takes no arguments and returns an owned reference.
-    let settings = unsafe { core.Settings() }.ok()?;
-    let settings4 = settings.cast::<ICoreWebView2Settings4>().ok()?;
-    let mut enabled = BOOL::default();
-    // SAFETY: `settings4` is a COM reference this frame holds (from `cast`) to the live
-    // settings object, and `enabled` a local BOOL for the call to fill.
-    unsafe { settings4.IsGeneralAutofillEnabled(&mut enabled) }.ok()?;
-    Some(enabled.as_bool())
 }
 
 /// Whether `key` is down, from the thread's keyboard state.
@@ -182,19 +140,17 @@ fn key_down(key: VIRTUAL_KEY) -> bool {
 }
 
 impl WebviewExtras {
-    /// Turns CSS `app-region` support off (WebView2's default and the fork's,
-    /// which `wry` changes), and adds the request handler (with its
-    /// filters on both origins), the file drop script and its message handler,
-    /// and the accelerator key and navigation handlers to `webview`. Call it
-    /// before the webview's first navigation, so the first document is served,
-    /// gets the drop script and has that setting. Build the webview with
-    /// [`with_page_behaviour`] for the rest of the fork's page behaviour.
-    pub fn attach(webview: &wry::WebView, options: ExtrasOptions) -> Result<Self, ErrorCode> {
+    /// Adds the request handler (with its filters on both origins), the file
+    /// drop script and its message handler, the page's messages, the
+    /// clipboard-read permission the C++ fork grants, and the accelerator key
+    /// and navigation handlers to `webview`. Call it before the webview's first
+    /// navigation, so the first document is served and gets the drop script.
+    pub fn attach(webview: &Webview, options: ExtrasOptions) -> Result<Self, ErrorCode> {
         let inner = Rc::new(Inner {
             shared: Shared::new(options.wake_ui),
-            controller: webview.controller(),
-            webview: webview.webview(),
-            env: webview.environment(),
+            controller: webview.controller().clone(),
+            webview: webview.core().clone(),
+            env: webview.environment().clone(),
             assets: RefCell::new(AssetTable::new()),
             request_handler: RefCell::new(None),
             pending: RefCell::new(HashMap::new()),
@@ -202,6 +158,9 @@ impl WebviewExtras {
             file_drop_enabled: Cell::new(false),
             accelerator_handler: RefCell::new(None),
             navigation_failed_handler: RefCell::new(None),
+            page_message_handler: RefCell::new(None),
+            new_window_handler: RefCell::new(None),
+            new_window_registration: RefCell::new(None),
             navigations: RefCell::new(Navigations::default()),
             host_epoch: Cell::new(0),
             registrations: RefCell::new(Vec::new()),
@@ -209,7 +168,6 @@ impl WebviewExtras {
             scripts_outstanding: Cell::new(0),
             scripts_registered: RefCell::new(None),
         });
-        inner.restore_page_settings().map_err(|_| ErrorCode::Unspecified)?;
         // On failure `inner` drops here, and with it every registration and filter made so far.
         inner.register().map_err(|_| ErrorCode::Unspecified)?;
         Ok(Self { inner })
@@ -284,7 +242,7 @@ impl WebviewExtras {
     /// first lets WebView2 report outstanding script registrations without
     /// waiting for that navigation's response.
     pub fn stop_navigation(&self) {
-        // SAFETY: `Inner` holds a COM reference to this ICoreWebView2 (taken from `wry` in
+        // SAFETY: `Inner` holds a COM reference to this ICoreWebView2 (taken from the `Webview` in
         // `attach`), so it is alive for the call; once WebView2 has closed, the call returns
         // an error rather than touching freed state. No arguments.
         let _ = unsafe { self.inner.webview.Stop() };
@@ -380,6 +338,42 @@ impl WebviewExtras {
         ErrorCode::Ok
     }
 
+    /// Sets or clears the handler that receives each message the page posts
+    /// with `window.chrome.webview.postMessage` (a string), inside WebView2's
+    /// event. The drop script's own message never reaches it.
+    pub fn set_page_message_handler(&self, handler: Option<PageMessageHandler>) {
+        drop(self.inner.page_message_handler.replace(handler));
+    }
+
+    /// Sets or clears the popup handler. With one, a popup the page asks for
+    /// (`window.open`, `target="_blank"`) is not opened: the handler gets its
+    /// address, inside WebView2's event. With none, nothing is registered and
+    /// WebView2 opens the popup itself, as under the C++ fork.
+    pub fn set_new_window_handler(&self, handler: Option<Rc<dyn Fn(String)>>) -> ErrorCode {
+        let registered = self.inner.new_window_registration.borrow().is_some();
+        match (&handler, registered) {
+            (Some(_), false) => {
+                let weak = Rc::downgrade(&self.inner);
+                let added = Registration::add_new_window_requested(
+                    &self.inner.webview,
+                    &NewWindowRequested::create(move |args| {
+                        if let Some(inner) = weak.upgrade() {
+                            inner.on_new_window_requested(args);
+                        }
+                    }),
+                );
+                match added {
+                    Ok(registration) => *self.inner.new_window_registration.borrow_mut() = Some(registration),
+                    Err(_) => return ErrorCode::Unspecified,
+                }
+            }
+            (None, true) => drop(self.inner.new_window_registration.take()),
+            _ => {}
+        }
+        drop(self.inner.new_window_handler.replace(handler));
+        ErrorCode::Ok
+    }
+
     /// Records that the host is about to navigate (`load_url`, `load_html`):
     /// a failure of a navigation started before this is no longer current.
     pub fn note_host_navigation(&self) {
@@ -389,7 +383,7 @@ impl WebviewExtras {
     /// Tells WebView2 its window moved, so popups (select lists, tooltips)
     /// follow it.
     pub fn notify_parent_window_position_changed(&self) {
-        // SAFETY: `Inner` holds a COM reference to the controller (taken from `wry` in
+        // SAFETY: `Inner` holds a COM reference to the controller (taken from the `Webview` in
         // `attach`), so it is alive for the call; a closed one returns an error. No arguments.
         let _ = unsafe { self.inner.controller.NotifyParentWindowPositionChanged() };
     }
@@ -416,10 +410,10 @@ impl Drop for WebviewExtras {
         drop(inner.shared.close());
         // Close the controller before any deferral is released, so WebView2 has
         // torn down its network stack: a deferral released unanswered can then
-        // never send its request to the network. `wry`'s own drop closes it again,
+        // never send its request to the network. The `Webview`'s own drop closes it again,
         // which does nothing.
         // SAFETY: `Inner` holds a COM reference to the controller until it drops, after this
-        // call; closing an already closed controller (as `wry` does again later) is a no-op.
+        // call; closing an already closed controller (as the `Webview` does again later) is a no-op.
         let _ = unsafe { inner.controller.Close() };
         drop(inner.pending.take());
         drop(inner.registrations.take());
@@ -429,32 +423,14 @@ impl Drop for WebviewExtras {
         drop(inner.file_drop_handler.take());
         drop(inner.accelerator_handler.take());
         drop(inner.navigation_failed_handler.take());
+        drop(inner.new_window_registration.take());
+        drop(inner.new_window_handler.take());
+        drop(inner.page_message_handler.take());
         drop(inner.scripts_registered.take());
     }
 }
 
 impl Inner {
-    /// Turns CSS `app-region` support off again, the one WebView2 default `wry`
-    /// changes with no builder option that the fork had (the rest is
-    /// [`with_page_behaviour`]; the status bar `wry` turns off was off under the
-    /// fork too): a page whose stylesheet marks a `-webkit-app-region: drag`
-    /// area (for another shell) does not drag the window here and still gets
-    /// its mouse events. `attach` comes before the first navigation, so the
-    /// first document already has it. A runtime without
-    /// `ICoreWebView2Settings9` (before 1.0.2420) has no `app-region` support
-    /// to turn off.
-    fn restore_page_settings(&self) -> windows::core::Result<()> {
-        // SAFETY: `self.webview` is a COM reference `Inner` holds to the live ICoreWebView2
-        // taken from `wry`; `Settings` takes no arguments and returns an owned reference.
-        let settings = unsafe { self.webview.Settings() }?;
-        if let Ok(settings9) = settings.cast::<ICoreWebView2Settings9>() {
-            // SAFETY: `settings9` is a COM reference this frame holds (from `cast`) to the same
-            // settings object; the flag is passed by value.
-            unsafe { settings9.SetIsNonClientRegionSupportEnabled(false) }?;
-        }
-        Ok(())
-    }
-
     fn register(self: &Rc<Self>) -> windows::core::Result<()> {
         // Every request to either origin reaches the handler. Each filter is
         // owned: if anything below fails, the filters added so far are removed
@@ -522,28 +498,24 @@ impl Inner {
                 }
             }),
         )?);
-        // Downloads are left to WebView2, which then shows its own download interface, as
-        // under the C++ fork (which never handled DownloadStarting). `wry` 0.58.2 registers a
-        // handler on every webview that marks each download handled, which hides that
-        // interface, and has no way to build a webview without it (`WebViewAttributes`,
-        // where the handler lives, is private); this handler runs after `wry`'s and marks
-        // the download unhandled again. A runtime before 92 has no download event to answer.
-        if let Ok(webview4) = self.webview.cast::<ICoreWebView2_4>() {
-            registrations.push(Registration::add_download_starting(
-                &webview4,
-                &DownloadStarting::create(|args| {
-                    // SAFETY: `args` is the live event args WebView2 passed to this handler;
-                    // the flag is passed by value.
-                    let _ = unsafe { args.SetHandled(false) };
-                }),
-            )?);
-        }
+        // The clipboard-read permission is granted, as the C++ fork's handler grants it; any
+        // other request is left to WebView2.
+        registrations.push(Registration::add_permission_requested(
+            &self.webview,
+            &PermissionRequested::create(|args| {
+                let mut kind = COREWEBVIEW2_PERMISSION_KIND::default();
+                // SAFETY: `kind` is a local for the call to fill; `args` are the live event args.
+                if unsafe { args.PermissionKind(&mut kind) }.is_ok() && kind == COREWEBVIEW2_PERMISSION_KIND_CLIPBOARD_READ {
+                    // SAFETY: `args` are the live event args WebView2 passed; the state is a plain value.
+                    let _ = unsafe { args.SetState(COREWEBVIEW2_PERMISSION_STATE_ALLOW) };
+                }
+            }),
+        )?);
         *self.registrations.borrow_mut() = registrations;
         *self.filters.borrow_mut() = filters;
 
         // The drop script is the same in every document and starts disabled.
-        self.add_script(FILE_DROP_SCRIPT, None)?;
-        self.add_script(KEEP_OPEN_SCRIPT, None)
+        self.add_script(FILE_DROP_SCRIPT, None)
     }
 
     /// `AddScriptToExecuteOnDocumentCreated`, with the handler that receives the
@@ -789,6 +761,19 @@ impl Inner {
 
     // ---- file drops -----------------------------------------------------------
 
+    fn on_new_window_requested(&self, args: &ICoreWebView2NewWindowRequestedEventArgs) {
+        let handler = self.new_window_handler.borrow().clone();
+        let Some(handler) = handler else { return };
+        // SAFETY: `args` are the live event args WebView2 passed; the flag is passed by value.
+        let _ = unsafe { args.SetHandled(true) };
+        let mut uri = PWSTR::null();
+        // SAFETY: `uri` is a local PWSTR for the call to fill; freed by `take_pwstr`.
+        if unsafe { args.Uri(&mut uri) }.is_ok() {
+            // `uri` was filled by `Uri` just above.
+            handler(take_pwstr(uri));
+        }
+    }
+
     fn on_web_message_received(self: &Rc<Self>, args: &ICoreWebView2WebMessageReceivedEventArgs) {
         let mut message = PWSTR::null();
         // SAFETY: `message` is a local PWSTR for the call to fill; freed by `take_pwstr`.
@@ -798,7 +783,17 @@ impl Inner {
         }
         // `message` was filled by `TryGetWebMessageAsString`, which succeeded, with a
         // NUL-terminated string allocated for us; read up to its NUL and freed.
-        if !is_file_drop_message(&take_pwstr(message)) || self.file_drop_handler.borrow().is_none() {
+        let message = take_pwstr(message);
+        if !is_file_drop_message(&message) {
+            // The page's own message (the bridge's), handed over inside this event, as the
+            // C++ fork's `on_message` receives it.
+            let handler = self.page_message_handler.borrow().clone();
+            if let Some(handler) = handler {
+                handler(&message);
+            }
+            return;
+        }
+        if self.file_drop_handler.borrow().is_none() {
             return;
         }
         // The paths are read here, while the event args are valid; the handler

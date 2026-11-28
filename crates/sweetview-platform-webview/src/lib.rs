@@ -1,25 +1,29 @@
-//! What the webview needs on top of `wry` that `wry` has no API for.
+//! The webview on Windows, made and driven as the C++ fork's `win32_edge.hh`
+//! makes and drives it, through the typed interfaces of `webview2-com`:
 //!
-//! The caller creates the `wry::WebView` (with `wry`'s own IPC handler and no
-//! `wry` custom protocols) and hands it to [`WebviewExtras::attach`], which adds
-//! the rest through the native objects `wry` hands out:
+//! * [`Webview`]: the `webview_widget` child window and the WebView2
+//!   controller on it, with the two settings the fork sets, navigation,
+//!   scripts, bounds, visibility, focus, reparenting and the background colour;
+//! * [`WebviewExtras`], attached to it: one `WebResourceRequested` handler
+//!   serving assets first, then the request handler, on
+//!   `http://webview.localhost` and `http://frames.webview.localhost`, with
+//!   deferred requests answered later from any thread through [`Responder`],
+//!   streamed bodies included; the page's messages; file drop paths and
+//!   external drop control; the clipboard-read permission; removable user
+//!   scripts; and what the tabs library sets (accelerator keys, navigation
+//!   failures, popups, the moved notification);
+//! * [`create_environment`]: the WebView2 environment, created as the fork
+//!   creates it.
 //!
-//! * one `WebResourceRequested` handler serving assets first, then the request
-//!   handler, on `http://webview.localhost` and `http://frames.webview.localhost`,
-//!   with deferred requests answered later from any thread through
-//!   [`Responder`], streamed bodies included;
-//! * the page behaviour the C++ fork had and `wry` changes (zoom, pinch zoom,
-//!   swipe navigation, CSS `app-region`): through `wry`'s own builder options
-//!   ([`with_page_behaviour`], which the caller applies), and `app-region` in
-//!   `attach`;
-//! * file drop paths, external drop control and the default background colour;
-//! * accelerator keys, navigation failures, focus and popup position for tabs.
+//! `wry` is not used on Windows: its creation path registers handlers and
+//! writes settings the fork never did, with no way to leave them out
+//! (DECISIONS D45).
 //!
 //! Dropping the [`WebviewExtras`] tears all of it down in the order of the C++
 //! fork's `deinit()`: answering calls are refused from then on, open streams are
 //! aborted, the WebView2 controller is closed, and open requests are released
-//! unanswered. It must be dropped as part of dropping the webview, right before
-//! the `wry::WebView`.
+//! unanswered. It is dropped as part of dropping the webview, right before the
+//! [`Webview`], which then destroys its widget.
 #![deny(unsafe_op_in_unsafe_fn)]
 #![deny(clippy::undocumented_unsafe_blocks)]
 #![deny(clippy::multiple_unsafe_ops_per_block)]
@@ -44,20 +48,19 @@ mod platform;
 pub use platform::{create_environment, default_user_data_folder};
 #[cfg(all(windows, any(test, feature = "test-support")))]
 pub use platform::test_support;
-pub use platform::{general_autofill, set_background_color, with_page_behaviour, UserScript, WebviewExtras};
+pub use platform::{Layout, PageMessageHandler, UserScript, Webview, WebviewExtras};
 pub use shared::Responder;
 pub use sweetview_http::ErrorCode;
 
 /// The web message the file drop script posts, with the dropped files attached.
 ///
-/// `wry`'s IPC handler receives it too, as a body of exactly this text: the
-/// IPC handler the caller gives `wry` ignores it ([`is_file_drop_message`]).
+/// The page message handler never receives it ([`is_file_drop_message`]).
 /// It is a string because WebView2 raises no `WebMessageReceived` at all for
 /// `postMessageWithAdditionalObjects` with any other message (an object posts
 /// without an error in the page and never arrives).
 pub const FILE_DROP_MESSAGE: &str = "__sweetview_file_drop__";
 
-/// True for the drop script's message, which `wry`'s IPC handler must ignore.
+/// True for the drop script's message, which is not the page's own.
 pub fn is_file_drop_message(body: &str) -> bool {
     body == FILE_DROP_MESSAGE
 }
@@ -213,25 +216,6 @@ pub(crate) const FILE_DROP_SCRIPT: &str = r#"(function() {
         '__sweetview_file_drop__', Array.from(e.dataTransfer.files));
     }
   }, true);
-})()"#;
-
-/// The script that keeps a page's `window.close()` from closing the webview,
-/// run in every document and frame. Under the C++ fork nothing handled
-/// WebView2's `WindowCloseRequested`, so the call did nothing. `wry` 0.58.2
-/// handles it on every webview by destroying the webview's container window
-/// (`src/webview2/mod.rs`, `attach_handlers`), with no option to leave it out
-/// and no way to remove its handler, so the request is not made: each frame's
-/// `window.close` (an own property of the window object, `Window` being a
-/// `[Global]` interface) does nothing, as the call did before, whichever frame
-/// calls it. The property keeps the built-in's attributes.
-pub(crate) const KEEP_OPEN_SCRIPT: &str = r#"(function() {
-  'use strict';
-  Object.defineProperty(window, 'close', {
-    value: function close() {},
-    writable: true,
-    enumerable: true,
-    configurable: true,
-  });
 })()"#;
 
 /// Sets the drop script's flag in the current top-level document.

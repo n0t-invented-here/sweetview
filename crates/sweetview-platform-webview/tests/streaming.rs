@@ -132,7 +132,7 @@ fn hold_request(view: &View, path: &'static str) -> Rc<Cell<Option<u64>>> {
 
 #[test]
 fn a_streamed_body_arrives_whole_and_in_order_and_webview2_gives_it_to_the_page_at_its_end() {
-    eprintln!("-- WebView2 Runtime {}", wry::webview_version().unwrap_or_default());
+    eprintln!("-- WebView2 Runtime {}", sweetview_platform_webview::test_support::runtime_version());
     let mut ctx = Ctx::new();
     let view = ctx.view();
     ctx.load_index(&view);
