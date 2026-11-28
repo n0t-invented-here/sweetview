@@ -162,8 +162,9 @@ describe("the system menu of a window by its handle (the tag's windowMenu(hwnd))
         wrapsOnce: /const (\w+) = Window\.fromHandle\(hwnd\)/.test(text) && /`?\b(\w+)\.showSystemMenu\(\)/.test(text.replace(/Window#showSystemMenu/g, "")),
         saysWhatItKeeps: /kept.*until `?\w+\.dispose\(\)`? or the end of the application/.test(text),
         saysNullAndNotAWindowThrow: /throws for a null handle and for a value that names no window/.test(text),
-        saysForeignWindowIsWatched: /did not make.*watched.*until the wrapper is disposed/s.test(text),
-      }).toEqual({ where, wrapsPerCall: false, wrapsOnce: true, saysWhatItKeeps: true, saysNullAndNotAWindowThrow: true, saysForeignWindowIsWatched: true });
+        // Round 4, P6: a window the application made gets a subclass only while a listener is attached.
+        saysSubclassOnlyWithAListener: /did not make gets a subclass only while a listener is attached/s.test(text),
+      }).toEqual({ where, wrapsPerCall: false, wrapsOnce: true, saysWhatItKeeps: true, saysNullAndNotAWindowThrow: true, saysSubclassOnlyWithAListener: true });
     });
   }
 });

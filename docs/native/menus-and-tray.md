@@ -118,11 +118,10 @@ the menu. An `HMENU` that the application tracks itself, with its own
 `TrackPopupMenu`, or sets as a window's menu bar, has no public call in 1.0.
 
 [`Window#showSystemMenu()`](windows.md#window-members) shows a `Window`'s
-system menu; `windowMenu(hwnd)` of `@n1h/sweetview-native/win32/tab-window`,
-which it calls, shows the system menu (Restore, Move, Size, Minimize,
-Maximize, Close) of any window of the UI thread at the cursor, with Restore
-enabled when `IsZoomed` and Move, Size and Maximize when not, and posts the
-chosen command as the title bar's own menu does.
+system menu (Restore, Move, Size, Minimize, Maximize, Close) at the cursor,
+with Restore enabled while the OS has the window maximized (`IsZoomed`), Move,
+Size and Maximize while it has not, and Minimize always, and posts the chosen
+command as the title bar's own menu does.
 For any other window of the UI thread, one the application made itself
 included, wrap it once and call `showSystemMenu()` on that one object each
 time, for example from the window's right-click handler:
@@ -138,13 +137,13 @@ win.dispose();
 ```
 
 The wrapper is kept until `win.dispose()` or the end of the application, so
-wrapping the window again on each click keeps one more each time. Two things
-differ from the tag's `windowMenu(hwnd)`, which only borrowed the handle for
+wrapping the window again on each click keeps one more each time. One thing
+differs from the tag's `windowMenu(hwnd)`, which only borrowed the handle for
 the call: `Window.fromHandle` throws for a null handle and for a value that
 names no window, where `windowMenu` did nothing. A wrapper used only for the
-menu changes nothing of the window: a window Sweetview did not make is
-subclassed only while a wrapper of it has a listener (`onResize`, `onMove`,
-`onMaximizeChange`, `onClose`, `onFileDrop`), as before 1.0.
+menu changes nothing of the window: a window Sweetview did not make gets a
+subclass only while a listener is attached to a wrapper of it (`onResize`,
+`onMove`, `onMaximizeChange`, `onClose`, `onFileDrop`), as before 1.0.
 
 ## Tray
 
