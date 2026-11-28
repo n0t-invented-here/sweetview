@@ -66,7 +66,7 @@ const ready = (hwnd: unknown) => {
   console.log(`READY ${watched}`);
 };
 
-if (mode === "blocking" || mode === "dispose" || mode === "window-dispose" || mode === "run-twice") {
+if (mode === "blocking" || mode === "dispose" || mode === "window-dispose" || mode === "run-twice" || mode === "run-twice-own-hide") {
   const app = await createApp({
     ...windowOptions,
     ...options(() => {
@@ -82,15 +82,22 @@ if (mode === "blocking" || mode === "dispose" || mode === "window-dispose" || mo
   });
   noFade(app.window);
   app.run();
-  if (mode === "run-twice") {
-    // The window the first run() hid comes back for the second, once the new page is ready.
-    const again = await WebView.attach(app.window, options(() => {
+  if (mode === "run-twice" || mode === "run-twice-own-hide") {
+    // Right after the first run() returned: hidden, still a window, and not listed as visible.
+    const handle = BigInt(app.window.handle as bigint | number);
+    console.log(`AFTER-FIRST ${JSON.stringify({ visible: app.window.isVisible(), alive: isWindow(handle), listed: Window.visibleWindows().includes(app.window) })}`);
+    // The application's own hide() stands: the second run() does not show the window again.
+    if (mode === "run-twice-own-hide") app.window.hide();
+    // A view with no showOnReady: only the restore at the start of run() shows the window.
+    const { showOnReady: _none, ...noReveal } = options(() => {
+      console.log(`SECOND ${JSON.stringify({ visible: app.window.isVisible() })}`);
       console.log("READY-AGAIN");
       scheduleNativeTimeout(1200, () => {
         console.log("QUIT");
         again.quit();
       });
-    }));
+    });
+    const again = await WebView.attach(app.window, noReveal);
     again.run();
   }
 } else if (mode === "pumped" || mode === "replace") {

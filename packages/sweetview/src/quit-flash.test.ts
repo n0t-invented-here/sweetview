@@ -131,7 +131,12 @@ describe.if(process.platform === "win32")("a window on its way out (D46)", () =>
         // The webview went while the process lived, and the window was off the screen before it did.
         expect(summary.lastWebview).not.toBeNull();
         expect(summary.lastOnScreen! <= summary.lastWebview!).toBe(true);
-        if (mode === "run-twice") expect(run.stdout).toContain("READY-AGAIN");
+        if (mode === "run-twice") {
+          // Hidden and alive right after the first run(), and shown again by the second with a
+          // view that does not use showOnReady (R8 of D46's first review).
+          expect(run.stdout).toContain('AFTER-FIRST {"visible":false,"alive":true,"listed":false}');
+          expect(run.stdout).toContain('SECOND {"visible":true}');
+        }
       },
       LIVE_TEST_MS,
     );
@@ -170,4 +175,15 @@ describe.if(process.platform === "win32")("a window on its way out (D46)", () =>
     },
     LIVE_TEST_MS,
   );
+  test(
+    "run-twice-own-hide: the application's own hide() between two run()s stands: the second does not show the window",
+    async () => {
+      const run = await watchFixture("run-twice-own-hide");
+      expect(run.exitCode).toBe(0);
+      expect(run.stdout).toContain('AFTER-FIRST {"visible":false,"alive":true,"listed":false}');
+      expect(run.stdout).toContain('SECOND {"visible":false}');
+    },
+    LIVE_TEST_MS,
+  );
 });
+
