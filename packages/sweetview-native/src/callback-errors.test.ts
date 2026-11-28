@@ -103,15 +103,69 @@ describe("reportCallbackError", () => {
 });
 
 describe("the reporter is not an entry point", () => {
-  test("no entry point of the package lets an application fabricate a fault: ./internal does not export reportCallbackError", async () => {
-    const pkg = JSON.parse(await Bun.file(new URL("../package.json", import.meta.url)).text()) as { exports: Record<string, string> };
+  // Every export of every entry point of @n1h/sweetview-native and @n1h/sweetview (review 2, P4).
+  // An entry point that loads here is checked by its exports' names and by their values, one level
+  // into an exported object too, so a private function re-exported under another name is found. One
+  // that cannot load on this OS (the darwin entry points off macOS: they open AppKit as they load)
+  // is checked by the names its source exports, read without running it; such a file may not
+  // re-export a whole module, which reading alone could not see into.
+  test("no export of any entry point of either package is the reporter, the binding's sink, or a reader of thrown values", async () => {
+    const callbackErrors = (await import("./callback-errors")) as Record<string, unknown>;
+    const thrown = (await import("./thrown")) as Record<string, unknown>;
+    const isPublic = (name: string) => name === "onCallbackError";
+    const privateValues = new Map<unknown, string>();
+    for (const [name, value] of Object.entries(callbackErrors)) if (!isPublic(name)) privateValues.set(value, `callback-errors.ts ${name}`);
+    for (const [name, value] of Object.entries(thrown)) privateValues.set(value, `thrown.ts ${name}`);
+    if (process.platform === "win32") {
+      const native = (await import("./binding")).binding() as unknown as Record<string, unknown>;
+      privateValues.set(native, "the binding");
+      privateValues.set(native.setCallbackErrorSink, "the binding's setCallbackErrorSink");
+    }
+    const privateNames = new Set([...[...privateValues.values()].map((what) => what.split(" ").at(-1)!), "setBindingSink", "binding"]);
+    expect(privateNames.size).toBeGreaterThan(8);
+
     const offering: string[] = [];
-    for (const [subpath, target] of Object.entries(pkg.exports)) {
-      if (typeof target !== "string" || subpath.includes("darwin")) continue;
-      const mod = (await import(new URL(`../${target}`, import.meta.url).href)) as Record<string, unknown>;
-      for (const name of ["reportCallbackError", "kindOfBindingCallback"]) if (name in mod) offering.push(`${subpath}: ${name}`);
+    const checked: string[] = [];
+    for (const pkgDir of ["../", "../../sweetview/"]) {
+      const pkg = JSON.parse(await Bun.file(new URL(`${pkgDir}package.json`, import.meta.url)).text()) as { name: string; exports: Record<string, unknown> };
+      for (const [subpath, target] of Object.entries(pkg.exports)) {
+        const where = `${pkg.name}${subpath.slice(1)}`;
+        if (typeof target !== "string") {
+          // Types only (./file-imports): nothing is there at run time.
+          expect(Object.keys(target as object)).toEqual(["types"]);
+          continue;
+        }
+        const url = new URL(`${pkgDir}${target}`, import.meta.url);
+        let mod: Record<string, unknown> | undefined;
+        try {
+          mod = (await import(url.href)) as Record<string, unknown>;
+        } catch (err) {
+          expect({ where, loads: false, darwinOffMacOS: subpath.includes("darwin") && process.platform !== "darwin" }).toEqual({ where, loads: false, darwinOffMacOS: true });
+          const source = await Bun.file(url).text();
+          expect({ where, reExportsAll: /^\s*export\s*\*/m.test(source) }).toEqual({ where, reExportsAll: false });
+          for (const name of new Bun.Transpiler({ loader: "ts" }).scan(source).exports) if (privateNames.has(name)) offering.push(`${where}: ${name}`);
+          checked.push(`${where} (its source)`);
+          continue;
+        }
+        for (const [name, value] of Object.entries(mod)) {
+          if (privateNames.has(name)) offering.push(`${where}: ${name}`);
+          if (privateValues.has(value)) offering.push(`${where}: ${name} is ${privateValues.get(value)}`);
+          if (value !== null && typeof value === "object") {
+            for (const key of Object.keys(value)) {
+              const inner = (value as Record<string, unknown>)[key];
+              if (privateValues.has(inner)) offering.push(`${where}: ${name}.${key} is ${privateValues.get(inner)}`);
+            }
+          }
+        }
+        checked.push(where);
+      }
     }
     expect(offering).toEqual([]);
+    // Both packages' entry points were reached, the root ones included.
+    expect(checked).toContain("@n1h/sweetview-native");
+    expect(checked).toContain("@n1h/sweetview-native/internal");
+    expect(checked).toContain("@n1h/sweetview");
+    expect(checked).toContain("@n1h/sweetview/native");
   });
 });
 
