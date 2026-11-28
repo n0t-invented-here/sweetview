@@ -103,8 +103,11 @@ describe("one recipe for each thing", () => {
 describe("internals named in passing", () => {
   test("docs/app.md's list of what the end of the application releases names no internal call", () => {
     const list = read("docs/app.md").replace(/\s+/g, " ");
-    const step = list.slice(list.indexOf("7. on Windows, whatever the binding still holds"), list.indexOf("A step that fails"));
-    expect({ step, namesBuildMenu: /buildMenu/.test(step), namesNativeTimeouts: /native timeouts/.test(step) }).toEqual({ step, namesBuildMenu: false, namesNativeTimeouts: false });
+    // The release list's last step, which names what the native layer still holds: present, and naming no internal call.
+    const start = list.indexOf("7. on Windows, whatever the native layer still holds");
+    const end = list.indexOf("A step that fails", start);
+    const step = start >= 0 && end > start ? list.slice(start, end) : "";
+    expect({ found: step.length > 40, namesBuildMenu: /buildMenu/.test(step), namesNativeTimeouts: /native timeouts/.test(step) }).toEqual({ found: true, namesBuildMenu: false, namesNativeTimeouts: false });
   });
 
   test("the guide's win32/tray.ts note says what the public Tray covers, not that the file's exports are still there", () => {
