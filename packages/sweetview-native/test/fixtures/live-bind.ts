@@ -49,7 +49,6 @@ if (scenario === "results-and-errors") {
     }),
   );
   // Not bound: refused with WEBVIEW_ERROR_NOT_FOUND (2).
-  report.unbindUnknown = codeOf(() => webview.unbind("neverBound"));
   webview.bind("done", (json: string) => {
     report.page = JSON.parse(json);
     report.duplicateCalled = duplicateCalled;

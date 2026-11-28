@@ -1,10 +1,11 @@
 // W1.3 and W1.4 for the webview's callback kinds: a binding, a request
 // handler, a file drop handler, an accelerator-key handler, a new-window
 // handler and a navigation-failed handler. An exception thrown from each is
-// caught at the boundary and logged, and the loop goes on; each may remove
-// itself, or destroy its webview, from inside its own call. One scenario per
-// process (argv[2]); prints `RESULT <json>`; the test reads stderr for the
-// log lines.
+// caught at the boundary and logged, and the loop goes on; the accelerator
+// handler then removes itself. One scenario per process (argv[2]); prints
+// `RESULT <json>`; the test reads stderr for the log lines. A handler that
+// replaces, clears or destroys from inside its own call is proven in Rust
+// (`crates/sweetview-runtime/src/engine_os_tests.rs`).
 //
 // The accelerator-key, new-window and navigation-failed handlers are the
 // engine's (the tabs library wraps them); the others go through the Webview
@@ -13,7 +14,7 @@
 
 import { join } from "node:path";
 import { engineOf, SizeHint, Webview } from "../../src/webview";
-import { codeOf, finish, native, report, watchdog } from "./kit";
+import { finish, native, report, watchdog } from "./kit";
 import * as probe from "./win32-probe";
 
 watchdog(30_000);
@@ -33,11 +34,6 @@ const fileDrop = async (name: string) => {
     }
   };
 };
-const destroyedCodes = () => ({
-  setRequestHandler: codeOf(() => webview.setRequestHandler(null)),
-  setFileDropHandler: codeOf(() => webview.setFileDropHandler(null)),
-  bind: codeOf(() => webview.bind("late", () => 0)),
-});
 const page = (script: string) =>
   webview.setAsset("index.html", "text/html; charset=utf-8", `<!doctype html><body style="margin:0;height:100vh"><script>addEventListener("dragover", (e) => e.preventDefault()); addEventListener("drop", (e) => e.preventDefault()); (async () => { ${script} })();</script></body>`);
 
@@ -120,48 +116,6 @@ if (scenario === "throws") {
   finish();
 }
 
-if (scenario === "remove-self") {
-  const calls: string[] = [];
-  // A new-window handler replaces itself; the replacement clears itself.
-  engine.onNewWindowRequested(() => {
-    calls.push("A popup");
-    engine.onNewWindowRequested(() => {
-      calls.push("B popup");
-      engine.onNewWindowRequested(null);
-    });
-  });
-  // A navigation-failed handler clears itself.
-  engine.onNavigationFailed(() => {
-    calls.push("navigation failed");
-    engine.onNavigationFailed(null);
-    after(100, () => webview.navigate("http://127.0.0.1:9/again"));
-    after(1500, () => native.quitLoop());
-  });
-  webview.bind("opened", () => {
-    after(300, () => webview.navigate("http://127.0.0.1:9/"));
-  });
-  page(`window.open(${JSON.stringify(origin)} + "/one"); await new Promise((r) => setTimeout(r, 200)); window.open(${JSON.stringify(origin)} + "/two"); await new Promise((r) => setTimeout(r, 200)); window.opened();`);
-  webview.navigate(`${origin}/index.html`);
-  webview.run();
-  report.calls = calls;
-  finish();
-}
-
-if (scenario === "destroy-new-window" || scenario === "destroy-navigation-failed") {
-  const destroyInside = () => {
-    webview.destroy();
-    report.insideCall = destroyedCodes();
-  };
-  if (scenario === "destroy-new-window") engine.onNewWindowRequested(destroyInside);
-  else engine.onNavigationFailed(destroyInside);
-  page(scenario === "destroy-new-window" ? `window.open(${JSON.stringify(origin)} + "/popup");` : `location.href = "http://127.0.0.1:9/";`);
-  webview.navigate(`${origin}/index.html`);
-  webview.run();
-  report.runReturned = true;
-  report.released = webview.unsafeHandle === null && engine.destroyed;
-  finish();
-}
-
 /**
  * Asks for the foreground for `hwnd` up to eight times, a short wait apart (other sessions take
  * it), then runs `then`; when it is never granted, records `foreground: false` and the reason and
@@ -197,39 +151,6 @@ function tapInForeground(hwnd: number | bigint, virtualKey: number): boolean {
   return probe.tapKey(hwnd, virtualKey);
 }
 
-if (scenario === "accelerator-destroy") {
-  // An accelerator-key handler destroys its own webview from inside its call. Needs the
-  // foreground, as above.
-  const hwnd = webview.unsafeWindowHandle!;
-  const keys: number[] = [];
-  engine.onAcceleratorKey((key) => {
-    // Other sessions press keys system-wide while this window has the foreground: only F12 is ours.
-    if (key.virtualKey !== 0x7b) return false;
-    keys.push(key.virtualKey);
-    webview.destroy();
-    report.insideCall = destroyedCodes();
-    return true;
-  });
-  webview.bind("ready", () =>
-    whenForeground(hwnd, () => {
-      engine.moveFocus();
-      const VK_F12 = 0x7b;
-      const taps: boolean[] = [];
-      report.taps = taps;
-      after(200, () => taps.push(tapInForeground(hwnd, VK_F12)));
-      // run() returns when the handler destroys the webview; this only bounds a run where it did not.
-      after(3000, () => native.quitLoop());
-    }),
-  );
-  page(`window.ready();`);
-  webview.navigate(`${origin}/index.html`);
-  webview.run();
-  report.runReturned = true;
-  report.released = webview.unsafeHandle === null && engine.destroyed;
-  report.windowGone = !probe.isWindow(hwnd);
-  report.keys = keys;
-  finish();
-}
 
 if (scenario === "accelerator") {
   // AcceleratorKeyPressed is raised only for real keyboard input to a

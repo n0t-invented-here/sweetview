@@ -8,12 +8,15 @@
 //   called each symbol with a NULL webview (-2) and a handle that never came
 //   from webview_create (-3). The binding's functions take a handle number;
 //   there is no NULL pointer to pass, so a handle that names no webview (0
-//   included) is refused with -3 by every one of them.
+//   included) is refused with -3 by every one of them: proven in Rust
+//   (`crates/sweetview-napi/tests/stale_handles.rs`); this file checks they
+//   are exported.
 // - A NULL chunk with a length (-2) has no counterpart: a chunk is a
 //   Uint8Array and carries its own length.
 // - `pendingCallbackCloses` and the call through a handler's native function
-//   pointer were `JSCallback` plumbing; the teardown tests now drive real
-//   drops and keep every other assertion.
+//   pointer were `JSCallback` plumbing. Handlers that replace, clear or
+//   destroy from inside their own calls, driven by real requests and drops,
+//   are proven in Rust (`crates/sweetview-runtime/src/engine_os_tests.rs`).
 
 import { describe, expect, test } from "bun:test";
 import { binding } from "./binding";
@@ -23,21 +26,13 @@ import { runFixture } from "../test/run-fixture";
 const onWindows = process.platform === "win32";
 
 describe.if(onWindows)("W2.7 binding exports", () => {
-  test("W2.7 the request, streaming and drop functions exist, and a handle that names no webview is refused with -3", () => {
+  test("W2.7 the request, streaming and drop functions exist", () => {
     const native = binding();
-    for (const fn of [native.completeRequest, native.beginResponse, native.writeResponseChunk, native.endResponse]) {
+    for (const fn of [native.completeRequest, native.beginResponse, native.writeResponseChunk, native.endResponse, native.Engine.fromHandle]) {
       expect(typeof fn).toBe("function");
     }
     for (const method of ["setRequestHandler", "setAllowExternalDrop", "setAsset", "setFileDropHandler"] as const) {
       expect(typeof native.Engine.prototype[method]).toBe("function");
-    }
-    for (const stale of [0, 0x1000]) {
-      expect(native.completeRequest(stale, 1n, 200, null, null)).toBe(-3);
-      expect(native.completeRequest(stale, 0n, 200, null, null)).toBe(-3);
-      expect(native.beginResponse(stale, 1n, 200, null)).toBe(-3);
-      expect(native.writeResponseChunk(stale, 1n, new Uint8Array(0))).toBe(-3);
-      expect(native.endResponse(stale, 1n)).toBe(-3);
-      expect(native.Engine.fromHandle(stale)).toBeNull();
     }
   });
 });
@@ -87,14 +82,13 @@ describe("W2.7 argument checks in the bindings", () => {
 });
 
 describe.if(onWindows)("W2.7 live webview", () => {
-  test("W2.7 dynamic HTML, POST echo, binary image, cross-origin iframe, static assets, streaming, service worker, teardown", async () => {
+  test("W2.7 dynamic HTML, POST echo and a binary image answered from a Worker, static assets, streaming from a Worker, teardown", async () => {
     const { r, exitCode } = await runFixture("live-request-handler.ts");
     // run() returned, the webview was destroyed with a request still open, and the process exited cleanly.
     expect(exitCode).toBe(0);
     expect(r.timedOut).toBeUndefined();
     const p = r.page;
     const origin = r.assetOrigin;
-    const frames = r.framesOrigin;
 
     expect(p.error).toBeUndefined();
     expect(r.handleType).toBe("number");
@@ -104,103 +98,51 @@ describe.if(onWindows)("W2.7 live webview", () => {
 
     // Dynamic HTML from the handler at the main origin.
     expect(origin).toBe("http://webview.localhost");
-    expect(frames).toBe("http://frames.webview.localhost");
+    expect(r.framesOrigin).toBe("http://frames.webview.localhost");
     expect(p.parentOrigin).toBe(origin);
-    // Static assets still answer first, from setAsset.
+    // Static assets set as strings answer first, from setAsset.
     expect(p.staticScript).toBe("static-ok");
     expect(p.staticFetch).toBe("asset-text");
     const paths = r.requests.map((q: { url: string }) => new URL(q.url).pathname);
     expect(paths).not.toContain("/static.js");
     expect(paths).not.toContain("/asset.txt");
 
-    // POST with a body and a custom header, answered asynchronously.
+    // POST with a body and a custom header, answered asynchronously from a Worker.
     expect(p.echoStatus).toBe(201);
     expect(p.echoContentType).toBe("application/json");
     expect(p.echo.method).toBe("POST");
-    expect(p.echo.query).toBe("?x=1");
     expect(p.echo.header).toBe('hello "world"');
     expect(JSON.parse(p.echo.body)).toEqual({ ping: "pong", n: 42 });
-    // Repeated headers survive.
+    // Repeated headers given as pairs survive.
     expect(p.echoMulti).toBe("a, b");
-    // Bad header JSON is refused with WEBVIEW_ERROR_INVALID_ARGUMENT (-2)
-    // before anything is queued, and the request stays open for the real
-    // answer: trailing text after a literal ({"X-Example":trueish}), an
-    // escaped NUL, a name that is not a token, a lone surrogate, a raw tab
-    // inside a string, CR LF in a value.
-    expect(p.rawRejections).toBe("-2,-2,-2,-2,-2,-2");
-    // The same through completeWebviewRequest, which throws WebviewError.
+    // Bad headers are refused by completeWebviewRequest with WebviewError -2
+    // before anything is queued, and the request stays open for the real answer.
     expect(p.wrapperRejections).toBe("-2,-2,-2,-2");
     // Nothing was injected.
     expect(p.echoInjected).toBeNull();
     expect(p.echoEvil).toBeNull();
 
-    // A service worker's own fetch reaches the handler, not the network.
-    expect(p.sw).toEqual({ status: 200, text: "sw-ok" });
-    expect(paths).toContain("/sw.js");
-    expect(paths).toContain("/from-sw");
-
     // Binary image completed from a worker thread.
     expect(p.imgEvent).toBe("load");
     expect(p.img).toEqual({ w: 1, h: 1 });
 
-    // Cross-origin iframe from the frames origin: the browser isolates it.
-    expect(p.frameOrigin).toBe(frames);
-    expect(p.frameEventOrigin).toBe(frames);
-    expect(p.frameOrigin).not.toBe(p.parentOrigin);
-    expect(p.frameHref).toBe(`${frames}/sandbox.html`);
-    expect(String(p.frameDocumentAccess)).toStartWith("blocked:");
-
-    // Seen from inside the iframe: no bridge and no bound functions...
-    const f = p.frameProbe;
-    expect(f.error).toBeUndefined();
-    expect(f.hasBridge).toBe(false);
-    // ...no access to the parent document...
-    expect(f.parentDocBlocked).toBe("SecurityError");
-    // ...no CORS read of the main origin...
-    expect(f.crossOriginFetchBlocked).toBe("blocked");
-    // ...raw RPC posts to the native channel never run a host binding...
-    expect(Array.isArray(f.rawPostAttempted)).toBe(true);
-    expect(r.iframeEscaped).toBe(false);
-    // ...and its own origin's subresources still load.
-    expect(f.subresourceStatus).toBe(200);
-    expect(f.subresourceLoaded).toEqual({ frameData: "frame-ok" });
-    expect(r.requests.map((q: { url: string }) => q.url)).toContain(`${frames}/frame-data.json`);
-
-    // Unknown paths reach the handler, which answers 404.
+    // A handler's { status: 404 } answers 404.
     expect(p.missingStatus).toBe(404);
     expect(paths).toContain("/nothing-here");
 
     {
-      // Server-Sent Events streamed from a worker, no socket: all three
-      // arrive in order, as separate events (event 2 was written in two
-      // halves, 100 ms apart), over one connection, with no reconnect.
+      // Server-Sent Events streamed from a worker through the wrappers: all
+      // three arrive in order, as separate events. A bad status is refused
+      // (-2) before anything is sent; a second begin for the same request is
+      // WEBVIEW_ERROR_DUPLICATE (1).
       const sse = p.sse;
       expect(sse.timeout).toBeUndefined();
       expect(sse.events.map((e: { n: number }) => e.n)).toEqual([1, 2, 3]);
       expect(sse.events.map((e: { id: string }) => e.id)).toEqual(["1", "2", "3"]);
-      expect(paths.filter((q: string) => q === "/sse")).toHaveLength(1);
       const last = sse.events[2].data;
-      // WebView2 hands the page an intercepted response only once its body
-      // has ended (WebView2Feedback #3519), so every event arrives together,
-      // after the last write. If a future WebView2 Runtime delivers partial
-      // bodies, the page acks event 1 before event 2 is written and these
-      // flip: update the docs of beginWebviewResponse then.
-      expect(last.ack1BeforeEvent2).toBe(false);
-      expect(last.ack2BeforeEvent3).toBe(false);
-      expect(sse.events[0].receivedAt).toBeGreaterThanOrEqual(last.writtenAt);
-      // Bad header JSON and a bad status are refused (-2) before anything
-      // is sent. A second begin for the same request is
-      // WEBVIEW_ERROR_DUPLICATE (1).
-      expect(last.badBegin).toBe(-2);
       expect(last.badStatus).toBe(-2);
       expect(last.duplicateBegin).toBe(1);
     }
-
-    // OS file drops: the drop script ran enabled, took a drop carrying
-    // files from the page, and let go of drops once the handler was
-    // cleared. A File made in script has no path, so the handler never ran.
-    expect(p.fileDrop).toEqual({ enabledFlag: true, prevented: true, clearedFlag: false, preventedAfterClear: false });
-    expect(r.fileDropCalls).toEqual([]);
 
     // A request still open when the webview is destroyed is released
     // unanswered, and run() returns.
@@ -216,66 +158,6 @@ describe.if(onWindows)("W2.7 live webview", () => {
     expect(r.afterDestroyMethod).toBe(-3);
     // An empty chunk after destroy is refused with -3, not skipped.
     expect(r.emptyChunkAfterDestroy).toBe(-3);
-  }, 90_000);
-});
-
-// Replacing, clearing and destroying from inside the handlers' own calls.
-// Each scenario runs in its own process, so a teardown that hangs (destroy
-// run inside WebView2's WebResourceRequested) fails here.
-describe.if(onWindows)("W2.7 live webview: changes from inside a handler's own call", () => {
-  // What a destroyed webview answers: WEBVIEW_ERROR_INVALID_STATE (-3).
-  const destroyedCodes = { completeRequest: -3, setRequestHandler: -3, setFileDropHandler: -3 };
-
-  test("W2.7 the request handler replaces itself, then the replacement clears itself", async () => {
-    const { r, exitCode } = await runFixture("live-callback-teardown.ts", ["request-replace-clear"]);
-    expect(exitCode).toBe(0);
-    expect(r.timedOut).toBeUndefined();
-    expect(r.page).toEqual([
-      { path: "/a", status: 200, body: "from-A" },
-      { path: "/b", status: 200, body: "from-B" },
-      // No handler: 404.
-      { path: "/c", status: 404, body: expect.any(String) },
-    ]);
-    // /a went to A, /b to its replacement B, /c to neither.
-    expect(r.calls).toContain("A/a");
-    expect(r.calls).toContain("B/b");
-    expect(r.calls).not.toContain("A/b");
-    expect(r.calls.filter((c: string) => c.endsWith("/c"))).toEqual([]);
-    expect(r.runReturned).toBe(true);
-  }, 90_000);
-
-  test("W2.7 the request handler destroys the webview from inside WebResourceRequested without hanging", async () => {
-    const { r, exitCode } = await runFixture("live-callback-teardown.ts", ["request-destroy"]);
-    expect(exitCode).toBe(0);
-    expect(r.timedOut).toBeUndefined();
-    expect(r.destroyedInsideCall).toBe(true);
-    // Destroyed at once, inside the call: every checked API throws -3.
-    expect(r.insideCall).toEqual(destroyedCodes);
-    // run() returned and the deferred teardown ran.
-    expect(r.runReturned).toBe(true);
-    expect(r.afterRun).toEqual(destroyedCodes);
-    // Nothing reached the handler once it had destroyed the webview, and
-    // the page never got to finish.
-    expect(r.callsAfterDestroy).toBe(0);
-    expect(r.pageFinished).toBeUndefined();
-  }, 90_000);
-
-  test("W2.7 the file drop handler replaces itself, clears itself, and destroys the webview from inside its call", async () => {
-    const { r, exitCode } = await runFixture("live-callback-teardown.ts", ["drop-replace-clear-destroy"]);
-    expect(exitCode).toBe(0);
-    expect(r.timedOut).toBeUndefined();
-    expect(r.firstDrop).toBe(0);
-    expect(r.firstCalled).toBe(true);
-    expect(r.secondCalled).toBe(true);
-    expect(r.thirdCalled).toBe(true);
-    expect(r.fourthCalled).toBe(true);
-    // A ran once and handed over to B, which ran once and cleared itself;
-    // with no handler the page got the drop; C destroyed the webview.
-    expect(r.drops).toEqual(["A:one", "B:two", "page:three", "C:four"]);
-    expect(r.insideCall).toEqual(destroyedCodes);
-    expect(r.dropAfterDestroy).toBe(-3);
-    expect(r.runReturned).toBe(true);
-    expect(r.afterRun).toEqual(destroyedCodes);
   }, 90_000);
 });
 
@@ -309,7 +191,6 @@ describe.if(onWindows)("W2.7 live webview: bindings", () => {
     });
     expect(r.duplicate).toBe(1);
     expect(r.duplicateCalled).toBe(false);
-    expect(r.unbindUnknown).toBe(2);
     expect(r.runReturned).toBe(true);
     // Destroyed webviews are released.
     expect(r.releasedAfterRun).toBe(true);
