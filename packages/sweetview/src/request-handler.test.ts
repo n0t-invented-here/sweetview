@@ -239,6 +239,8 @@ test.if(live && process.platform === "win32")("a worker's streamed body arrives 
   expect(report.pacing.produced).toBe(bulkBytes);
   // No part reached the page before the next was written...
   expect(report.pacing.liveAcks).toEqual([false, false, false]);
-  // ...and the page read nothing of the body before the worker had produced all of it.
+  // ...and the page read nothing of the body before the worker ended it (the worker waited up to
+  // 3 s for the page's first read before ending), so all of it was ahead of the page.
+  expect(report.pacing.firstBeforeEnd).toBe(false);
   expect(report.pacing.maxAhead).toBe(bulkBytes);
 }, 30_000);

@@ -18,6 +18,24 @@ let ackWaiter: (() => void) | undefined;
 let produced = 0;
 let consumed = 0;
 let maxAhead = 0;
+// Whether the page had read any of /bulk before the worker ended it: once everything is
+// produced, the worker waits up to 3 s for the page's first report before it closes the body,
+// so the worker, which ends the response, decides.
+let firstBeforeEnd: boolean | undefined;
+let consumedWaiter: (() => void) | undefined;
+const waitForFirstRead = () =>
+  new Promise<boolean>((resolve) => {
+    if (consumed > 0) return resolve(true);
+    const timer = setTimeout(() => {
+      consumedWaiter = undefined;
+      resolve(false);
+    }, 3000);
+    consumedWaiter = () => {
+      clearTimeout(timer);
+      consumedWaiter = undefined;
+      resolve(true);
+    };
+  });
 const waitForAck = (n: number) =>
   new Promise<boolean>((resolve) => {
     const timer = setTimeout(() => {
@@ -38,7 +56,7 @@ const service = defineService<{
   paths: [null, string[]];
   ack: [number, void];
   consumed: [number, void];
-  pacing: [null, { liveAcks: boolean[]; produced: number; maxAhead: number }];
+  pacing: [null, { liveAcks: boolean[]; produced: number; maxAhead: number; firstBeforeEnd: boolean | undefined }];
 }, { pending: null; streamEof: null }>((emit) => {
   pending = () => emit("pending", null);
   streamEof = () => emit("streamEof", null);
@@ -51,8 +69,9 @@ const service = defineService<{
       },
       consumed: (n: number) => {
         consumed = n;
+        consumedWaiter?.();
       },
-      pacing: () => ({ liveAcks, produced, maxAhead }),
+      pacing: () => ({ liveAcks, produced, maxAhead, firstBeforeEnd }),
     },
   };
 });
@@ -107,8 +126,9 @@ const onRequest: RequestHandler = async (request) => {
     }
     case "/bulk":
       return new Response(new ReadableStream<Uint8Array>({
-        pull(controller) {
+        async pull(controller) {
           if (produced >= BULK_BYTES) {
+            firstBeforeEnd = await waitForFirstRead();
             controller.close();
             return;
           }

@@ -231,3 +231,42 @@ pub fn focused_window() -> isize {
     // SAFETY: `GetFocus` takes no arguments and reads the calling thread's input state.
     unsafe { GetFocus() }.0 as isize
 }
+
+/// `ICoreWebView2Controller::ZoomFactor` of `webview`.
+pub fn zoom_factor(webview: &wry::WebView) -> f64 {
+    let controller = webview.controller();
+    let mut factor = 0.0;
+    // SAFETY: `controller` is a COM reference this frame owns to the live controller of
+    // `webview`, and `factor` a local f64 for the call to fill.
+    unsafe { controller.ZoomFactor(&mut factor) }.expect("ZoomFactor");
+    factor
+}
+
+/// Where the top-left corner of `webview`'s area is on the screen, in physical pixels.
+pub fn screen_origin(webview: &wry::WebView) -> (i32, i32) {
+    let window = container(webview).expect("a live webview");
+    let mut point = windows::Win32::Foundation::POINT::default();
+    // SAFETY: `window` is the webview's container, a window of this thread, and `point` a
+    // local POINT the call converts in place.
+    let _ = unsafe { windows::Win32::Graphics::Gdi::ClientToScreen(window, &mut point) };
+    (point.x, point.y)
+}
+
+/// The outer rectangle (left, top, right, bottom) of the top-level window
+/// `webview` is in, in physical pixels.
+pub fn top_level_rect(webview: &wry::WebView) -> (i32, i32, i32, i32) {
+    let window = container(webview).expect("a live webview");
+    // SAFETY: `GetAncestor` takes a handle value and a flag, and reads no memory of ours.
+    let root = unsafe { windows::Win32::UI::WindowsAndMessaging::GetAncestor(window, windows::Win32::UI::WindowsAndMessaging::GA_ROOT) };
+    let mut rect = windows::Win32::Foundation::RECT::default();
+    // SAFETY: `root` is a handle value (a stale one fails the call) and `rect` a local RECT
+    // for the call to fill.
+    let _ = unsafe { windows::Win32::UI::WindowsAndMessaging::GetWindowRect(root, &mut rect) };
+    (rect.left, rect.top, rect.right, rect.bottom)
+}
+
+/// The primary screen's width in physical pixels.
+pub fn screen_width() -> i32 {
+    // SAFETY: `GetSystemMetrics` takes a plain index and reads no memory of ours.
+    unsafe { windows::Win32::UI::WindowsAndMessaging::GetSystemMetrics(windows::Win32::UI::WindowsAndMessaging::SM_CXSCREEN) }
+}

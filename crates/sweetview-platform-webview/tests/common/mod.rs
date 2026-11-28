@@ -96,6 +96,27 @@ impl Ctx {
         self.view_built(|builder| builder, true)
     }
 
+    /// A webview exactly as `wry` builds one with nothing set: its own
+    /// environment (on a data folder of this process's own), no extras, only
+    /// the IPC handler that lets the page report.
+    pub fn plain_wry_view(&self) -> View {
+        let window = WindowBuilder::new()
+            .with_title("sweetview-platform-webview test: wry alone")
+            .with_inner_size(LogicalSize::new(480.0, 360.0))
+            .build(&self.el)
+            .expect("window");
+        let messages = Rc::new(RefCell::new(Vec::new()));
+        let sink = messages.clone();
+        let mut context = WebContext::new(Some(
+            std::env::temp_dir().join(format!("sweetview-platform-webview-wry-{}", std::process::id())),
+        ));
+        let webview = WebViewBuilder::new_with_web_context(&mut context)
+            .with_ipc_handler(move |request| sink.borrow_mut().push(request.into_body()))
+            .build(&window)
+            .expect("webview");
+        View { extras: None, webview: Some(webview), window: Some(window), messages, wakes: Arc::new(AtomicUsize::new(0)) }
+    }
+
     /// [`view`](Self::view), with `customize` applied to the builder after the
     /// harness's own options, and the extras attached only when `attach`.
     pub fn view_built(&self, customize: impl FnOnce(WebViewBuilder<'_>) -> WebViewBuilder<'_>, attach: bool) -> View {

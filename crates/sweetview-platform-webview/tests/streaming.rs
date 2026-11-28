@@ -1,16 +1,16 @@
 //! What a streamed response does on a real WebView2 (DECISIONS D45): the page
 //! reads the body with a `ReadableStream` reader while the response is open,
-//! written from the UI thread and from another thread, small chunks and a
-//! large fast body. Every byte arrives, in order; the binding never holds more
-//! than the backlog limit and one chunk for a writer off the UI thread; the UI
-//! thread's writes never wait.
+//! written from the UI thread and from another thread, small chunks (text) and
+//! a large fast body (24 MiB of bytes). Every byte arrives, in order, and no
+//! write waits for the page, on any thread.
 //!
-//! And what WebView2 does with it: the binding's `Read` hands each chunk over
-//! as soon as it is written (WebView2 reads it at once), but WebView2 gives the
-//! page none of the body before the response has ended (WebView2Feedback
-//! #3519). That is asserted as measured, so a WebView2 Runtime that starts
-//! handing the page bytes before the end fails here: then streaming works, and
-//! D45, `docs/webview-library.md` and these assertions are updated.
+//! And what the page gets before the end, measured on the runtime the test
+//! runs on (it prints the version): for these responses, nothing, not even the
+//! resolved `fetch()`. Each "before the end" is decided by the thread that ends
+//! the response, which waits for the page's report (up to 3 s) before it
+//! calls `end`. Asserted as measured, so a WebView2 Runtime that hands the
+//! page bytes before the end fails here: then D45, `docs/webview-library.md`
+//! and these assertions are updated.
 #![cfg(windows)]
 
 mod common;
@@ -205,10 +205,12 @@ fn a_streamed_body_arrives_whole_and_in_order_and_webview2_gives_it_to_the_page_
     view.eval(&bulk_reader_js("/bulk"));
     assert!(ctx.pump(Some(&view), Duration::from_secs(10), || held.get().is_some()), "the request reached the handler");
     let id = held.get().unwrap();
-    let ended = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    // The writer decides whether the page had a byte before the end, because it is the one
+    // that ends the response: once every byte is written it waits up to BOUND for the page's
+    // first byte, and only then calls `end`.
+    let (first_tx, first_rx) = mpsc::channel::<()>();
     let writer = {
         let responder = responder.clone();
-        let ended = ended.clone();
         thread::spawn(move || {
             assert_eq!(responder.begin(id, 200, Some(r#"{"Content-Type":"application/octet-stream"}"#)), ErrorCode::Ok);
             let (mut sent, mut held_back) = (0usize, 0u32);
@@ -222,22 +224,24 @@ fn a_streamed_body_arrives_whole_and_in_order_and_webview2_gives_it_to_the_page_
                 }
                 sent += n;
             }
+            let first_before_end = first_rx.recv_timeout(BOUND).is_ok();
             assert_eq!(responder.end(id), ErrorCode::Ok);
-            ended.store(true, std::sync::atomic::Ordering::SeqCst);
-            (sent, held_back)
+            (sent, held_back, first_before_end)
         })
     };
-    let mut bulk_first_before_end = None;
     let mut done = None;
+    let mut told = false;
     ctx.pump(Some(&view), Duration::from_secs(120), || {
-        if bulk_first_before_end.is_none() && view.take("bulk-first").is_some() {
-            bulk_first_before_end = Some(!ended.load(std::sync::atomic::Ordering::SeqCst));
+        if !told && view.take("bulk-first").is_some() {
+            told = true;
+            let _ = first_tx.send(());
         }
         done = done.take().or_else(|| view.take("bulk-done"));
         done.is_some()
     });
     let done = done.expect("the page read the fast writer's body to the end");
-    let (sent, held_back) = writer.join().expect("the writer thread");
+    let (sent, held_back, first_before_end) = writer.join().expect("the writer thread");
+    let bulk_first_before_end = Some(first_before_end);
     eprintln!("   wrote {sent} bytes; writes that took over 5 ms {held_back}; the page: {done}");
     assert_eq!(done["error"], Value::Null, "{done}");
     assert_eq!(done["total"].as_u64(), Some(sent as u64), "every byte reached the page: {done}");

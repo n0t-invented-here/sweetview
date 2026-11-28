@@ -1,9 +1,8 @@
-//! The page behaviour of a real WebView2, read back from WebView2's own
-//! settings objects: what `wry` 0.58.2 sets on its own, and what a webview
-//! built as the runtime builds it (`with_page_behaviour`, then
-//! `WebviewExtras::attach`) has. The C++ fork set only the developer tools
-//! (from `debug`) and the status bar (off) in `win32_edge.hh`, so the second
-//! must be WebView2's defaults with those two as the fork set them.
+//! What `wry` 0.58.2 sets on a real WebView2 on its own, read back from
+//! WebView2's own settings objects: the control for what this crate and the
+//! runtime put back. The C++ fork's settings, the measure, are WebView2's
+//! defaults with the developer tools from `debug` and the status bar off
+//! (`win32_edge.hh`); `cpp_fork` below.
 #![cfg(windows)]
 #![deny(clippy::undocumented_unsafe_blocks)]
 #![deny(clippy::multiple_unsafe_ops_per_block)]
@@ -116,11 +115,13 @@ fn cpp_fork(devtools: bool) -> Settings {
 }
 
 #[test]
-fn the_page_behaves_as_it_did_under_the_cpp_fork() {
+fn what_wry_sets_on_its_own() {
     let mut ctx = Ctx::new();
-
-    // `wry` on its own: its builder defaults for zoom and swipe, no extras.
-    let wry_alone = ctx.view_built(|b| b.with_hotkeys_zoom(false).with_back_forward_navigation_gestures(false).with_devtools(false), false);
+    // A webview `wry` builds with nothing set, on its own environment: the control for
+    // what this crate and the runtime put back (the runtime's own webviews are read back,
+    // for each kind of host, by the runtime's engine tests). A `wry` upgrade that changes
+    // any of this fails here, and D45 and `with_page_behaviour` are revisited.
+    let wry_alone = ctx.plain_wry_view();
     let seen = read(&wry_alone);
     eprintln!("-- wry 0.58.2 on its own: {seen:?}");
     let expected = Settings {
@@ -128,19 +129,10 @@ fn the_page_behaves_as_it_did_under_the_cpp_fork() {
         pinch_zoom: Some(false),
         swipe_navigation: Some(false),
         non_client_region: Some(true),
-        ..cpp_fork(false)
+        // `wry`'s default: the developer tools in a debug build, as this test is.
+        ..cpp_fork(cfg!(debug_assertions))
     };
-    assert_eq!(seen, expected, "what wry changes (a wry upgrade that changes this list needs this file and D45 revisited)");
+    assert_eq!(seen, expected, "what wry 0.58.2 sets on its own");
     drop(wry_alone);
-
-    // Built as the runtime builds a webview, without and with `debug`.
-    for debug in [false, true] {
-        let view = ctx.view_built(|b| b.with_devtools(debug).with_clipboard(true), true);
-        ctx.load_index(&view);
-        let seen = read(&view);
-        eprintln!("-- as the runtime builds it, debug {debug}: {seen:?}");
-        assert_eq!(seen, cpp_fork(debug), "the C++ fork's settings");
-        drop(view);
-    }
     ctx.settle(None, std::time::Duration::from_millis(200));
 }

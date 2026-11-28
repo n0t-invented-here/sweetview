@@ -1,7 +1,8 @@
 # Real input for the webview's page behaviour and drops (DECISIONS D45), injected with SendInput
 # so it travels through the OS as a person's does. Run by
-# crates/sweetview-platform-webview/tests/real_input.rs, one action per run:
+# the runtime's engine tests (crates/sweetview-runtime/src/engine_tests.rs, `real_input`), one action per run:
 #
+#   -Action click -X <x> -Y <y>                      one left click at x,y
 #   -Action ctrlwheel -X <x> -Y <y> [-Notches <n>]   Ctrl held, the wheel turned n notches up at x,y
 #   -Action ctrlkey -X <x> -Y <y> -Key plus|minus|zero   a click at x,y (for the keyboard), then Ctrl+key
 #   -Action drag -X <x> -Y <y> -ToX <x2> -ToY <y2>   the left button pressed at x,y, moved in steps
@@ -14,7 +15,7 @@
 # down. Explorer's window belongs to the shell's own process (the explorer.exe started here hands the
 # folder to it and exits), so the window is closed, not a process ended.
 param(
-  [Parameter(Mandatory = $true)][ValidateSet("ctrlwheel", "ctrlkey", "drag", "explorer")][string]$Action,
+  [Parameter(Mandatory = $true)][ValidateSet("click", "ctrlwheel", "ctrlkey", "drag", "explorer")][string]$Action,
   [int]$X, [int]$Y, [int]$ToX, [int]$ToY,
   [int]$Notches = 1,
   [ValidateSet("plus", "minus", "zero")][string]$Key = "plus",
@@ -109,6 +110,13 @@ try {
       [RI]::KeyUp([uint16]$keys[$Key]); Start-Sleep -Milliseconds 60
       [RI]::KeyUp($VK_CONTROL)
       "clicked at $X,$Y, then Ctrl+$Key"
+    }
+    "click" {
+      [RI]::SetCursorPos($X - 2, $Y) | Out-Null
+      Move-To $X $Y 2
+      Start-Sleep -Milliseconds 200
+      [RI]::Mouse($LEFTDOWN, 0); Start-Sleep -Milliseconds 60; [RI]::Mouse($LEFTUP, 0)
+      "clicked at $X,$Y"
     }
     "drag" { Drag $X $Y $ToX $ToY }
     "explorer" {

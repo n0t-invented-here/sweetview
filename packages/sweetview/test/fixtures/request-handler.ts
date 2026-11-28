@@ -29,7 +29,9 @@ const paceScript = `
           const i = total + k;
           if (value[k] !== (((i % 251) ^ (Math.floor(i / 65536) % 256)) & 255)) bad = i;
         }
+        const first = total === 0;
         total += value.length;
+        if (first) await window.__sweetview_rpc("consumed", total);
         if (total >= nextReport) {
           nextReport += 1048576;
           await window.__sweetview_rpc("consumed", total);
