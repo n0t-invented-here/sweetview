@@ -706,3 +706,73 @@ describe.if(process.platform === "darwin")("WebView, createApp & tabs (darwin)",
     expect(t3.webview.raw.unsafeHandle).toBeNull();
   });
 });
+
+// Three faults of an application's callbacks that once took more than their own call down (review
+// 2, item 9), run by test/fixtures/app-faults.ts in a process of its own with a WebView2 profile
+// of its own. No input is injected.
+describe.if(onWindows)("a fault in one callback of createApp stays in that callback", () => {
+  type Seen = Record<string, unknown> & { events: string[] };
+  let run: Promise<{ exitCode: number; seen: Seen | null; tapped: string[]; stderr: string }> | undefined;
+  const faults = () =>
+    (run ??= (async () => {
+      const { mkdtempSync, rmSync } = await import("node:fs");
+      const { tmpdir } = await import("node:os");
+      const { join } = await import("node:path");
+      const { fileURLToPath } = await import("node:url");
+      const profile = mkdtempSync(join(tmpdir(), "sweetview-app-faults-"));
+      try {
+        const proc = Bun.spawn([process.execPath, fileURLToPath(new URL("../test/fixtures/app-faults.ts", import.meta.url))], {
+          env: { ...process.env, WEBVIEW2_USER_DATA_FOLDER: profile },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const limit = setTimeout(() => process.kill(proc.pid), 60_000);
+        const [stdout, stderr, exitCode] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
+        clearTimeout(limit);
+        const line = stdout.split(/\r?\n/).find((l) => l.startsWith("RESULT "));
+        const result = line ? (JSON.parse(line.slice("RESULT ".length)) as { seen: Seen | null; tapped: string[] }) : { seen: null, tapped: [] };
+        return { exitCode, stderr, ...result };
+      } finally {
+        // WebView2's processes can hold the profile for a moment after the fixture's exit.
+        for (let attempt = 0; attempt < 50; attempt++) {
+          try {
+            rmSync(profile, { recursive: true, force: true });
+            break;
+          } catch {
+            await Bun.sleep(100);
+          }
+        }
+      }
+    })());
+
+  test("a UI-thread method that throws a value that cannot be turned into text has its call rejected, and the rest of its deferred batch is answered", async () => {
+    const { exitCode, seen } = await faults();
+    expect(exitCode).toBe(0);
+    expect({
+      deferredUnreadable: seen?.deferredUnreadable,
+      deferredOk: seen?.deferredOk,
+      deferredNoPrototype: seen?.deferredNoPrototype,
+      uiUnreadable: seen?.uiUnreadable,
+    }).toEqual({
+      deferredUnreadable: "rejected: [object Object]",
+      deferredOk: "resolved: ok",
+      deferredNoPrototype: "rejected: [object Object]",
+      uiUnreadable: "rejected: [object Object]",
+    });
+  }, LIVE_TEST_MS * 3);
+
+  test("an onEvent listener that throws: the other listeners and the page still get each event, the reply behind them arrives, and the error is printed as before", async () => {
+    const { seen, tapped, stderr } = await faults();
+    expect(tapped).toEqual(["tick 1", "tick 2"]);
+    expect(seen?.events).toEqual(["tick 1", "tick 2"]);
+    expect(seen?.ticks).toBe("resolved: ticked");
+    expect(stderr).toMatch(/^sweetview: UI dispatch failed:/m);
+    expect(stderr).toContain("onEvent listener");
+  }, LIVE_TEST_MS * 3);
+
+  test("a worker that crashes is printed once", async () => {
+    const { stderr } = await faults();
+    expect(stderr.match(/^sweetview: the worker failed:/gm)?.length).toBe(1);
+    expect(stderr).toContain("worker crash");
+  }, LIVE_TEST_MS * 3);
+});
