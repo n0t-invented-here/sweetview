@@ -75,9 +75,9 @@ Shared, no gate: `ResourceCounts` (`src/lib.rs` lines 42-51; its fields are docu
 |---|---|---|
 | `SignalWindow::new(handler: impl Fn(Signal) + 'static) -> Result<Self, SignalError>` | a message-only window; wakes and timers arrive as its messages, inside any message loop the thread is in | `Err(SignalError("the signal window is not ported to this platform yet"))` |
 | `SignalWindow::waker(&self) -> Waker` | a `Send` handle that posts to the window | a `Waker` (unreachable) |
-| `SignalWindow::set_timer(&self, interval_ms: u32) -> Result<TimerId, SignalError>` | `SetTimer` on the window | `Err(...)` |
-| `SignalWindow::cancel_timer(&self, TimerId)` | `KillTimer` | no-op |
-| `SignalWindow::dispatch_due_timers(&self)` | serves due timers after a pump (decision D3) | no-op |
+| `SignalWindow::set_timer(&self, interval_ms: u32) -> Result<TimerId, SignalError>` | not `SetTimer` (D38): each tick is a message a thread of the signal window's own posts to it, so it wakes any loop that waits for messages, a modal one included; the period is held to 10 ms and above, the next period starts when the last tick's job has returned, and a tick taken while input waits is posted again shortly after | `Err(...)` |
+| `SignalWindow::cancel_timer(&self, TimerId)` | stops the timer; a tick already posted for it delivers nothing | no-op |
+| `SignalWindow::stop_ticker_if_idle(&self)` | ends the tick thread when no timer is set, as the release at the end of the application leaves it; the next timer starts a new one | no-op |
 | `Waker::wake(&self, token: u64) -> bool` | posts a message carrying the token; false when the window is gone | `false` |
 | `discard_quit() -> bool` | takes back a pending `WM_QUIT` | `false` |
 | `post_quit_for_tests()` (`#[doc(hidden)]`) | `PostQuitMessage(0)` | no-op |
