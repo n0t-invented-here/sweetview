@@ -287,3 +287,55 @@ What stands between this tree and yes: G1 and G2. G3 to G10 are each a small cha
 - Anything on macOS, the bindings repository and the C++ fork.
 
 ## Answers
+
+### G2
+
+**Fixed.** `Runtime::pump` (`crates/sweetview-runtime/src/runtime.rs`) returns `true` at once when either loop mode is running, before it posts anything or sets a timer, which is what its doc comment and `pumpEvents`'s say; so a nested call costs nothing, under `run_blocking` too. The guard is a `PumpGuard`, a value set when the pump starts whose `Drop` cancels the timer and empties `pump_guard`, so every way out of the pump releases it, the unwind `tao` raises again for a handler's panic included. The test `a_nested_pump_does_nothing_and_every_way_out_of_a_pump_cancels_its_guard` calls `pump()` 100 times from a drain inside a pump and asserts that the outer pump's guard is the same timer afterwards, that only that one timer is set inside (`SignalWindow::timers_set_for_tests`), that the guard still gives `tao` its event while the outer pump runs, and that no timer is left set afterwards; then a listener panics inside a pump, the panic comes out of `pump`, no timer is left set, and the loop pumps again. Decision D36.
+
+### G3
+
+**Fixed.** In `crates/sweetview-platform-loop/src/windows.rs`: `Poster::post` posts only `WM_APP` to `0xBFFE` and returns false for any other number; a `WM_NCDESTROY` sent from another thread (`InSendMessageEx` reports `ISMEX_SEND`) is answered and changes nothing; a `WM_NCDESTROY` of the window's own thread marks the post target `ending`, holds posts instead of sending them, and posts the window its own confirmation (`WM_STILL_ALIVE`). The window's next message arms it again and sends what was held; a window that `DestroyWindow` destroyed took the confirmation with it, and a poster that finds `IsWindow` false while `ending` disarms the target. `IsWindow` inside the procedure cannot tell the two apart, which was measured: it reads true during a real `WM_NCDESTROY`, before and after `DefWindowProcW`, as during a posted one. The SAFETY comment of `QueuedMessage::dispatch` now says the parameters are the poster's and that the OS calls a `WM_TIMER`'s procedure only when this thread registered it, measured (a posted `WM_TIMER` naming an unregistered function: 0 calls; registered with `SetTimer`: called; after `KillTimer`: 0). Tests: `a_posted_ncdestroy_leaves_the_window_and_its_owner_working`, `an_unconfirmed_ncdestroy_still_lets_drop_destroy_and_a_sent_one_is_refused`, and `a_window_destroyed_by_other_code_disarms_its_owner` with an assertion that no confirmation is left queued after a real destruction. `a_posted_close_leaves_the_window_and_its_owner_coherent` now posts its `WM_CLOSE` with `PostMessageW` from the other thread, since the `Poster` refuses it (D20). Decision D35.
+
+### G4
+
+**Fixed.** `crates/sweetview-platform-shell/src/clipboard.rs`: `Block::ClipboardText` holds `&'a mut OpenedClipboard<'o>` and `OpenedClipboard::empty` takes `&mut self`, so the compiler refuses `empty` while the clipboard's block is locked, and a second lock of that block; `Block` and `LockedGlobal` carry a second lifetime for the clipboard's owner window. The SAFETY comments of the clipboard arm and of `write` now rest on that exclusive borrow. No test can show a refused compilation inside a private module; `read_text` and `write_text` do what they did, and the clipboard tests cover them.
+
+### G5
+
+**Fixed.** `WindowIcons::still_shown` (`crates/sweetview-platform-window/src/windows.rs`) asks a parked window with `SendMessageTimeoutW` (`SMTO_ABORTIFHUNG | SMTO_BLOCK`, 100 ms); a window that does not answer keeps its icons parked. Test: `a_parked_window_that_does_not_answer_keeps_its_icons_and_holds_up_nothing` (`windows_tests.rs`) parks icons on a window of another thread, stops that thread for 1.5 s, and asserts that the next `WindowIcons::set` returns within 1 s with the icons still parked, and that they go once the window is gone. The smaller gap (a window whose procedure answers `WM_GETICON` with another icon) is left as it is, with its reason, in decision D37.
+
+### G6
+
+**Fixed.** The answer to F9 (`rust-rewrite/evidence/review-windows.md`) and D20's teardown entry now say what the tests assert: `teardown.rs` requires USER and GDI growth no larger than the same loop without the extras grew, with a floor of 0, and compares kernel handles with that loop too; `assert_gives_back_every_handle` requires no growth over the smaller of two measured loops, a count below its start passing. No test changed.
+
+### G7
+
+**Answered, with the text corrected.** The block under W0.6 (`rust-rewrite/CHECKLIST-windows.md`) now says that it is a summary written by hand from run 46088815542 on `c744c56`, not pasted output; that only the three steps after `cargo test` run after a failure; and that the workflow file changed afterwards in its triggers and comments only (`533d64e`). The answer to F38 says what happened after it. No run was started, re-run or read (D33). What stays for the owner, recorded in `rust-rewrite/OWNER-ACTIONS.md` section 8: whether the run on `c744c56` stands as the item's proof, or the item is unticked with D33 as its reason. The item's text and its box are unchanged. The same question for the macOS goal's M8.4 is noted in `rust-rewrite/HANDOFF-macos.md`.
+
+### G8
+
+**Fixed.** Both tests of a binary for another platform in `packages/sweetview-native/src/binding.test.ts` are plain tests again: they use WOW64's i386 `kernel32.dll` where it exists and the 16-byte ELF stub of `26a5474` otherwise (`otherPlatformBinary`), so they always run. Recorded in D20.
+
+### G9
+
+**Fixed.** The runners of `Window#setHitRegions`, `Window#startDrag` and `Window#startResize` (`rust-rewrite/compat/fixtures/row-runners.ts`) wait for every mouse button to be up with `untilDesktopIsOurs` and otherwise throw `not run: ...`, which records the row as an error. Recorded in D20.
+
+### G10
+
+**Fixed.** `whenMenuOpens` in `packages/sweetview-native/src/win32/tray-menu.test.ts` and `packages/sweetview-native/src/callbacks.test.ts` keeps its 3 s closer with the watcher: the watcher's cancel (run by `afterEach`, and returned to `chooseFirstTrayItem` in `callbacks.test.ts`) cancels the closer too. Recorded in D20.
+
+### G11
+
+**Answered, one test extended.** `the_handlers_are_not_agile` (`crates/sweetview-platform-webview/src/windows/handlers.rs`) now checks all seven handler types by name (F31). For the others, the answers in `rust-rewrite/evidence/review-windows.md` now say what the named test does not tell apart, as this review found: F8 (the release test passes without the `Drop`'s `catch_unwind`), F17 (no run with the scope removed), F24 (the icon that carries the balloon is not read from the OS), F29 (the second half asserts a state the test set), F32 (the `Toasts` test passes without its `Drop`, by reading) and F41 ("once" rests on reading). A test that tells each of these apart needs product surface or a second build of the binding; none was added.
+
+### G12
+
+**Fixed where code could carry it, the rest corrected.** `on_load` (`crates/sweetview-platform-node/src/lib.rs`) runs its body inside `std::panic::catch_unwind` and fails the load with an error; a class's finaliser, which `napi` runs without one, is recorded in D28 and in the answer to F36. Corrected sentences: F30 (at teardown the controller is closed before the filters are dropped, so their removal does nothing there), F41 and D27 (thread-local values go in reverse order of first use; the runtime's own apartment is what outlives the UI thread's COM objects, and the comment in `environment.rs` now says so), F10 (3 passed in the `sweetview-napi` run, 24 runtime tests left out), F7 (the ledger group "The suggested rectangle of a DPI change" names `WindowEvent::ScaleFactorChanged` and `WM_DPICHANGED` with their docs.rs pages), F26 (35 checks), D29 and the comment in `build_event_loop` (`tao` registers the process once, with its hidden window as the target), and `rust-rewrite/HANDOFF-macos.md` (no hosted CI as a source of binaries; M8.4's evidence is the owner's question since D33).
+
+### G13
+
+**Fixed and recorded.** `failure_reason` (`crates/sweetview-platform-webview/src/lib.rs`): the doc comment names the `edge:` and `chrome:` exclusions, and `navigation_failure_rules` asserts that `chrome:` (in either case) is not reported while an address that only begins with those letters is. D20 now records the raised default of `pumpUntil` for every caller with the tabs fixtures' longer watchdogs, and `takeForeground`'s `AttachThreadInput`. The three merge commits' rises of the `unsafe` count are history: pushed commits are not rewritten, and each rise is explained in the branch commit that made it, as the review found.
+
+### G14
+
+**Fixed.** The blocks under W1.3, W4.7 and W7.1 (`rust-rewrite/CHECKLIST-windows.md`) now hold their files' lines as printed, with no `0 skip` line and no lines joined across a section; W5.2 cites `rust-rewrite/evidence/w4-windows.txt` for "win32 icons"; W3.5 says the page's log lines are asserted by the test and are not in the evidence file; W8.2 names where the embedded binding (`w1-compiled-alone.txt`) and the demo without a compile recipe (the root `README.md`) are shown. `rust-rewrite/evidence/w7-native-tabs.txt` no longer calls the passing `about:` check FAILS. The evidence files were not produced again, so none names its commit in its text; `git log -1 -- <file>` gives it (`c744c56` for each before this work).
