@@ -119,6 +119,8 @@ if (native && internal) {
   // A WebView's `window`: an own enumerable property after `raw`, as at the tag (review round 5, R5-6).
   const { webviewWindowShape } = await import("../webview-window-shape");
   result.webviewWindowProperty = webviewWindowShape(await import("../../../sweetview/src/app"));
+  // The drawn handshake of D49's reveal is Windows': no request, and `__sweetview.drawn` routes as any method (second review, T2).
+  result.drawnHandshake = (await import("../../../sweetview/src/app")).drawnHandshakeOn();
   // The demos' windows: the outer frame each passed at the tag.
   const { demoWindowSize } = await import("../../../../demos/window-size");
   result.demoWindowSize = demoWindowSize({ width: 1100, height: 800 }, () => ({ x: 410, y: 140, width: 1100, height: 800 }));

@@ -97,7 +97,7 @@ export type TabAttachHooks = {
    * drawn a frame since it was asked (D49); `fallbackMs` is the tab's `readyTimeoutMs`. The
    * watchdog's reveal passes neither, and shows at once.
    */
-  revealWindow?(drawn?: (done: () => void) => void, fallbackMs?: number): void;
+  revealWindow?(drawn?: (done: () => void) => () => void, fallbackMs?: number): void;
   /**
    * Set by `WebView.attach`: re-subscribes file-drop demand to the current
    * `fileDropHost()`. The driver calls it after the tab's logical host
@@ -139,7 +139,7 @@ export type TabAttachHooks = {
 export const tabAttachHooks: unique symbol = Symbol("sweetview.tabAttachHooks");
 
 /**
- * Asks a webview's page to say when a frame of it has been presented (`DRAWN_SCRIPT`) and calls
+ * Asks a webview's page to say when a frame of it has been presented (`drawnScript`) and calls
  * `done` then. At once for a webview with no RPC binding, and when the webview goes first. A
  * callback, not a promise: a blocking `run()` turns no promise continuation until it returns.
  * Inside the package only.
@@ -147,16 +147,29 @@ export const tabAttachHooks: unique symbol = Symbol("sweetview.tabAttachHooks");
 // The page's answer once a frame of it has been presented: its first paint's entry, which the
 // engine records when the frame is presented; for a page that has painted before, two
 // animation frames.
-const DRAWN_SCRIPT = `(() => {
-  const drawn = () => window.__sweetview_rpc("__sweetview.drawn", null);
+// Each request is numbered, and only an answer with the number of a request still outstanding
+// is the host's: any other call of that name is the application's to route (T2 of D49's second
+// review).
+const drawnScript = (id: number) => `(() => {
+  const drawn = () => window.__sweetview_rpc("__sweetview.drawn", ${id});
   if (performance.getEntriesByType("paint").length > 0) return requestAnimationFrame(() => requestAnimationFrame(drawn));
   new PerformanceObserver((_, observer) => { observer.disconnect(); drawn(); }).observe({ type: "paint" });
 })()`;
-const drawnRequests = new WeakMap<RawWebview, (done: () => void) => void>();
-export function afterNextDraw(raw: RawWebview, done: () => void): void {
-  const request = drawnRequests.get(raw);
-  if (request) request(done);
-  else done();
+/**
+ * Whether the drawn handshake is on: on Windows only. On macOS (D42) there is no cloaked reveal,
+ * no request is made, and a method named `__sweetview.drawn` routes as any method did at the tag.
+ */
+export const drawnHandshakeOn = (): boolean => process.platform === "win32" && !macosKeepsTagPath();
+/** The time a reveal waits for its pages when the page sets no `readyTimeoutMs` (T1 of D49's second review). */
+export const REVEAL_BOUND_MS = 3_000;
+const drawnRequests = new WeakMap<RawWebview, (done: () => void) => () => void>();
+/**
+ * Asks `raw`'s page for a presented frame and calls `done` when it answers; the function returned
+ * cancels the request. A webview with no handshake, or one already gone, never calls `done`:
+ * the reveal's bound ends what waits for it.
+ */
+export function afterNextDraw(raw: RawWebview, done: () => void): () => void {
+  return drawnRequests.get(raw)?.(done) ?? (() => {});
 }
 
 /**
@@ -167,21 +180,32 @@ export function afterNextDraw(raw: RawWebview, done: () => void): void {
  * never comes. Where DWM refuses the cloak, and on macOS (D42), it is shown at once, as
  * `show()` shows it. An application's own `show()` is never this.
  */
-export function revealWhenDrawn(window: Window, drawn: (done: () => void) => void, fallbackMs: number | undefined): void {
+export function revealWhenDrawn(window: Window, drawn: (done: () => void) => () => void, fallbackMs: number | undefined): () => void {
   const backend = getWindowBackend(window);
-  if (macosKeepsTagPath() || backend.showCloaked === undefined) {
+  if (!drawnHandshakeOn() || backend.showCloaked === undefined) {
     window.show();
-    return;
+    return () => {};
   }
-  if (!backend.showCloaked()) return;
-  let stopFallback: (() => void) | undefined;
-  const uncloak = () => {
-    stopFallback?.();
-    stopFallback = undefined;
-    backend.uncloak?.();
+  // The number of this cloaked show: only it is uncloaked, not a later reveal's (T3).
+  const generation = backend.showCloaked();
+  if (generation === 0) return () => {};
+  let stopBound: (() => void) | undefined;
+  let cancelDraws: (() => void) | undefined;
+  let ended = false;
+  const end = (uncloak: boolean) => {
+    ended = true;
+    stopBound?.();
+    stopBound = undefined;
+    cancelDraws?.();
+    cancelDraws = undefined;
+    if (uncloak) backend.uncloak?.(generation);
   };
-  if (fallbackMs !== undefined && fallbackMs > 0) stopFallback = scheduleNativeTimeout(fallbackMs, uncloak);
-  drawn(uncloak);
+  // Always bounded (T1): the page's readyTimeoutMs when positive, REVEAL_BOUND_MS otherwise.
+  stopBound = scheduleNativeTimeout(fallbackMs !== undefined && fallbackMs > 0 ? fallbackMs : REVEAL_BOUND_MS, () => end(true));
+  const cancel = drawn(() => end(true));
+  if (ended) cancel();
+  else cancelDraws = cancel;
+  return () => end(false);
 }
 
 type InternalWebViewOptions<M extends MethodMap> = WebViewOptions<M> & { [tabAttachHooks]?: TabAttachHooks };
@@ -632,15 +656,16 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
         cancelWatchdog?.();
         cancelWatchdog = undefined;
       };
-      // The page's frames asked for since the last one drawn (afterNextDraw).
-      const drawnWaiters: (() => void)[] = [];
-      const settleDrawn = () => {
-        for (const done of drawnWaiters.splice(0)) done();
-      };
-      const requestDrawn = (done: () => void) => {
-        if (!isLive()) return done();
-        drawnWaiters.push(done);
-        if (drawnWaiters.length === 1) raw.eval(DRAWN_SCRIPT);
+      // The page's presented frames asked for and not answered yet, by request number
+      // (afterNextDraw). Going away cancels them: none is reported drawn (T3).
+      const drawnWaiters = new Map<number, () => void>();
+      let lastDrawnRequest = 0;
+      const requestDrawn = (done: () => void): (() => void) => {
+        if (!isLive()) return () => {};
+        const id = ++lastDrawnRequest;
+        drawnWaiters.set(id, done);
+        raw.eval(drawnScript(id));
+        return () => void drawnWaiters.delete(id);
       };
       const clearDispatches = () => {
         queue.length = 0;
@@ -721,7 +746,7 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
         unsubscribeWindowDispose();
         cancelStartup();
         clearDispatches();
-        settleDrawn();
+        drawnWaiters.clear();
         assembler.clear();
         requestResponses.clear();
         // Destroying the webview aborts native streams, including any waiting for their next chunk.
@@ -892,7 +917,7 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
           options.showOnReady === true ||
           options.readyTimeoutMs !== undefined ||
           options.onReady !== undefined;
-        if (needsRpc) drawnRequests.set(raw, requestDrawn);
+        if (needsRpc && drawnHandshakeOn()) drawnRequests.set(raw, requestDrawn);
         if (needsRpc) raw.bindRaw("__sweetview_rpc", (seq, req) => {
           if (!isLive()) return;
           try {
@@ -908,8 +933,10 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
               respond(seq, 0, null);
               return;
             }
-            if (method === "__sweetview.drawn") {
-              settleDrawn();
+            const drawnDone = method === "__sweetview.drawn" && typeof params === "number" ? drawnWaiters.get(params) : undefined;
+            if (drawnDone) {
+              drawnWaiters.delete(params as number);
+              drawnDone();
               respond(seq, 0, null);
               return;
             }

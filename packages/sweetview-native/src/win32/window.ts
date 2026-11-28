@@ -132,12 +132,12 @@ function wrap(native: NativeWindow, owned: boolean, tabbed = false): WindowBacke
       return was;
     },
     showCloaked: () => {
-      if (!live()) return false;
+      if (!live()) return 0;
       hiddenAtRunEnd = false;
       return native.showCloaked();
     },
-    uncloak: () => {
-      if (live()) native.uncloak();
+    uncloak: (generation: number) => {
+      if (live()) native.uncloak(generation);
     },
     toggle: () => {
       if (self.isVisible()) self.hide();

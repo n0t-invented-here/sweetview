@@ -41,6 +41,12 @@ describe("on macOS, until the macOS goal", () => {
     }
   });
 
+  test("the reveal's drawn handshake is off: no request is made, and a method named __sweetview.drawn is the application's, as at the tag", async () => {
+    // Review round 2 of D49, T2.
+    const { r } = await runFixture("macos-seam.ts", ["fake"]);
+    expect(r.drawnHandshake).toBe(false);
+  });
+
   test("nothing is registered for release at exit, and no exit listener is added", async () => {
     const { r } = await runFixture("macos-seam.ts", ["fake"]);
     expect(r.lifetime).toEqual({ exitListenersAdded: 0, released: 0, macosKeepsTagPath: true });

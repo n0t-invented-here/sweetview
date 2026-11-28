@@ -110,6 +110,8 @@ type WinTabHost = {
   readonly tabs: WinTabRecord[];
   selected?: WinTabRecord;
   shown?: WinTabRecord;
+  /** The reveal waiting for this window's pages to draw (D49): asked again when the selected page changes, cancelled when the window goes. */
+  reveal?: { reselected(): void; cancel(): void };
   strip?: WebView<StripMethods, StripEvents>;
   /** The borrowed `Window.fromHandle(frame)` the strip is attached to; disposed right after `strip`. */
   stripWin?: Window;
@@ -182,6 +184,8 @@ function present(host: WinTabHost): void {
     setVisible(tab.controller, true);
   }
   host.shown = tab;
+  // A reveal waits for the page the window will show, not one hidden behind it (T1).
+  host.reveal?.reselected();
   if (previous && previous.window === host && !previous.closed) hideTab(previous);
   syncWindowTitle(host);
   focusPage(host);
@@ -400,7 +404,8 @@ async function moveRecordToNewWindow(record: WinTabRecord, at?: { x: number; y: 
     throw new Error("sweetview: the tab closed before its new window was ready");
   }
   moveTabBetweenHosts(record, target, 0);
-  target.window.show();
+  // The new window waits for its own page and strip to draw (T3).
+  revealHost(target, undefined);
   return target.window;
 }
 
@@ -418,7 +423,7 @@ function dropOnStrip(host: WinTabHost): void {
   const scale = target.frame.scale();
   const idx = dropIndex(strip.width / scale, target.tabs.length, (at.x - strip.x) / scale, target.scrolledBy);
   moveTabBetweenHosts(record, target, idx);
-  target.frame.show();
+  revealHost(target, undefined);
 }
 
 function dragByTab(host: WinTabHost, held: StripPoint): void {
@@ -486,9 +491,64 @@ function showContextMenu(host: WinTabHost, record: WinTabRecord | undefined): vo
   ]);
 }
 
+/**
+ * Sweetview's reveal of a tabbed window (D49): shown cloaked, and put on the screen once the page
+ * it shows (its selected tab's, asked again when the selection changes meanwhile) and its strip
+ * have drawn, or at the bound (`fallbackMs`, or the internal one). One reveal per window: a new
+ * one, and the window's going, cancel the one before. An already visible window is left as it is.
+ */
+function revealHost(host: WinTabHost, fallbackMs: number | undefined): void {
+  if (host.closed || isWindowDisposed(host.window)) return;
+  host.reveal?.cancel();
+  let finish: (() => void) | undefined;
+  let pageDone = false;
+  let stripDone = host.strip === undefined;
+  let cancelPage: (() => void) | undefined;
+  let cancelStrip: (() => void) | undefined;
+  const check = () => {
+    if (pageDone && stripDone) finish?.();
+  };
+  const askPage = () => {
+    cancelPage?.();
+    const page = host.selected;
+    pageDone = page === undefined;
+    cancelPage = page ? afterNextDraw(page.webview.raw, () => ((pageDone = true), check())) : undefined;
+    check();
+  };
+  const reveal = {
+    reselected: () => finish && askPage(),
+    cancel: () => {
+      if (host.reveal === reveal) host.reveal = undefined;
+      finish = undefined;
+      stopReveal();
+    },
+  };
+  host.reveal = reveal;
+  const stopReveal = revealWhenDrawn(
+    host.window,
+    (done) => {
+      finish = () => {
+        finish = undefined;
+        if (host.reveal === reveal) host.reveal = undefined;
+        done();
+      };
+      if (host.strip) cancelStrip = afterNextDraw(host.strip.raw, () => ((stripDone = true), check()));
+      askPage();
+      return () => {
+        finish = undefined;
+        cancelPage?.();
+        cancelStrip?.();
+      };
+    },
+    fallbackMs,
+  );
+  if (finish === undefined && host.reveal === reveal) host.reveal = undefined;
+}
+
 function disposeHost(host: WinTabHost): void {
   if (host.closed) return;
   host.closed = true;
+  host.reveal?.cancel();
   // Off the screen before its tabs' webviews and its strip go, then destroyed with them (D49).
   if (!isWindowDisposed(host.window) && host.window.isVisible()) host.window.hide();
   hosts.delete(host.window);
@@ -710,7 +770,7 @@ export function mergeAllWindows(intoWindow?: Window): void {
     for (const tab of [...other.tabs]) moveTabBetweenHosts(tab, into, into.tabs.length);
   }
   if (keep) selectTab(keep);
-  into.frame.show();
+  revealHost(into, undefined);
 }
 
 /**
@@ -768,17 +828,7 @@ export const winTabsDriver: TabsDriver = {
         const h = logicalHost();
         if (h.closed || isWindowDisposed(h.window) || h.window.isVisible()) return;
         if (!drawn) h.window.show();
-        else
-          revealWhenDrawn(
-            h.window,
-            (done) => {
-              let left = h.strip ? 2 : 1;
-              const one = () => void (--left === 0 && done());
-              drawn(one);
-              if (h.strip) afterNextDraw(h.strip.raw, one);
-            },
-            fallbackMs,
-          );
+        else revealHost(h, fallbackMs);
       },
       // A disposed window abandons the attach before it touches the frame again.
       isCancelled: () => host.closed,
