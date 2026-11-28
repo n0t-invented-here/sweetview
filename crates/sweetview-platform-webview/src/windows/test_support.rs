@@ -456,3 +456,67 @@ pub fn move_top_level_by(webview: &Webview, dx: i32, dy: i32) {
     // passed by value.
     unsafe { SetWindowPos(root, None, rect.left + dx, rect.top + dy, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE) }.expect("SetWindowPos");
 }
+
+/// A plain top-level window of this thread, made as an application makes
+/// its own (class `STATIC`, `WS_OVERLAPPEDWINDOW`, shown), with no subclass
+/// and nothing of Sweetview's. Destroyed when dropped.
+pub struct BareWindow(HWND);
+
+impl BareWindow {
+    pub fn new(title: &str) -> Self {
+        use windows::Win32::UI::WindowsAndMessaging::{CreateWindowExW, WINDOW_EX_STYLE, WS_OVERLAPPEDWINDOW, WS_VISIBLE};
+        // SAFETY: a system class name and a title as wide strings that outlive the call, no
+        // parent, menu, module or creation data.
+        let hwnd = unsafe {
+            CreateWindowExW(WINDOW_EX_STYLE(0), windows::core::w!("STATIC"), &HSTRING::from(title), WS_OVERLAPPEDWINDOW | WS_VISIBLE, 120, 120, 500, 380, None, None, None, None)
+        }
+        .expect("a bare window");
+        Self(hwnd)
+    }
+
+    /// Its handle value, as an application hands it to Sweetview.
+    pub fn handle_value(&self) -> isize {
+        self.0 .0 as isize
+    }
+
+    /// Resizes it by its frame, as dragging an edge would.
+    pub fn resize(&self, width: i32, height: i32) {
+        use windows::Win32::UI::WindowsAndMessaging::{SetWindowPos, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOZORDER};
+        // SAFETY: this value's own live window; the numbers are passed by value.
+        unsafe { SetWindowPos(self.0, None, 0, 0, width, height, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE) }.expect("SetWindowPos");
+    }
+}
+
+impl Drop for BareWindow {
+    fn drop(&mut self) {
+        // SAFETY: the window this value made, on this thread; a window already gone fails the call.
+        let _ = unsafe { windows::Win32::UI::WindowsAndMessaging::DestroyWindow(self.0) };
+    }
+}
+
+/// The sizes (width, height) of `webview`'s container's client area, of the
+/// client area of the window it is in, and of the controller's bounds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FillSizes {
+    pub container: (i32, i32),
+    pub parent: (i32, i32),
+    pub controller: (i32, i32),
+}
+
+pub fn fill_sizes(webview: &Webview) -> FillSizes {
+    use windows::Win32::UI::WindowsAndMessaging::{GetClientRect, GetParent};
+    let widget = container(webview).expect("a live webview");
+    let size = |rect: windows::Win32::Foundation::RECT| (rect.right - rect.left, rect.bottom - rect.top);
+    let mut inner = windows::Win32::Foundation::RECT::default();
+    // SAFETY: `widget` is the webview's container, and `inner` a local RECT for the call to fill.
+    let _ = unsafe { GetClientRect(widget, &mut inner) };
+    // SAFETY: a handle value; the call reads no memory through it.
+    let parent = unsafe { GetParent(widget) }.unwrap_or_default();
+    let mut outer = windows::Win32::Foundation::RECT::default();
+    // SAFETY: `parent` is a handle value (a stale one fails the call) and `outer` a local RECT.
+    let _ = unsafe { GetClientRect(parent, &mut outer) };
+    let mut bounds = windows::Win32::Foundation::RECT::default();
+    // SAFETY: the controller is a COM reference this frame holds; `bounds` a local RECT.
+    let _ = unsafe { webview.controller().Bounds(&mut bounds) };
+    FillSizes { container: size(inner), parent: size(outer), controller: size(bounds) }
+}

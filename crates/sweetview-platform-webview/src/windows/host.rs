@@ -53,7 +53,7 @@ use windows::Win32::Graphics::Gdi::UpdateWindow;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::Accessibility::{SetWinEventHook, UnhookWinEvent, HWINEVENTHOOK};
-use windows::Win32::UI::WindowsAndMessaging::{IsChild, CHILDID_SELF, EVENT_OBJECT_LOCATIONCHANGE, OBJID_WINDOW, WINEVENT_OUTOFCONTEXT};
+use windows::Win32::UI::WindowsAndMessaging::{GetParent, IsChild, CHILDID_SELF, EVENT_OBJECT_LOCATIONCHANGE, OBJID_WINDOW, WINEVENT_OUTOFCONTEXT};
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, GetClientRect, MoveWindow, RegisterClassExW, SetParent,
     ShowWindow, SW_HIDE, SW_SHOW, WM_NCDESTROY, WM_SIZE, WNDCLASSEXW, WS_CHILD, WS_EX_CONTROLPARENT,
@@ -78,6 +78,9 @@ thread_local! {
     static NEXT_WIDGET: Cell<u64> = const { Cell::new(1) };
     /// The watch on this thread's windows' moves, while any widget of it exists.
     static MOVE_WATCH: RefCell<Option<MoveWatch>> = const { RefCell::new(None) };
+    /// The widgets that fill their parent's client area (`Layout::Fill`, or
+    /// `fill_parent` since their last `set_bounds`), by handle value.
+    static FILLING: RefCell<std::collections::HashSet<isize>> = RefCell::new(std::collections::HashSet::new());
     /// Tests only: each widget's controller's default background (alpha, red,
     /// green, blue) when the widget was first shown, read in its
     /// `WM_SHOWWINDOW`; `None` inside when it had no controller then.
@@ -149,13 +152,25 @@ impl Drop for MoveWatch {
 }
 
 /// The hook's procedure: `hwnd` (a window, not one of its objects) moved or
-/// was resized; tells the controllers of the widgets it holds. The
-/// controllers are taken out of the table before any is called, so a call
-/// that sends a widget a message finds the table free.
+/// was resized. A widget filling it is sized to its client area again,
+/// whoever resized it (the application, a Sweetview call, the person
+/// dragging its frame), so a page filling any window follows it; then the
+/// controllers of the widgets it holds are told it moved. The widgets and
+/// controllers are taken out of the tables before any is sized or called, so
+/// a call that sends a widget a message finds the tables free.
 extern "system" fn window_moved(_hook: HWINEVENTHOOK, _event: u32, hwnd: HWND, object: i32, child: i32, _thread: u32, _time: u32) {
     let _ = catch_unwind(AssertUnwindSafe(|| {
         if object != OBJID_WINDOW.0 || child != CHILDID_SELF as i32 || hwnd.is_invalid() {
             return;
+        }
+        let filling: Vec<HWND> = FILLING
+            .try_with(|filling| filling.borrow().iter().map(|widget| HWND(*widget as *mut _)).collect())
+            .unwrap_or_default();
+        for widget in filling {
+            // SAFETY: a handle value; the call reads no memory through it.
+            if unsafe { GetParent(widget) }.ok() == Some(hwnd) {
+                fill(widget, hwnd);
+            }
         }
         let controllers: Vec<ICoreWebView2Controller> = WIDGETS
             .try_with(|widgets| {
@@ -193,6 +208,7 @@ extern "system" fn widget_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPA
         }
         if msg == WM_NCDESTROY {
             let _ = WIDGETS.try_with(|widgets| widgets.borrow_mut().remove(&key(hwnd)));
+            let _ = FILLING.try_with(|filling| filling.borrow_mut().remove(&key(hwnd)));
             // The last widget of the thread gone, the watch goes.
             if WIDGETS.try_with(|widgets| widgets.borrow().is_empty()).unwrap_or(false) {
                 let watch = MOVE_WATCH.try_with(|watch| watch.borrow_mut().take()).ok().flatten();
@@ -212,6 +228,18 @@ fn client_rect(hwnd: HWND) -> Option<RECT> {
     // SAFETY: `client` is a RECT owned by this frame for the call to fill; the system validates the handle.
     unsafe { GetClientRect(hwnd, &mut client) }.ok()?;
     Some(client)
+}
+
+/// Sizes `widget` to `parent`'s client area (the fork's `resize_widget`), when
+/// it is not that size already.
+fn fill(widget: HWND, parent: HWND) {
+    let (Some(client), Some(now)) = (client_rect(parent), client_rect(widget)) else { return };
+    if (now.right - now.left, now.bottom - now.top) == (client.right - client.left, client.bottom - client.top) {
+        return;
+    }
+    // SAFETY: `widget` is a widget of this thread's table (its entry goes at `WM_NCDESTROY`);
+    // the numbers are passed by value.
+    let _ = unsafe { MoveWindow(widget, client.left, client.top, client.right - client.left, client.bottom - client.top, true) };
 }
 
 fn size_controller(hwnd: HWND) {
@@ -466,11 +494,17 @@ impl Webview {
     /// Moves the widget to this rectangle of its parent's client area; its
     /// `WM_SIZE` sizes the controller.
     pub fn set_bounds(&self, x: i32, y: i32, width: u32, height: u32) {
+        let _ = FILLING.try_with(|filling| filling.borrow_mut().remove(&key(self.widget.hwnd)));
         self.widget.move_to(x, y, i32::try_from(width).unwrap_or(i32::MAX), i32::try_from(height).unwrap_or(i32::MAX));
     }
 
-    /// Sizes the widget to its parent's whole client area (the fork's `resize_widget`).
+    /// Sizes the widget to its parent's whole client area (the fork's
+    /// `resize_widget`), and keeps it so after each resize of the parent,
+    /// until [`set_bounds`](Self::set_bounds).
     pub fn fill_parent(&self) {
+        if self.widget.alive() {
+            let _ = FILLING.try_with(|filling| filling.borrow_mut().insert(key(self.widget.hwnd)));
+        }
         // SAFETY: `GetParent` takes a handle value and reads no memory of ours.
         let parent = unsafe { windows::Win32::UI::WindowsAndMessaging::GetParent(self.widget.hwnd) };
         if let Some(client) = parent.ok().and_then(client_rect) {

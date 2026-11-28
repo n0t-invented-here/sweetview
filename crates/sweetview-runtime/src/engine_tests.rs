@@ -888,3 +888,68 @@ fn a_script_asked_for_right_after_a_new_webview_s_first_navigation_runs_in_the_n
     }
   });
 }
+
+#[test]
+fn a_page_filling_a_window_follows_its_client_area_whoever_made_the_window() {
+  on_ui_thread(|runtime| {
+    let _finish = Finish(&runtime);
+    // One rule for every filled host: the page is the size of the window's client area after
+    // every resize, whoever resizes it. A window the application made itself (a plain Win32
+    // window), the same adopted as a Sweetview `Window` (`Window.fromHandle`), a Sweetview
+    // window, the size set through the webview (`setSize` on a filled window), and a window of
+    // the webview's own.
+    let check = |what: &str, engine: &Engine| {
+      settle(&runtime, Duration::from_millis(400));
+      let seen = webview_of(engine, test_support::fill_sizes);
+      eprintln!("-- {what}: {seen:?}");
+      assert!(seen.parent.0 > 0 && seen.parent.1 > 0, "{what}: a client area: {seen:?}");
+      assert_eq!(seen.container, seen.parent, "{what}: the container fills the client area: {seen:?}");
+      assert_eq!(seen.controller, seen.container, "{what}: the page fills the container: {seen:?}");
+    };
+    {
+      let bare = test_support::BareWindow::new("engine test: bare");
+      let engine = Engine::create(false, Host::Fill(bare.handle_value()), None).expect("fill a bare window");
+      load(&runtime, &engine, PAGE);
+      check("bare window, at first", &engine);
+      bare.resize(700, 520);
+      check("bare window, resized by its frame", &engine);
+      engine.set_size(560, 400, SizeHint::None);
+      check("bare window, setSize", &engine);
+      engine.destroy();
+      settle(&runtime, Duration::from_millis(100));
+    }
+    {
+      let bare = test_support::BareWindow::new("engine test: adopted");
+      let adopted = Window::adopt(bare.handle_value()).expect("adopt");
+      let engine = Engine::create(false, Host::Fill(adopted.handle()), None).expect("fill an adopted window");
+      load(&runtime, &engine, PAGE);
+      bare.resize(720, 500);
+      check("adopted window, resized by its frame", &engine);
+      engine.set_size(540, 420, SizeHint::None);
+      check("adopted window, setSize", &engine);
+      engine.destroy();
+      settle(&runtime, Duration::from_millis(100));
+      drop(adopted);
+    }
+    {
+      let window = host_window("engine test: sweetview window");
+      let engine = Engine::create(false, Host::Fill(window.handle()), None).expect("fill");
+      load(&runtime, &engine, PAGE);
+      window.set_bounds(crate::Rect::new(60, 60, 680, 500));
+      check("Sweetview window, set_bounds", &engine);
+      engine.set_size(500, 360, SizeHint::None);
+      check("Sweetview window, setSize", &engine);
+      engine.destroy();
+      settle(&runtime, Duration::from_millis(100));
+    }
+    {
+      let engine = Engine::create(false, Host::Own, None).expect("own");
+      engine.show_own_window();
+      load(&runtime, &engine, PAGE);
+      engine.set_size(620, 440, SizeHint::None);
+      check("own window, setSize", &engine);
+      engine.destroy();
+    }
+  });
+}
+
