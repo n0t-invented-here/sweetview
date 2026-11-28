@@ -253,7 +253,7 @@ thread_local! {
 /// The handle value of the stand-in owner, made on first use.
 fn stand_in_owner() -> Result<isize> {
   if STAND_IN.with(|slot| slot.borrow().is_none()) {
-    let window = hidden_menu_owner("sweetview.popup-menu")?;
+    let window = hidden_menu_owner("sweetview.popup-menu", "a popup menu's owner window could not be made")?;
     STAND_IN.with(|slot| *slot.borrow_mut() = Some(window));
   }
   let handle = STAND_IN.with(|slot| slot.borrow().as_ref().map_or(0, window_handle_value));
@@ -263,11 +263,12 @@ fn stand_in_owner() -> Result<isize> {
 /// A hidden window that can own a popup menu and hold the foreground for it: the tray's menu owner
 /// (whose icon window cannot be activated) and the stand-in for a `no_activate` owner. One way to
 /// make it, for both.
-pub(crate) fn hidden_menu_owner(title: &str) -> Result<tao::window::Window> {
+/// `failure` is the error's wording when it cannot be made: each caller's own, as it always was.
+pub(crate) fn hidden_menu_owner(title: &str, failure: &'static str) -> Result<tao::window::Window> {
   let runtime = Runtime::get()?;
   runtime
     .with_target(|target| tao::window::WindowBuilder::new().with_visible(false).with_title(title).build(target))?
-    .map_err(|e| Error::os("a popup menu's owner window could not be made", e))
+    .map_err(|e| Error::os(failure, e))
 }
 
 #[cfg(windows)]
