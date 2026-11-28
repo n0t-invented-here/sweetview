@@ -9,6 +9,9 @@
 //
 //   bun app-faults.ts           no onCallbackError listener: what stderr shows
 //   bun app-faults.ts listen    one listener: what it is told, and what stderr still shows
+//   bun app-faults.ts crash-event   one listener; the worker emits an event and then crashes, and
+//                                   Worker.onerror is seen before the native drain runs (nothing is
+//                                   pumped meanwhile): the cleanup after the failure delivers the event
 //
 // Prints `RESULT <json>`. No input is injected.
 
@@ -52,11 +55,13 @@ const page = `<!doctype html><title>app faults</title><script>
 let seen: unknown;
 const tapped: string[] = [];
 const told: string[] = [];
-if (process.argv[2] === "listen") onCallbackError((error, source) => void told.push(`${source.kind}: ${error.message}`));
+const mode = process.argv[2] ?? "";
+const crashEvent = mode === "crash-event";
+if (mode === "listen" || crashEvent) onCallbackError((error, source) => void told.push(`${source.kind}: ${error.message}`));
 const app = await createApp({
   title: `sweetview app faults ${process.pid}`,
   noActivate: true,
-  assets: { "index.html": new TextEncoder().encode(page) },
+  assets: { "index.html": new TextEncoder().encode(crashEvent ? `<!doctype html><script>window.__sweetview_rpc("__sweetview.ready", null)</script>` : page) },
   worker: new URL("./app-faults.worker.ts", import.meta.url),
   uiMethods: {
     "ui.unreadable": () => {
@@ -76,7 +81,7 @@ const app = await createApp({
 });
 // Throws for the first event only, so what is printed or told is the same however the events are drained.
 app.onEvent((event) => {
-  if (event.payload === 1) throw new Error("onEvent listener");
+  if (event.payload === 1 || event.payload === 99) throw new Error(`onEvent listener ${String(event.payload)}`);
 });
 app.onEvent((event) => void tapped.push(`${event.name} ${String(event.payload)}`));
 
@@ -88,8 +93,17 @@ async function pumpUntil(done: () => boolean, ms: number) {
   }
 }
 
-await pumpUntil(() => seen !== undefined, 30_000);
-await pumpUntil(() => false, 1500);
+if (crashEvent) {
+  await pumpUntil(() => false, 2000);
+  app.notify("crash.afterEvent" as never, null as never);
+  // Bun's own loop runs, the native one does not: Worker.onerror comes first, and the cleanup
+  // after the failure drains the ring, the event included.
+  await Bun.sleep(1500);
+  await pumpUntil(() => false, 500);
+} else {
+  await pumpUntil(() => seen !== undefined, 30_000);
+  await pumpUntil(() => false, 1500);
+}
 app.dispose();
 console.log("RESULT " + JSON.stringify({ seen: seen ?? null, tapped, told }));
 process.exit(0);

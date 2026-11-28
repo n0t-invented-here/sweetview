@@ -4,7 +4,7 @@
 import { defineService } from "@n1h/sweetview/ipc";
 import { hostService } from "@n1h/sweetview/worker";
 
-type Methods = { ticks: [null, string]; crash: [null, null] };
+type Methods = { ticks: [null, string]; crash: [null, null]; "crash.afterEvent": [null, null] };
 type Events = { tick: number };
 
 hostService(
@@ -14,6 +14,14 @@ hostService(
         emit("tick", 1);
         emit("tick", 2);
         return "ticked";
+      },
+      // An event, then the worker's own uncaught exception: the event is queued before the crash.
+      "crash.afterEvent": () => {
+        emit("tick", 99);
+        setTimeout(() => {
+          throw new Error("worker crash after an event");
+        }, 0);
+        return null;
       },
       crash: () => {
         setTimeout(() => {

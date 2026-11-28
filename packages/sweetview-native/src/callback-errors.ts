@@ -10,7 +10,8 @@
 // the worker's crash and rejected calls, the tab machinery) do not reach this module: it is no
 // entry point of the package, and an application must not be able to call it to fabricate a fault
 // (D44). What does reach it from that package is what leaves its code into this one's catches: an
-// `onEvent` listener's exception, which leaves the worker's drain (`ui-thread.ts`, kind `worker`).
+// `onEvent` listener's exception, which leaves the worker's drain (`ui-thread.ts`, kind `worker`),
+// except while the facade cleans up after the worker failed, where its own catch prints it.
 
 import { isMainThread } from "node:worker_threads";
 import { binding } from "./binding";
@@ -214,7 +215,8 @@ function setBindingSink(on: boolean): void {
  * a notification click, a `Window` listener (`onClose`, `onResize`, `onMove`, `onMaximizeChange`,
  * `onFileDrop`, `onNewTab`, `onTabSelect`, `onTabClose`), a hit-region refiner, an input hook, a
  * single-instance or open-URL listener, a function bound on the raw webview class (`bind`,
- * `bindRaw`), its request or file drop handler, an `onEvent` listener (kind `worker`), and the
+ * `bindRaw`), its request or file drop handler, an `onEvent` listener (kind `worker`; not while
+ * `@n1h/sweetview` cleans up after the worker failed, which prints it itself), and the
  * native module's own code at such a boundary (kind `internal`). On macOS no handler is called.
  *
  * Not told: the faults `@n1h/sweetview` catches itself (a page's UI-thread method, a request

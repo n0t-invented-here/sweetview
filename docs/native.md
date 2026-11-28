@@ -118,7 +118,7 @@ exception leaves the bindings package as it always did.
 | `webview.bindRaw` | a function bound with `bindRaw` (caught by the binding itself; `name` is the name it was bound under) | `sweetview: a binding threw:` | the page's call is left unanswered |
 | `webview.setRequestHandler` | the raw webview class's request handler, which throws or whose promise rejects | nothing | the request is answered `500` |
 | `webview.setFileDropHandler` | the raw webview class's file drop handler | nothing | none |
-| `worker` | an `onEvent` listener of a `createApp` application or a `WebView`, called as the worker's events are delivered on the UI thread | `sweetview: UI dispatch failed:` (several in one delivery: one `AggregateError`) | the other listeners and the page still get the event, and the delivery goes on |
+| `worker` | an `onEvent` listener of a `createApp` application or a `WebView`, called as the worker's events are delivered on the UI thread | `sweetview: UI dispatch failed:` (several in one delivery: one `AggregateError`) | the other listeners and the page still get the event, and the delivery goes on. An event delivered while Sweetview cleans up after the worker failed is not reported: that cleanup prints `sweetview: draining the failed worker's replies threw:` |
 | `internal` | the native module's own code at a callback boundary (the tab frame's callbacks, a window's dispose hooks, its own native timeouts, intervals and deferred jobs, which no public call makes); a fault here is a defect of Sweetview's | its own line | that boundary's |
 
 What a listener is not told about: the faults `@n1h/sweetview` catches (a

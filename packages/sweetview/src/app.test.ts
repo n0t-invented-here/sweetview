@@ -714,7 +714,7 @@ describe.if(onWindows)("a fault in one callback of createApp stays in that callb
   type Seen = Record<string, unknown> & { events: string[] };
   type Run = { exitCode: number; seen: Seen | null; tapped: string[]; told: string[]; stderr: string };
   const runs = new Map<string, Promise<Run>>();
-  const faults = (mode: "" | "listen" = ""): Promise<Run> => {
+  const faults = (mode: "" | "listen" | "crash-event" = ""): Promise<Run> => {
     let run = runs.get(mode);
     if (!run) runs.set(mode, (run = (async () => {
       const { mkdtempSync, rmSync } = await import("node:fs");
@@ -785,10 +785,23 @@ describe.if(onWindows)("a fault in one callback of createApp stays in that callb
   test("with an onCallbackError listener, an onEvent listener's throw is told as the worker kind and not printed; a UI-thread method's throw and the worker's crash are not told", async () => {
     const { exitCode, seen, tapped, told, stderr } = await faults("listen");
     expect(exitCode).toBe(0);
-    expect(told).toEqual(["worker: onEvent listener"]);
+    expect(told).toEqual(["worker: onEvent listener 1"]);
     expect(stderr).not.toMatch(/^sweetview: UI dispatch failed:/m);
     expect(tapped).toEqual(["tick 1", "tick 2"]);
     expect(seen?.deferredUnreadable).toBe("rejected: [object Object]");
+    expect(stderr.match(/^sweetview: the worker failed:/gm)?.length).toBe(1);
+  }, LIVE_TEST_MS * 3);
+
+  // What docs/app.md and docs/native.md say of an onEvent listener's throw during the cleanup after
+  // the worker failed (review 3, item 4): the cleanup is @n1h/sweetview's own catch, which prints
+  // its line as on the main branch, with a listener set too; the listener is not told.
+  test("an event queued before the worker's crash, delivered by the cleanup after Worker.onerror: an onEvent listener's throw is printed by that cleanup, not told", async () => {
+    const { exitCode, tapped, told, stderr } = await faults("crash-event");
+    expect(exitCode).toBe(0);
+    expect(tapped).toEqual(["tick 99"]);
+    expect(told).toEqual([]);
+    expect(stderr.match(/^sweetview: draining the failed worker's replies threw:/gm)?.length).toBe(1);
+    expect(stderr).toContain("onEvent listener 99");
     expect(stderr.match(/^sweetview: the worker failed:/gm)?.length).toBe(1);
   }, LIVE_TEST_MS * 3);
 });

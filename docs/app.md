@@ -715,7 +715,7 @@ other calls, requests and events go on.
 | A `deferredUiMethods` method | the call is rejected with the error's message, on the later tick the method ran in; the other calls of that tick are still answered | nothing | no |
 | An `onRequest` function | `500 Internal Server Error` | nothing | no |
 | `onReady`, `onReadyTimeout` | (no effect on the page) | `sweetview: onReady handler threw:` (`onReadyTimeout`) | no: the line is printed with a listener too |
-| An `onEvent` listener | the other listeners and the page still get the event, and the worker's later replies and events are still delivered | `sweetview: UI dispatch failed:` (one error as it was thrown; several thrown in one delivery as one `AggregateError`) | yes, as `worker`, in place of the line |
+| An `onEvent` listener | the other listeners and the page still get the event, and the worker's later replies and events are still delivered | `sweetview: UI dispatch failed:` (one error as it was thrown; several thrown in one delivery as one `AggregateError`) | yes, as `worker`, in place of the line; but not for an event Sweetview delivers while it cleans up after the worker failed: that is printed `sweetview: draining the failed worker's replies threw:`, with a listener too |
 | A method of the worker's service (`hostService`) | the call is rejected with the error's message | nothing | no |
 | The worker's own uncaught exception | the worker ends, and every call waiting on it is rejected | `sweetview: the worker failed:`, once | no: the line is printed with a listener too |
 | A worker method called with `notify` (no reply) | nothing | `<method> failed:`, in the worker | no |
@@ -732,7 +732,8 @@ is told about the exceptions of the native module's callbacks the application
 sets, on `app.window` and elsewhere (a `Window` listener such as `onClose` or
 `onFileDrop`, which a file dropped on the page reaches; a tray, a menu, a
 notification, a hook, a single-instance or open-URL listener), and about an
-`onEvent` listener's, as `worker`. It is not told about the handlers above
+`onEvent` listener's, as `worker` (except during the cleanup after the worker
+failed). It is not told about the handlers above
 marked "no", a fault inside the worker, a fault in the tab machinery of
 `@n1h/sweetview` (moving a tab to a new window, detaching a tab from the
 strip, opening a page's new-window request as a tab: those print their error
