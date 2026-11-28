@@ -211,7 +211,7 @@ Twenty-eight places.
 
 Done, on branch `rust-rewrite-fix-webview-behaviour` (DECISIONS D45), after two adversarial reviews. "Old" is the C++ library (`sweetview-webview`, branch `v1-drafting`, `win32_edge.hh`): it set the developer tools from `debug` and the status bar off (lines 1909 to 1923) and left the rest at WebView2's defaults. Each row is read back from WebView2, on Runtime 158.0.4370.45, for webviews made through `Engine::create` in a window of the engine's own, a given window and a child (`crates/sweetview-runtime/src/engine_tests.rs`); the middle column from a webview `wry` builds with nothing set (`crates/sweetview-platform-webview/tests/settings.rs`).
 
-| Setting or behaviour | Old (C++ library) | `wry` 0.58.2 alone | Now |
+| Setting or behaviour | Old (C++ library) | `wry` 0.58.2, as first built | Now |
 |---|---|---|---|
 | Zoom: Ctrl+wheel, Ctrl+plus/minus/0 (`IsZoomControlEnabled`) | on | **off** | on |
 | Pinch zoom (`IsPinchZoomEnabled`) | on | **off** | on |
@@ -227,7 +227,7 @@ Done, on branch `rust-rewrite-fix-webview-behaviour` (DECISIONS D45), after two 
 | Developer tools | `debug` | `debug` | `debug` |
 | User agent, environment options | WebView2's, none | WebView2's, `wry`'s arguments (not used: D15) | WebView2's, none |
 
-Zoom, pinch and swipe go back through `wry`'s own builder options (`with_page_behaviour`), the focus through `wry`'s `with_focused`, autofill through `wry`'s `with_general_autofill_enabled` with the value read from the profile; `app-region` through `ICoreWebView2Settings9`, the download through a `DownloadStarting` handler after `wry`'s, and `window.close()` through a document script, because `wry` has no option for those. `app-region` on can bite, as the real-input run shows: on a webview `wry` built alone, a press on a `-webkit-app-region: drag` area moved the window by (82, 2) and the page saw no `mousedown`.
+After a third review round the webview is no longer built by `wry` on Windows: `sweetview-platform-webview` makes it as `win32_edge.hh` does (DECISIONS D45), so every "Now" above holds by construction, with no setting put back and no handler worked around; the tests read each row back for a window of the engine's own, a given window, a child and a reparented child. `app-region` on can bite, as the real-input run shows: on a webview `wry` built, a press on a `-webkit-app-region: drag` area moved the window by (82, 2) and the page saw no `mousedown`.
 
 What an application cannot choose today (no public option): zoom on or off (an application-like page usually wants it off), pinch zoom, swipe navigation, the status bar on, the browser's context menu, the browser's keys, `app-region` on, autofill and password saving, the user agent, downloads. The developer tools follow `debug`.
 

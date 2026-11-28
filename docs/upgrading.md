@@ -54,8 +54,8 @@ this page: it imports each new form and checks that it is what the row says.
   after Quit: `unref()` or clear it ([the end of the application](app.md#the-end-of-the-application)).
   On macOS, until the macOS goal of the rewrite, keep those lines: macOS still
   runs the code it ran before 1.0, which releases nothing at exit.
-- **The engine on Windows.** The webview is WebView2 driven by Rust (`wry`
-  and Sweetview's own additions), and windows, the tray, menus, dialogs,
+- **The engine on Windows.** The webview is WebView2 driven by Rust (this
+  project's own crates, which make it as the C++ library made it), and windows, the tray, menus, dialogs,
   notifications, input hooks and the event loop are Rust too. The native
   code is one file per target in `@n1h/sweetview-native`:
   `prebuilt/sweetview.win32-x64-msvc.node`. It is loaded with `require`, so

@@ -708,7 +708,7 @@ page). [WebView2 Feedback #3519](https://github.com/MicrosoftEdge/WebView2Feedba
 
 | Direction | Mechanism |
 |---|---|
-| page to UI thread | `__sweetview_rpc(method, params)` bound via `RawWebview#bindRaw` (`wry`'s IPC handler on Windows, `webview_bind` on macOS) |
+| page to UI thread | `__sweetview_rpc(method, params)` bound via `RawWebview#bindRaw` (the webview's `WebMessageReceived` on Windows, `webview_bind` on macOS) |
 | UI thread to worker | `worker.postMessage` (synchronous enqueue) |
 | worker to UI thread | Chunkable JSON IPC and binary HTTP response frames in shared `Ring` + a wakeup (the binding's signal window on Windows, `webview_dispatch` on macOS) |
 | UI thread to page (replies) | `RawWebview#return(seq, status, json)` (`webview_return` on macOS) |

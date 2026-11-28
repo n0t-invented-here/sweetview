@@ -10,11 +10,11 @@
 //!
 //! * the widget: `CreateWindowExW(WS_EX_CONTROLPARENT, L"webview_widget",
 //!   nullptr, WS_CHILD, 0, 0, 0, 0, parent, ...)` (1784), whose `WM_SIZE`
-//!   sizes the controller to its client area (1771) and whose class uses
-//!   `DefWindowProcW` for everything else;
+//!   sizes the controller to its client area (1771 to 1773) and whose class
+//!   uses `DefWindowProcW` for everything else;
 //! * the controller: `CreateCoreWebView2Controller` on the widget (241),
-//!   pumping this thread's messages until it completes (`embed`, 1891 to
-//!   1905); a `WM_QUIT` meanwhile cancels (1903); a failure other than
+//!   pumping this thread's messages until it completes (`embed`, 1895 to
+//!   1906); a `WM_QUIT` meanwhile cancels (1904); a failure other than
 //!   `ERROR_INVALID_STATE` or `E_ABORT` (which give up at once, 255 to 262)
 //!   is tried again, up to 60 attempts, 200 ms apart when the call itself
 //!   fails (`try_create_environment`, 404 to 425);
@@ -23,8 +23,8 @@
 //! * shown: the controller's bounds set to the widget's client area,
 //!   `put_IsVisible(TRUE)`, `ShowWindow(widget, SW_SHOW)`, `UpdateWindow`
 //!   (1933 to 1936);
-//! * at the end: the controller closed and the widget destroyed (`deinit`,
-//!   595 to 604).
+//! * at the end: the controller closed (574) and the widget destroyed
+//!   (`deinit`, 601 to 604).
 //!
 //! What the fork's engine does around this (the scripts, the event
 //! registrations, focus for a window it owns) is `WebviewExtras` and the

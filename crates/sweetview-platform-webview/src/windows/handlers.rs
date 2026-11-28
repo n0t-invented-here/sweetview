@@ -228,7 +228,7 @@ impl RequestFilter {
                 Ok(Self::WithSourceKinds { webview: webview22, uri })
             }
             Err(_) => {
-                // SAFETY: `webview` is a COM reference the extras hold (from `wry`); `uri` is
+                // SAFETY: `webview` is a COM reference the extras hold (from the `Webview`); `uri` is
                 // an owned HSTRING for the call.
                 unsafe { webview.AddWebResourceRequestedFilter(&uri, COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL) }?;
                 Ok(Self::Legacy { webview: webview.clone(), uri })

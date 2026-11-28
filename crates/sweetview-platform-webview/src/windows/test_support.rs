@@ -130,7 +130,7 @@ pub fn set_general_autofill(webview: &Webview, enabled: bool) {
     unsafe { s4.SetIsGeneralAutofillEnabled(enabled) }.expect("SetIsGeneralAutofillEnabled");
 }
 
-/// The window WebView2 is parented to (`wry`'s container window); `None` once
+/// The window WebView2 is parented to (the webview's widget); `None` once
 /// the controller is closed and no longer answers.
 fn container(webview: &Webview) -> Option<HWND> {
     let controller = webview.controller().clone();
@@ -141,8 +141,8 @@ fn container(webview: &Webview) -> Option<HWND> {
     Some(parent)
 }
 
-/// Whether the webview is still in place: its controller answers and `wry`'s
-/// container window exists.
+/// Whether the webview is still in place: its controller answers and its
+/// widget window exists.
 pub fn container_alive(webview: &Webview) -> bool {
     let Some(window) = container(webview) else { return false };
     // SAFETY: `IsWindow` takes any handle value, a stale one included, and reads no memory of ours.

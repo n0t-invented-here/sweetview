@@ -127,7 +127,7 @@ pub(super) fn release_shared() {
 /// options), which gives up at once.
 ///
 /// The calling thread is made a COM single-threaded apartment first, once, for
-/// the rest of its life, as `wry` does before it creates each webview (the C++
+/// the rest of its life, before it creates any webview (the C++
 /// does the same for a window it owns). Errors: [`ErrorCode::MissingDependency`] without a
 /// WebView2 Runtime, [`ErrorCode::Canceled`] when a `WM_QUIT` arrives while
 /// waiting (it is consumed, as in the C++), [`ErrorCode::InvalidState`] when

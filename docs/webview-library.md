@@ -6,13 +6,13 @@ does not call it directly; `WebView.attach` and `createApp` do, through the
 `RawWebview` class ([app reference](app.md)). This page is for understanding
 what happens underneath, choosing a build, and working on it.
 
-- On Windows the webview is WebView2 driven by Rust: [`wry`](https://github.com/tauri-apps/wry)
-  creates it, and this project's `sweetview-platform-webview` crate adds what
-  `wry` has no API for (the request handler with streamed bodies, file drops,
-  external drop control, the transparent background, removable user scripts,
-  and the C++ library's page behaviour where `wry` changes it: see
-  [Page behaviour](#page-behaviour)),
-  with the request rules in `sweetview-http`. Both are compiled into the
+- On Windows the webview is WebView2 driven by Rust: this project's
+  `sweetview-platform-webview` crate makes it as the C++ library made it (its
+  container window, the WebView2 controller, the two settings the C++
+  library set: see [Page behaviour](#page-behaviour)) and adds the request
+  handler with streamed bodies, file drops, external drop control, the
+  background colour and removable user scripts, through the typed WebView2
+  interfaces of `webview2-com`, with the request rules in `sweetview-http`. Both are compiled into the
   N-API binding that ships inside `@n1h/sweetview-native`. Nothing else is
   installed, and `bun:ffi` is not involved.
 - On macOS, until the macOS goal of the Rust rewrite, the webview is the C++
@@ -305,54 +305,28 @@ one `onFileDrop` listener ([file drops](native/windows.md#file-drops)).
 
 ### Page behaviour
 
-Not a C function: what the page does for the person using it. The C++
-library set two of WebView2's settings (`win32_edge.hh`): the developer tools
-from `debug`, and the status bar off. `wry` changes four others, so on
-Windows the binding puts them back (`with_page_behaviour` and
-`WebviewExtras::attach` in `crates/sweetview-platform-webview`), and its
-tests read each one back from WebView2. The result is the C++ library's:
+Not a C function: what the page does for the person using it. On Windows
+the webview is made as the C++ library's `win32_edge.hh` made it, step by
+step (`crates/sweetview-platform-webview/src/windows/host.rs` names the
+lines), so the page behaves as it did. The project used `wry` for this at
+first, and `wry` sets and registers things the C++ library never did, with
+no way to leave them out; that is why it is not used (DECISIONS D45).
 
-| Setting | The C++ library | `wry` 0.58.2 alone | Sweetview 1.0 on Windows |
-|---|---|---|---|
-| Zoom with Ctrl+wheel, Ctrl+plus, Ctrl+minus, Ctrl+0 (`IsZoomControlEnabled`) | on | off | on |
-| Pinch zoom (`IsPinchZoomEnabled`) | on | off | on |
-| Back and forward by a horizontal swipe (`IsSwipeNavigationEnabled`) | on | off | on |
-| The status bar: a link's address while the pointer is over it (`IsStatusBarEnabled`; WebView2's default is on) | off | off | off |
-| CSS `app-region` (`IsNonClientRegionSupportEnabled`) | off | on | off |
-| The browser's context menu, its keys (Ctrl+F, Ctrl+P, F5), script dialogs, the built-in error page, host objects, web messages, SmartScreen (`IsReputationCheckingRequired`) | on | on | on |
-| General autofill (`IsGeneralAutofillEnabled`, one preference for the whole profile) | left as the profile has it (on unless changed) | set on, on every webview made | left as the profile has it |
-| Saving passwords (`IsPasswordAutosaveEnabled`) | off | off | off |
-| The developer tools (`AreDevToolsEnabled`) | `debug` | `debug` | `debug` |
+| | The C++ library, and Sweetview 1.0 on Windows |
+|---|---|
+| Settings | WebView2's defaults, except the developer tools (`debug`) and the status bar (off). So zoom with Ctrl+wheel, Ctrl+plus, Ctrl+minus, Ctrl+0 and a pinch, swipe navigation, the browser's context menu and keys, script dialogs, the built-in error page and SmartScreen are on; CSS `app-region` support and password saving are off; general autofill is whatever the profile has, never written |
+| The environment | created once, with no options (no extra browser arguments, no language, the default scroll bars), on `%APPDATA%\<executable file name>` |
+| The page's container | a child window of class `webview_widget` with `WS_EX_CONTROLPARENT`, destroyed with the webview |
+| Focus | given to the page in a window Sweetview made itself, at creation and when that window is activated; a page filling a Sweetview `Window` (as `createApp`'s does) gets it when that window is activated. A webview in a window of the application's own, or beside a control that has the focus, takes nothing |
+| A page's `window.close()`, from any document or frame, and the DevTools protocol's `Page.close` | nothing happens |
+| A download | WebView2's own: its interface, the profile's download folder, a file already there kept (the new one is named `name (1).ext`) |
+| A popup (`window.open`, `target="_blank"`) | WebView2 opens its own window, unless the tabs library has a handler set, which then gets the address |
+| The page's globals | nothing but `window.chrome.webview` (WebView2's) and Sweetview's bridge; a page may define its own `window.ipc` |
 
-The environment is created as the C++ library created it, with no options
-(no extra browser arguments, no language, the default scroll bars), which
-`wry`'s own environment would add. With `app-region` on, an area marked
-`-webkit-app-region: drag` in a stylesheet shared with another shell would
-drag the window here and take that area's mouse events from the page, so it
-stays off; a frameless window is dragged with `Window.startDrag`. No option
-changes any of these yet.
-
-Three more things `wry` does when it makes a webview, each put back to the
-C++ library's behaviour, and each tested through `Engine::create` for a
-window of the engine's own, a given window and a child:
-
-- Focus: `wry` moves the keyboard focus into every webview it makes. The
-  C++ library did that only for a window it made itself, so a webview made
-  in a given window, or beside a native control that has the focus, leaves
-  the focus where it was.
-- A page's `window.close()`: `wry` destroys the webview's container window
-  when WebView2 reports the request, which left the window empty. The C++
-  library did not handle the request, so nothing happened; a document
-  script now keeps `window.close()` from making it, in every frame.
-- Downloads: `wry` marks every download handled, which keeps it out of
-  WebView2's own download interface. The C++ library never handled
-  downloads, so WebView2 showed its interface and saved to the user's
-  downloads folder; it does again.
-
-One exception: the first webview a process makes is built with `wry`'s
-value for general autofill, on, because `wry` writes it before anything can
-be read from the profile. Whether WebView2 keeps that preference in the
-profile from one process to the next was not measured.
+The tests read each of these back from WebView2 for a webview made the way
+an application's is (`crates/sweetview-runtime/src/engine_tests.rs`), in a
+window of its own, a given window, a child and a child moved to another
+window. No option changes any of them yet.
 
 ### Teardown
 
@@ -414,9 +388,9 @@ the page is running.
 ## Source
 
 - Windows: this repository, `n0t-invented-here/sweetview`. The webview is
-  `crates/sweetview-platform-webview` (what WebView2 needs beyond `wry`) and
-  `crates/sweetview-http` (the request rules, ported with the C++ library's
-  tests); `crates/sweetview-runtime` creates it with `wry`; the binding is
+  `crates/sweetview-platform-webview` (the webview itself and what Sweetview
+  adds to it) and `crates/sweetview-http` (the request rules, ported with the
+  C++ library's tests); `crates/sweetview-runtime` creates it; the binding is
   `crates/sweetview-napi` and `crates/sweetview-platform-node`. Each crate's
   `README.md` states its job.
 - macOS: the C++ library and browser integrations,

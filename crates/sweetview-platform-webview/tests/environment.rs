@@ -1,4 +1,4 @@
-//! `create_environment`: an environment made the C++ fork's way serves `wry`
+//! `create_environment`: an environment made the C++ fork's way serves
 //! webviews, one environment is shared by several webviews, and the C++
 //! fork's default folder is `%APPDATA%\<exe file name>`. Passes with
 //! `WEBVIEW2_USER_DATA_FOLDER` set or unset: the variable is read, never set.
