@@ -108,6 +108,15 @@ describe.if(process.platform === "win32")("a closed window gives back what it he
         // A window and its webview's container, or a tab's container alone.
         expect(r.closedHandles).toBeGreaterThanOrEqual(r.path === "tab" ? ROUNDS : ROUNDS * 2);
         expect({ path: r.path, user: growth("user") <= 0, gdi: growth("gdi") <= 0 }).toEqual({ path: r.path, user: true, gdi: true });
+        // Each count read for real: a baseline above zero (R9 and S5 of D46's first review).
+        for (const key of ["user", "gdi", "handles", "privateBytes"] as const) expect({ path: r.path, key, positive: r.afterWarmUp[key] > 0 }).toEqual({ path: r.path, key, positive: true });
+        // A leak that happens once and stays (100, 101, 101) shows in neither measurement's
+        // smaller growth, so the run's whole growth is judged too, and what may remain is named:
+        // one WebView2 process WebView2 starts during the run when it pleases (a utility
+        // process), and with it the one USER object it brings; nothing else.
+        const total = (key: "user" | "gdi" | "webview2Processes") => r.atEnd[key] - r.afterWarmUp[key];
+        const startedOne = total("webview2Processes") === 1;
+        expect({ path: r.path, webview2Processes: total("webview2Processes") <= 1, user: total("user") <= (startedOne ? 1 : 0), gdi: total("gdi") <= 0 }).toEqual({ path: r.path, webview2Processes: true, user: true, gdi: true });
         expect(growth("handles")).toBeLessThanOrEqual(r.path === "tab" ? KERNEL_HANDLES_ONCE : KERNEL_HANDLES_PER_WINDOW * measured + KERNEL_HANDLES_ONCE);
         expect(growth("webview2Processes")).toBeLessThanOrEqual(0);
         expect(climb(r.privateBytes)).toBeLessThanOrEqual(PRIVATE_BYTES_NOISE);

@@ -91,12 +91,18 @@ const PROCESSENTRY32W_SIZE = 568;
 /** How many msedgewebview2.exe processes descend from this one. */
 function webview2Processes(): number {
   const snapshot = kernel32.CreateToolhelp32Snapshot(2, 0); // TH32CS_SNAPPROCESS
+  // A failed read is not a count of zero: INVALID_HANDLE_VALUE, or a snapshot with no first entry.
+  if (snapshot === 0n || snapshot === 0xffff_ffff_ffff_ffffn) throw new Error("reclaim: CreateToolhelp32Snapshot failed");
   const entry = new Uint8Array(PROCESSENTRY32W_SIZE);
   const view = new DataView(entry.buffer);
   view.setUint32(0, PROCESSENTRY32W_SIZE, true);
   const parents = new Map<number, number>();
   const names = new Map<number, string>();
-  for (let ok = kernel32.Process32FirstW(snapshot, ptr(entry)); ok; ok = kernel32.Process32NextW(snapshot, ptr(entry))) {
+  if (!kernel32.Process32FirstW(snapshot, ptr(entry))) {
+    kernel32.CloseHandle(snapshot);
+    throw new Error("reclaim: Process32FirstW found no process");
+  }
+  for (let ok = 1; ok; ok = kernel32.Process32NextW(snapshot, ptr(entry))) {
     const pid = view.getUint32(8, true);
     parents.set(pid, view.getUint32(32, true));
     const exe = new Uint16Array(entry.buffer, 44, 260);
@@ -125,11 +131,15 @@ function counts(): Counts {
   Bun.gc(true);
   const me = kernel32.GetCurrentProcess();
   const handles = new Uint32Array(1);
-  kernel32.GetProcessHandleCount(me, ptr(handles));
+  // Every read is checked: a failed one would read as a count of zero, and a count can only grow from a real start.
+  if (!kernel32.GetProcessHandleCount(me, ptr(handles))) throw new Error("reclaim: GetProcessHandleCount failed");
   const memory = new BigUint64Array(10);
   new DataView(memory.buffer).setUint32(0, 80, true);
-  kernel32.K32GetProcessMemoryInfo(me, ptr(memory), 80);
-  return { ...guiObjects(), handles: handles[0]!, privateBytes: Number(memory[9]), webview2Processes: webview2Processes() };
+  if (!kernel32.K32GetProcessMemoryInfo(me, ptr(memory), 80)) throw new Error("reclaim: K32GetProcessMemoryInfo failed");
+  // GetGuiResources answers 0 on failure; this process has windows, so 0 is a failed read.
+  const gui = guiObjects();
+  if (gui.user === 0 || gui.gdi === 0) throw new Error(`reclaim: GetGuiResources read ${JSON.stringify(gui)}`);
+  return { ...gui, handles: handles[0]!, privateBytes: Number(memory[9]), webview2Processes: webview2Processes() };
 }
 
 /** Counts once they have stopped moving: read until two reads 200 ms apart agree, at most 5 s. */
