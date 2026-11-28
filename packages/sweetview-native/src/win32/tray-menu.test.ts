@@ -21,6 +21,8 @@ import {
   WM_CLOSE,
   buttonsDown,
   chooseMenuItem,
+  hInstance,
+  wide,
   chooseInFolderDialog,
   cursor,
   guiObjects,
@@ -516,6 +518,132 @@ describe.if(onWindows)("Menu.popup (binding: muda)", () => {
 });
 
 describe.if(onWindows)("Window#showSystemMenu", () => {
+  test("a window Sweetview did not make keeps the OS's own system menu: one of another process shows none, one of this thread offers Size and Maximize as its styles say and keeps its own disabled Close", async () => {
+    // Review round 2, findings 1 and 4. Class: every window kind Window#showSystemMenu can be
+    // given that Sweetview did not make (another process's, this thread's own with each of
+    // WS_THICKFRAME and WS_MAXIMIZEBOX), each adopted by Window.fromHandle, which registers it.
+    const states = (win: Window): string[] => {
+      let read: string[] = [];
+      whenMenuOpens((menuWindow) => {
+        read = readMenu(menuOfWindow(menuWindow)).map((e) => (e.separator ? "-" : e.disabled ? "off" : "on"));
+        pressKeys(menuWindow, VK.ESCAPE);
+      });
+      win.showSystemMenu();
+      return read;
+    };
+    // Another process's window: the menu is not shown (it was not before Window.fromHandle registered it either).
+    const holder = Bun.spawn([process.execPath, require("node:url").fileURLToPath(new URL("../../../../rust-rewrite/compat/fixtures/foreign-window.ts", import.meta.url)), "hold"], { stdin: "pipe", stdout: "pipe", stderr: "pipe" });
+    try {
+      const reader = holder.stdout.getReader();
+      let text = "";
+      while (!/\r?\n/.test(text)) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        text += new TextDecoder().decode(value);
+      }
+      const foreign = Window.fromHandle(BigInt(text.trim()));
+      let opened = false;
+      whenMenuOpens((menuWindow) => {
+        opened = true;
+        pressKeys(menuWindow, VK.ESCAPE);
+      });
+      foreign.showSystemMenu();
+      await pumpFor(300);
+      expect(opened).toBe(false);
+      foreign.dispose();
+      // Its watcher saw no menu and is still armed: disarmed, so the next menus are read by their own.
+      for (const cancel of [...menuWatchers]) cancel();
+    } finally {
+      holder.stdin.end();
+      await Promise.race([holder.exited, Bun.sleep(10_000)]);
+    }
+
+    // This thread's own windows, by their styles: sizable but not maximisable, and the other way round.
+    const WS_CAPTION = 0x00c00000;
+    const WS_SYSMENU = 0x00080000;
+    const WS_THICKFRAME = 0x00040000;
+    const WS_MINIMIZEBOX = 0x00020000;
+    const WS_MAXIMIZEBOX = 0x00010000;
+    const WS_VISIBLE = 0x10000000;
+    const MF_GRAYED = 0x1;
+    const SC_CLOSE = 0xf060;
+    const make = (style: number) => {
+      const hwnd = user32.CreateWindowExW(0, wide("STATIC"), wide(unique("own system menu")), WS_VISIBLE | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | style, 200, 200, 320, 200, 0n, 0n, hInstance(), null);
+      expect(hwnd).not.toBe(0n);
+      return hwnd;
+    };
+    const sizable = make(WS_THICKFRAME);
+    const maximisable = make(WS_MAXIMIZEBOX);
+    const noClose = make(WS_THICKFRAME | WS_MAXIMIZEBOX);
+    user32.EnableMenuItem(user32.GetSystemMenu(noClose, 0), SC_CLOSE, MF_GRAYED);
+    const wrapped = [sizable, maximisable, noClose].map((h) => Window.fromHandle(h));
+    try {
+      // Restore, Move, Size, Minimize, Maximize, a separator, Close.
+      expect(states(wrapped[0]!)).toEqual(["off", "on", "on", "on", "off", "-", "on"]);
+      expect(states(wrapped[1]!)).toEqual(["off", "on", "off", "on", "on", "-", "on"]);
+      expect(states(wrapped[2]!)).toEqual(["off", "on", "on", "on", "on", "-", "off"]);
+    } finally {
+      for (const w of wrapped) w.dispose();
+      for (const h of [sizable, maximisable, noClose]) user32.DestroyWindow(h);
+    }
+  }, 40_000);
+
+  test("a command chosen from the system menu means what its label says, whatever changed while the menu was open", async () => {
+    // Review round 2, finding 4. Class: Maximize and Restore, chosen after the window was maximised
+    // or restored by another call while the menu tracked (the menu loop runs page calls and timers),
+    // for a frameless window (Sweetview's toggle) and a framed one (the OS's).
+    const area = Screen.primary().workArea;
+    const at = { x: area.x + 110, y: area.y + 110, width: 400, height: 280 };
+    // Opens the menu, runs `meanwhile` from inside its loop, then chooses the item at `position`.
+    const chooseAfter = (win: Window, meanwhile: () => void, position: number) => {
+      whenMenuOpens((menuWindow) => {
+        meanwhile();
+        chooseMenuItem(menuWindow, position);
+      });
+      win.showSystemMenu();
+    };
+    for (const frame of [false, true]) {
+      const win = new Window({ title: unique(`menu label ${frame}`), frame, resizable: true, noActivate: true, bounds: at });
+      try {
+        win.show();
+        // Maximize, chosen after another call maximised the window: it stays maximised.
+        chooseAfter(win, () => win.toggleMaximize(), 4);
+        await pumpFor(200);
+        expect({ frame, maximized: win.isMaximized() }).toEqual({ frame, maximized: true });
+        // Restore, chosen after another call restored it: it stays restored.
+        chooseAfter(win, () => win.toggleMaximize(), 0);
+        await pumpFor(200);
+        expect({ frame, maximized: win.isMaximized(), bounds: win.bounds() }).toEqual({ frame, maximized: false, bounds: at });
+        // Review round 2, M2: Maximize chosen on a minimised window maximises it (a frameless one
+        // through its toggle, never the OS's maximise behind it), and its next toggle restores it.
+        win.minimize();
+        chooseAfter(win, () => {}, 4);
+        await pumpFor(300);
+        expect({ frame, minimized: win.isMinimized(), maximized: win.isMaximized() }).toEqual({ frame, minimized: false, maximized: true });
+        win.toggleMaximize();
+        await pumpFor(200);
+        expect({ frame, maximized: win.isMaximized(), bounds: win.bounds() }).toEqual({ frame, maximized: false, bounds: at });
+        // M3: minimised while the menu is open, then Maximize. The OS may cancel a menu whose owner
+        // it minimises (no command comes back); when the command does come back the window is
+        // maximised from where it was, never with its iconic bounds kept to go back to.
+        chooseAfter(win, () => win.minimize(), 4);
+        await pumpFor(300);
+        if (win.isMinimized()) win.show();
+        if (win.isMaximized()) win.toggleMaximize();
+        await pumpFor(200);
+        expect({ frame, maximized: win.isMaximized(), bounds: win.bounds() }).toEqual({ frame, maximized: false, bounds: at });
+      } finally {
+        win.dispose();
+      }
+    }
+    // M3: disposed while the menu is open, then a command: nothing more happens, nothing throws.
+    const gone = new Window({ title: unique("menu disposed"), frame: false, noActivate: true, bounds: at });
+    gone.show();
+    expect(() => chooseAfter(gone, () => gone.dispose(), 4)).not.toThrow();
+    await pumpFor(200);
+    expect(gone.isMaximized()).toBe(false);
+  }, 60_000);
+
   test("follows Sweetview's own state: a frameless window maximises and restores through its work-area toggle, a minimised window can be restored, a window that cannot be sized offers no Size or Maximize", async () => {
     // Review finding 2 and N1. The items, in order: Restore, Move, Size, Minimize, Maximize, a separator, Close.
     const area = Screen.primary().workArea;

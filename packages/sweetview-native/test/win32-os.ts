@@ -53,6 +53,8 @@ export const user32 = dlopen("user32.dll", {
   PostQuitMessage: { args: [i32], returns: FFIType.void },
   RegisterWindowMessageW: { args: [FFIType.ptr], returns: u32 },
   GetMenuItemCount: { args: [u64], returns: i32 },
+  GetSystemMenu: { args: [u64, i32], returns: u64 },
+  EnableMenuItem: { args: [u64, u32, u32], returns: i32 },
   GetMenuState: { args: [u64, u32, u32], returns: u32 },
   GetMenuStringW: { args: [u64, u32, FFIType.ptr, i32, u32], returns: i32 },
   GetSubMenu: { args: [u64, i32], returns: u64 },

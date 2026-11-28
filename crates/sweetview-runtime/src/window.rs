@@ -284,6 +284,14 @@ impl Core {
     }
   }
 
+  /// Puts a minimised window back where it was, synchronously: `tao`'s own
+  /// for a window it made, so its flags agree; the OS's for any other.
+  fn restore_from_minimized(&self) {
+    if self.with_tao(|tao| tao.set_minimized(false)).is_none() {
+      self.with_native(|window| platform::show_as(window, ShowAs::Restored));
+    }
+  }
+
   /// A frameless window is maximised while it fills the work area its toggle
   /// gave it: moved or sized off it (dragged by `startDrag`, say), it is not,
   /// and the bounds kept to go back to are forgotten (review N8).
@@ -332,9 +340,31 @@ impl Core {
       can_maximize: !self.chrome.frame || self.chrome.resizable,
     };
     let Some(command) = self.with_native(|window| platform::track_system_menu(window, at, state)).flatten() else { return Ok(()) };
+    if !self.alive.get() {
+      return Ok(());
+    }
+    // The menu's loop ran page calls and timers while it tracked: a command means what its label
+    // says for the window as it is now, not as it was when the menu opened.
+    let minimized_now = self.with_native(|window| platform::is_minimized(window)).unwrap_or(false);
     match command {
-      platform::SystemCommand::Maximize | platform::SystemCommand::Restore if !self.chrome.frame && !minimized => self.toggle_frameless_maximize(),
+      // A frameless window's maximise is Sweetview's toggle: the OS's would fill the screen behind it.
+      platform::SystemCommand::Maximize if !self.chrome.frame => {
+        if minimized_now {
+          self.restore_from_minimized();
+        }
+        if !self.maximized_now() {
+          self.toggle_frameless_maximize()?;
+        }
+        Ok(())
+      }
+      platform::SystemCommand::Restore if !self.chrome.frame && !minimized_now => {
+        if self.maximized_now() {
+          self.toggle_frameless_maximize()?;
+        }
+        Ok(())
+      }
       command => {
+        // The OS carries out a framed window's Maximize and Restore for the window as it is.
         self.with_native(|window| platform::post_system_command(window, command));
         Ok(())
       }

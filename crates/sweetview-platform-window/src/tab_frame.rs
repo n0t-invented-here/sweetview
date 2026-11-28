@@ -145,8 +145,9 @@ impl SystemCommand {
   }
 }
 
-/// Which of the system menu's commands `state` offers, by command.
-pub fn system_menu_items(state: SystemMenuState) -> [(SystemCommand, bool); 6] {
+/// Which of the system menu's commands `state` offers, by command. Close is
+/// not among them: it is left as the window's owner set it.
+pub fn system_menu_items(state: SystemMenuState) -> [(SystemCommand, bool); 5] {
   let normal = !state.maximized && !state.minimized;
   [
     (SystemCommand::Restore, state.maximized || state.minimized),
@@ -154,7 +155,6 @@ pub fn system_menu_items(state: SystemMenuState) -> [(SystemCommand, bool); 6] {
     (SystemCommand::Size, normal && state.can_size),
     (SystemCommand::Minimize, !state.minimized),
     (SystemCommand::Maximize, !state.maximized && state.can_maximize),
-    (SystemCommand::Close, true),
   ]
 }
 
