@@ -172,6 +172,12 @@ struct Core {
   /// True while the maximise listeners are being told of a change: a change
   /// one of them makes is told after every listener has heard the first.
   noting_maximized: Cell<bool>,
+  /// Changes of the maximised state not told yet, in the order they happened.
+  maximize_queue: RefCell<std::collections::VecDeque<bool>>,
+  /// How many resizes and moves have begun to be told: one told later supersedes an older one
+  /// still being told, so no listener hears bounds older than bounds it heard.
+  resizes_told: Cell<u64>,
+  moves_told: Cell<u64>,
   icons: RefCell<Option<WindowIcons>>,
   /// Live wrappers of this window.
   wrappers: Cell<usize>,
@@ -231,6 +237,9 @@ impl Core {
       restore: Cell::new(None),
       maximized: Cell::new(false),
       noting_maximized: Cell::new(false),
+      maximize_queue: RefCell::new(std::collections::VecDeque::new()),
+      resizes_told: Cell::new(0),
+      moves_told: Cell::new(0),
       icons: RefCell::new(None),
       wrappers: Cell::new(0),
       tab,
@@ -260,27 +269,32 @@ impl Core {
   /// since it was last looked at. A minimised window is not looked at: it
   /// keeps the state it is restored to.
   ///
-  /// A change a listener makes while being told (it toggles the window back,
-  /// say) is not told from inside that call, where the listeners after it
-  /// would hear the second change before the first: it is noticed once every
-  /// listener has heard the first, and told then, so each listener hears every
-  /// change in order and ends with the window's own state.
+  /// Every change is queued where it is noticed, and told from the queue in
+  /// order: one a listener makes while being told (it restores the window and
+  /// maximises it again, say) is told after every listener has heard the one
+  /// before it, so each listener hears every change, once, in order, and ends
+  /// with the window's own state.
   fn note_maximized(&self) {
+    let minimized = self.with_native(|window| platform::is_minimized(window)).unwrap_or(true);
+    if self.alive.get() && !minimized {
+      let now = self.maximized_now();
+      if self.maximized.replace(now) != now {
+        self.maximize_queue.borrow_mut().push_back(now);
+      }
+    }
     if self.noting_maximized.get() {
       return;
     }
     self.noting_maximized.set(true);
     let _told = scopeguard_reset(&self.noting_maximized);
     loop {
-      if !self.alive.get() || self.with_native(|window| platform::is_minimized(window)).unwrap_or(true) {
-        return;
-      }
-      let now = self.maximized_now();
-      if self.maximized.replace(now) == now {
+      let Some(next) = self.maximize_queue.borrow_mut().pop_front() else { return };
+      if !self.alive.get() {
+        self.maximize_queue.borrow_mut().clear();
         return;
       }
       let listeners: Vec<BoolListener> = self.listeners.borrow().maximize.iter().map(|(_, l)| l.clone()).collect();
-      listeners.iter().for_each(|l| l(now));
+      listeners.iter().for_each(|l| l(next));
     }
   }
 
@@ -611,17 +625,33 @@ fn on_event(weak: &Weak<Core>, event: &WindowEvent) -> bool {
     WindowEvent::Resized(bounds) => {
       // The maximised state is looked at before a resize listener can change it (restore the
       // window, say), so the change this resize made is told, and then the one the listener made.
+      let told = core.resizes_told.get() + 1;
+      core.resizes_told.set(told);
       core.leave_frameless_maximize_if_moved();
       core.note_maximized();
       let listeners: Vec<RectListener> = core.listeners.borrow().resize.iter().map(|(_, l)| l.clone()).collect();
-      listeners.iter().for_each(|l| l(*bounds));
+      for listener in &listeners {
+        // A resize a listener (of this kind or a maximise one) made has told newer bounds already.
+        if core.resizes_told.get() != told {
+          break;
+        }
+        listener(*bounds);
+      }
       false
     }
     WindowEvent::Moved(bounds) => {
+      let told = core.moves_told.get() + 1;
+      core.moves_told.set(told);
       core.leave_frameless_maximize_if_moved();
       core.note_maximized();
       let listeners: Vec<RectListener> = core.listeners.borrow().moved.iter().map(|(_, l)| l.clone()).collect();
-      listeners.iter().for_each(|l| l(*bounds));
+      for listener in &listeners {
+        // A move a listener made has told newer bounds already.
+        if core.moves_told.get() != told {
+          break;
+        }
+        listener(*bounds);
+      }
       false
     }
     WindowEvent::CloseRequested => {
