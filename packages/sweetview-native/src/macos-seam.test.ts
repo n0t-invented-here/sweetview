@@ -33,6 +33,17 @@ describe("on macOS, until the macOS goal", () => {
     ]);
   });
 
+  test("onCallbackError calls no listener: every catch prints the line it printed on the main branch", async () => {
+    const { r } = await runFixture("macos-seam.ts", ["fake"]);
+    expect(r.callbackErrors).toEqual({
+      told: [],
+      printed: [
+        ["sweetview: message window handler threw:", "mac boom"],
+        ["sweetview: onClose handler threw:", "mac close"],
+      ],
+    });
+  });
+
   test("hooks, permissions and the any-thread calls go to the library, each when called", async () => {
     const { r } = await runFixture("macos-seam.ts", ["fake"]);
     expect(r.permissions).toEqual({ status: "granted", request: "missing", ready: true, needed: [1], autoRequest: false });

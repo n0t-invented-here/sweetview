@@ -11,6 +11,7 @@
 // application must not be able to call it to fabricate a fault (D44).
 
 import { binding } from "./binding";
+import { macosKeepsTagPath } from "./platform";
 
 /**
  * Where an exception came from: the public API the application wrote the handler for. `internal` is
@@ -63,9 +64,6 @@ export type DefaultReport = string | ((error: unknown) => void) | null;
 
 const listeners = new Set<CallbackErrorHandler>();
 
-/** Whether an `onCallbackError` listener is set: macOS's input hooks report only then (D42). */
-export const hasCallbackErrorListener = (): boolean => listeners.size > 0;
-
 /**
  * A key an exception may carry to name the kind it came from, for code that cannot import this
  * module (`windowChromeEvents` of `@n1h/sweetview/window-chrome`, which a page bundle loads too).
@@ -89,7 +87,8 @@ function printDefault(kind: CallbackKind, error: unknown, fallback: DefaultRepor
  * what that catch did before when there are none. Never throws.
  */
 export function reportCallbackError(kind: CallbackKind, error: unknown, fallback: DefaultReport, name?: string): void {
-  if (listeners.size === 0) {
+  // macOS keeps the main branch's path until its goal (D42): no listener is called there.
+  if (listeners.size === 0 || macosKeepsTagPath()) {
     if (fallback !== null) printDefault(kind, error, fallback);
     return;
   }

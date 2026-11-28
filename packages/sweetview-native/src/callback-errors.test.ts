@@ -109,7 +109,7 @@ describe("the reporter is not an entry point", () => {
     for (const [subpath, target] of Object.entries(pkg.exports)) {
       if (typeof target !== "string" || subpath.includes("darwin")) continue;
       const mod = (await import(new URL(`../${target}`, import.meta.url).href)) as Record<string, unknown>;
-      for (const name of ["reportCallbackError", "hasCallbackErrorListener", "kindOfBindingCallback"]) if (name in mod) offering.push(`${subpath}: ${name}`);
+      for (const name of ["reportCallbackError", "kindOfBindingCallback"]) if (name in mod) offering.push(`${subpath}: ${name}`);
     }
     expect(offering).toEqual([]);
   });

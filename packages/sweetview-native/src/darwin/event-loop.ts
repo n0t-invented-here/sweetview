@@ -66,7 +66,7 @@ export function scheduleNativeTimeout(ms: number, fn: () => void): () => void {
   const commonModes = commonRunLoopModes();
   if (timerTarget === NIL) {
     if (timerTargetClass === NIL) {
-      timerTarget = makeTarget("SweetviewNativeTimeout", { "fire:": (timer) => timers.get(timer)?.() }, "NSObject", { "fire:": "timeout" });
+      timerTarget = makeTarget("SweetviewNativeTimeout", { "fire:": (timer) => timers.get(timer)?.() });
       timerTargetClass = asId(send(timerTarget, sel("class")));
     } else {
       timerTarget = asId(send(asId(send(timerTargetClass, sel("alloc"))), sel("init")));

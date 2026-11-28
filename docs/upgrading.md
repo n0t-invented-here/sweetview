@@ -235,7 +235,8 @@ this page: it imports each new form and checks that it is what the row says.
     hands the native module's faults to that listener, or call the
     application's own reporter there. A shipped executable has no console, so
     without it these faults reach nobody. A page's own calls fail in the page:
-    `await` them there.
+    `await` them there. On macOS, until its goal, the listener is not called
+    and the faults are printed as before.
 13. Check what an overlay application notices, in [What changed for every
     application](#what-changed-for-every-application): the opaque
     `unsafeHandle`, the error messages, the UI-thread checks, the frameless

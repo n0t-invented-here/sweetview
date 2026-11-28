@@ -91,6 +91,10 @@ and each is called in the order it was added, on the UI thread.
 - A listener may end the application: `process.exit(code)` from inside it
   ends the process with that code, from inside either loop.
 
+On macOS, until the macOS goal of the Rust rewrite, no listener is called:
+every catch prints what it printed before, and an input hook handler's
+exception leaves the bindings package as it always did.
+
 | `kind` | The callback | Printed with no listener | Its fallback |
 |---|---|---|---|
 | `tray.onClick`, `tray.onDoubleClick` | `Tray` `onClick`, `onDoubleClick` | `sweetview: message window handler threw:` | none |

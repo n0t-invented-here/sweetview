@@ -2,7 +2,6 @@
 // handoff via a CoreFoundation message port on AppKit's main run loop.
 
 import { FFIType, JSCallback, dlopen, toArrayBuffer, type Pointer } from "bun:ffi";
-import { reportCallbackError } from "../callback-errors";
 import { createHash } from "node:crypto";
 import { validateUrlScheme } from "@n1h/sweetview-settings";
 import { parseSecondInstanceEvent, type RegisterUrlSchemeOptions, type SecondInstanceEvent, type SingleInstanceLock } from "../activation";
@@ -137,7 +136,7 @@ export async function acquireSingleInstance(params: {
             }
           }
         } catch (err) {
-          reportCallbackError("singleInstance.onSecondInstance", err, "sweetview: singleInstance CFMessagePort handler threw:");
+          console.error("sweetview: singleInstance CFMessagePort handler threw:", err);
         } finally {
           callbackDepth--;
         }
