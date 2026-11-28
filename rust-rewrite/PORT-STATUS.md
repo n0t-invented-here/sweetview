@@ -13,7 +13,8 @@ Tree: `bf5881d` (the main branch with the first part of `rust-rewrite-api-gaps` 
 
 | What | State | Where |
 |---|---|---|
-| A streamed response reaching the page as it is written | Not achieved. The bytes go through the Rust stream, and the page receives the body only when the response ends. A test asserts that. Whether the old library streamed to the page on Windows is unknown. | `packages/sweetview-native/src/webview.ts:177-181`; `crates/sweetview-platform-webview/src/stream.rs:144-180` |
+| A streamed response reaching the page as it is written | **The same as before the rewrite, so nothing was lost.** The page receives the body when the response ends. The old C++ library's own page (`sweetview/request-handler.md`, citing WebView2Feedback issue 3519) and the old bindings' test say the same of Windows; two independent reviewers read those sources and confirmed it. It is a property of WebView2. | `packages/sweetview-native/src/webview.ts:177-181` |
+| WebView2's own download interface | **Lost.** `wry` marks every download handled, which hides WebView2's download dialog; the old library never did. A download now saves with nothing shown. Found in review; fix in progress on `rust-rewrite-fix-webview-behaviour`. | `wry` 0.58.2 `src/webview2/mod.rs:976` |
 | The page behaviour WebView2 has by default (zoom, pinch zoom, swipe navigation, status bar) and CSS `app-region` off | No project code sets any of them; whatever `wry` sets applies. No test. A fix sits on the unmerged branch `rust-rewrite-fix-webview-behaviour`. | `crates/sweetview-runtime/src/engine.rs:225-246` |
 | A display-scale change on an ordinary window | No handling of its own; left to `tao`. No test. Only the tabbed frame applies the rectangle Windows suggests. | `crates/sweetview-platform-window/src/windows.rs:925-990` |
 | Keyboard access to the tab strip's own buttons and tabs | Not implemented: every control is `tabindex="-1"` and the strip marks every key handled. | `packages/sweetview/src/tabs/win-strip-assets.ts:8-12` |
@@ -34,6 +35,9 @@ Found by reading the new code against the reference inventory, or stated by the 
 | `singleInstance`, second instance | Sleeps the UI thread between its ten lookups, where the old code let Bun's loop run (`crates/sweetview-platform-shell/src/single_instance.rs:131-135`). |
 | `tab.webview.window` | Names the frame the tab opened in. After a tear-off or merge it can name a destroyed window (`packages/sweetview/src/tabs/win-tabs.ts:704`). |
 | The page context menu | On even with `debug: false`; the docs say `debug` enables it (`crates/sweetview-runtime/src/engine.rs:214-215`). |
+| Keyboard focus when a webview is created | `wry` moves focus into every webview it builds, a child webview and a background tab included; the old library focused only a window it owned. Found in review; fix in progress. |
+| A page calling `window.close()` in an embedded webview | `wry` destroys the webview's container window while the host window stays; the old library did not handle the event. Found in review; fix in progress. |
+| Autofill on a profile where it was turned off | `wry` turns general autofill on for the whole profile each time a webview is created; the old library left the preference alone. Found in review; fix in progress. |
 | A popup from a plain (untabbed) window | Allowed, so WebView2 opens a window of its own. Inferred, not run. |
 | `pickFolder` on a COM failure | Returns `null`, where the docs say it throws. Inferred. |
 | `Screen.of` | Largest overlap of the outer rectangle, not `MonitorFromWindow`. What that answers for a minimised window was not checked. |
