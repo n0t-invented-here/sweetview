@@ -185,7 +185,7 @@ with Bun.
 
 `@n1h/sweetview-build` 1.0.0 is not on npm yet
 ([Install](../README.md#install)), so run the script from a source checkout
-of the `v1-drafting` branch. From the repository root:
+of the `v1-rust-rewrite` branch. From the repository root:
 
 ```sh
 bun packages/sweetview-build/src/make-app.ts --name "My App" --bundle-id com.example.my-app --binary dist/my-app-macos-arm64 --out dist
