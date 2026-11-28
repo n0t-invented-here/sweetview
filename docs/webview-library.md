@@ -9,7 +9,9 @@ what happens underneath, choosing a build, and working on it.
 - On Windows the webview is WebView2 driven by Rust: [`wry`](https://github.com/tauri-apps/wry)
   creates it, and this project's `sweetview-platform-webview` crate adds what
   `wry` has no API for (the request handler with streamed bodies, file drops,
-  external drop control, the transparent background, removable user scripts),
+  external drop control, the transparent background, removable user scripts,
+  and WebView2's own page behaviour where `wry` changes it: see
+  [Page behaviour](#page-behaviour)),
   with the request rules in `sweetview-http`. Both are compiled into the
   N-API binding that ships inside `@n1h/sweetview-native`. Nothing else is
   installed, and `bun:ffi` is not involved.
@@ -34,6 +36,7 @@ Windows binding provides the same behaviour as methods of `RawWebview`
   - [Streaming responses](#streaming-responses)
   - [External drops](#external-drops)
   - [File drops over the webview](#file-drops-over-the-webview)
+  - [Page behaviour](#page-behaviour)
   - [Teardown](#teardown)
 - [Library selection and symbol probing](#library-selection-and-symbol-probing)
 - [Source](#source)
@@ -281,6 +284,34 @@ one `onFileDrop` listener ([file drops](native/windows.md#file-drops)).
   iframes included. A drag from Finder is an external drag, so external
   drops must be allowed here too.
 - Linux: accepted, does nothing.
+
+### Page behaviour
+
+Not a C function: what the page does for the person using it. The C++
+library changed none of WebView2's settings except the developer tools, which
+follow `debug`; `wry` changes five, so on Windows the binding puts them back
+(`with_page_behaviour` and `WebviewExtras::attach` in
+`crates/sweetview-platform-webview`), and its tests read each one back from
+WebView2. The result is WebView2's defaults:
+
+| Setting | WebView2 and the C++ library | `wry` 0.58.2 alone | Sweetview 1.0 on Windows |
+|---|---|---|---|
+| Zoom with Ctrl+wheel, Ctrl+plus, Ctrl+minus, Ctrl+0 (`IsZoomControlEnabled`) | on | off | on |
+| Pinch zoom (`IsPinchZoomEnabled`) | on | off | on |
+| Back and forward by a horizontal swipe (`IsSwipeNavigationEnabled`) | on | off | on |
+| The status bar: a link's address while the pointer is over it (`IsStatusBarEnabled`) | on | off | on |
+| CSS `app-region` (`IsNonClientRegionSupportEnabled`) | off | on | off |
+| The browser's context menu, its keys (Ctrl+F, Ctrl+P, F5), autofill, script dialogs, the built-in error page, host objects, web messages, SmartScreen (`IsReputationCheckingRequired`) | on | on | on |
+| Saving passwords (`IsPasswordAutosaveEnabled`) | off | off | off |
+| The developer tools (`AreDevToolsEnabled`) | `debug` | `debug` | `debug` |
+
+The environment is created as the C++ library created it, with no options
+(no extra browser arguments, no language, the default scroll bars), which
+`wry`'s own environment would add. With `app-region` on, an area marked
+`-webkit-app-region: drag` in a stylesheet shared with another shell would
+drag the window here and take that area's mouse events from the page, so it
+stays off; a frameless window is dragged with `Window.startDrag`. No option
+changes any of these yet.
 
 ### Teardown
 
