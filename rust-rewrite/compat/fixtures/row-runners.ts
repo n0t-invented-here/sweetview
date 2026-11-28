@@ -702,6 +702,7 @@ export const RUNNERS: Record<string, Runner> = {
     const own = ctx.os.ownWindow();
     try {
       const wrapped = Window.fromHandle(own.hwnd);
+      wrapped.show(); // on the screen, as a window whose title bar a user right-clicks is
       const kept = _debugTrackedCount(own.hwnd);
       const opens: { seen: boolean; result: unknown; kept: number }[] = [];
       for (let i = 0; i < 3; i++) {
