@@ -62,7 +62,6 @@ export const user32 = dlopen("user32.dll", {
   EnumChildWindows: { args: [u64, FFIType.ptr, i64], returns: i32 },
   GetGuiResources: { args: [u64, u32], returns: u32 },
   // (HWND, COLORREF* key, BYTE* alpha, DWORD* flags) -> BOOL
-  GetLayeredWindowAttributes: { args: [u64, FFIType.ptr, FFIType.ptr, FFIType.ptr], returns: i32 },
   // An application's own window: its class, the window and its procedure's default.
   RegisterClassExW: { args: [FFIType.ptr], returns: u16 },
   CreateWindowExW: { args: [u32, FFIType.ptr, FFIType.ptr, u32, i32, i32, i32, i32, u64, u64, u64, FFIType.ptr], returns: u64 },
@@ -233,15 +232,6 @@ export const endMenu = (): boolean => user32.EndMenu() !== 0;
 export const ownerOf = (hwnd: bigint): bigint => user32.GetWindow(hwnd, 4);
 
 export const post = (hwnd: bigint, message: number, wParam = 0n, lParam = 0n): boolean => user32.PostMessageW(hwnd, message, wParam, lParam) !== 0;
-
-/** GetLayeredWindowAttributes: the colour key, alpha and flags of a layered window, or null when it is not layered. */
-export function layeredAttributes(hwnd: bigint): { key: number; alpha: number; flags: number } | null {
-  const key = new Uint32Array(1);
-  const alpha = new Uint8Array(1);
-  const flags = new Uint32Array(1);
-  if (user32.GetLayeredWindowAttributes(hwnd, key, alpha, flags) === 0) return null;
-  return { key: key[0]!, alpha: alpha[0]!, flags: flags[0]! };
-}
 
 /** MINMAXINFO.ptMinTrackSize as the window's own WM_GETMINMAXINFO answers: the outer minimum, physical pixels. */
 export function minTrackSize(hwnd: bigint): [number, number] {

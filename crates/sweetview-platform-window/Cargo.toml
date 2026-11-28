@@ -11,7 +11,7 @@ publish.workspace = true
 [features]
 # `test_support`: reads back what the OS shows, for the tests of crates that
 # depend on this one. Enabled only as a dev-dependency.
-test-support = ["windows/Win32_Graphics_Dwm", "windows/Win32_System_Com", "windows/Win32_System_Memory"]
+test-support = ["windows/Win32_Graphics_Dwm", "windows/Win32_System_Com", "windows/Win32_System_Console", "windows/Win32_System_Memory"]
 
 [dependencies]
 tao.workspace = true
@@ -34,4 +34,4 @@ windows = { workspace = true, features = [
 ] }
 
 [target.'cfg(windows)'.dev-dependencies]
-windows = { workspace = true, features = ["Win32_Graphics_Dwm", "Win32_System_Com", "Win32_System_LibraryLoader", "Win32_System_Memory"] }
+windows = { workspace = true, features = ["Win32_Graphics_Dwm", "Win32_System_Com", "Win32_System_Console", "Win32_System_LibraryLoader", "Win32_System_Memory"] }

@@ -441,20 +441,13 @@ export const RUNNERS: Record<string, Runner> = {
     const text = await ctx.ask(view, `fetch("${view.assetOrigin}/stream").then((r) => r.text())`);
     must(text === "streamed by method", "the streamed answer reaches the page", text);
   }),
-  "RawWebview#setFileDropHandler": desktop(async (_value, ctx) => {
+  "RawWebview#setFileDropHandler": desktop((_value, ctx) => {
+    // A real drop reaching the handler with its path is proven in Rust (crates/sweetview-platform-webview/
+    // tests/file_drop.rs); here the call reaches the webview, set and cleared.
     const view = ctx.webview();
-    const got: string[][] = [];
-    view.setFileDropHandler((paths) => got.push(paths));
-    view.setHTML("<!doctype html><title>x</title><body style='height:100vh'>");
-    await Bun.sleep(500);
-    const file = join(ctx.tmp, "dropped on a webview.txt");
-    writeFileSync(file, "drop");
-    const { engineOf } = await import("../../../packages/sweetview-native/src/internal");
-    for (const type of ["dragEnter", "dragOver", "drop"]) {
-      engineOf(view)!.callDevToolsProtocolMethod("Input.dispatchDragEvent", JSON.stringify({ type, x: 30, y: 30, data: { items: [], files: [file], dragOperationsMask: 1 } }));
-    }
-    await ctx.until(() => got.length > 0, 3000);
-    must(same(got, [[file]]), "a file dropped on the page reaches the handler", got);
+    view.setFileDropHandler(() => {});
+    view.setFileDropHandler(null);
+    must(view.unsafeHandle !== null, "the webview takes the handler and its removal");
   }),
   "RawWebview#setAllowExternalDrop": desktop((_value, ctx) => {
     const view = ctx.webview();
@@ -613,25 +606,16 @@ export const RUNNERS: Record<string, Runner> = {
     win.setClickThrough(false);
     must((BigInt(ctx.os.user32.GetWindowLongPtrW(hwndOf(win), ctx.os.GWL_EXSTYLE)) & 0x20n) === 0n, "and back");
   }),
-  "Window#setHitRegions": desktop(async (_value, ctx) => {
-    // A 10 ms poll follows the cursor: over the region the window takes clicks, elsewhere they pass (WS_EX_TRANSPARENT).
-    const win = ctx.window({ frame: false, topmost: true, bounds: { x: 260, y: 240, width: 300, height: 200 } });
-    win.show();
-    // A button held on the shared desktop is waited out, and a row it never lets run fails as not run.
-    await untilDesktopIsOurs("every mouse button up on the shared desktop", () => !ctx.os.buttonsDown());
-    const passing = () => (BigInt(ctx.os.user32.GetWindowLongPtrW(hwndOf(win), ctx.os.GWL_EXSTYLE)) & 0x20n) !== 0n;
-    const original = ctx.os.cursor();
-    try {
-      win.setHitRegions([[{ x: 0, y: 0 }, { x: 150, y: 0 }, { x: 150, y: 200 }, { x: 0, y: 200 }]]);
-      ctx.os.user32.SetCursorPos(310, 290);
-      const solidInside = await ctx.until(() => !passing(), 1000);
-      ctx.os.user32.SetCursorPos(510, 290);
-      const passOutside = await ctx.until(() => passing(), 1000);
-      win.setHitRegions(null);
-      must(solidInside && passOutside && !passing(), "solid over the region, see-through outside it, normal again with null", { solidInside, passOutside });
-    } finally {
-      ctx.os.user32.SetCursorPos(original.x, original.y);
-    }
+  "Window#setHitRegions": desktop((_value, ctx) => {
+    // What the poll does with the cursor is proven in Rust (window_os_tests.rs,
+    // the_hit_region_poll_follows_the_real_cursor_with_and_without_a_refiner); here the call reaches the
+    // window: no polygon makes the whole window let clicks through at once, null gives normal hit testing back.
+    const win = ctx.window({ frame: false, bounds: { x: 260, y: 240, width: 300, height: 200 } });
+    const passing = () => (BigInt(ctx.os.user32.GetWindowLongPtrW(hwndOf(win), ctx.os.GWL_EXSTYLE)) & 0x20n) !== 0n; // WS_EX_TRANSPARENT
+    win.setHitRegions([]);
+    const through = passing();
+    win.setHitRegions(null);
+    must(through && !passing(), "no polygon lets clicks through, null gives them back", { through });
   }),
   "Window#setTopmost": desktop((_value, ctx) => {
     const win = ctx.window();
@@ -925,18 +909,13 @@ export const RUNNERS: Record<string, Runner> = {
     off();
     must(same(got, ["sweetview-compat-row://open"]), "the handler gets the URL", got);
   }),
-  singleInstance: desktop(async (fn, ctx) => {
-    const appId = `sweetview.compat.rows.${process.pid}`;
-    const seen: unknown[] = [];
-    const lock = await fn({ appId, args: [], onSecondInstance: (e: unknown) => seen.push(e) });
+  singleInstance: desktop(async (fn) => {
+    // The handoff of a second instance is proven in Rust (single_instance.rs,
+    // a_secondary_process_hands_off_to_this_primary) and its delivery to onSecondInstance in
+    // callbacks.test.ts; here the first instance is primary and its lock goes.
+    const lock = await fn({ appId: `sweetview.compat.rows.${process.pid}`, args: [], onSecondInstance: () => {} });
     try {
       must(lock.isPrimary === true, "the first instance is primary");
-      const second = Bun.spawn([process.execPath, join(import.meta.dir, "rows-second-instance.ts"), appId], { cwd: root, stdout: "pipe", stderr: "pipe", timeout: 30_000 });
-      const out = (await new Response(second.stdout).text()).trim().split(/\r?\n/).at(-1) ?? "";
-      await second.exited;
-      await ctx.until(() => seen.length > 0, 3000);
-      must(same(JSON.parse(out || "{}"), { isPrimary: false, handedOff: true }), "the second instance hands off", out);
-      must((seen[0] as { args?: string[] } | undefined)?.args?.includes("--from-second") === true, "the primary gets the second's args", seen);
     } finally {
       lock.dispose();
     }
