@@ -77,6 +77,38 @@ if (mode === "exit-blocking" || mode === "exit-pumped") {
   process.exit(0);
 }
 
+if (mode === "registration") {
+  // Registering a listener reads nothing from the application's function, and no function names its
+  // own kind (review 2, item 3).
+  const win = new Window({ title: "callback-errors registration", bounds: { x: 160, y: 160, width: 320, height: 240 }, noActivate: true });
+  let reads = 0;
+  const counted = new Proxy(() => {}, {
+    get(target, key, receiver) {
+      reads++;
+      return Reflect.get(target, key, receiver);
+    },
+  });
+  const offClose = win.onClose(counted);
+  const offMove = win.onMove(counted);
+  offClose();
+  offMove();
+  const claiming = () => {
+    throw new Error("claims another kind");
+  };
+  Object.defineProperty(claiming, Symbol.for("sweetview.callbackKind"), { value: "windowChromeEvents" });
+  const told: string[] = [];
+  const offTold = onCallbackError((error, source) => void told.push(`${source.kind}: ${error.message}`));
+  const offResize = win.onResize(claiming);
+  win.setBounds({ x: 160, y: 160, width: 340, height: 240 });
+  await pumpFor(100);
+  offResize();
+  offTold();
+  win.dispose();
+  console.error = originalError;
+  console.log("RESULT " + JSON.stringify({ readsWhileRegistering: reads, told }));
+  process.exit(0);
+}
+
 if (mode === "reentry") {
   // A listener that calls back into Sweetview (review N6): it resizes a window whose onResize throws.
   const win = new Window({ title: "callback-errors reentry", bounds: { x: 150, y: 150, width: 320, height: 240 }, noActivate: true });

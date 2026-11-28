@@ -1257,7 +1257,7 @@ describe.if(onWindows)("onCallbackError", () => {
         "window.onResize: onResize boom",
         "window.onClose: onClose boom",
         "window.onMaximizeChange: onMaximizeChange boom",
-        "windowChromeEvents: window chrome emit boom",
+        "window.onMaximizeChange: window chrome emit boom",
         "window.onFileDrop: onFileDrop boom",
         "window.onNewTab: onNewTab boom",
         "window.onTabSelect: onTabSelect boom",
@@ -1295,19 +1295,24 @@ describe.if(onWindows)("onCallbackError", () => {
     ]);
   }, 120_000);
 
+  test("registering a window listener reads nothing from the application's function, and no function can name its own kind (review 2, item 3)", async () => {
+    const { r, exitCode } = await runFixture("callback-errors.ts", ["registration"]);
+    expect({ exitCode, readsWhileRegistering: r.readsWhileRegistering, told: r.told }).toEqual({ exitCode: 0, readsWhileRegistering: 0, told: ["window.onResize: claims another kind"] });
+  }, 60_000);
+
   test("a fault raised while a listener runs is printed, not delivered again: a listener that resizes a window whose onResize throws is called once (review N6)", async () => {
     const { r, exitCode } = await runFixture("callback-errors.ts", ["reentry"]);
     expect({ exitCode, calls: r.calls, printed: r.printed }).toEqual({ exitCode: 0, calls: 1, printed: ["sweetview: onResize handler threw: resize boom"] });
   }, 60_000);
 
-  test("windowChromeEvents: its kind belongs to its registration; the thrown value is never touched, with or without a listener (review F3)", async () => {
+  test("windowChromeEvents: its listener is a Window#onMaximizeChange listener; the thrown value is never touched, with or without a listener (review F3)", async () => {
     const { r, exitCode } = await runFixture("callback-errors.ts", ["chrome"]);
     expect(exitCode).toBe(0);
     expect(r.printedWithoutListener).toEqual(["sweetview: onMaximizeChange handler threw: frozen without listener"]);
     expect(r.told).toEqual([
-      "windowChromeEvents: chrome primitive (not the thrown value)",
-      "windowChromeEvents: frozen with listener",
-      "windowChromeEvents: thrown twice",
+      "window.onMaximizeChange: chrome primitive (not the thrown value)",
+      "window.onMaximizeChange: frozen with listener",
+      "window.onMaximizeChange: thrown twice",
       "internal: thrown twice",
     ]);
     expect(r.printedWithListener).toEqual([]);

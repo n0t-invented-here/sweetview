@@ -86,11 +86,7 @@ export function windowChromeEvents(
   window: Pick<Window, "onMaximizeChange">,
   view: { emit(name: "window.maximized", payload: { maximized: boolean }): void },
 ): () => void {
-  const listener = (maximized: boolean) => view.emit("window.maximized", { maximized });
-  // The listener names its kind for an onCallbackError listener (read by @n1h/sweetview-native,
-  // which this module, loaded by pages too, does not import). The key is on this function only.
-  Object.defineProperty(listener, Symbol.for("sweetview.callbackKind"), { value: "windowChromeEvents" });
-  return window.onMaximizeChange(listener);
+  return window.onMaximizeChange((maximized) => view.emit("window.maximized", { maximized }));
 }
 
 /** The page half: what to call from the chrome's elements. Framework-free; pass `webviewTransport()`. */

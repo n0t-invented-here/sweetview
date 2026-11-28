@@ -29,7 +29,6 @@ export type CallbackKind =
   | "window.onResize"
   | "window.onMove"
   | "window.onMaximizeChange"
-  | "windowChromeEvents"
   | "window.onFileDrop"
   | "window.onNewTab"
   | "window.onTabSelect"
@@ -66,25 +65,6 @@ export type DefaultReport = string | ((error: unknown) => void) | null;
 
 /** One entry per registration, so each unsubscribe removes its own, once, even for the same function. */
 const listeners = new Set<{ readonly handler: CallbackErrorHandler }>();
-
-/**
- * The key a listener of Sweetview's own carries to name its kind when it registers through a public
- * call, for a module that cannot import this one: `windowChromeEvents` of
- * `@n1h/sweetview/window-chrome`, which a page bundle loads too, registers through
- * `Window#onMaximizeChange`. It is on the function registered, never on what the function throws.
- */
-const LISTENER_KIND = Symbol.for("sweetview.callbackKind");
-const LISTENER_KINDS: ReadonlySet<string> = new Set<CallbackKind>(["windowChromeEvents"]);
-
-/** The kind of an exception `listener` threw: the one it names for itself, else `otherwise`. */
-export function kindOfListener(listener: unknown, otherwise: CallbackKind): CallbackKind {
-  try {
-    const named = typeof listener === "function" ? (listener as unknown as Record<symbol, unknown>)[LISTENER_KIND] : undefined;
-    return typeof named === "string" && LISTENER_KINDS.has(named) ? (named as CallbackKind) : otherwise;
-  } catch {
-    return otherwise; // a Proxy whose get trap throws names nothing
-  }
-}
 
 /** Text for a thrown value that is not an `Error`. Any value: one whose conversion throws (an object
  * with no prototype, a `Proxy` whose traps throw) is described by its type instead. */

@@ -108,8 +108,7 @@ exception leaves the bindings package as it always did.
 | `notifier.onClick` | `Notifier` `onClick` | `sweetview: notification onClick threw:` | none |
 | `window.onClose`, `window.onResize`, `window.onMove` | those `Window` listeners | `sweetview: onClose handler threw:` (`onResize`, `onMove`) | a close request is still taken: the window stays open |
 | `window.onFileDrop`, `window.onNewTab`, `window.onTabSelect`, `window.onTabClose` | those `Window` listeners | `sweetview: onFileDrop handler threw:` (and the others by name) | none |
-| `window.onMaximizeChange` | `Window` `onMaximizeChange` | `sweetview: onMaximizeChange handler threw:` | none |
-| `windowChromeEvents` | the listener `windowChromeEvents` of `@n1h/sweetview/window-chrome` installs on the window (sending `window.maximized` to the page) | `sweetview: onMaximizeChange handler threw:` | none |
+| `window.onMaximizeChange` | `Window` `onMaximizeChange`, the listener `windowChromeEvents` of `@n1h/sweetview/window-chrome` installs included | `sweetview: onMaximizeChange handler threw:` | none |
 | `hitRegions.refine` | the refiner of `setHitRegions(polygons, refine)` | `sweetview: hit region poll threw:` | the polygon's answer stands |
 | `mouseHook`, `keyboardHook` | `installMouseHook`, `installKeyboardHook` handlers | `sweetview: mouse hook handler threw:` (`keyboard hook`) | the event is not swallowed |
 | `singleInstance.onSecondInstance`, `onOpenUrl` | those listeners | `sweetview: onSecondInstance handler threw:`, `sweetview: onOpenUrl handler threw:` | the other listeners still run |
