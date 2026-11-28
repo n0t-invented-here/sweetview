@@ -46,17 +46,40 @@ function callEach<T>(handlers: Set<(value: T) => void>, value: T, name: Listener
 }
 
 /**
+ * `onMaximizeChange`'s delivery to the handlers of one wrapper (its sentences, in
+ * docs/native/windows.md): to the handlers there were when the change came, each skipped once
+ * removed or once the window is disposed, and stopped once a later change (one a handler made) has
+ * been delivered in its place, so the last value each handler heard is the window's state.
+ */
+function callEachCurrent<T>(handlers: Set<(value: T) => void>, value: T, name: ListenerName, live: () => boolean, delivery: { count: number }): void {
+  const mine = ++delivery.count;
+  for (const fn of [...handlers]) {
+    if (!live() || delivery.count !== mine) return;
+    if (!handlers.has(fn)) continue;
+    try {
+      fn(value);
+    } catch (err) {
+      reportCallbackError(`window.${name}`, err, `sweetview: ${name} handler threw:`);
+    }
+  }
+}
+
+/**
  * Keeps any number of handlers per event on the JavaScript side and one
  * listener per event in the binding, registered while there is a handler.
+ * Resizes and moves go to a snapshot of the handlers, as at the tag; with
+ * `current`, `onMaximizeChange`'s rule above.
  */
-function subscription<T>(register: (listener: ((value: T) => void) | null) => void, name: ListenerName) {
+function subscription<T>(register: (listener: ((value: T) => void) | null) => void, name: ListenerName, current?: { live: () => boolean }) {
   const handlers = new Set<(value: T) => void>();
+  const delivery = { count: 0 };
   return {
     handlers,
     add(handler: (value: T) => void): () => void {
       // Each subscription can be removed on its own, even for the same function.
       const entry = (value: T) => handler(value);
-      if (handlers.size === 0) register((value) => callEach(handlers, value, name));
+      if (handlers.size === 0)
+        register((value) => (current ? callEachCurrent(handlers, value, name, current.live, delivery) : callEach(handlers, value, name)));
       handlers.add(entry);
       return () => {
         if (!handlers.delete(entry) || handlers.size > 0) return;
@@ -76,7 +99,7 @@ function wrap(native: NativeWindow, owned: boolean, tabbed = false): WindowBacke
   const toRect = (fn: (r: Rect) => void) => (x: number, y: number, width: number, height: number) => fn({ x, y, width, height });
 
   const resize = subscription<Rect>((l) => native.onResize(l && toRect(l)), "onResize");
-  const maximize = subscription<boolean>((l) => native.onMaximizeChange(l), "onMaximizeChange");
+  const maximize = subscription<boolean>((l) => native.onMaximizeChange(l), "onMaximizeChange", { live: () => !disposed });
   const move = subscription<Rect>((l) => native.onMove(l && toRect(l)), "onMove");
   const close = subscription<void>((l) => native.onCloseRequest(l && (() => l())), "onClose");
   const fileDrop = subscription<string[]>((l) => native.onFileDrop(l), "onFileDrop");

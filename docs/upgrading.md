@@ -30,7 +30,9 @@ Each row has three columns:
   whose first span is `import { dlopen } from "bun:ffi"`, followed by
   `dlopen("name.dll", { … })`, means the application declares its own
   `bun:ffi` table for its own calls. A row whose span starts with `type` is a
-  declaration the application keeps in its own code.
+  declaration the application keeps in its own code. A row whose Write now
+  is `no public call in 1.0`, with no code, is a capability 1.0 has no public
+  call for yet; the Change column says which, and names no substitute.
 - **Change**: what is different, in a few words. `unchanged` means the
   import and the call stay as they are.
 
@@ -107,8 +109,8 @@ this page: it imports each new form and checks that it is what the row says.
   called from a `Worker` throw `sweetview: this call must be made on the UI thread`.
   `Window.fromHandle(h)` with an `h` that names no window throws
   `sweetview: not a window: 0x…` (it used to wrap it silently), and
-  subscribing to events (`onClose`, `onResize`, `onMove`, `onFileDrop`) on a
-  wrapper of a window that belongs to another thread throws
+  subscribing to events (`onClose`, `onResize`, `onMaximizeChange`, `onMove`,
+  `onFileDrop`) on a wrapper of a window that belongs to another thread throws
   `sweetview: a window of another thread cannot be observed`.
 - **Exceptions thrown by your callbacks.** An exception thrown by a handler
   Sweetview calls on the UI thread (a tray's or a menu item's click, a
@@ -192,13 +194,17 @@ this page: it imports each new form and checks that it is what the row says.
    (`frame`, `transparent`, `topmost`, `icon`, …) go in the same object. What
    it returns is an `App`: `call` is `notify`, `windowHandle` is
    `app.window.handle`, `webview.raw` is the webview class.
-3. Sizes: `width` and `height` were the page's client size in DIPs; `bounds`
-   is the window's outer frame in physical pixels. Drop them when the window
-   already has its bounds (an overlay made with `createOverlayWindow`'s
-   `bounds`). To keep a page of `width` x `height` DIPs in a framed window,
-   set it after `createApp`:
-   `app.webview.raw.size = { width, height, hint: SizeHint.NONE }`
-   (`SizeHint.FIXED` for a window that is not resizable).
+3. Sizes: `width` and `height` were the page's client size in DIPs, the
+   window centred: that is `contentSize: { width, height }` now, the frame
+   sized around the page at the screen's scale and the window centred on the
+   primary work area (pass `contentSize: { width: 1100, height: 800 }` for
+   0.x's default). `bounds` is the other way: the window's outer frame in
+   physical pixels; give one or the other. Drop `width` and `height` when the
+   window already has its bounds (an overlay made with
+   `createOverlayWindow`'s `bounds`). On macOS, until the macOS goal of the
+   Rust rewrite, `contentSize` is not used: a macOS window is made from
+   `bounds` (its outer frame, in points) or the default, so an application
+   that also runs on macOS passes `bounds` there, as before.
 4. Showing: the window is created hidden. Call `app.window.show()` once it
    is wired, or pass `showOnReady: true`.
 5. Closing: a close request on a window with no `onClose` listener disposes
@@ -557,8 +563,8 @@ Every other option (`page`, `title`, `assets`, `index`, `worker`, `debug`, `uiMe
 
 | Old | Write now | Change |
 |---|---|---|
-| `width` | `import type { AppOptions } from "@n1h/sweetview"`; `AppOptions#contentSize` | the same quantity, in one option with `height`: `contentSize: { width, height }` is the page's size in DIPs (CSS pixels), the frame sized around it at the screen's scale and the window centred on the primary work area, as 0.x's was. 0.x defaulted to 1100 x 800; without `contentSize` or `bounds` a window is 320 x 240 outer, so pass `contentSize: { width: 1100, height: 800 }` to keep that size. `bounds` (the outer frame in physical pixels) is the other way to place a window; give one, not both. With `window`, drop it: the window already has its size |
-| `height` | `import type { AppOptions } from "@n1h/sweetview"`; `AppOptions#contentSize` | the same quantity: the `height` of `contentSize`, as for `width` |
+| `width` | `import type { AppOptions } from "@n1h/sweetview"`; `AppOptions#contentSize` | the same quantity, in one option with `height`: `contentSize: { width, height }` is the page's size in DIPs (CSS pixels), the frame sized around it at the screen's scale and the window centred on the primary work area, as 0.x's was. 0.x defaulted to 1100 x 800; without `contentSize` or `bounds` a window is 320 x 240 outer, so pass `contentSize: { width: 1100, height: 800 }` to keep that size. `bounds` (the outer frame in physical pixels) is the other way to place a window; give one, not both. With `window`, drop it: the window already has its size; on macOS, until its goal, `contentSize` is not used and the window is made from `bounds`, as step A.3 says |
+| `height` | `import type { AppOptions } from "@n1h/sweetview"`; `AppOptions#contentSize` | the same quantity: the `height` of `contentSize`, as for `width`; on macOS, until its goal, `contentSize` is not used and the window is made from `bounds`, as step A.3 says |
 | `window` | `import { WebView } from "@n1h/sweetview"`; `WebView.attach(window, options)` | mount the page in a window you made: `WebView.attach(win, options)`; it keeps the window's size (the library resized it to `width` x `height`), and showing the window and what a close request does are yours, as before |
 | `transparent` | `import type { AppOptions } from "@n1h/sweetview"`; `AppOptions#transparent` | a window option now; it makes the window and the page background transparent |
 | `resizable` | `import type { AppOptions } from "@n1h/sweetview"`; `AppOptions#resizable` | a window option; defaults to `true` for a framed window (with `window` it defaulted to `false`) |
@@ -1187,7 +1193,7 @@ in it, so an import of either by file path follows these rows too.
 | `GW_CHILD` | `import { WebView } from "@n1h/sweetview"`; `WebView.attach(window, options)` | Sweetview places and sizes the webview inside the window itself |
 | `HKEY_CURRENT_USER` | `import { registerUrlScheme } from "@n1h/sweetview-native"`; `registerUrlScheme(scheme, options)` | the registry writes are internal |
 | `HTCAPTION` | `import { Window } from "@n1h/sweetview-native"`; `Window#startDrag()` | the OS move loop from a page's pointer-down |
-| `HWND_MESSAGE` | `import { Window } from "@n1h/sweetview-native"`; `new Window(options)` | a hidden `new Window()` is the owner a menu or dialog needs (`Menu.popup`, `pickFolder`), and `dispose()` is `destroy()`; the other uses each have a public call: a second instance's arguments (`WM_COPYDATA`) arrive at `singleInstance`'s `onSecondInstance`, work handed to the UI thread is a `deferredUiMethods` handler, a global hotkey is `installKeyboardHook`, the tray's `TaskbarCreated` is Sweetview's own, and the clipboard, notifications and the tray need no window of yours; only a system broadcast Sweetview reports nothing of (`WM_POWERBROADCAST`, `WM_DEVICECHANGE`, `WM_QUERYENDSESSION`) still needs a window of your own from your own `dlopen` table |
+| `HWND_MESSAGE` | `import { Window } from "@n1h/sweetview-native"`; `new Window(options)` | a hidden `new Window()` is the owner a menu or dialog needs (`Menu.popup`, `pickFolder`), and `dispose()` is `destroy()`; the other uses each have a public call: a second instance's arguments (`WM_COPYDATA`) arrive at `singleInstance`'s `onSecondInstance`, work handed to the UI thread is a `deferredUiMethods` handler, the tray's `TaskbarCreated` is Sweetview's own, and the clipboard, notifications and the tray need no window of yours. Two uses have no public call in 1.0: a global hotkey of the application's own (`RegisterHotKey`, `WM_HOTKEY`), and the system broadcasts (`WM_POWERBROADCAST`, `WM_DEVICECHANGE`, `WM_QUERYENDSESSION`) |
 | `HWND_NOTOPMOST` | `import { Window } from "@n1h/sweetview-native"`; `Window#setTopmost(on)` | `setTopmost(false)` |
 | `HWND_TOPMOST` | `import { Window } from "@n1h/sweetview-native"`; `Window#setTopmost(on)` | or `topmost: true` |
 | `ICON_BIG` | `import { Window } from "@n1h/sweetview-native"`; `Window#setIcon(icon)` | both icon sizes come from the `.ico` |
@@ -1322,12 +1328,12 @@ engine of the webview moves, shows, hides and re-parents it.
 | Old | Write now | Change |
 |---|---|---|
 | `stripPane` | `import type { FrameWindow } from "@n1h/sweetview-native/win32/tab-window"`; `FrameWindow#stripBounds` | the strip's rectangle in the frame's client area, physical pixels: make the strip's webview there |
-| `createPane(…)` | `import { WebView } from "@n1h/sweetview"`; `WebView.openTab(window, options)` | a tab of a `tabs: true` window, its webview made and laid out in the frame's page area by the tabs library |
-| `adoptPane(…)` | `import type { Tab } from "@n1h/sweetview"`; `Tab#moveToNewWindow` | a tab moves to a window of its own (and the user drags it into another); `app.mergeAllWindows()` brings torn-off tabs back, without reloading them |
-| `placePane(…)` | `import type { Tab } from "@n1h/sweetview"`; `Tab#select` | the tabs library places the shown tab in the page area and keeps it there on every resize; a layout of several webviews of your own in one window has no public call |
-| `showPane(…)` | `import type { Tab } from "@n1h/sweetview"`; `Tab#select` | selecting a tab shows it and hides the one shown before |
-| `hidePane(…)` | `import type { Tab } from "@n1h/sweetview"`; `Tab#select` | a tab is hidden when another is selected |
-| `destroyPane(…)` | `import type { Tab } from "@n1h/sweetview"`; `Tab#close` | closes the tab and destroys its webview |
+| `createPane(…)` | no public call in 1.0 | a webview of the application's own made at a rectangle of a window's client area |
+| `adoptPane(…)` | no public call in 1.0 | a webview of the application's own moved into another window without reloading it |
+| `placePane(…)` | no public call in 1.0 | a webview of the application's own placed at a rectangle of its window |
+| `showPane(…)` | no public call in 1.0 | a webview of the application's own shown |
+| `hidePane(…)` | no public call in 1.0 | a webview of the application's own hidden |
+| `destroyPane(…)` | no public call in 1.0 | a webview of the application's own destroyed apart from its window |
 | `layout()` | `import type { FrameWindow } from "@n1h/sweetview-native/win32/tab-window"`; `FrameWindow#pageRect`; `FrameWindow#pageSize` | on each `Window#onResize`, place the strip at `stripBounds()` and the shown tab at `pageRect()` |
 | `destroy()` | `import { Window } from "@n1h/sweetview-native"`; `Window#dispose()` | dispose the `Window` the frame belongs to |
 | `stripRect()` | `import type { FrameWindow } from "@n1h/sweetview-native/win32/tab-window"`; `FrameWindow#stripRect` | unchanged: the strip on the screen; new members `stripBounds`, `pageRect`, `pageSize`, `requestClose`, `showSystemMenu`, `setBounds` and `hide` |
@@ -1374,8 +1380,8 @@ path follows these rows too.
 |---|---|---|
 | `MessageHandler` | `type MessageHandler = (message: number, wParam: bigint, lParam: bigint) => void` | declare the type in your own code |
 | `MessageWindow` | `type MessageWindow = { readonly hwnd: bigint; readonly destroy: () => void }` | declare the type in your own code |
-| `createMessageWindow` | `import { Window } from "@n1h/sweetview-native"`; `new Window(options)`; `Window#dispose()` | a hidden `new Window()` is the owner a menu or dialog needs (`Menu.popup`, `pickFolder`), and `dispose()` is `destroy()`; the other uses each have a public call: a second instance's arguments (`WM_COPYDATA`) arrive at `singleInstance`'s `onSecondInstance`, work handed to the UI thread is a `deferredUiMethods` handler, a global hotkey is `installKeyboardHook`, the tray's `TaskbarCreated` is Sweetview's own, and the clipboard, notifications and the tray need no window of yours; only a system broadcast Sweetview reports nothing of (`WM_POWERBROADCAST`, `WM_DEVICECHANGE`, `WM_QUERYENDSESSION`) still needs a window of your own from your own `dlopen` table |
-| `createMessageWindowRaw` | `import { Window } from "@n1h/sweetview-native"`; `new Window(options)`; `Window#dispose()` | Sweetview's own message windows are internal; a hidden `new Window()` is the owner a menu or dialog needs (`Menu.popup`, `pickFolder`), and `dispose()` is `destroy()`; the other uses each have a public call: a second instance's arguments (`WM_COPYDATA`) arrive at `singleInstance`'s `onSecondInstance`, work handed to the UI thread is a `deferredUiMethods` handler, a global hotkey is `installKeyboardHook`, the tray's `TaskbarCreated` is Sweetview's own, and the clipboard, notifications and the tray need no window of yours; only a system broadcast Sweetview reports nothing of (`WM_POWERBROADCAST`, `WM_DEVICECHANGE`, `WM_QUERYENDSESSION`) still needs a window of your own from your own `dlopen` table |
+| `createMessageWindow` | `import { Window } from "@n1h/sweetview-native"`; `new Window(options)`; `Window#dispose()` | a hidden `new Window()` is the owner a menu or dialog needs (`Menu.popup`, `pickFolder`), and `dispose()` is `destroy()`; the other uses each have a public call: a second instance's arguments (`WM_COPYDATA`) arrive at `singleInstance`'s `onSecondInstance`, work handed to the UI thread is a `deferredUiMethods` handler, the tray's `TaskbarCreated` is Sweetview's own, and the clipboard, notifications and the tray need no window of yours. Two uses have no public call in 1.0: a global hotkey of the application's own (`RegisterHotKey`, `WM_HOTKEY`), and the system broadcasts (`WM_POWERBROADCAST`, `WM_DEVICECHANGE`, `WM_QUERYENDSESSION`) |
+| `createMessageWindowRaw` | `import { Window } from "@n1h/sweetview-native"`; `new Window(options)`; `Window#dispose()` | Sweetview's own message windows are internal; a hidden `new Window()` is the owner a menu or dialog needs (`Menu.popup`, `pickFolder`), and `dispose()` is `destroy()`; the other uses each have a public call: a second instance's arguments (`WM_COPYDATA`) arrive at `singleInstance`'s `onSecondInstance`, work handed to the UI thread is a `deferredUiMethods` handler, the tray's `TaskbarCreated` is Sweetview's own, and the clipboard, notifications and the tray need no window of yours. Two uses have no public call in 1.0: a global hotkey of the application's own (`RegisterHotKey`, `WM_HOTKEY`), and the system broadcasts (`WM_POWERBROADCAST`, `WM_DEVICECHANGE`, `WM_QUERYENDSESSION`) |
 
 ### `@n1h/sweetview-native/darwin/objc`
 

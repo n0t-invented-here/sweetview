@@ -201,7 +201,7 @@ describe.skipIf(!onWindows)("Windows behaviour an application notices", () => {
       expect(handle).toMatch(/^\d+$/);
       const report = await runChild(fixture("foreign-window.ts"), ["observe", handle]);
       const refused = "sweetview: a window of another thread cannot be observed";
-      expect(report).toEqual({ boundsPositive: true, onClose: refused, onResize: refused, onMove: refused, onFileDrop: refused });
+      expect(report).toEqual({ boundsPositive: true, onClose: refused, onResize: refused, onMaximizeChange: refused, onMove: refused, onFileDrop: refused });
     } finally {
       holder.stdin.end();
       const exited = await Promise.race([holder.exited, Bun.sleep(10_000).then(() => "timeout")]);

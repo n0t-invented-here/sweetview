@@ -308,9 +308,6 @@ export type NativeEngine__sweetview_native__internal_reparent = NativeEngine__sw
 export type NativeEngine__sweetview_native__internal_setBounds = NativeEngine__sweetview_native__internal["setBounds"];
 export type NativeEngine__sweetview_native__internal_setVisible = NativeEngine__sweetview_native__internal["setVisible"];
 export type Tab__sweetview_window = Tab__sweetview["window"];
-export type Tab__sweetview_close = Tab__sweetview["close"];
-export type Tab__sweetview_moveToNewWindow = Tab__sweetview["moveToNewWindow"];
-export type Tab__sweetview_select = Tab__sweetview["select"];
 export type Webview__sweetview_native_destroy = Webview__sweetview_native["destroy"];
 
 // Types an application declares in its own code (rows whose "Write now" is a declaration).
