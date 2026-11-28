@@ -34,7 +34,8 @@ async function bundleOf(entry: string): Promise<{ webviewModules: string[]; bind
 /** Which of the WebView2 names occur in a binary, as bytes. */
 function webview2NamesIn(file: string): string[] {
   const bytes = readFileSync(file).toString("latin1");
-  return ["CoreWebView2", "WebView2Loader", "wry"].filter((name) => bytes.includes(name));
+  // The interface and loader names, and two lines only the WebView2 loader and the engine print.
+  return ["CoreWebView2", "WebView2Loader", "wry", "WebView2 client dll", "WebView2 environment"].filter((name) => bytes.includes(name));
 }
 
 /** The Sweetview bindings a process has loaded, by file name. */
@@ -75,8 +76,8 @@ describe("the webview is not in the native package (D50)", () => {
     });
   }, 60_000);
 
-  test.skipIf(!onWindows)("the binding the native package ships holds no CoreWebView2, WebView2Loader or wry; the facade's holds them", () => {
-    expect({ native: webview2NamesIn(NATIVE_BINDING), webview: webview2NamesIn(WEBVIEW_BINDING).length > 0 }).toEqual({ native: [], webview: true });
+  test.skipIf(!onWindows)("the binding the native package ships holds no CoreWebView2, WebView2Loader, wry or WebView2 loader line; the facade's holds the loader's lines", () => {
+    expect({ native: webview2NamesIn(NATIVE_BINDING), webview: webview2NamesIn(WEBVIEW_BINDING) }).toEqual({ native: [], webview: ["WebView2 client dll", "WebView2 environment"] });
   });
 
   test.skipIf(!onWindows)("demos/menubar-only running loads the native binding only", async () => {
