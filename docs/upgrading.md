@@ -232,7 +232,9 @@ after them give every export its row.
    `bounds` (its outer frame, in points) or the default, so an application
    that also runs on macOS passes `bounds` there, as before.
 4. Showing: the window is created hidden. Pass `showOnReady: true` and call
-   `signalReady()` from `@n1h/sweetview/page` once the page has rendered.
+   `signalReady()` from `@n1h/sweetview/page` once the page has rendered,
+   with `readyTimeoutMs` (15 s, say) so a page that fails first still gets
+   its window, with a start-up error page.
 5. Closing: a close request on a window with no `onClose` listener disposes
    it and ends `run()`. A tray application declares close-to-tray with
    `closeToTrayOnLastWindow(app.window, onHide)`.
