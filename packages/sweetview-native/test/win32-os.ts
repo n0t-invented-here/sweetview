@@ -108,6 +108,8 @@ export const gdi32 = dlopen("gdi32.dll", {
 export const dwmapi = dlopen("dwmapi.dll", {
   // (HWND, DWORD attribute, PVOID value, DWORD size) -> HRESULT; 20 is DWMWA_USE_IMMERSIVE_DARK_MODE
   DwmGetWindowAttribute: { args: [u64, u32, FFIType.ptr, u32], returns: i32 },
+  // (HWND, DWORD attribute, LPCVOID value, DWORD size) -> HRESULT; 3 is DWMWA_TRANSITIONS_FORCEDISABLED
+  DwmSetWindowAttribute: { args: [u64, u32, FFIType.ptr, u32], returns: i32 },
 }).symbols;
 
 export const WM_APP = 0x8000;
@@ -671,4 +673,14 @@ export function chooseInFolderDialog(dialog: bigint, path: string): boolean {
   const text = wide(path);
   user32.SendMessageW(edit, WM_SETTEXT, 0n, BigInt(ptr(text)));
   return post(ok, BM_CLICK);
+}
+
+/**
+ * Turns DWM's open and close transitions off for a window of this process's own
+ * (`DWMWA_TRANSITIONS_FORCEDISABLED`), so a read of the screen shows the window's own pixels or
+ * what is behind it, never a fade between the two. True when DWM took it.
+ */
+export function disableTransitions(hwnd: bigint): boolean {
+  const on = new Int32Array([1]);
+  return dwmapi.DwmSetWindowAttribute(hwnd, 3, ptr(on), 4) === 0;
 }

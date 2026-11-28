@@ -20,6 +20,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { BACKSTOP } from "../test/fixtures/backstop";
 import { flatLight, onScreen, seen, summarize, type Sample, type WindowSummary } from "../test/fixtures/window-watch";
 
 const LIVE_TEST_MS = 60_000;
@@ -50,7 +51,7 @@ async function watchFixture(mode: string): Promise<Watched> {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const watcher = Bun.spawn([process.execPath, fileURLToPath(new URL("../test/fixtures/window-watch.ts", import.meta.url)), String(proc.pid), out, "40000"], { stdout: "pipe", stderr: "pipe" });
+    const watcher = Bun.spawn([process.execPath, fileURLToPath(new URL("../test/fixtures/window-watch.ts", import.meta.url)), String(proc.pid), out, "40000", BACKSTOP], { stdout: "pipe", stderr: "pipe" });
     let killed = false;
     const limit = setTimeout(() => {
       killed = true;
@@ -157,16 +158,15 @@ describe.if(process.platform === "win32")("a window on its way out (D46)", () =>
     "tab-close: a tabbed window whose last tab closed shows its dark backdrop, never white",
     async () => {
       const run = await watchFixture("tab-close");
+      // The tab's page, then the frame's backdrop where it was: the window's on-screen colours.
+      const shown = run.samples.filter((s) => s.hwnd === run.hwnd && seen(s));
+      const other = shown.filter((s) => s.flat >= 0.5 && !near(s.mode, DARK_BACKDROP) && !near(s.mode, PAGE));
+      explain(run, [...lightSamples(run), ...other].sort((a, b) => a.t - b.t));
       expectEndedCleanly(run);
       expect(lightSamples(run)).toEqual([]);
       expect(run.summary!.flatLight).toBe(0);
-      // The tab's page, then the frame's backdrop where it was: the window's on-screen colours.
-      const shown = run.samples.filter((s) => s.hwnd === run.hwnd && seen(s));
-      explain(run, [...lightSamples(run), ...shown.filter((s) => s.flat >= 0.5 && !near(s.mode, DARK_BACKDROP) && !near(s.mode, PAGE))].sort((a, b) => a.t - b.t));
       expect(shown.some((s) => near(s.mode, DARK_BACKDROP))).toBe(true);
-      // A frame with no colour over half of it is DWM's open animation blending the window with what
-      // is behind it, as it appears: not a colour of the window's own.
-      expect(shown.filter((s) => s.flat >= 0.5 && !near(s.mode, DARK_BACKDROP) && !near(s.mode, PAGE))).toEqual([]);
+      expect(other).toEqual([]);
     },
     LIVE_TEST_MS,
   );

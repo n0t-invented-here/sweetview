@@ -23,7 +23,7 @@
 import { createApp, indexHtml, quitEventLoop, runEventLoop, WebView } from "@n1h/sweetview";
 import { Window } from "@n1h/sweetview/native";
 import { scheduleNativeTimeout } from "../../../sweetview-native/src/event-loop";
-import { isWindow } from "../../../sweetview-native/test/win32-os";
+import { disableTransitions, isWindow } from "../../../sweetview-native/test/win32-os";
 
 const mode = process.env.SWEETVIEW_FLASH_TEST ?? "blocking";
 /** The page's colour: dark, and not the backdrop's (#15161a), so the two can be told apart. */
@@ -41,6 +41,14 @@ const options = (onReady: () => void) => ({
 const windowOptions = { title: "quit-flash", bounds, topmost: true, noActivate: true, appearance: "dark" as const };
 
 let watched = 0n;
+/**
+ * DWM's transitions off for the fixture's window, before it is shown: every frame the watcher
+ * reads is then the window's own pixels or the backstop behind it, never a fade between them.
+ * What the window paints is unchanged; only DWM's animation of its appearing and going is.
+ */
+const noFade = (win: Window) => {
+  if (!disableTransitions(BigInt(win.handle as bigint | number))) throw new Error("quit-flash: DWM refused to turn the window's transitions off");
+};
 const ready = (hwnd: unknown) => {
   if (watched === 0n) {
     // Registered after the window was made, so after Sweetview's own `exit` listener: it reads
@@ -67,6 +75,7 @@ if (mode === "blocking" || mode === "dispose" || mode === "window-dispose" || mo
     }),
     worker: mode === "blocking" ? new URL("./app-exit.worker.ts", import.meta.url) : undefined,
   });
+  noFade(app.window);
   app.run();
   if (mode === "run-twice") {
     // The window the first run() hid comes back for the second, once the new page is ready.
@@ -82,6 +91,7 @@ if (mode === "blocking" || mode === "dispose" || mode === "window-dispose" || mo
 } else if (mode === "pumped" || mode === "replace") {
   const loop = runEventLoop({ intervalMs: 5 });
   const win = new Window(windowOptions);
+  noFade(win);
   let first!: () => void;
   const firstReady = new Promise<void>((resolve) => (first = resolve));
   const view = await WebView.attach(win, options(first));
@@ -104,6 +114,7 @@ if (mode === "blocking" || mode === "dispose" || mode === "window-dispose" || mo
 } else if (mode === "tab-close") {
   const loop = runEventLoop({ intervalMs: 5 });
   const win = new Window({ ...windowOptions, tabs: true, onClose: () => {} });
+  noFade(win);
   let first!: () => void;
   const firstReady = new Promise<void>((resolve) => (first = resolve));
   const tab = await WebView.openTab(win, options(first));

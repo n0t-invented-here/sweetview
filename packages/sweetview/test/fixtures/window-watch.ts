@@ -7,7 +7,7 @@
 // channel less) and the share of the area in it, read with BitBlt from the
 // screen. It injects no input and changes nothing.
 //
-//   bun window-watch.ts <pid> <out.jsonl> [maxMs]
+//   bun window-watch.ts <pid> <out.jsonl> [maxMs] [#backstop]
 //
 // It prints `WATCHING` once it runs, then writes one JSON line per sample to
 // `out.jsonl` and prints `DONE <samples>` when the process has gone (or after
@@ -147,7 +147,11 @@ export function summarize(samples: Sample[]): WindowSummary[] {
 }
 
 if (import.meta.main) {
-  const [pidArg, out, maxArg] = process.argv.slice(2);
+  const [pidArg, out, maxArg, backstopArg] = process.argv.slice(2);
+  // The colour of what is behind the watched windows, when the caller put it there: a read that
+  // shows it shows what is behind, not the window.
+  const backstop = backstopArg ? ([1, 3, 5].map((i) => Number.parseInt(backstopArg.slice(i, i + 2), 16) & 0xf8) as [number, number, number]) : undefined;
+  const isBackstop = (mode: [number, number, number]) => backstop !== undefined && mode.every((v, i) => Math.abs(v - backstop[i]!) <= 8);
   const pid = Number(pidArg);
   if (!Number.isInteger(pid) || pid <= 0 || !out) {
     console.error("usage: bun window-watch.ts <pid> <out.jsonl> [maxMs]");
@@ -271,6 +275,13 @@ if (import.meta.main) {
   /** Reads that the window left the screen during, waiting for the read of what was behind them. */
   const unresolved = new Map<bigint, Sample>();
   const resolve = (sample: Sample) => {
+    // With a backstop the answer is certain: the read shows the window unless it shows the
+    // backstop. Without one, the rectangle is read again, and the read is the window's unless it
+    // shows the same; DWM can still show a window just gone, so that answer is the weaker one.
+    if (backstop) {
+      sample.ours = !(isBackstop(sample.mode) && sample.flat >= 0.5);
+      return;
+    }
     const again = capture(sample.left!, sample.top!, sample.width, sample.height);
     sample.behind = { mode: again.mode, flat: again.flat };
     const same = again.mode.every((v, i) => Math.abs(v - sample.mode[i]!) <= 8) && Math.abs(again.flat - sample.flat) <= 0.05;
@@ -347,6 +358,8 @@ if (import.meta.main) {
           const after = sample.visibleAfter ? others(hwnd, left, top, width, height) : [];
           sample.coveredBy = [...new Set([...before, ...after])];
           if (before.length > 0 || moved) sample.ours = false;
+          // A window that shows the backstop over half of it shows what is behind it, not itself.
+          else if (isBackstop(sample.mode) && sample.flat >= 0.5) sample.ours = false;
           else if (sample.visibleAfter) sample.ours = after.length === 0;
           else unresolved.set(hwnd, sample); // decided by what is behind, once the window is off the screen
         }

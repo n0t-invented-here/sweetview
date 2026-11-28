@@ -25,7 +25,7 @@ if (import.meta.main) {
   });
   const loop = runEventLoop({ intervalMs: 5 });
   win.show();
-  // Two compositions for it to be on the screen before the parent goes on.
-  setTimeout(() => console.log("READY"), 100);
+  // On the screen, its own opening transition done, before the parent goes on.
+  setTimeout(() => console.log("READY"), 500);
   await loop;
 }
