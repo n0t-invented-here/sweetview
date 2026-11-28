@@ -444,7 +444,139 @@ describe.if(onWindows)("Window on the binding: click-through, hit regions, the r
   }, 20_000);
 });
 
+describe.if(onWindows)("startDrag on a maximised frameless window", () => {
+  test.skipIf(moveLoop?.ok === false)("a frameless window maximised by toggleMaximize and dragged by startDrag stays maximised, and its next toggle gives back the bounds it had, as at the tag", async () => {
+    // Review round 3, measure A: at tag pre-rust-rewrite the saved rectangle stayed until the next
+    // toggle (win32/window.ts, lines 813 to 830); round 1's N8 rule (c9e91fd) that cleared it is undone.
+    const native = binding();
+    const original = await cursorNow();
+    const start = { x: 320, y: 320, width: 300, height: 200 };
+    const win = new Window({ title: unique("drag maximised"), frame: false, topmost: true, noActivate: true, bounds: start });
+    const seen: boolean[] = [];
+    win.onMaximizeChange((m) => seen.push(m));
+    let pressed = false;
+    try {
+      win.show();
+      win.toggleMaximize();
+      const maximised = win.bounds();
+      expect({ maximized: win.isMaximized(), bounds: maximised }).toEqual({ maximized: true, bounds: Screen.of(win).workArea });
+      await settle(30);
+      const grip = { x: maximised.x + 40, y: maximised.y + 20 };
+      probe!.SetCursorPos(grip.x, grip.y);
+      await untilDesktopIsOurs(
+        "startDrag (maximised): the test window is not under the cursor, or a mouse button is held",
+        async () => !(await buttonsDown()) && windowAt(grip.x, grip.y) === handleOf(win),
+        { between: () => { win.setTopmost(true); win.show(); probe!.SetCursorPos(grip.x, grip.y); } },
+      );
+      leftButton(true);
+      pressed = true;
+      await settle(2000, () => probe!.GetKeyState(0x01) < 0);
+      native.scheduleTimeout(120, () => moveCursorAsInput(grip.x + 60, grip.y + 45));
+      const readInLoop = (end: number) => {
+        const now = win.bounds();
+        if ((now.x !== maximised.x + 60 || now.y !== maximised.y + 45) && Date.now() < end && pressed) {
+          native.scheduleTimeout(20, () => readInLoop(end));
+          return;
+        }
+        leftButton(false);
+        pressed = false;
+      };
+      native.scheduleTimeout(140, () => readInLoop(Date.now() + 6000));
+      win.startDrag();
+      await settle(8000, () => !pressed);
+      await settle(60);
+      expect(win.bounds()).toEqual({ ...maximised, x: maximised.x + 60, y: maximised.y + 45 });
+      expect({ maximized: win.isMaximized(), seen }).toEqual({ maximized: true, seen: [true] });
+      win.toggleMaximize();
+      expect({ maximized: win.isMaximized(), bounds: win.bounds(), seen }).toEqual({ maximized: false, bounds: start, seen: [true, false] });
+    } finally {
+      if (pressed) leftButton(false);
+      probe!.SetCursorPos(original.x, original.y);
+      win.dispose();
+    }
+  }, 20_000);
+});
+
 describe.if(onWindows)("Window.fromHandle on an application's own window (made here through bun:ffi)", () => {
+  test("a popup window the application made reads as not maximised when wrapped, as at the tag, and reports nothing when it is restored", async () => {
+    // Review round 3: at tag pre-rust-rewrite a wrapper of a frameless (WS_POPUP) window answered
+    // isMaximized() from Sweetview's own saved rectangle (win32/window.ts, line 830), which a wrapper
+    // starts without; adoption read the placement flag for it too, which disagreed.
+    const { hInstance, user32, wide } = await api();
+    const WS_POPUP = 0x80000000;
+    const WS_VISIBLE = 0x10000000;
+    const WM_SYSCOMMAND = 0x0112;
+    const [SC_MINIMIZE, SC_MAXIMIZE, SC_RESTORE] = [0xf020n, 0xf030n, 0xf120n];
+    const hwnd = user32.CreateWindowExW(0, wide("STATIC"), wide(unique("own popup")), WS_POPUP | WS_VISIBLE, 80, 80, 300, 200, 0n, 0n, hInstance(), null);
+    expect(hwnd).not.toBe(0n);
+    const command = (sc: bigint) => user32.SendMessageW(hwnd, WM_SYSCOMMAND, sc, 0n);
+    command(SC_MAXIMIZE);
+    command(SC_MINIMIZE);
+    const wrapped = Window.fromHandle(hwnd);
+    try {
+      expect(wrapped.isMaximized()).toBe(false);
+      const seen: boolean[] = [];
+      wrapped.onMaximizeChange((m) => seen.push(m));
+      command(SC_RESTORE);
+      expect({ maximized: wrapped.isMaximized(), seen }).toEqual({ maximized: false, seen: [] });
+    } finally {
+      wrapped.dispose();
+      if (user32.IsWindow(hwnd)) user32.DestroyWindow(hwnd);
+    }
+  });
+
+  test("a window the application made, maximised and minimised before Window.fromHandle wraps it, reports nothing when restored to maximised", async () => {
+    // Review round 2, finding 5: the state was read only when the window was not minimised.
+    const { WS_OVERLAPPEDWINDOW, hInstance, user32, wide } = await api();
+    const WM_SYSCOMMAND = 0x0112;
+    const [SC_MINIMIZE, SC_MAXIMIZE, SC_RESTORE] = [0xf020n, 0xf030n, 0xf120n];
+    const hwnd = user32.CreateWindowExW(0, wide("STATIC"), wide(unique("own wrapped minimised")), WS_OVERLAPPEDWINDOW, 60, 60, 300, 200, 0n, 0n, hInstance(), null);
+    expect(hwnd).not.toBe(0n);
+    const command = (sc: bigint) => user32.SendMessageW(hwnd, WM_SYSCOMMAND, sc, 0n);
+    command(SC_MAXIMIZE);
+    command(SC_MINIMIZE);
+    const wrapped = Window.fromHandle(hwnd);
+    try {
+      const seen: boolean[] = [];
+      wrapped.onMaximizeChange((m) => seen.push(m));
+      command(SC_RESTORE); // back to maximised
+      expect({ maximized: wrapped.isMaximized(), seen }).toEqual({ maximized: true, seen: [] });
+      command(SC_RESTORE);
+      expect({ maximized: wrapped.isMaximized(), seen }).toEqual({ maximized: false, seen: [false] });
+    } finally {
+      wrapped.dispose();
+      if (user32.IsWindow(hwnd)) user32.DestroyWindow(hwnd);
+    }
+  });
+
+  test("onMaximizeChange arrives for a window the application made: maximised, minimised and restored to maximised (nothing), restored", async () => {
+    // Review N7: onMaximizeChange had been run only on wrappers of Sweetview's own windows.
+    const { WS_OVERLAPPEDWINDOW, hInstance, user32, wide } = await api();
+    const WM_SYSCOMMAND = 0x0112;
+    const [SC_MINIMIZE, SC_MAXIMIZE, SC_RESTORE] = [0xf020n, 0xf030n, 0xf120n];
+    const hwnd = user32.CreateWindowExW(0, wide("STATIC"), wide(unique("own maximise")), WS_OVERLAPPEDWINDOW, 60, 60, 300, 200, 0n, 0n, hInstance(), null);
+    expect(hwnd).not.toBe(0n);
+    const wrapped = Window.fromHandle(hwnd);
+    try {
+      const seen: boolean[] = [];
+      const off = wrapped.onMaximizeChange((m) => seen.push(m));
+      const command = (sc: bigint) => user32.SendMessageW(hwnd, WM_SYSCOMMAND, sc, 0n);
+      command(SC_MAXIMIZE);
+      expect({ maximized: wrapped.isMaximized(), seen }).toEqual({ maximized: true, seen: [true] });
+      command(SC_MINIMIZE);
+      command(SC_RESTORE); // back to maximised
+      expect({ maximized: wrapped.isMaximized(), seen }).toEqual({ maximized: true, seen: [true] });
+      command(SC_RESTORE);
+      expect({ maximized: wrapped.isMaximized(), seen }).toEqual({ maximized: false, seen: [true, false] });
+      off();
+      command(SC_MAXIMIZE);
+      expect(seen).toEqual([true, false]);
+    } finally {
+      wrapped.dispose();
+      if (user32.IsWindow(hwnd)) user32.DestroyWindow(hwnd);
+    }
+  });
+
   test("onResize, onMove, onClose and onFileDrop arrive; dispose leaves the window alive", async () => {
     const { WM_CLOSE, WS_OVERLAPPEDWINDOW, hInstance, sendDrop, user32, wide } = await api();
     const hwnd = user32.CreateWindowExW(0, wide("STATIC"), wide(unique("own")), WS_OVERLAPPEDWINDOW, 50, 50, 300, 200, 0n, 0n, hInstance(), null);

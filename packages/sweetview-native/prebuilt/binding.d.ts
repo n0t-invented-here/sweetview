@@ -128,10 +128,16 @@ export interface WindowInit {
  * Numeric results are `webview_error_t` codes.
  */
 export declare class Engine {
-  /** Fills `window` with a webview; with `null`, in a window of the webview's own. */
+  /**
+   * Fills `window` with a webview; with `null`, in a window of the webview's own. In a
+   * Sweetview window with a `backgroundColor`, the browser has that colour from its start on a WebView2 Runtime with `ICoreWebView2ControllerOptions3` (and right after it is made on an older one; see `docs/native/windows.md`).
+   */
   static create(debug: boolean, window?: bigint | undefined | null): Engine
-  /** A child of `window`, at a rectangle of its client area in physical pixels. */
-  static createChild(debug: boolean, window: bigint, bounds: Rect): Engine
+  /**
+   * A child of `window`, at a rectangle of its client area in physical pixels. With
+   * `pageBackground`, a page of the window (a tab) has the window's `backgroundColor` from its start on a WebView2 Runtime with `ICoreWebView2ControllerOptions3` (and right after it is made on an older one; see `docs/native/windows.md`).
+   */
+  static createChild(debug: boolean, window: bigint, bounds: Rect, pageBackground?: boolean | undefined | null): Engine
   /** The live webview a handle names, or null. */
   static fromHandle(handle: number): Engine | null
   /** The number that names this webview to the functions a Worker calls. */

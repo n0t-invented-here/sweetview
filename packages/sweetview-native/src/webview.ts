@@ -246,20 +246,29 @@ export function engineOf(webview: Webview): Engine | undefined {
   return engines.get(webview);
 }
 
-// Set only while createChildWebview runs the constructor.
-let childBounds: { x: number; y: number; width: number; height: number } | undefined;
+/**
+ * How `createChildWebview` asks the constructor for a child: passed with the call, in place of a
+ * size, so nothing is held across the creation (which pumps messages: a webview made meanwhile
+ * takes nothing of it). Not exported: only this module makes one.
+ */
+class ChildMount {
+  constructor(
+    readonly bounds: { x: number; y: number; width: number; height: number },
+    readonly pageBackground: boolean,
+  ) {}
+}
+
+/** The size a webview made without one gets. */
+const DEFAULT_SIZE: Size = { width: 1024, height: 768, hint: SizeHint.NONE };
 
 /**
  * Internal, Windows: a webview made as a child of `window` at `bounds` (its
  * client coordinates, physical pixels), for the tabs library's strip and tabs.
+ * With `pageBackground`, the child is a page of the window (a tab), and starts
+ * with the window's `backgroundColor`; the strip keeps its own.
  */
-export function createChildWebview(debug: boolean, window: bigint, bounds: { x: number; y: number; width: number; height: number }): Webview {
-  childBounds = bounds;
-  try {
-    return new Webview(debug, undefined, window);
-  } finally {
-    childBounds = undefined;
-  }
+export function createChildWebview(debug: boolean, window: bigint, bounds: { x: number; y: number; width: number; height: number }, pageBackground = false): Webview {
+  return new Webview(debug, new ChildMount(bounds, pageBackground) as unknown as Size, window);
 }
 
 /**
@@ -324,9 +333,12 @@ export class Webview {
   constructor(debug?: boolean, size?: Size, window?: WindowHandle);
   constructor(
     debugOrHandle: boolean | WebviewHandle = false,
-    size: Size | undefined = { width: 1024, height: 768, hint: SizeHint.NONE },
+    sizeOrMount: Size | undefined = DEFAULT_SIZE,
     window: WindowHandle = null,
   ) {
+    const mount = sizeOrMount instanceof ChildMount ? sizeOrMount : undefined;
+    // A child gets the size a webview made without one gets, as it always has.
+    const size = mount ? DEFAULT_SIZE : sizeOrMount;
     // The macOS seam: there the instance is the webview library's own class, with this same API.
     if (onDarwin) return darwin().createWebview(debugOrHandle, size, window) as unknown as Webview;
     const native = binding();
@@ -339,8 +351,8 @@ export class Webview {
       const host = window === null || window === 0 || window === 0n ? null : BigInt(window);
       try {
         this.#engine =
-          childBounds !== undefined && host !== null
-            ? native.Engine.createChild(Boolean(debugOrHandle), host, childBounds)
+          mount !== undefined && host !== null
+            ? native.Engine.createChild(Boolean(debugOrHandle), host, mount.bounds, mount.pageBackground)
             : native.Engine.create(Boolean(debugOrHandle), host);
       } catch (err) {
         throw Object.assign(new WebviewError("webview_create", -1), { cause: err });

@@ -243,7 +243,7 @@ What `WebView.attach` does, in order:
 5. Refuses a disposed window, or one whose handle is null, and checks `ringBytes`.
 6. Creates the `RawWebview` inside `window.handle` using the window's bounds, scale and `resizable` hint, then restores the window's styles and outer bounds in case the engine changed them.
 7. Applies `title` (and mirrors it onto an untitled owned `window`).
-8. Clears the browser background when `window` was created with `transparent: true`, or, on Windows, sets it to the window's `backgroundColor` when it has one (what shows before the page paints), and applies `allowExternalDrop` when it is set.
+8. Clears the browser background when `window` was created with `transparent: true` (on Windows a window's `backgroundColor` is the browser's background from the moment WebView2 makes it, at step 6, on a WebView2 Runtime with `ICoreWebView2ControllerOptions3`; when that holds, and what shows otherwise, is under [`backgroundColor`](native/windows.md#windowoptions)), and applies `allowExternalDrop` when it is set.
 9. Allocates the shared `Ring`, subscribes webview file drops to the window's `onFileDrop` listeners, and starts `worker` if configured.
 10. Registers the request handler when `onRequest` is set.
 11. Binds `__sweetview_rpc`: the reserved ready method first, then `uiMethods`, then `deferredUiMethods`, then the worker. The binding exists before the first navigation and dispatches by method name only; see [the trust boundary](#the-rpc-trust-boundary). A direct-URL webview with no UI methods, no worker and no ready options gets no binding.

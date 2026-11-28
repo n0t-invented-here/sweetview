@@ -95,14 +95,16 @@ impl TabState {
 /// were given) centred on the primary work area, and its minimum. Bounds and
 /// minimums are the outer frame, as for every window; the frame's edges are
 /// measured, not assumed.
-pub(super) fn finish(core: &Rc<Core>, tab: &TabState, page: Option<Dips>, min: (Option<i32>, Option<i32>)) {
+pub(super) fn finish(core: &Rc<Core>, tab: &TabState, page: Option<Dips>, requested: bool, min: (Option<i32>, Option<i32>)) {
   let scale = core.with_tao(platform::dpi_scale).unwrap_or(1.0);
   let (edge_w, edge_h) = frame_edges(core);
   let strip = f64::from(tab.strip_height);
   if let Some(page) = page {
     let (width, height) = logic::outer_size_for_content(Dips::new(page.width, page.height + strip), scale, (edge_w, edge_h));
     let area = screen::primary().map(|s| s.work_area).unwrap_or(Rect::new(0, 0, width, height));
-    core.set_bounds(logic::centred(width, height, area));
+    // The default keeps its size, as it always has; a contentSize the application gave is kept on the work area.
+    let placed = if requested { logic::centred(width, height, area) } else { logic::centred_keeping_size(width, height, area) };
+    core.set_bounds(placed);
   }
   // `tao` enforces an undecorated window's minimum inner size plus the frame's
   // edges (outer less client) as the outer minimum the OS tracks.
@@ -298,7 +300,7 @@ impl TabFrame {
   pub fn show_system_menu(&self) -> Result<()> {
     if self.is_live() {
       let at = screen::cursor()?;
-      self.core.with_tao(|tao| platform::show_system_menu(tao, at));
+      self.core.show_system_menu(at)?;
     }
     Ok(())
   }

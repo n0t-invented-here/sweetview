@@ -260,6 +260,10 @@ pub(crate) fn release_all() {
 pub fn window_menu(owner: isize) -> Result<()> {
   Runtime::get()?;
   let cursor = screen::cursor()?;
+  // One of Sweetview's own windows: its state as Sweetview knows it (a frameless window's maximise is its own).
+  if let Some(shown) = crate::window::show_own_system_menu(owner, cursor) {
+    return shown;
+  }
   BorrowedWindow::with_handle_value(owner, |owner| {
     if is_on_this_thread(owner) {
       show_system_menu(owner, cursor);

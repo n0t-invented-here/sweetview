@@ -10,7 +10,7 @@ import type { HitPolygon } from "./hit-regions";
 import type { AppIdentity, AppIdentityIcon } from "@n1h/sweetview-settings";
 import { icoFromRgba, type Icon } from "./icon";
 import { releaseAtEnd } from "./lifetime";
-import { backend } from "./platform";
+import { backend, macosKeepsTagPath } from "./platform";
 import type { Point, Rect, WindowHandle } from "./types";
 
 export type { Point, Rect, WindowHandle } from "./types";
@@ -408,8 +408,11 @@ export class Window {
       const transparent = options.transparent ?? false;
       const tabs = options.tabs ?? false;
       const appearance = options.appearance ?? "system";
-      if (options.bounds !== undefined && options.contentSize !== undefined) throw new Error("sweetview: bounds and contentSize cannot both be given");
-      const backgroundColor = backgroundColorOf(options.backgroundColor);
+      // macOS keeps the tag's path until its goal (darwin/held-back.ts): it had neither option, so
+      // neither is checked there; the darwin backend uses neither.
+      const tagPath = macosKeepsTagPath();
+      if (!tagPath && options.bounds !== undefined && options.contentSize !== undefined) throw new Error("sweetview: bounds and contentSize cannot both be given");
+      const backgroundColor = tagPath ? undefined : backgroundColorOf(options.backgroundColor);
       this.#meta = {
         title: options.title ?? options.identity?.appName ?? "",
         topmost: options.topmost ?? false,
@@ -455,6 +458,11 @@ export class Window {
   /** Non-mutating wrapper around an existing HWND or NSWindow*. */
   static fromHandle(handle: WindowHandle): Window {
     const inner = impl().fromHandle(handle);
+    // A wrapper of one of Sweetview's own windows shows what that window shows where nothing has
+    // painted: a webview attached through it takes the window's backgroundColor (review finding 5).
+    const value = handle === null ? undefined : BigInt(handle);
+    const own = value === undefined ? undefined : [...ownedWindows].find((win) => win.handle !== null && BigInt(win.handle) === value);
+    const backgroundColor = own ? windowMetaMap.get(own)?.backgroundColor : undefined;
     const meta: WindowMeta = {
       title: "",
       frame: inner.detectedMeta?.frame ?? true,
@@ -463,6 +471,7 @@ export class Window {
       tabs: false,
       appearance: "system",
       owned: false,
+      ...(backgroundColor === undefined ? {} : { backgroundColor }),
     };
     return new Window({ [INTERNAL_CONSTRUCT]: { inner, meta } } as unknown as WindowOptions);
   }
@@ -562,10 +571,14 @@ export class Window {
   }
   /**
    * Called with `true` when the window becomes maximized and `false` when it
-   * is restored, by any means: the frame's button, a snap gesture, a double
-   * click on the title bar, `toggleMaximize()` (a frameless window: filling
-   * its work area). Minimizing and restoring to the same state reports
-   * nothing. Returns the function that removes this listener.
+   * is restored, by any means: a framed window's button, snap gesture, title
+   * bar double click and system menu; a frameless window's `toggleMaximize()`
+   * (filling its work area) and system menu; `toggleMaximize()` for both. Minimizing and restoring to the same
+   * state reports nothing. A listener hears a change once, and the last value
+   * each heard is `isMaximized()`; a change goes to the listeners subscribed
+   * when it happened; a change made while the listeners hear one a listener
+   * made is printed and not told (docs/native/windows.md). Returns the
+   * function that removes this listener.
    */
   onMaximizeChange(handler: (maximized: boolean) => void): () => void {
     return this.#inner.onMaximizeChange(handler);
