@@ -103,7 +103,7 @@ display. Multiply page coordinates by `win.scale()` to get window units.
 | `tabs` | `boolean` | `false` | A native tabbed container; see [Tabbed](#tabbed). |
 | `transparent` | `boolean` | `false` | Per-pixel alpha; see [Transparent](#transparent). |
 | `colorKey` | `string` | none | Windows-only 1-bit color key; see [overlays](overlays-and-hit-regions.md#colorkey-vs-transparent). |
-| `backgroundColor` | `string` | the system's, or `appearance`'s | `"#rrggbb"`: what the window shows where nothing has painted: before its page paints, behind a page that leaves its background transparent, and after its webview has gone. The webview `WebView.attach` mounts takes it as the browser's background too, and a tabbed window's page area and its tabs' webviews (the tab strip keeps its own). On Windows it is set as WebView2's default background as soon as the controller exists, before the webview's container window is first shown, so no white shows while it starts. `WEBVIEW2_DEFAULT_BACKGROUND_COLOR`, when set, is what WebView2 starts with (Microsoft documents it); the window's colour is set over it before anything is shown, so that is the one that stays. A page's own canvas, before its stylesheet applies, follows the page's colour scheme (#121212 in a dark one), and a tab moved into a window with no colour keeps its own background. Not applied to a `transparent` window (it shows what is behind it). Anything else throws `sweetview: background color must be #rrggbb, got <text>`. macOS: accepted and ignored until the macOS goal. |
+| `backgroundColor` | `string` | the system's, or `appearance`'s | `"#rrggbb"` (the `#` optional, either case): what the window shows where nothing has painted: before its page paints, behind a page that leaves its background transparent, and after its webview has gone. The webview `WebView.attach` mounts takes it as the browser's background too, and a tabbed window's page area and its tabs' webviews (the tab strip keeps its own). On Windows it is set as WebView2's default background as soon as the controller exists, before the webview's container window is first shown, so no white shows while it starts. When `WEBVIEW2_DEFAULT_BACKGROUND_COLOR` is set (an `AARRGGBB` hex value, as Microsoft documents), a webview in a window with no `backgroundColor` starts with that colour; a window's `backgroundColor` wins over it. A page's own canvas, before its stylesheet applies, follows the page's colour scheme (#121212 in a dark one), a tab moved into a window that has a colour takes that colour, a tab moved into a window with no colour keeps its own background, and a window a tab is torn off into has the colour of the window it came from. Not applied to a `transparent` window (it shows what is behind it). Anything else throws `sweetview: background color must be #rrggbb, got <text>`. macOS: accepted and ignored until the macOS goal. |
 | `opacity` | `number` | none | Whole-window opacity, clamped to `0..1`. |
 | `topmost` | `boolean` | `false` | Above normal windows. |
 | `hideFromTaskbar` | `boolean` | `false` | Omitted from the taskbar and app switcher. |
@@ -195,7 +195,7 @@ the menu bar. See [`setActivationPolicy`](menus-and-tray.md#setactivationpolicy)
 |---|---|
 | `handle` | `HWND` on Windows, `NSWindow*` on macOS, `null` for a macOS tabbed window. |
 | `Window.visibleWindows()` | Visible windows this process created with `new Window`, minimized ones included. Wrappers from `fromHandle` are not listed. |
-| `isVisible()`, `show()`, `hide()`, `toggle()` | Visibility. `isVisible()` is true for a minimized window too; see `isMinimized()`. `show()` restores a minimized Windows window and activates the app on macOS, unless `noActivate`. |
+| `isVisible()`, `show()`, `hide()`, `toggle()` | Visibility. `isVisible()` is true for a minimized window too; see `isMinimized()`. `show()` restores a minimized Windows window and activates the app on macOS, unless `noActivate`; a minimized `noActivate` tabbed window is restored without being activated, as before 1.0. |
 | `bounds()`, `setBounds(rect)` | Outer frame rectangle. |
 | `moveTo(x, y)`, `resize(width, height)` | Moves the outer top-left corner keeping the size; resizes keeping the top-left corner. |
 | `scale()` | Window units per CSS pixel; see [Coordinates](#coordinates). |
@@ -204,12 +204,12 @@ the menu bar. See [`setActivationPolicy`](menus-and-tray.md#setactivationpolicy)
 | `minimize()` | Minimizes. |
 | `isMinimized()` | Whether the window is minimized: `IsIconic` on Windows (created, frameless, tabbed and `fromHandle` windows alike), `isMiniaturized` on macOS (a tabbed window: its active tab). `isVisible()` is also true for a minimized window, so "on screen" is `isVisible() && !isMinimized()`. A window made hidden, or restored by `show()`, reads `false`; one minimized and then hidden stays minimized and reads `true` until `show()` restores it. |
 | `toggleMaximize()`, `isMaximized()` | Framed Windows: `SW_MAXIMIZE` / `SW_RESTORE` and `IsZoomed`. Frameless Windows: work area vs saved bounds. macOS: `zoom:` and `isZoomed`. |
-| `onMaximizeChange(fn: (maximized: boolean) => void)` | Called with `true` when the window becomes maximized and `false` when it is restored, by any means. Its rule, in full: (1) a listener hears a change once, after it happened, and the last value each listener heard is what `isMaximized()` then returns, also when a listener changes the state itself (a change a listener makes is told at once, and the one it was told of then goes to no one after it); (2) a change goes to the listeners subscribed when it happened: one removed, or the window disposed, during delivery hears nothing more, and one added during delivery does not hear it; (3) a listener that changes the state while being told of a change a listener made is not told that change: it is printed (`sweetview: an onMaximizeChange listener changed the window's maximised state while being told of a change a listener made; that change is not told`), the window keeps its state, and a listener that changes the state every time it is told does not hang the application; (4) nothing else: it says nothing about `onResize` or `onMove`. A framed window: the frame's button, a snap gesture, a title bar double click, the system menu, `toggleMaximize()`. A frameless window, whose maximize is filling its work area: `toggleMaximize()` (what a page-drawn chrome's button and double click call) and its system menu ([`showSystemMenu()`](#window-members)). A maximized frameless window moved or sized (`setBounds`, `moveTo`, `resize`, `startDrag`) stays maximized, and its next `toggleMaximize()` gives back the bounds it had before it was maximized, as before 1.0. Once per change: minimizing a maximized window and restoring it reports nothing. Windows: from the window's `WM_SIZE`. macOS: until the macOS goal of the Rust rewrite, it registers nothing and is never called. Replaces polling `isMaximized()`. |
-| `showSystemMenu()` | Windows: the window's system menu (Restore, Move, Size, Minimize, Maximize, Close) at the cursor, its items offered for the window's state as Sweetview knows it (Restore while maximized or minimized; Move and Size only while neither, Size and Maximize only for a window that can be sized, and Maximize for any frameless window, whose maximize is `toggleMaximize()`'s work-area fill), the choice carried out: Maximize and Restore of a frameless window through `toggleMaximize()`, so `isMaximized()` and `onMaximizeChange` follow, everything else as the title bar's own menu sends it; for a page-drawn title bar's right click ([window chrome](../window-chrome.md)). Blocks until it closes. macOS: does nothing; AppKit windows have no such menu. Its rule, for a window Sweetview made: (1) each command does what its label says from the window's state at the moment it is carried out; (2) the window's liveness is checked after every step that can run application code (the menu's own loop, and un-minimising, which runs resize listeners); (3) a command that no longer applies (Maximize of a maximized window, Restore of a restored one, anything for a disposed one) does nothing. A window Sweetview did not make gets the menu `windowMenu(hwnd)` gave it before 1.0: Restore enabled when `IsZoomed`, Move, Size and Maximize when not, Minimize always, Close as its owner left it and the default item, the chosen command posted. |
+| `onMaximizeChange(fn: (maximized: boolean) => void)` | Called with `true` when the window becomes maximized and `false` when it is restored, by any means. Its rule, in full: (1) a change is told once to every listener the window had when it happened, whichever `Window` of the window added it, in the order they were added, with the state it changed to; one removed, or the window disposed, during the delivery hears nothing more of it, and one added during the delivery does not hear it; (2) a change a listener makes from inside its call is told after that delivery finishes, as one further delivery of the state the window is then in (none when it is back where it was), so no listener misses a change another one makes and the last value each heard is what `isMaximized()` returns; (3) a change made during that further delivery is not told: it is printed (`sweetview: an onMaximizeChange listener changed the window's maximised state while being told of a change a listener made; that change is not told`), the window keeps its state, and a listener that changes the state every time it is told does not hang the application; (4) nothing else: it says nothing about `onResize` or `onMove`. A framed window: the frame's button, a snap gesture, a title bar double click, the system menu, `toggleMaximize()`. A frameless window, whose maximize is filling its work area: `toggleMaximize()` (what a page-drawn chrome's button and double click call); its system menu's Maximize is the OS's ([`showSystemMenu()`](#window-members)). A maximized frameless window moved or sized (`setBounds`, `moveTo`, `resize`, `startDrag`) stays maximized, and its next `toggleMaximize()` gives back the bounds it had before it was maximized, as before 1.0. Once per change: minimizing a maximized window and restoring it reports nothing. Windows: from the window's `WM_SIZE`. macOS: until the macOS goal of the Rust rewrite, it registers nothing and is never called. Replaces polling `isMaximized()`. |
+| `showSystemMenu()` | Windows: the window's system menu (Restore, Move, Size, Minimize, Maximize, Close) at the cursor, as `windowMenu(hwnd)` gave every window before 1.0: Restore enabled when the OS has the window maximized (`IsZoomed`), Move, Size and Maximize when it has not, Minimize always, Close as its owner left it and the default item. The chosen command is posted to the window as the title bar's own menu sends it, and the call blocks until the menu closes. For a frameless window Maximize is therefore the OS's, which fills the whole screen, taskbar included, and which `isMaximized()` and `onMaximizeChange` do not report; `toggleMaximize()` fills the work area. macOS: does nothing; AppKit windows have no such menu. |
 | `setTopmost(on)` | Changes `topmost` after creation. |
 | `startDrag()`, `startResize(edge)` | Page-driven move and resize; see [below](#moving-and-resizing-from-the-page). |
 | `setClickThrough(on)`, `setHitRegions(polygons, refine?)` | See [overlays](overlays-and-hit-regions.md). |
-| `onResize(fn)`, `onMove(fn)` | Called with the new outer `Rect`. |
+| `onResize(fn)`, `onMove(fn)` | Called with the new outer `Rect`. A window has one list of each, as before 1.0, whichever `Window` of it added a listener: they are called in the order they were added, with the bounds read once, and the same function added again, through any `Window` of the window, is one listener, which either unsubscribe takes out. A tab frame's `onMove` is called while it is minimized too. For a window Sweetview did not make, they run before the window's own procedure sees the message. |
 | `onClose(fn)`, `onFileDrop(fn)` | See [Closing](#closing) and [File drops](#file-drops). |
 | `onNewTab(fn: (origin: Window) => void)`, `onTabSelect(fn)`, `onTabClose(fn)` | Tab events; see [Tabbed](#tabbed). |
 | `dispose()` | Destroys an owned window, or detaches a wrapper's hooks. Releases timers, subclass hooks, observers and icons. A webview attached to an owned window is torn down with it ([lifecycle](../app.md#lifecycle)). On Windows every window is disposed when the application ends ([the end of the application](../app.md#the-end-of-the-application)); call it for one that should go before that. Safe to call twice. |
@@ -237,8 +237,8 @@ and does not own its lifetime: `dispose()` removes the hooks Sweetview added
 and leaves the window alive. It throws `sweetview: window handle is NULL`
 (Windows) or `sweetview: window handle is nil` (macOS) for `null`, `0` or
 `0n`. On Windows a handle that names no window throws `sweetview: not a
-window: 0x…`, and events (`onClose`, `onResize`, `onMove`, `onFileDrop`) can
-be observed only on a window of the UI thread; for a window of another thread
+window: 0x…`, and events (`onClose`, `onResize`, `onMove`, `onMaximizeChange`,
+`onFileDrop`) can be observed only on a window of the UI thread; for a window of another thread
 they throw `sweetview: a window of another thread cannot be observed`.
 
 The wrapper reads the window's real chrome so `WebView.attach` and
@@ -256,8 +256,11 @@ a foreign window without breaking that window's owner:
   intercepted.
 - `onFileDrop` throws `sweetview: file drops require a Sweetview-managed NSWindow`.
 
-On Windows a wrapper subclasses the `HWND`, so `onClose` and `onFileDrop`
-work as they do on an owned window.
+On Windows a wrapper subclasses the `HWND` with its first listener (`onResize`,
+`onMove`, `onMaximizeChange`, `onClose`, `onFileDrop`) and takes the subclass
+out with its last, or when it is disposed, as before 1.0, so those listeners
+work as they do on an owned window and a wrapper that only reads or moves the
+window changes nothing of it.
 
 ## Moving and resizing from the page
 
@@ -269,8 +272,9 @@ left mouse button is down (a `pointerdown` handler in the page).
   `WM_NCLBUTTONDOWN` with `HTCAPTION` on Windows,
   `performWindowDragWithEvent:` on macOS. Snap layouts and multi-monitor
   moves behave as with a real title bar.
-- `startResize(edge)` runs a 10 ms cursor-tracking loop (a `SetTimer` on
-  Windows, an `NSTimer` reading `NSEvent.pressedMouseButtons` on macOS) that
+- `startResize(edge)` runs a 10 ms cursor-tracking loop (an interval of the
+  native loop on Windows, the kind `scheduleInterval` makes; an `NSTimer`
+  reading `NSEvent.pressedMouseButtons` on macOS) that
   resizes from `edge` until the left button is released. It enforces
   `minWidth` / `minHeight`, or a 160 x 120 floor when neither is set.
 
@@ -390,7 +394,7 @@ are the same window units as `Window` ([Coordinates](#coordinates)).
 | `Screen.primary()` | The primary monitor. |
 | `Screen.all()` | Every connected monitor. |
 | `Screen.at(point)` | The monitor containing `point`, or the nearest one when it is outside all of them. |
-| `Screen.of(window)` | The monitor showing most of `window`: a `Window`, anything with a `handle`, or a raw `WindowHandle`. A macOS tabbed `Window` resolves through its active tab, or through its bounds before any tab exists. |
+| `Screen.of(window)` | The monitor showing most of `window` (for a minimised window, the one its restored position is on): a `Window`, anything with a `handle`, or a raw `WindowHandle`. A macOS tabbed `Window` resolves through its active tab, or through its bounds before any tab exists. |
 | `Screen.bounds()` | The bounding rectangle of all monitors. |
 | `Screen.cursor()` | The cursor position. |
 

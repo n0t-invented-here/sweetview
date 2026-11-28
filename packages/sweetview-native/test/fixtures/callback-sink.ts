@@ -113,6 +113,7 @@ if (mode === "values" || mode === "values-listen") {
     ["plain object", () => ({ a: 1 })],
     ["error", () => new Error("boom")],
     ["error whose cause is itself", () => { const e = new Error("loop") as Error & { cause?: unknown }; e.cause = e; return e; }],
+    ["error whose message throws", () => Object.defineProperty(new Error("hidden"), "message", { get() { throw new Error("message getter"); } })],
   ];
   const told: { name?: string; kind: string; message: string; isThrown: boolean; causeIsThrown: boolean }[] = [];
   let off = () => {};
@@ -120,7 +121,13 @@ if (mode === "values" || mode === "values-listen") {
     const { onCallbackError } = await import("../../src/callback-errors");
     off = onCallbackError((error, source) => {
       const thrown = current;
-      told.push({ name: source.name, kind: source.kind, message: error.message, isThrown: error === thrown, causeIsThrown: error.cause === thrown });
+      let message: string;
+      try {
+        message = error.message;
+      } catch {
+        message = "(its message throws)";
+      }
+      told.push({ name: source.name, kind: source.kind, message, isThrown: error === thrown, causeIsThrown: error.cause === thrown });
     });
   }
   let current: unknown;
@@ -151,6 +158,65 @@ if (mode === "values" || mode === "values-listen") {
   }
   off();
   result.after = after;
+  result.told = told;
+}
+
+if (mode === "patched-globals") {
+  // The binding loads; then the application patches what the binding's guard uses; then it makes
+  // its first callbacks (follow-up 3). The guard holds what the globals were at load.
+  const { binding } = await import("../../src/binding");
+  const { onCallbackError } = await import("../../src/callback-errors");
+  const native = binding();
+  const saved = { apply: Reflect.apply, create: Object.create, text: globalThis.String };
+  const told: string[] = [];
+  let ran = 0;
+  const throwFromTimeout = async (message: string) => {
+    const target = ran + 1;
+    native.scheduleTimeout(1, () => {
+      ran++;
+      throw new Error(message);
+    });
+    for (let i = 0; i < 400 && ran < target; i++) {
+      native.pumpEvents();
+      await Bun.sleep(5);
+    }
+    native.pumpEvents();
+  };
+  Reflect.apply = () => {
+    throw new Error("patched Reflect.apply");
+  };
+  Object.create = () => {
+    throw new Error("patched Object.create");
+  };
+  globalThis.String = (() => "patched String") as unknown as StringConstructor;
+  await throwFromTimeout("first"); // no listener: the line is napi's text of the guard's stand-in
+  const off = onCallbackError((error, source) => void told.push(`${source.name}: ${error.message}`));
+  await throwFromTimeout("second"); // with one: the value itself
+  off();
+  Object.assign(Reflect, { apply: saved.apply });
+  Object.create = saved.create;
+  globalThis.String = saved.text;
+  result.ran = ran;
+  result.told = told;
+}
+
+if (mode === "late-listener") {
+  // No listener when the callback throws; reading the thrown value registers one (review 4, C5).
+  // The listeners told about a fault are those set when it was thrown: this one hears nothing.
+  const { binding } = await import("../../src/binding");
+  const { onCallbackError } = await import("../../src/callback-errors");
+  const native = binding();
+  const told: string[] = [];
+  let ran = false;
+  native.scheduleTimeout(1, () => {
+    ran = true;
+    throw { toString: () => (onCallbackError((error) => void told.push(error.message)), "registers a listener") };
+  });
+  for (let i = 0; i < 400 && !ran; i++) {
+    native.pumpEvents();
+    await Bun.sleep(5);
+  }
+  native.pumpEvents();
   result.told = told;
 }
 

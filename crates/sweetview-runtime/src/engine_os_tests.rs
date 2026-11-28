@@ -19,6 +19,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 use sweetview_platform_webview::{test_support::release_environment, ErrorCode};
+use sweetview_platform_window::test_support as support;
 use sweetview_platform_window::test_support_desktop as desktop;
 use sweetview_platform_window::BorrowedWindow;
 
@@ -174,13 +175,13 @@ fn physical(window: isize, dips: u32) -> i32 {
 }
 
 fn client_is(window: isize, width: u32, height: u32) -> bool {
-  desktop::client_size(window) == (physical(window, width), physical(window, height))
+  support::client_size(window) == (physical(window, width), physical(window, height))
 }
 
 /// The outer frame around the client area: outer size minus client size.
 fn frame_of(window: isize) -> (i32, i32) {
   let (left, top, right, bottom) = desktop::window_rect(window);
-  let (width, height) = desktop::client_size(window);
+  let (width, height) = support::client_size(window);
   (right - left - width, bottom - top - height)
 }
 
@@ -199,29 +200,29 @@ fn an_own_window_is_a_real_window_each_size_hint_sizes_styles_or_bounds_and_clos
     engine.set_title(&tag);
     let hwnd = engine.window_handle();
     assert!(exists(hwnd), "the window handle names a window");
-    assert_eq!(desktop::title_of(hwnd), tag, "the title, read back");
+    assert_eq!(support::title_of(hwnd), tag, "the title, read back");
     assert!(visible(hwnd), "the first size shows the window");
-    assert!(client_is(hwnd, 500, 400), "NONE sizes the client area: {:?}", desktop::client_size(hwnd));
+    assert!(client_is(hwnd, 500, 400), "NONE sizes the client area: {:?}", support::client_size(hwnd));
     assert_ne!(style(hwnd) & WS_THICKFRAME, 0, "NONE leaves it resizable");
-    assert_eq!(desktop::uses_dark_title_bar(hwnd), Some(desktop::system_uses_dark_apps()), "the title bar follows the system's dark mode");
+    assert_eq!(support::uses_dark_title_bar(hwnd), Some(desktop::system_uses_dark_apps()), "the title bar follows the system's dark mode");
 
     engine.set_size(450, 350, SizeHint::Fixed);
-    assert!(client_is(hwnd, 450, 350), "FIXED sizes the client area: {:?}", desktop::client_size(hwnd));
+    assert!(client_is(hwnd, 450, 350), "FIXED sizes the client area: {:?}", support::client_size(hwnd));
     assert_eq!(style(hwnd) & WS_THICKFRAME, 0, "FIXED takes the resize frame away");
 
     engine.set_size(300, 200, SizeHint::Min);
     assert_ne!(style(hwnd) & WS_THICKFRAME, 0, "MIN gives the resize frame back");
     let frame = frame_of(hwnd);
-    let (min, _) = desktop::track_sizes(hwnd);
+    let min = support::min_track_size(hwnd);
     assert_eq!(min, (physical(hwnd, 300) + frame.0, physical(hwnd, 200) + frame.1), "MIN is the smallest the user can drag it to");
     engine.set_size(700, 600, SizeHint::Max);
-    let (_, max) = desktop::track_sizes(hwnd);
+    let max = desktop::max_track_size(hwnd);
     assert_eq!(max, (physical(hwnd, 700) + frame.0, physical(hwnd, 600) + frame.1), "MAX is the largest the user can drag it to");
 
     let _watch = watchdog(Duration::from_secs(30), "run() after the own window's WM_CLOSE");
     runtime
       .set_timeout(300, move || {
-        assert!(desktop::post(hwnd, WM_CLOSE, 0, 0));
+        assert!(support::post(hwnd, WM_CLOSE, 0, 0));
       })
       .expect("timeout");
     engine.run().expect("run");
@@ -251,10 +252,10 @@ fn a_given_window_is_sized_and_restyled_by_each_hint_never_shown_followed_by_the
     engine.set_size(420, 260, SizeHint::None);
     assert_eq!(engine.window_handle(), hwnd, "the webview names the window it was given");
     assert!(!visible(hwnd), "a size never shows a given window");
-    assert!(client_is(hwnd, 420, 260), "NONE sizes the client area: {:?}", desktop::client_size(hwnd));
+    assert!(client_is(hwnd, 420, 260), "NONE sizes the client area: {:?}", support::client_size(hwnd));
     assert_eq!(style(hwnd) & (WS_THICKFRAME | WS_MAXIMIZEBOX), WS_THICKFRAME | WS_MAXIMIZEBOX, "NONE: resizable and maximisable");
     engine.set_title(&tag);
-    assert_eq!(desktop::title_of(hwnd), tag);
+    assert_eq!(support::title_of(hwnd), tag);
 
     engine.set_size(400, 250, SizeHint::Fixed);
     assert!(client_is(hwnd, 400, 250), "FIXED sizes the client area");
@@ -633,10 +634,10 @@ fn a_transparent_page_shows_the_window_behind_it_on_the_screen_and_an_opaque_bac
       for (name, (px, py)) in [("centre", centre), ("square", square)] {
         let there = desktop::top_level_at(px, py);
         if !ours.contains(&there) {
-          refuse_to_judge(&format!("{what}: the {name} ({px}, {py}) is covered by {:?}", desktop::title_of(there)));
+          refuse_to_judge(&format!("{what}: the {name} ({px}, {py}) is covered by {:?}", support::title_of(there)));
         }
       }
-      (desktop::screen_pixel(centre.0, centre.1), desktop::screen_pixel(square.0, square.1))
+      (support::screen_pixel(centre.0, centre.1), support::screen_pixel(square.0, square.1))
     };
     let (centre, square) = sample("transparent");
     assert_eq!(centre, Some(0x00ff00), "the green window behind shows through the transparent page: {centre:x?}");
@@ -1175,11 +1176,19 @@ fn a_handle_that_names_no_webview_has_no_responder_and_no_engine() {
 
 // ---- real keys ---------------------------------------------------------------------------------
 
+/// Presses and releases a key as real input; the release is sent whatever the press did, so no
+/// key is left down on the shared desktop. True when the system took both.
+fn tap_key(virtual_key: u16) -> bool {
+  let down = support::send_key(virtual_key, false);
+  let up = support::send_key(virtual_key, true);
+  down && up
+}
+
 /// Holds the foreground for `window`: asked up to eight times, a short pump apart (other
 /// programs take it); refuses to judge when it is never given.
 fn hold_foreground(runtime: &Runtime, window: isize) {
   for _attempt in 0..8 {
-    if desktop::take_foreground(window) {
+    if support::take_foreground(window) {
       return;
     }
     settle(runtime, Duration::from_millis(250));
@@ -1191,11 +1200,11 @@ fn hold_foreground(runtime: &Runtime, window: isize) {
 /// another program took it), and the page the keyboard focus.
 fn tap_f12(runtime: &Runtime, engine: &Engine) {
   let window = engine.window_handle();
-  if desktop::foreground() != window {
+  if support::foreground() != window {
     hold_foreground(runtime, window);
   }
   engine.move_focus();
-  assert!(desktop::tap_key(VK_F12), "the system took the key");
+  assert!(tap_key(VK_F12), "the system took the key");
 }
 
 #[test]
@@ -1243,7 +1252,7 @@ fn f12_opens_the_developer_tools_with_debug_on_and_none_with_debug_off() {
         settle(runtime, Duration::from_millis(100));
       }
       if let Some(window) = devtools {
-        desktop::post(window, WM_CLOSE, 0, 0);
+        support::post(window, WM_CLOSE, 0, 0);
       }
       assert_eq!(devtools.is_some(), debug, "debug {debug}: F12 opened the developer tools: {devtools:?}");
       engine.destroy();
@@ -1284,9 +1293,9 @@ fn an_accelerator_key_handler_destroys_its_webview_from_inside_its_own_call_on_a
       let (engine_in, refused) = (engine.clone(), refused.clone());
       runtime
         .set_timeout(200, move || {
-          if desktop::foreground() == hwnd {
+          if support::foreground() == hwnd {
             engine_in.move_focus();
-            assert!(desktop::tap_key(VK_F12), "the system took the key");
+            assert!(tap_key(VK_F12), "the system took the key");
           } else {
             refused.set(true);
           }

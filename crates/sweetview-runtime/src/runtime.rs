@@ -152,6 +152,8 @@ impl Runtime {
   pub fn shutdown_for_tests() {
     crate::window::destroy_all();
     *WAKER.lock().unwrap_or_else(PoisonError::into_inner) = None;
+    // Before the runtime, whose apartment the environment belongs to.
+    crate::engine::release_environment_for_tests();
     RUNTIME.with(|slot| slot.borrow_mut().take());
   }
 
@@ -274,6 +276,12 @@ impl Runtime {
 
   pub fn remove_event_listener(&self, token: u64) {
     self.listeners.borrow_mut().retain(|(t, _)| *t != token);
+  }
+
+  /// Tests only: how many listeners the loop has.
+  #[cfg(test)]
+  pub(crate) fn listener_count(&self) -> usize {
+    self.listeners.borrow().len()
   }
 
   fn dispatch(&self, event: &Event<'_, ()>, target: &EventLoopWindowTarget<()>) {
@@ -459,6 +467,8 @@ pub(crate) mod testing {
   pub(crate) fn on_ui_thread(body: impl FnOnce(Rc<Runtime>)) {
     static SERIAL: Mutex<()> = Mutex::new(());
     let _serial = SERIAL.lock().unwrap_or_else(PoisonError::into_inner);
+    // Every test leaves its thread's apartment when it ends; COM stays loaded for the next.
+    sweetview_platform_window::test_support::keep_com_loaded_for_the_test_process();
     struct Release;
     impl Drop for Release {
       fn drop(&mut self) {

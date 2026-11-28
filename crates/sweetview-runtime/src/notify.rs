@@ -184,4 +184,137 @@ mod tests {
       assert_eq!(notifier.pending_balloons(), 0);
     });
   }
+
+  /// The message `tray-icon` gives the shell for its icon's mouse events, with the mouse message
+  /// in the low word of `lParam` (`tray-icon`'s own constant, not exported).
+  const WM_USER_TRAYICON: u32 = 6002;
+  const WM_LBUTTONDBLCLK: isize = 0x0203;
+
+  /// The fallback beside a real `Tray`: the balloon is on the notifier's own hidden icon, not the
+  /// tray's, whether WinRT is not in use or a toast's `Show` failed. Its click is the
+  /// notification's and never the tray's; the tray's own double click (posted to its window as
+  /// the shell posts it) is the tray's and no notification's. Without the tray the notifier's
+  /// icon stays and still shows a balloon.
+  #[test]
+  fn beside_a_real_tray_the_fallback_balloon_is_on_the_notifiers_own_icon_and_each_click_stays_its_owners() {
+    use crate::tray::{Tray, TrayInit};
+    on_ui_thread(|runtime| {
+      let pump_until = |done: &dyn Fn() -> bool| {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !done() && Instant::now() < deadline {
+          runtime.pump();
+          std::thread::sleep(Duration::from_millis(5));
+        }
+        runtime.pump();
+      };
+      let tray_events: Rc<RefCell<Vec<&'static str>>> = Rc::default();
+      let (clicked, doubled) = (tray_events.clone(), tray_events.clone());
+      let tray = Tray::new(TrayInit {
+        tooltip: format!("sweetview runtime notifier beside a tray {}", std::process::id()),
+        icon: None,
+        has_menu: false,
+        on_click: Some(Rc::new(move || clicked.borrow_mut().push("click"))),
+        on_double_click: Some(Rc::new(move || doubled.borrow_mut().push("double"))),
+        open_menu: Rc::new(Vec::new),
+        menu_chosen: Rc::new(|_| {}),
+      })
+      .expect("tray");
+      assert_ne!(tray.window_handle_value(), 0);
+      type Clicks = Rc<RefCell<Vec<(String, Option<String>)>>>;
+      let clicks: Clicks = Rc::default();
+      let sink = clicks.clone();
+      let notifier = Notifier::new(NotifierOptions::default(), move |id, data| sink.borrow_mut().push((id.to_owned(), data.map(str::to_owned)))).expect("notifier");
+      notifier.set_toast_life(Some(4));
+      for (path, id) in [(ForcedPath::BalloonOnly, "no-winrt"), (ForcedPath::ToastShowFails, "show-failed")] {
+        notifier.force_path(path);
+        let shown_before = notifier.balloons_shown();
+        let data = format!("{{\"path\":\"{id}\"}}");
+        let note = Notification { id: id.into(), title: "With a tray".into(), data_json: Some(data.clone()), silent: true, ..Default::default() };
+        let Some(Shown::Balloon(uid)) = notifier.show(&note) else { panic!("{id}: the fallback balloon was not shown") };
+        // The shell accepted a balloon on the notifier's own icon.
+        assert_eq!(notifier.balloons_shown(), shown_before + 1, "{id}");
+        assert!(notifier.simulate_balloon_event(uid, BalloonEvent::Clicked));
+        pump_until(&|| clicks.borrow().iter().any(|(seen, _)| seen == id));
+        assert_eq!(clicks.borrow().last(), Some(&(id.to_owned(), Some(data))), "{id}: the click is the notification's");
+        assert!(tray_events.borrow().is_empty(), "{id}: and not the tray's: {:?}", tray_events.borrow());
+      }
+      let before = clicks.borrow().len();
+      let posted = sweetview_platform_window::test_support::post(tray.window_handle_value(), WM_USER_TRAYICON, 0, WM_LBUTTONDBLCLK);
+      assert!(posted, "the double click was posted to the tray's window");
+      pump_until(&|| !tray_events.borrow().is_empty());
+      assert_eq!(*tray_events.borrow(), ["double"], "the tray's double click is the tray's");
+      assert_eq!(clicks.borrow().len(), before, "and no notification's");
+
+      tray.dispose();
+      notifier.force_path(ForcedPath::BalloonOnly);
+      let shown_before = notifier.balloons_shown();
+      let after = Notification { id: "after the tray".into(), title: "After the tray".into(), silent: true, ..Default::default() };
+      assert!(notifier.notify(&after));
+      assert_eq!(notifier.balloons_shown(), shown_before + 1, "without the tray the notifier's icon still shows a balloon");
+    });
+  }
+
+  /// `callbacks.test.ts` "W1.4 a click handler disposes its notifier from inside its own call; a
+  /// click already queued is not delivered", on the runtime's `Notifier` (what the binding holds).
+  /// Dropped from inside its own `on_click` with a second balloon click already posted, only the
+  /// first click runs. And one released from inside its click, still held as the binding's wrapper
+  /// is: it has no balloon pending, a late event finds nothing, and it shows nothing more.
+  #[test]
+  fn a_notifier_dropped_or_released_from_inside_its_own_click_delivers_no_queued_click_and_shows_nothing_more() {
+    use std::cell::Cell;
+    on_ui_thread(|runtime| {
+      let pump_for = |ms: u64| {
+        let deadline = Instant::now() + Duration::from_millis(ms);
+        while Instant::now() < deadline {
+          runtime.pump();
+          std::thread::sleep(Duration::from_millis(5));
+        }
+      };
+      let note = |id: &str| Notification { id: id.into(), title: "Sweetview test".into(), silent: true, ..Default::default() };
+
+      // Dropped.
+      let slot: Rc<RefCell<Option<Notifier>>> = Rc::default();
+      let clicks: Rc<RefCell<Vec<String>>> = Rc::default();
+      let (inner, sink) = (slot.clone(), clicks.clone());
+      let notifier = Notifier::new(NotifierOptions::default(), move |id, _| {
+        sink.borrow_mut().push(id.to_owned());
+        drop(inner.borrow_mut().take());
+      })
+      .expect("notifier");
+      notifier.force_path(ForcedPath::BalloonOnly);
+      let Some(Shown::Balloon(first)) = notifier.show(&note("first")) else { panic!("balloon") };
+      let Some(Shown::Balloon(second)) = notifier.show(&note("second")) else { panic!("balloon") };
+      // Both clicks are posted before either is dispatched.
+      assert!(notifier.simulate_balloon_event(first, BalloonEvent::Clicked));
+      assert!(notifier.simulate_balloon_event(second, BalloonEvent::Clicked));
+      *slot.borrow_mut() = Some(notifier);
+      pump_for(200);
+      assert_eq!(*clicks.borrow(), ["first"], "the click queued behind the drop is not delivered");
+      assert!(slot.borrow().is_none());
+
+      // Released, and still held.
+      let held: Rc<RefCell<Option<Rc<Notifier>>>> = Rc::default();
+      let calls = Rc::new(Cell::new(0u32));
+      let (inner, count) = (held.clone(), calls.clone());
+      let notifier = Rc::new(
+        Notifier::new(NotifierOptions::default(), move |_, _| {
+          count.set(count.get() + 1);
+          if let Some(notifier) = inner.borrow().as_ref() {
+            notifier.release();
+          }
+        })
+        .expect("notifier"),
+      );
+      notifier.force_path(ForcedPath::BalloonOnly);
+      let Some(Shown::Balloon(uid)) = notifier.show(&note("released")) else { panic!("balloon") };
+      *held.borrow_mut() = Some(notifier.clone());
+      assert!(notifier.simulate_balloon_event(uid, BalloonEvent::Clicked));
+      pump_for(200);
+      assert_eq!(calls.get(), 1);
+      assert_eq!(notifier.pending_balloons(), 0, "no balloon pending");
+      assert!(!notifier.simulate_balloon_event(uid, BalloonEvent::Clicked), "a late event finds nothing");
+      assert!(!notifier.notify(&note("after")), "it shows nothing more");
+      held.borrow_mut().take();
+    });
+  }
 }

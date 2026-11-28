@@ -62,17 +62,22 @@ impl<Args: JsValuesTupleIntoVec, Return: FromNapiValue> JsCallback<Args, Return>
     match outcome {
       Ok(value) => Some(value),
       Err(error) => {
-        match taken(&self.env) {
-          // The guard handed what was thrown to the sink: the `undefined` it threw on is no fault.
-          Taken::HandedOn => return None,
-          // The sink threw: both lines, the callback's (napi's text of the stand-in the guard
-          // threw on, as with no sink) and the sink's.
-          Taken::SinkThrew(sink_text) => {
-            eprintln!("sweetview: {} threw: {}", self.kind, error.reason);
-            eprintln!("sweetview: the callback error sink threw: {sink_text}");
+        match outcome_of(&error.reason) {
+          // The guard handed what was thrown to the sink, which took it.
+          Outcome::Told => return None,
+          // The sink threw: the callback's line and the sink's.
+          Outcome::SinkThrew { reason, sink } => {
+            eprintln!("sweetview: {} threw: {reason}", self.kind);
+            eprintln!("sweetview: the callback error sink threw: {sink}");
             return None;
           }
-          Taken::Nothing => {}
+          // No sink was set when the callback threw: its line, whatever is set by now.
+          Outcome::NoSink { reason } => {
+            eprintln!("sweetview: {} threw: {reason}", self.kind);
+            return None;
+          }
+          // napi's own failure (a value of the wrong type returned), not the guard's.
+          Outcome::NotTheGuards => {}
         }
         // The TypeScript layer wraps every application handler and reports
         // its exception with that handler's own kind; this is the backstop
@@ -84,25 +89,31 @@ impl<Args: JsValuesTupleIntoVec, Return: FromNapiValue> JsCallback<Args, Return>
   }
 }
 
-/// Run once per thread that makes a callback: the guard, and the state it shares with this file.
-/// `sink` is the application's sink or `null`; `handedOn` counts the values handed to it whose
-/// `undefined` napi has not yet returned to [`JsCallback::call`] (one per guard on the stack);
-/// `sinkThrew` holds the text of what the sink threw, when it threw, until that call takes it.
-/// Nothing outside this file can reach the state.
+/// Run when the binding loads on a thread: the guard, and the state it shares with this file
+/// (`sink`, the application's sink or `null`). Nothing outside this file can reach the state.
 ///
-/// With no sink, what napi is given in place of the value: a primitive other than a symbol as it
-/// is (napi keeps no reference to one below Node-API 10, and that refusal is the line's text, as
-/// it always was); anything else as a stand-in that carries the text napi made of it, its
-/// `String()` form or nothing when that throws, and has no `cause` to follow. So the line reads as
-/// it did, while napi's conversion runs no application code, leaves no exception pending (a
-/// symbol's, or a `toString` that throws) and follows no `cause` (one that is itself overflowed
-/// the stack).
+/// Every exception the guard catches is answered by one it throws on to napi: a stand-in made
+/// here, whose text (its `toString`, all napi reads of it) carries what the guard did with that
+/// call's exception, after the thread's mark (`__MARK__`). So the outcome belongs to the call: a
+/// callback made while the guard reads the value (its `toString` calls back into Sweetview) has
+/// one of its own. The sink is read once, when the callback threw: the listeners told about a
+/// fault are those set then. The text is `mark:outcome:reason:sink`, the last two percent-encoded:
+/// `told` (the sink took the value), `sink` (the sink threw: the callback's line and the sink's),
+/// `none` (no sink was set: the callback's line).
+///
+/// `reason` is the text napi made of a thrown value on the main branch: for a primitive other
+/// than a symbol, its refusal to keep a reference to one below Node-API 10 (this binding is
+/// `napi8`); for a symbol, nothing; for anything else, its `String()` form, or nothing when that
+/// throws. So the line reads as it did, while napi's conversion runs no application code, leaves
+/// no exception pending and follows no `cause` (one that is itself overflowed the stack).
 const GUARD_SCRIPT: &str = r#"(() => {
   "use strict";
+  const MARK = "__MARK__";
   const apply = Reflect.apply;
   const create = Object.create;
   const toText = String;
-  const state = { sink: null, handedOn: 0, sinkThrew: null, guard: null };
+  const encode = encodeURIComponent;
+  const state = { sink: null, guard: null };
   const textOf = (value) => {
     try {
       return toText(value);
@@ -110,17 +121,21 @@ const GUARD_SCRIPT: &str = r#"(() => {
       return "";
     }
   };
-  const onward = (thrown) => {
-    const type = typeof thrown;
-    if (thrown === null || (type !== "object" && type !== "function" && type !== "symbol")) return thrown;
-    let text = "";
-    if (type !== "symbol") {
-      try {
-        text = toText(thrown);
-      } catch {
-        text = "";
-      }
+  const encoded = (text) => {
+    try {
+      return encode(text);
+    } catch {
+      return encode("(text that is not well-formed)");
     }
+  };
+  const napiText = (thrown) => {
+    const type = typeof thrown;
+    if (type === "symbol") return "";
+    if (thrown === null || (type !== "object" && type !== "function")) return "Create Error reference failed";
+    return textOf(thrown);
+  };
+  const outcome = (what, reason, sink) => {
+    const text = MARK + ":" + what + ":" + encoded(reason) + ":" + encoded(sink);
     const standIn = create(null);
     standIn.toString = () => text;
     standIn.cause = undefined;
@@ -132,15 +147,13 @@ const GUARD_SCRIPT: &str = r#"(() => {
         return apply(fn, this, arguments);
       } catch (thrown) {
         const sink = state.sink;
-        if (sink === null) throw onward(thrown);
+        if (sink === null) throw outcome("none", napiText(thrown), "");
         try {
           sink(kind, label, thrown);
         } catch (sinkError) {
-          state.sinkThrew = textOf(sinkError);
-          throw onward(thrown);
+          throw outcome("sink", napiText(thrown), textOf(sinkError));
         }
-        state.handedOn += 1;
-        throw undefined;
+        throw outcome("told", "", "");
       }
     };
   return state;
@@ -151,6 +164,9 @@ struct Guard {
   env: Env,
   state: ObjectRef<false>,
   sink_set: bool,
+  /// What marks this thread's stand-ins (see [`GUARD_SCRIPT`]): not to be guessed by a value an
+  /// application throws.
+  mark: String,
 }
 
 /// The thread's guard state. The reference is released by the environment's cleanup hook (added
@@ -175,15 +191,21 @@ thread_local! {
   static GUARD: GuardSlot = const { GuardSlot(RefCell::new(None)) };
 }
 
-/// This thread's guard state, made on first use.
+/// Makes this thread's guard state, when the binding loads (`prepare_environment`).
+pub(crate) fn prepare_guard(env: &Env) -> napi::Result<()> {
+  env.run_in_scope(|| state(env).map(|_| ()))
+}
+
+/// This thread's guard state: made when the binding loads, else on first use.
 fn state(env: &Env) -> napi::Result<Object<'_>> {
   if let Some(state) = GUARD.with(|slot| slot.0.borrow().as_ref().map(|guard| guard.state.get_value(env))) {
     return state;
   }
-  let state: Object<'_> = env.run_script(GUARD_SCRIPT)?;
+  let mark = new_mark();
+  let state: Object<'_> = env.run_script(GUARD_SCRIPT.replace("__MARK__", &mark))?;
   let reference = state.create_ref::<false>()?;
   env.add_env_cleanup_hook(*env, release_guard)?;
-  GUARD.with(|slot| *slot.0.borrow_mut() = Some(Guard { env: *env, state: reference, sink_set: false }));
+  GUARD.with(|slot| *slot.0.borrow_mut() = Some(Guard { env: *env, state: reference, sink_set: false, mark }));
   Ok(state)
 }
 
@@ -206,34 +228,67 @@ fn guarded<Args: JsValuesTupleIntoVec, Return: FromNapiValue>(env: Env, function
   })
 }
 
-/// What the guard did with the exception a call just returned.
-enum Taken {
-  /// It handed the value to the sink, and threw `undefined` on.
-  HandedOn,
-  /// The sink threw (its text): the guard threw the value on as it does with no sink.
-  SinkThrew(String),
-  /// Nothing: the value (or the stand-in for it) reached napi with no sink set, or the failure is
-  /// napi's own (a value of the wrong type returned).
-  Nothing,
+/// A mark for a thread's guard: random, from the standard library's per-process hash keys.
+fn new_mark() -> String {
+  use std::hash::{BuildHasher, Hasher};
+  let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
+  hasher.write_u128(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0));
+  format!("sweetview-guard-{:016x}", hasher.finish())
 }
 
-/// Takes what the guard left for the call that just returned an error: one count of `handedOn`,
-/// or the text of what the sink threw.
-fn taken(env: &Env) -> Taken {
-  let outcome = env.run_in_scope(|| {
-    let mut state = state(env)?;
-    if let Some(text) = state.get_named_property::<Option<String>>("sinkThrew")? {
-      state.set_named_property("sinkThrew", Null)?;
-      return Ok(Taken::SinkThrew(text));
+/// What the guard did with the exception one call returned (see [`GUARD_SCRIPT`]).
+#[derive(Debug, PartialEq, Eq)]
+enum Outcome {
+  Told,
+  SinkThrew { reason: String, sink: String },
+  NoSink { reason: String },
+  /// The error is none of the guard's stand-ins: napi's own failure.
+  NotTheGuards,
+}
+
+/// The outcome a returned error's text carries, read with this thread's mark.
+fn outcome_of(reason: &str) -> Outcome {
+  match GUARD.with(|slot| slot.0.borrow().as_ref().map(|guard| guard.mark.clone())) {
+    Some(mark) => decode_outcome(reason, &mark),
+    None => Outcome::NotTheGuards,
+  }
+}
+
+/// `mark:outcome:reason:sink`, the last two percent-encoded; any other text is not the guard's.
+fn decode_outcome(text: &str, mark: &str) -> Outcome {
+  let Some(rest) = text.strip_prefix(mark).and_then(|rest| rest.strip_prefix(':')) else {
+    return Outcome::NotTheGuards;
+  };
+  let mut fields = rest.splitn(3, ':');
+  let (Some(what), Some(reason), Some(sink)) = (fields.next(), fields.next(), fields.next()) else {
+    return Outcome::NotTheGuards;
+  };
+  match what {
+    "told" => Outcome::Told,
+    "sink" => Outcome::SinkThrew { reason: percent_decoded(reason), sink: percent_decoded(sink) },
+    "none" => Outcome::NoSink { reason: percent_decoded(reason) },
+    _ => Outcome::NotTheGuards,
+  }
+}
+
+/// The text `encodeURIComponent` encoded.
+fn percent_decoded(text: &str) -> String {
+  let bytes = text.as_bytes();
+  let mut out = Vec::with_capacity(bytes.len());
+  let mut i = 0;
+  while i < bytes.len() {
+    let digit = |at: usize| bytes.get(at).and_then(|&b| (b as char).to_digit(16));
+    if bytes[i] == b'%' {
+      if let (Some(high), Some(low)) = (digit(i + 1), digit(i + 2)) {
+        out.push((high * 16 + low) as u8);
+        i += 3;
+        continue;
+      }
     }
-    let pending: u32 = state.get_named_property("handedOn")?;
-    if pending == 0 {
-      return Ok(Taken::Nothing);
-    }
-    state.set_named_property("handedOn", pending - 1)?;
-    Ok(Taken::HandedOn)
-  });
-  outcome.unwrap_or(Taken::Nothing)
+    out.push(bytes[i]);
+    i += 1;
+  }
+  String::from_utf8_lossy(&out).into_owned()
 }
 
 /// Makes `sink` where a caught exception goes on this thread, in place of the stderr line, or puts
@@ -281,5 +336,37 @@ fn report(kind: &'static str, label: Option<&str>, error: napi::Error) {
       eprintln!("sweetview: the callback error sink threw: {}", sink_error.reason);
     }
     Some(Ok(false)) | None => eprintln!("sweetview: {kind} threw: {reason}"),
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::{decode_outcome, percent_decoded, Outcome};
+
+  const MARK: &str = "sweetview-guard-0123456789abcdef";
+
+  // Review 4, C2 and C5: each call's outcome is read from the error that call returned, so a
+  // nested call's cannot be taken for it, and "no sink when it threw" is its own outcome.
+  #[test]
+  fn each_outcome_is_read_from_the_calls_own_text() {
+    assert_eq!(decode_outcome(&format!("{MARK}:told::"), MARK), Outcome::Told);
+    assert_eq!(decode_outcome(&format!("{MARK}:none:Error%3A%20boom:"), MARK), Outcome::NoSink { reason: "Error: boom".into() });
+    assert_eq!(
+      decode_outcome(&format!("{MARK}:sink:Create%20Error%20reference%20failed:Error%3A%20sink%20%E2%9C%93%0Aline"), MARK),
+      Outcome::SinkThrew { reason: "Create Error reference failed".into(), sink: "Error: sink \u{2713}\nline".into() }
+    );
+  }
+
+  #[test]
+  fn a_text_without_this_threads_mark_is_not_the_guards() {
+    for text in ["Error: boom", "Create Error reference failed", "sweetview-guard-ffffffffffffffff:told::", &format!("{MARK}:told"), &format!("{MARK}:else::"), &format!("{MARK}told::")] {
+      assert_eq!(decode_outcome(text, MARK), Outcome::NotTheGuards, "{text}");
+    }
+  }
+
+  #[test]
+  fn percent_decoding_keeps_what_is_not_an_escape() {
+    assert_eq!(percent_decoded("100%25%20sure%"), "100% sure%");
+    assert_eq!(percent_decoded("%zz%4"), "%zz%4");
   }
 }

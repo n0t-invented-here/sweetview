@@ -2,8 +2,8 @@
 //!
 //! Monitors, their bounds and scale, and the cursor come from `tao`; the work
 //! area, which `tao`'s `MonitorHandle` does not carry, from the platform crate.
-//! Which screen a point or a window is on is decided in the logic crate, the
-//! way the OS picks one.
+//! Which screen a point is on is decided in the logic crate, the way the OS
+//! picks one; which screen a window is on, by the OS (`MonitorFromWindow`).
 
 use sweetview_platform_window as platform;
 use sweetview_window_logic::screen as pick;
@@ -64,16 +64,21 @@ pub fn at(point: Point) -> Result<ScreenInfo> {
   Ok(screens[pick::screen_at(&bounds, point).unwrap_or(0)])
 }
 
-/// The monitor a window is on: the one its outer frame overlaps most, else
-/// the nearest. A handle that names no window gets the primary monitor, as
-/// `MonitorFromWindow` answers with no monitor for it.
+/// The monitor a window is on, as `MonitorFromWindow` answers: the one its
+/// outer frame overlaps most, else the nearest, and for a minimised window
+/// the one its restored position is on. A handle that names no window gets
+/// the primary monitor.
 pub fn of_window(handle: isize) -> Result<ScreenInfo> {
-  let Some(rect) = platform::BorrowedWindow::with_handle_value(handle, |window| platform::outer_bounds(window).unwrap_or_default()) else {
-    return primary();
-  };
-  let screens = all()?;
-  let bounds: Vec<Rect> = screens.iter().map(|s| s.bounds).collect();
-  Ok(screens[pick::screen_of_rect(&bounds, rect).unwrap_or(0)])
+  let runtime = Runtime::get()?;
+  let screen = runtime.with_target(|target| {
+    let primary = target.primary_monitor();
+    let monitor = platform::BorrowedWindow::with_handle_value(handle, |window| platform::monitor_of(window, target.available_monitors()))?;
+    Some(info(&monitor?, primary.as_ref()))
+  })?;
+  match screen {
+    Some(screen) => Ok(screen),
+    None => primary(),
+  }
 }
 
 /// The rectangle holding every monitor.
@@ -95,6 +100,7 @@ pub fn cursor() -> Result<Point> {
 mod tests {
   use super::*;
   use crate::runtime::testing::on_ui_thread;
+  use crate::window::{Window, WindowInit};
 
   #[test]
   fn screens_without_a_window() {
@@ -110,6 +116,28 @@ mod tests {
       assert!(all_bounds.width >= primary.bounds.width && all_bounds.height >= primary.bounds.height);
       cursor().expect("cursor");
       assert_eq!(of_window(1).expect("no window: the primary").bounds, primary.bounds);
+    });
+  }
+
+  /// A minimised window is on the screen of its restored position, as `MonitorFromWindow` answers
+  /// and as at tag `pre-rust-rewrite`, not on the screen nearest its minimised rectangle (which is
+  /// off every screen). Fails only where a screen is not the one nearest that rectangle, so with
+  /// two screens or more.
+  #[test]
+  fn a_minimised_window_is_on_the_screen_of_its_restored_position() {
+    on_ui_thread(|runtime| {
+      for screen in all().expect("screens") {
+        let w = screen.work_area;
+        let bounds = Rect::new(w.x + w.width / 2 - 150, w.y + w.height / 2 - 100, 300, 200);
+        let init = WindowInit { title: "rt screen of minimised".into(), frame: true, bounds: Some(bounds), no_activate: true, ..Default::default() };
+        let window = Window::create(init).expect("window");
+        window.show().expect("show");
+        window.minimize();
+        runtime.pump();
+        assert!(window.is_minimized());
+        assert_eq!(of_window(window.handle()).expect("screen").bounds, screen.bounds, "a window minimised from {bounds:?}");
+        window.dispose();
+      }
     });
   }
 }

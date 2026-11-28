@@ -1,5 +1,5 @@
-// Native Windows folder picker, through the native binding (rfd, which shows
-// the IFileOpenDialog folder dialog). No child process.
+// Native Windows folder picker, through the native binding (the IFileOpenDialog
+// folder dialog; a COM failure throws "<step> failed: HRESULT 0x<code>"). No child process.
 //
 // Must be called on the UI thread. The dialog runs its own message loop until
 // it closes; the UI thread's timers, wakes and deferred work go on running in it.

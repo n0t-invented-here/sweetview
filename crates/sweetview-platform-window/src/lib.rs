@@ -115,8 +115,10 @@ pub struct Chrome {
 pub enum WindowEvent {
   /// The window's outer bounds after a size change; not sent while it is minimised.
   Resized(Rect),
-  /// The window's outer bounds after a move; not sent while it is minimised.
-  Moved(Rect),
+  /// The window's outer bounds after a move, and whether it is minimised
+  /// (its bounds are then the OS's iconic position): a tab frame tells its
+  /// move listeners then too, any other window does not.
+  Moved { bounds: Rect, minimized: bool },
   /// The user asked to close the window (close button, Alt+F4, `WM_CLOSE`).
   CloseRequested,
   /// Files were dropped on the window: every path of one drop, in order.
@@ -134,6 +136,8 @@ pub use sweetview_platform_loop::ResourceCounts as HandleCounts;
 /// Tests that count the process's handles run one at a time.
 #[cfg(test)]
 pub(crate) static TEST_SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+#[cfg(windows)]
+mod folder_dialog;
 mod metrics;
 mod popup;
 
@@ -143,8 +147,12 @@ mod popup;
 #[path = "test_support.rs"]
 pub mod test_support;
 
-/// The foreground, real keys, screen pixels and a window read back by handle value, for the
-/// runtime's webview tests (enabled as a dev-dependency only, as `test_support` is).
+#[cfg(windows)]
+pub use folder_dialog::{pick_folder, FolderDialogError};
+
+/// What `test_support` does not read for the runtime's webview tests: the top-level window at a
+/// screen point, a window's outer rectangle and largest tracking size, the user's app theme, and a
+/// top-level window by part of its title (enabled as a dev-dependency only, as `test_support` is).
 #[cfg(all(windows, any(test, feature = "test-support")))]
 #[path = "test_support_desktop.rs"]
 pub mod test_support_desktop;

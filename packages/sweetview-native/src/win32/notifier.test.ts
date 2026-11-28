@@ -1,7 +1,10 @@
-// The Windows notifier through the native binding, against real WinRT and the real shell.
-// The binding's debug hooks stand in for a person clicking: they invoke the
-// handlers WinRT holds and post the messages the shell posts, and the clicks
-// then arrive from the UI thread's message loop, as real ones do.
+// The Windows notifier's TypeScript layer (`createNotifier`) through the native binding: which
+// identity it hands the binding, what a click's data comes back as, the tray's icon handed on,
+// `dispose`, and an exception thrown by `onClick`. What the notifier does with WinRT and the shell
+// (toasts, routing each click once, the balloon fallback, beside a real tray) is proven in Rust:
+// `crates/sweetview-platform-notify/src/windows.rs` and `crates/sweetview-runtime/src/notify.rs`.
+// The binding's debug hooks stand in for a person clicking: they post the messages the shell
+// posts, and the clicks then arrive from the UI thread's message loop, as real ones do.
 
 import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
@@ -53,110 +56,42 @@ function cookieOf(shown: string | null, kind: "toast" | "balloon"): number {
 const TEST_TOAST_LIFE = 4;
 
 describe.if(process.platform === "win32")("Windows notifier", () => {
-  test("registers an AUMID and shows real WinRT toasts with independently routed clicks", async () => {
+  test("the explicit app ID wins over the identity's and is registered under the identity's name; a click's data comes back through JSON, or unchanged when JSON cannot carry it; dispose ends it", async () => {
     const { createNotifier, debugNativeNotifier } = await import("./notifier");
-    const appId = `Sweetview.NotifierTest.${crypto.randomUUID()}`;
-    const identity = defineAppIdentity({ appId, appName: 'Sweetview <test> & "toast"' });
-    const clicks: NotificationClick[] = [];
-    // A real IToastNotifier.Show under this identity, on a notifier of its own: a toast, not a fallback.
-    const real = createNotifier({ identity, onClick: () => {} });
-    try {
-      const realNative = debugNativeNotifier(real)!;
-      realNative.debugSetToastLife(TEST_TOAST_LIFE);
-      cookieOf(realNative.debugShow("really shown", '<Title> & "quotes"', "It’s <body> & 'more'", true, "null"), "toast");
-      expect(realNative.debugToastsAvailable()).toBe(true);
-      expect(realNative.debugBalloonsShown()).toBe(0);
-    } finally {
-      real.dispose();
-    }
-    const backend = createNotifier({ identity, onClick: (click) => clicks.push(click) });
-    const native = debugNativeNotifier(backend)!;
-    native.debugSetToastLife(TEST_TOAST_LIFE);
-    try {
-      const first = { id: 'first<&>"', data: { index: 1 } };
-      const second = { id: "second", data: ["different", 2] };
-      const show = (click: { id: string; data: unknown }) =>
-        native.debugShow(click.id, '<Title> & "quotes"', "It’s <body> & 'more'", true, JSON.stringify(click.data));
-      // The toasts whose events are routed below are built and subscribed the same way and held
-      // back from the platform, so its own events (a machine that shows no toasts dismisses each
-      // at once) cannot arrive between the ones this test delivers.
-      native.debugForcePath("toastHeld");
-      const firstCookie = cookieOf(show(first), "toast");
-      const secondCookie = cookieOf(show(second), "toast");
-      const outstanding = cookieOf(show({ id: "outstanding", data: null }), "toast");
-      expect(firstCookie).not.toBe(secondCookie);
-      expect(native.debugToastsAvailable()).toBe(true);
-      expect(displayName(appId)).toBe(identity.appName);
-      expect(native.debugPendingToasts()).toBe(3);
-      expect(native.debugPendingBalloons()).toBe(0);
-
-      // The handlers WinRT holds post the event; the click arrives only from the loop.
-      expect(native.debugSimulateToastEvent(secondCookie, "activated")).toBe(true);
-      expect(native.debugSimulateToastEvent(firstCookie, "activated")).toBe(true);
-      expect(native.debugSimulateToastEvent(secondCookie, "activated")).toBe(true);
-      expect(clicks).toEqual([]);
-      pumpUntil(() => clicks.length >= 2);
-      expect(clicks).toEqual([second, first]);
-
-      // A failed toast falls back to one balloon; a dismissed one only goes away; neither clicks.
-      const failed = cookieOf(show({ id: "failed", data: null }), "toast");
-      const dismissed = cookieOf(show({ id: "dismissed", data: null }), "toast");
-      native.debugSimulateToastEvent(failed, "failed");
-      native.debugSimulateToastEvent(failed, "failed");
-      native.debugSimulateToastEvent(dismissed, "dismissed");
-      native.debugSimulateToastEvent(failed, "activated");
-      native.debugSimulateToastEvent(dismissed, "activated");
-      pumpUntil(() => native.debugPendingToasts() === 1 && native.debugBalloonsShown() === 1);
-      expect(clicks).toEqual([second, first]);
-      // Counted as shown, not as still pending: a shell that shows no balloons hides one at once.
-      expect(native.debugBalloonsShown()).toBe(1);
-      expect(native.debugPendingBalloons()).toBeLessThanOrEqual(1);
-      expect(native.debugPendingToasts()).toBe(1);
-
-      backend.dispose();
-      backend.dispose();
-      // Disposed: a late event finds nothing, and every handler WinRT held is released.
-      expect(native.debugSimulateToastEvent(outstanding, "activated")).toBe(false);
-      pump();
-      expect(clicks).toEqual([second, first]);
-      expect(binding().debugLiveToastHandlers()).toBe(0);
-    } finally {
-      backend.dispose();
-      deleteAppId(appId);
-    }
-  });
-
-  test("uses the explicit app ID and falls back when WinRT Show fails", async () => {
-    const { createNotifier, debugNativeNotifier } = await import("./notifier");
-    const appId = `Sweetview.NotifierFallbackTest.${crypto.randomUUID()}`;
+    const appId = `Sweetview.NotifierWrapperTest.${crypto.randomUUID()}`;
     const unused = `Sweetview.Unused.${crypto.randomUUID()}`;
-    const identity = defineAppIdentity({ appId: unused, appName: "Sweetview fallback test" });
+    const identity = defineAppIdentity({ appId: unused, appName: "Sweetview wrapper test" });
     const clicks: NotificationClick[] = [];
     const backend = createNotifier({ appId, identity, onClick: (click) => clicks.push(click) });
     const native = debugNativeNotifier(backend)!;
     native.debugSetToastLife(TEST_TOAST_LIFE);
     try {
       expect(backend.notify({ title: "WinRT", silent: true })).toBe(true);
-      expect(native.debugToastsAvailable()).toBe(true);
-      expect(native.debugPendingToasts()).toBe(1);
-      expect(native.debugPendingBalloons()).toBe(0);
-      expect(displayName(appId)).toBe("Sweetview fallback test");
+      expect(displayName(appId)).toBe("Sweetview wrapper test");
       expect(displayName(unused)).toBeNull();
 
-      native.debugForcePath("toastShowFails");
-      expect(backend.notify({ title: "Fallback", silent: true, data: [1] })).toBe(true);
-      expect(native.debugPendingBalloons()).toBe(1);
-      expect(native.debugPendingToasts()).toBe(1); // the failed toast was torn down
-
-      // The click the shell posts for a fallback balloon comes back with its id and data.
-      const uid = cookieOf(native.debugShow("balloon-click", "Fallback", "", true, JSON.stringify({ ok: true })), "balloon");
-      expect(native.debugSimulateBalloonEvent(uid, "clicked")).toBe(true);
-      pumpUntil(() => clicks.length > 0);
-      expect(clicks).toEqual([{ id: "balloon-click", data: { ok: true } }]);
-      expect(native.debugPendingBalloons()).toBe(1);
+      native.debugForcePath("balloonOnly");
+      // A click with no payload gives no data.
+      const plain = cookieOf(native.debugShow("plain", "Plain", "", true, null), "balloon");
+      expect(native.debugSimulateBalloonEvent(plain, "clicked")).toBe(true);
+      pumpUntil(() => clicks.length === 1);
+      expect(clicks.splice(0)).toEqual([{ id: "plain", data: undefined }]);
+      // Balloon uIDs count up process-wide, so each notification's below is the next one.
+      const uid = cookieOf(native.debugShow("probe", "Probe", "", true, null), "balloon");
+      const data = { index: 1, list: ["different", 2] };
+      expect(backend.notify({ title: "Data", id: "data", silent: true, data })).toBe(true);
+      const raw = () => "not JSON";
+      expect(backend.notify({ title: "Raw", id: "raw", silent: true, data: raw })).toBe(true);
+      expect(native.debugSimulateBalloonEvent(uid + 1, "clicked")).toBe(true);
+      expect(native.debugSimulateBalloonEvent(uid + 2, "clicked")).toBe(true);
+      pumpUntil(() => clicks.length === 2);
+      expect(clicks[0]).toEqual({ id: "data", data });
+      expect(clicks[0]!.data).not.toBe(data);
+      expect(clicks[1]!.id).toBe("raw");
+      expect(clicks[1]!.data).toBe(raw);
 
       backend.dispose();
-      expect(native.debugPendingBalloons()).toBe(0);
+      backend.dispose();
       expect(backend.notify({ title: "Disposed" })).toBe(false);
     } finally {
       backend.dispose();
@@ -165,13 +100,12 @@ describe.if(process.platform === "win32")("Windows notifier", () => {
     }
   });
 
-  test("without WinRT every notification is a balloon, with the tray's icon or the stock one", async () => {
+  test("the tray's icon is handed to the binding; bytes it refuses are logged and the stock icon is used", async () => {
     const { createNotifier, debugNativeNotifier } = await import("./notifier");
     const { setNotifierTrayIcon } = await import("./notify-icon");
-    const clicks: NotificationClick[] = [];
     const errors: unknown[][] = [];
     const originalError = console.error;
-    const backend = createNotifier({ onClick: (click) => clicks.push(click) });
+    const backend = createNotifier({});
     const native = debugNativeNotifier(backend)!;
     native.debugSetToastLife(TEST_TOAST_LIFE);
     try {
@@ -184,80 +118,10 @@ describe.if(process.platform === "win32")("Windows notifier", () => {
       expect(String(errors[0]?.[0])).toBe("sweetview: notifier icon:");
       setNotifierTrayIcon(undefined);
       expect(backend.notify({ title: "Stock icon", silent: true })).toBe(true);
-      expect(native.debugToastsAvailable()).toBe(false); // WinRT was never tried
       expect(native.debugPendingBalloons()).toBe(2);
-
-      // A value JSON cannot carry comes back unchanged, as today on Windows.
-      const raw = () => "not JSON";
-      const uid = cookieOf(native.debugShow("plain", "Plain", "", true, null), "balloon");
-      expect(native.debugSimulateBalloonEvent(uid, "clicked")).toBe(true);
-      pumpUntil(() => clicks.length === 1);
-      expect(clicks).toEqual([{ id: "plain", data: undefined }]);
-      expect(backend.notify({ title: "Raw", id: "raw", silent: true, data: raw })).toBe(true);
-      // Balloon uIDs count up process-wide, so this notification's is the next one.
-      expect(native.debugSimulateBalloonEvent(uid + 1, "clicked")).toBe(true);
-      pumpUntil(() => clicks.length === 2);
-      expect(clicks[1]!.id).toBe("raw");
-      expect(clicks[1]!.data).toBe(raw);
-      // A balloon that times out reports no click.
-      const timeout = cookieOf(native.debugShow("timeout", "Timed out", "", true, null), "balloon");
-      native.debugSimulateBalloonEvent(timeout, "timedOut");
-      pumpUntil(() => native.debugPendingBalloons() === 2);
-      expect(native.debugPendingBalloons()).toBe(2);
-      expect(clicks).toHaveLength(2);
     } finally {
       console.error = originalError;
       setNotifierTrayIcon(undefined);
-      backend.dispose();
-    }
-  });
-
-  test("with a real Tray in the process the fallback is still a balloon on the notifier's own icon: its click is the notification's, and the tray's clicks stay the tray's", async () => {
-    const { createNotifier, debugNativeNotifier } = await import("./notifier");
-    const { createTray, currentTray } = await import("./tray");
-    const { postTrayMouse, TRAY } = await import("../../test/win32-os");
-    const clicks: NotificationClick[] = [];
-    const trayEvents: string[] = [];
-    const tray = createTray({
-      tooltip: `sweetview-test notifier with a tray ${process.pid}`,
-      icon: { windows: { ico: dotIco({ sizes: [16, 32] }) } },
-      onDoubleClick: () => trayEvents.push("double"),
-    });
-    const backend = createNotifier({ onClick: (click) => clicks.push(click) });
-    const native = debugNativeNotifier(backend)!;
-    native.debugSetToastLife(TEST_TOAST_LIFE);
-    try {
-      expect(currentTray()).toBe(tray);
-      expect(tray.windowHandle()).not.toBe(0n);
-      // Both failures, with the tray there: WinRT not in use, and a toast whose Show fails.
-      for (const [path, id] of [["balloonOnly", "no-winrt"], ["toastShowFails", "show-failed"]] as const) {
-        native.debugForcePath(path);
-        const shownBefore = native.debugBalloonsShown();
-        const uid = cookieOf(native.debugShow(id, "With a tray", "", true, JSON.stringify({ path })), "balloon");
-        // The shell accepted a balloon on the notifier's own icon (the tray's icon has none: its
-        // window gets no balloon message, and a click on the balloon is not a click on the tray).
-        expect(native.debugBalloonsShown()).toBe(shownBefore + 1);
-        expect(native.debugSimulateBalloonEvent(uid, "clicked")).toBe(true);
-        pumpUntil(() => clicks.some((c) => c.id === id));
-        expect(clicks.at(-1)).toEqual({ id, data: { path } });
-        expect(trayEvents).toEqual([]);
-      }
-      // The tray goes on working beside it: a double click the shell posts to the tray's own
-      // window is the tray's, and no notification click.
-      const before = clicks.length;
-      postTrayMouse(tray.windowHandle(), TRAY.LBUTTONDBLCLK);
-      pumpUntil(() => trayEvents.length > 0);
-      expect(trayEvents).toEqual(["double"]);
-      expect(clicks).toHaveLength(before);
-      // And without it: the tray goes, the notifier's icon stays and still shows a balloon.
-      tray.dispose();
-      expect(currentTray()).toBeUndefined();
-      native.debugForcePath("balloonOnly");
-      const shownBefore = native.debugBalloonsShown();
-      expect(backend.notify({ title: "After the tray", silent: true })).toBe(true);
-      expect(native.debugBalloonsShown()).toBe(shownBefore + 1);
-    } finally {
-      tray.dispose();
       backend.dispose();
     }
   });

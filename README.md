@@ -255,7 +255,7 @@ false, and that is the only place it knows the difference.
 
 ```ts
 import { createBridge } from "@n1h/sweetview/ipc";
-import { webviewTransport } from "@n1h/sweetview/page";
+import { signalReady, webviewTransport } from "@n1h/sweetview/page";
 import type { Events, Methods } from "./protocol";
 
 const bridge = createBridge<Methods, Events>(webviewTransport());
@@ -265,6 +265,7 @@ bridge.on("tick", ({ count }) => {
 });
 
 document.getElementById("root")!.textContent = await bridge.rpc("greet", { name: "world" });
+signalReady(); // the page has rendered: the window appears now
 ```
 
 ### 5. Create the window in `app.ts`
@@ -284,8 +285,11 @@ you made and call `process.exit()` after `run()`, as before 1.0.
   `Bun.main`, which is this file. The same path works under `bun run` and
   inside an executable from `bun build --compile`.
 - `title` defaults to the page's `<title>`; `assets` adds files the page
-  fetches, such as models or images. Windows are created hidden so you can
-  wire trays, menus, or bounds before calling `app.window.show()`. All options:
+  fetches, such as models or images. Windows are created hidden; with
+  `showOnReady: true` the window appears when the page calls `signalReady()`,
+  so it never shows a blank frame, and `readyTimeoutMs: 15_000` arms the
+  watchdog that shows it anyway, with a start-up error page, if the page fails
+  before it signals. All options:
   [`createApp`](docs/app.md#createapp).
 
 ```ts
@@ -296,9 +300,10 @@ import type { Events, Methods } from "./protocol";
 const app = await createApp<Methods, Events>({
   page: index,
   worker: "./worker.ts",
+  showOnReady: true, // the window appears when the page calls signalReady()
+  readyTimeoutMs: 15_000, // or, if the page fails first, with Sweetview's start-up error page
 });
 
-app.window.show();
 app.run();
 ```
 
@@ -390,7 +395,7 @@ codesign --sign - --force --deep "App.app"
 | Path | Contents |
 |---|---|
 | `packages/` | the Sweetview facade, IPC, the WebSocket, Electron and Tauri transports, native helpers, settings and build packages |
-| `crates/` | the Rust native layer on Windows (`tao`, `muda`, `tray-icon`, `rfd` and WebView2 through `webview2-com` behind this project's own crates), compiled by `just native build` into the N-API binding `@n1h/sweetview-native` loads |
+| `crates/` | the Rust native layer on Windows (`tao`, `muda`, `tray-icon` and WebView2 through `webview2-com` behind this project's own crates), compiled by `just native build` into the N-API binding `@n1h/sweetview-native` loads |
 | `docs/` | the reference pages, indexed by the [reference index](docs/README.md) |
 | [`demos/web-app/`](demos/web-app/README.md) | one backend and one React page run two ways: a desktop window with tray and notifications, or `Bun.serve` with WebSockets |
 | [`demos/web-app-electron/`](demos/web-app-electron/README.md) | the web-app page unchanged in an Electron shell, its service in the main process |

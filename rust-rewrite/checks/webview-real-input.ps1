@@ -1,4 +1,4 @@
-# Real input for the webview's page behaviour and drops (DECISIONS D45), injected with SendInput
+# Real input for the webview's page behaviour and drops (DECISIONS D48), injected with SendInput
 # so it travels through the OS as a person's does. Run by
 # the runtime's engine tests (crates/sweetview-runtime/src/engine_tests.rs, `real_input`), one action per run:
 #

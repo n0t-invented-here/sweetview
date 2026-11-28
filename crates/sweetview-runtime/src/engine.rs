@@ -272,10 +272,19 @@ impl Engine {
     };
 
     let token = drain_token(id);
-    let extras = WebviewExtras::attach(&webview, ExtrasOptions { wake_ui: Arc::new(move || {
+    let attached = WebviewExtras::attach(&webview, ExtrasOptions { wake_ui: Arc::new(move || {
       runtime::wake(token);
-    }) })
-    .map_err(|code| Error::os("the webview's request handling could not be set up", format!("webview_error_t {}", code.code())))?;
+    }) });
+    let extras = match attached {
+      Ok(extras) => extras,
+      Err(code) => {
+        // Nothing of this webview stays: its own window's listener goes with it.
+        if let HostWindow::Own { listener, .. } = &window {
+          runtime.remove_event_listener(*listener);
+        }
+        return Err(Error::os("the webview's request handling could not be set up", format!("webview_error_t {}", code.code())));
+      }
+    };
     let message_slot = slot.clone();
     extras.set_page_message_handler(Some(Rc::new(move |message: &str| {
       let inner = message_slot.borrow().upgrade();
@@ -814,6 +823,15 @@ fn given_hint(hint: SizeHint) -> sweetview_platform_window::GivenWindowSizeHint 
     SizeHint::Max => Given::Max,
     SizeHint::Fixed => Given::Fixed,
   }
+}
+
+/// Lets go of this thread's WebView2 environment. Tests only, from
+/// `Runtime::shutdown_for_tests`, which leaves the thread's COM apartment: the
+/// environment is a COM object of that apartment and must be released while it
+/// is still entered, not by the thread-local's destructor when the thread ends.
+pub(crate) fn release_environment_for_tests() {
+  #[cfg(windows)]
+  sweetview_platform_webview::release_thread_environment();
 }
 
 #[cfg(windows)]

@@ -102,7 +102,7 @@ const toggleMaximize = () => chrome.toggleMaximize();
 
 const info = await chrome.info();
 if (info.chrome === "page") {
-  chrome.onMaximizeChange(showMaximized); // the button, a double click, the system menu
+  chrome.onMaximizeChange(showMaximized); // the button, a double click, a framed window's system menu
   titleBar.addEventListener("pointerdown", chrome.onTitlePointerDown);
   titleBar.addEventListener("dblclick", toggleMaximize);
   titleBar.addEventListener("contextmenu", (e) => {
@@ -139,7 +139,7 @@ import type { WindowChromeEvents, WindowChromeInfo, WindowChromeKind, WindowChro
 | `window.resize` | `ResizeEdge` | `void` | Calls `window.startResize(edge)`. Both Windows and macOS drag the requested edge or corner with the cursor while the left mouse button is held. |
 | `window.minimize` | `void` | `void` | Calls `window.minimize()`. |
 | `window.maximize` | `void` | `void` | Calls `window.toggleMaximize()`: maximised, or back to the previous bounds when already maximised. |
-| `window.systemMenu` | `void` | `void` | Calls `window.showSystemMenu()`: on Windows the window's system menu (Restore, Move, Size, Minimize, Maximize, Close) at the cursor, its choice carried out. A window object without `showSystemMenu` (a test double) does nothing. On macOS, until the macOS goal of the Rust rewrite, the table has no `window.systemMenu`: it is the table it was before 1.0, so an application's own method of that name stays its own. |
+| `window.systemMenu` | `void` | `void` | Calls `window.showSystemMenu()`: on Windows the window's system menu (Restore, Move, Size, Minimize, Maximize, Close) at the cursor, its choice carried out. On a frameless window the menu's Maximize is the OS's: it covers the taskbar and is not reported (not by `isMaximized()`, `onMaximizeChange` or `window.maximized`), so a page-drawn title bar offers `toggleMaximize()` for maximising. A window object without `showSystemMenu` (a test double) gets no `window.systemMenu` in its table. On macOS, until the macOS goal of the Rust rewrite, the table has no `window.systemMenu`: it is the table it was before 1.0, so an application's own method of that name stays its own. |
 | `window.close` | `void` | `void` | Calls the `onClose` option. Without one, it calls `window.hide()`: the window disappears and the app keeps running. |
 
 `WindowChromeInfo` is `{ chrome: WindowChromeKind; maximized: boolean }`:
@@ -164,15 +164,15 @@ Builds the `window.*` handlers for one window; pass the result as `uiMethods` (o
 
 `windowChromeEvents(window, view): () => void`
 
-Sends `window.maximized` with `{ maximized }` to the page each time `window` becomes maximised or is restored, by any means: the page's maximise button or a double click on its title bar, the window's system menu (`window.systemMenu`), `toggleMaximize()` from anywhere ([`Window#onMaximizeChange`](native/windows.md#window-members)). `view` is the `WebView` (or `App`) the page runs in, whose event map includes `WindowChromeEvents`. Call it once the webview is attached; it returns the function that stops it. An event sent before the page subscribed is not kept, which is why the page asks `info()` once when it loads.
+Sends `window.maximized` with `{ maximized }` to the page each time `window` becomes maximised or is restored, by any means: the page's maximise button or a double click on its title bar, `toggleMaximize()` from anywhere, and a framed window's system menu (`window.systemMenu`) ([`Window#onMaximizeChange`](native/windows.md#window-members)). A frameless window's system-menu Maximize is the OS's: it covers the taskbar and is not reported, which is why the page's own button calls `toggleMaximize()`. `view` is the `WebView` (or `App`) the page runs in, whose event map includes `WindowChromeEvents`. In a tabbed application (`createApp({ tabs: true })`) the page runs in a tab: pass `tab.webview`, with `app.window` (or `tab.window`) as `window`; a tabbed `App` itself sends no events, so given as `view` it registers and the page is told nothing. The subscription stays on the window it was given: when the tab moves to another window (a tear-off or a merge), stop it and call `windowChromeEvents(tab.window, tab.webview)` again. Call it once the webview is attached; it returns the function that stops it. An event sent before the page subscribed is not kept, which is why the page asks `info()` once when it loads.
 
 `windowChromeMethods`, `windowChromeEvents`, `WindowChromeEvents`, `WindowChromeInfo`, `WindowChromeKind`, `WindowChromeMethods`, `WindowChromeMethodTable` and `WindowChromeOptions` are also exported from the root `@n1h/sweetview`. The page half (`windowChromeControls`, `resizeHandles`) is only in `@n1h/sweetview/window-chrome`.
 
-Throws: on Windows, the `window.resize` handler throws `sweetview: SetTimer failed (<code>)` when the resize timer cannot be created; `WebView` passes the message to the page as a failed call.
+Throws: on Windows, the `window.resize` handler throws `sweetview: a timer could not be set: <reason>` when the native loop cannot start the resize loop's interval, and `sweetview: the cursor position could not be read: <reason>` when the cursor cannot be read; `WebView` passes the message to the page as a failed call.
 
 Platforms:
 
-- `window.resize` runs `Window.startResize`, Sweetview's own resize loop, on both platforms: every 10 ms while the left button is held (a `SetTimer` on Windows, an `NSTimer` on macOS), it moves the edge or corner with the cursor. It stops at the window's `minWidth` / `minHeight`, or at 160 x 120 window units when neither is set. That 160 x 120 fallback belongs to this custom loop only: resizing a framed window by its native frame, and macOS zoom, use the OS's own limits and `minWidth` / `minHeight`.
+- `window.resize` runs `Window.startResize`, Sweetview's own resize loop, on both platforms: every 10 ms while the left button is held (an interval of the native loop on Windows, an `NSTimer` on macOS), it moves the edge or corner with the cursor. It stops at the window's `minWidth` / `minHeight`, or at 160 x 120 window units when neither is set. That 160 x 120 fallback belongs to this custom loop only: resizing a framed window by its native frame, and macOS zoom, use the OS's own limits and `minWidth` / `minHeight`.
 - `window.maximize` runs `Window.toggleMaximize`: on a frameless Windows window it toggles between the current monitor's work area (`Screen.of(window).workArea`) and the previous bounds; on a framed Windows window it uses the OS maximize; on macOS it zooms.
 - Linux: not available; `new Window()` throws. For a UI on Linux, serve the page to a browser over WebSocket instead: see [browser + WebSocket mode](ipc-ws.md).
 

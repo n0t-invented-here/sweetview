@@ -12,7 +12,7 @@
 import { describe, expect, test } from "bun:test";
 import { FFIType, dlopen } from "bun:ffi";
 import { quitEventLoop, runEventLoop, Window } from "@n1h/sweetview-native";
-import { scheduleNativeTimeout } from "@n1h/sweetview-native/internal";
+import { scheduleNativeTimeout } from "../../packages/sweetview-native/src/internal";
 import { binding } from "../../packages/sweetview-native/src/binding";
 
 const onWindows = process.platform === "win32";

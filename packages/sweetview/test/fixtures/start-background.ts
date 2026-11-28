@@ -2,14 +2,16 @@
 // nothing but a stripe, read from the screen, in a process of its own so its environment
 // (WEBVIEW2_DEFAULT_BACKGROUND_COLOR, which WebView2 reads when it starts) is the test's to set.
 // Prints `RESULT <json>`: { mark, below } once the stripe shows, or what was last seen.
+// With the argument `no-colour`, the window has no backgroundColor.
 
 import { WebView } from "../../src/index";
 import { Window, pumpEvents } from "@n1h/sweetview-native";
-import { scheduleNativeTimeout } from "@n1h/sweetview-native/internal";
+import { scheduleNativeTimeout } from "../../../sweetview-native/src/internal";
 import { clientSize, clientToScreen, screenPixel } from "../../../sweetview-native/test/win32-os";
 
 const MARK = "#ff00ff";
-const win = new Window({ title: "start background fixture", backgroundColor: "#304050", topmost: true, noActivate: true, bounds: { x: 160, y: 160, width: 360, height: 260 } });
+const backgroundColor = process.argv[2] === "no-colour" ? undefined : "#304050";
+const win = new Window({ title: "start background fixture", backgroundColor, topmost: true, noActivate: true, bounds: { x: 160, y: 160, width: 360, height: 260 } });
 win.show();
 const hwnd = BigInt(win.handle!);
 // While the webview starts: the middle of the page area, from native timers (they fire inside the loops WebView2 pumps).

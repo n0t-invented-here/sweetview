@@ -360,12 +360,16 @@ export declare class Window {
   setHitRegions(packed?: Int32Array | undefined | null, refine?: ((arg0: number, arg1: number, arg2: number) => void) | undefined | null): void
   /** The refiner's answer to the question numbered `seq`. */
   answerHit(seq: number, solid: boolean): void
-  /** This wrapper's resize listener, with the outer bounds; `null` removes it. */
-  onResize(listener?: ((arg0: number, arg1: number, arg2: number, arg3: number) => void) | undefined | null): void
-  /** This wrapper's maximise listener: `true` when the window becomes maximised, `false` when it is restored; `null` removes it. */
-  onMaximizeChange(listener?: ((arg: boolean) => void) | undefined | null): void
-  /** This wrapper's move listener, with the outer bounds; `null` removes it. */
-  onMove(listener?: ((arg0: number, arg1: number, arg2: number, arg3: number) => void) | undefined | null): void
+  /**
+   * A resize listener of the window, with the outer bounds, under `key`, the
+   * number the caller gives the function it was made from (the same function
+   * is one listener, through any wrapper); `null` takes the one under `key` out.
+   */
+  onResize(key: number, listener?: ((arg0: number, arg1: number, arg2: number, arg3: number) => void) | undefined | null): void
+  /** A maximise listener of the window under `key` (as `onResize`): `true` when the window becomes maximised, `false` when it is restored; `null` takes it out. */
+  onMaximizeChange(key: number, listener?: ((arg: boolean) => void) | undefined | null): void
+  /** A move listener of the window, with the outer bounds, under `key` (as `onResize`); `null` takes it out. */
+  onMove(key: number, listener?: ((arg0: number, arg1: number, arg2: number, arg3: number) => void) | undefined | null): void
   /** This wrapper's close listener; while any wrapper has one, the window stays open on a close request. */
   onCloseRequest(listener?: (() => void) | undefined | null): void
   /** The owner's action for a close request no listener takes; without one the window is destroyed. */

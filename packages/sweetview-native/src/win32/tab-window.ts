@@ -13,6 +13,7 @@ import { binding } from "../binding";
 import { reportCallbackError } from "../callback-errors";
 import type { TabFrame as NativeTabFrame, Window as NativeWindow } from "../../prebuilt/binding";
 import type { MenuTemplate } from "../menu";
+import { keyOf } from "./listener-keys";
 import { popupMenu } from "./menu";
 import type { Point, Rect } from "../types";
 import type { Appearance, ResizeEdge } from "../window";
@@ -87,8 +88,10 @@ function frameApi(tab: NativeTabFrame): FrameWindow {
     if (listening || !tab.live) return;
     listening = true;
     tab.onActivate((active) => callEach(extras, (c) => c.onActivate?.(active), "onActivate"));
-    win.onResize(() => callEach(extras, (c) => c.onResized?.(), "onResized"));
-    win.onMove(() => callEach(extras, (c) => c.onMoved?.(), "onMoved"));
+    const resized = () => callEach(extras, (c) => c.onResized?.(), "onResized");
+    const moved = () => callEach(extras, (c) => c.onMoved?.(), "onMoved");
+    win.onResize(keyOf(resized), resized);
+    win.onMove(keyOf(moved), moved);
   };
   const held = (point?: Point): [number | undefined, number | undefined] => (point ? [point.x, point.y] : [undefined, undefined]);
   return {

@@ -44,6 +44,7 @@ fn hidden_windows_take_their_exact_outer_bounds_and_dispose_destroys_them() {
     assert!(alive(h2));
     frameless.dispose();
     assert!(!alive(h2));
+    assert_eq!(tracked_count(h2), 0, "the frameless window is released too");
   });
 }
 
@@ -98,10 +99,25 @@ fn show_activates_unless_no_activate() {
     quiet.minimize();
     assert!(native(&quiet, |w| platform::is_minimized(w)));
     quiet.show().expect("restore");
+    runtime.pump();
     assert!(!native(&quiet, |w| platform::is_minimized(w)) && quiet.is_visible());
+    // As at tag `pre-rust-rewrite`: a window restores with `SW_RESTORE`, `noActivate` or not (R5-4).
+    assert!(native(&quiet, |w| platform::is_active(w)), "a minimised noActivate window is restored as the tag restored it");
     quiet.hide();
     assert!(!quiet.is_visible());
     quiet.dispose();
+
+    // The tab frame restored a minimised `noActivate` frame without activating it (audit finding 15).
+    let frame = Window::create(WindowInit { tab_strip_height: Some(40), no_activate: true, bounds: Some(Rect::new(-2000, -2000, 400, 300)), ..init("rt quiet frame") }).expect("frame");
+    frame.show().expect("show");
+    runtime.pump();
+    frame.minimize();
+    assert!(native(&frame, |w| platform::is_minimized(w)));
+    frame.show().expect("restore");
+    runtime.pump();
+    assert!(!native(&frame, |w| platform::is_minimized(w)) && frame.is_visible());
+    assert!(!native(&frame, |w| platform::is_active(w)), "a minimised noActivate tab frame is restored without activation");
+    frame.dispose();
 
     let loud = Window::create(WindowInit { bounds: Some(Rect::new(-2000, -2000, 200, 200)), ..init("rt loud") }).expect("loud");
     loud.show().expect("show");
@@ -116,8 +132,8 @@ fn events_reach_every_wrapper_and_close_follows_the_listeners() {
     let window = Window::create(WindowInit { bounds: Some(Rect::new(100, 100, 300, 200)), ..init("rt events") }).expect("window");
     let seen: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
     let (a, b, c) = (seen.clone(), seen.clone(), seen.clone());
-    window.on_resize(Some(Rc::new(move |r| a.borrow_mut().push(format!("resize {}x{}", r.width, r.height))))).expect("resize");
-    window.on_move(Some(Rc::new(move |r| b.borrow_mut().push(format!("move {},{}", r.x, r.y))))).expect("move");
+    window.on_resize(window.id, Some(Rc::new(move |r| a.borrow_mut().push(format!("resize {}x{}", r.width, r.height))))).expect("resize");
+    window.on_move(window.id, Some(Rc::new(move |r| b.borrow_mut().push(format!("move {},{}", r.x, r.y))))).expect("move");
     window.resize(420, 310);
     window.move_to(180, 160);
     assert!(seen.borrow().contains(&"resize 420x310".to_string()), "{:?}", seen.borrow());
@@ -190,6 +206,260 @@ fn frameless_maximise_uses_the_work_area_of_its_own_screen() {
   });
 }
 
+/// Round 4, P2: `windowMenu` (and `Window#showSystemMenu`) gives every window the tag's menu: Restore
+/// enabled when `IsZoomed`, Move, Size and Maximize when not, Minimize always, whatever Sweetview
+/// knows of the window. A minimised frameless window, one maximised by its own work-area toggle
+/// (which the OS does not call zoomed) and one that cannot be sized.
+#[test]
+fn the_system_menu_of_every_window_is_enabled_from_is_zoomed_alone() {
+  on_ui_thread(|runtime| {
+    let at = Some(Rect::new(-2000, -2000, 320, 240));
+    let frameless = Window::create(WindowInit { frame: false, no_activate: true, bounds: at, ..init("rt menu frameless") }).expect("window");
+    let fixed = Window::create(WindowInit { resizable: false, no_activate: true, bounds: at, ..init("rt menu fixed") }).expect("window");
+    // The items as the menu shows them: read inside its loop, then the menu is closed.
+    let shown = |window: &Window| {
+      let read: Rc<Cell<Option<[bool; 5]>>> = Rc::default();
+      let (into, handle) = (read.clone(), window.handle());
+      let tick = runtime
+        .set_interval(20, move || {
+          if into.get().is_none() {
+            into.set(BorrowedWindow::with_handle_value(handle, |w| platform::test_support::system_menu_enabled(w)).flatten());
+            platform::end_menu_for_tests();
+          }
+        })
+        .expect("interval");
+      crate::menu::window_menu(handle).expect("menu");
+      runtime.clear_timeout(tick);
+      read.get().expect("the menu was open")
+    };
+    let tag = |zoomed: bool| [zoomed, !zoomed, !zoomed, true, !zoomed];
+    frameless.show().expect("show");
+    frameless.minimize();
+    assert_eq!(shown(&frameless), tag(false), "a minimised frameless window");
+    frameless.show().expect("restore");
+    frameless.toggle_maximize().expect("maximise");
+    assert!(frameless.is_maximized() && !native(&frameless, |w| platform::is_zoomed(w)));
+    assert_eq!(shown(&frameless), tag(false), "a frameless window maximised by its own toggle");
+    fixed.show().expect("show");
+    assert_eq!(shown(&fixed), tag(false), "a window that cannot be sized");
+    frameless.dispose();
+    fixed.dispose();
+  });
+}
+
+/// Round 4, P3: a frameless window's restore sets its bounds and only then forgets the bounds it
+/// kept, as tag `pre-rust-rewrite`'s `toggleMaximize` did: a resize listener that reads
+/// `is_maximized()` during the restore reads `true`, and during the maximise reads `true` too.
+#[test]
+fn a_frameless_restore_is_still_maximised_while_its_resize_is_delivered() {
+  on_ui_thread(|_runtime| {
+    let window = Rc::new(Window::create(WindowInit { frame: false, no_activate: true, bounds: Some(Rect::new(110, 120, 320, 240)), ..init("rt restore order") }).expect("window"));
+    window.show().expect("show");
+    let read: Rc<RefCell<Vec<bool>>> = Rc::default();
+    let (into, reader) = (read.clone(), Rc::downgrade(&window));
+    window.on_resize(window.id, Some(Rc::new(move |_| into.borrow_mut().extend(reader.upgrade().map(|w| w.is_maximized()))))).expect("resize");
+    window.toggle_maximize().expect("maximise");
+    window.toggle_maximize().expect("restore");
+    assert_eq!(*read.borrow(), [true, true], "maximised while the maximise and the restore are delivered");
+    assert!(!window.is_maximized());
+    window.dispose();
+  });
+}
+
+/// Round 4, P4: a window has one list of resize, move and maximise listeners, whichever wrapper
+/// added them, as the tag had one set per window: they are told in the order they were added
+/// (A1, B1, A2 for A1, B1, A2), the same function added again, through any wrapper, is one
+/// listener, taking it out takes it out for every wrapper, and disposing a wrapper takes out
+/// what it added.
+#[test]
+fn a_windows_listeners_are_one_list_in_the_order_they_were_added() {
+  on_ui_thread(|_runtime| {
+    let window = Window::create(WindowInit { frame: false, no_activate: true, bounds: Some(Rect::new(-2000, -2000, 320, 240)), ..init("rt one list") }).expect("window");
+    let a = Window::adopt(window.handle()).expect("wrapper A");
+    let b = Window::adopt(window.handle()).expect("wrapper B");
+    let heard: Rc<RefCell<Vec<String>>> = Rc::default();
+    let rect = |kind: &'static str, name: &'static str| -> RectListener {
+      let sink = heard.clone();
+      Rc::new(move |_| sink.borrow_mut().push(format!("{kind} {name}")))
+    };
+    let flag = |name: &'static str| -> BoolListener {
+      let sink = heard.clone();
+      Rc::new(move |_| sink.borrow_mut().push(format!("maximise {name}")))
+    };
+    for (wrapper, key, name) in [(&a, 1, "A1"), (&b, 2, "B1"), (&a, 3, "A2"), (&b, 1, "A1 again")] {
+      wrapper.on_resize(key, Some(rect("resize", name))).expect("resize");
+      wrapper.on_move(key, Some(rect("move", name))).expect("move");
+      wrapper.on_maximize_change(key, Some(flag(name))).expect("maximise");
+    }
+    // The listeners of `kind` told while `f` runs, in order.
+    let told = |kind: &str, f: &dyn Fn()| -> Vec<String> {
+      heard.borrow_mut().clear();
+      f();
+      heard.borrow().iter().filter_map(|h| h.strip_prefix(kind).map(|n| n.trim().to_string())).collect()
+    };
+    let all = ["A1", "B1", "A2"];
+    assert_eq!(told("resize", &|| window.set_bounds(Rect::new(-2000, -2000, 330, 240))), all);
+    assert_eq!(told("move", &|| window.set_bounds(Rect::new(-1990, -2000, 330, 240))), all);
+    assert_eq!(told("maximise", &|| window.toggle_maximize().expect("maximise")), all);
+    window.toggle_maximize().expect("restore");
+    // Taken out through B, which added it second: gone for A too.
+    b.on_resize(1, None).expect("take out");
+    assert_eq!(told("resize", &|| window.set_bounds(Rect::new(-2000, -2000, 340, 240))), ["B1", "A2"]);
+    // Disposing A takes out what A added (A2, and A1 under move); B's own stays.
+    a.dispose();
+    assert_eq!(told("move", &|| window.set_bounds(Rect::new(-1980, -2000, 340, 240))), ["B1"]);
+    b.dispose();
+    window.dispose();
+  });
+}
+
+/// Round 4, Q3: a listener that changes the maximised state from inside its call, every time it is
+/// told, costs no other listener a delivery, whichever wrapper each was added through and in either
+/// order: the other hears the change and then the one further delivery; the change made during
+/// that one is refused (printed), and the window keeps the state it is in.
+#[test]
+fn a_listener_that_changes_the_maximised_state_costs_no_other_listener_a_delivery() {
+  on_ui_thread(|_runtime| {
+    for toggler_first in [true, false] {
+      let window = Window::create(WindowInit { frame: false, bounds: Some(Rect::new(140, 140, 320, 240)), ..init("rt no lost delivery") }).expect("window");
+      let changer = Window::adopt(window.handle()).expect("the changer's wrapper");
+      let witness = Window::adopt(window.handle()).expect("the witness's wrapper");
+      let toggler = Rc::new(Window::adopt(window.handle()).expect("a wrapper to toggle with"));
+      let (heard, calls) = (Rc::new(RefCell::new(Vec::new())), Rc::new(Cell::new(0)));
+      let add_changer = || {
+        let (toggle, count) = (toggler.clone(), calls.clone());
+        changer
+          .on_maximize_change(
+            1,
+            Some(Rc::new(move |_| {
+              count.set(count.get() + 1);
+              toggle.toggle_maximize().expect("toggle");
+            })),
+          )
+          .expect("changer");
+      };
+      let add_witness = || {
+        let sink = heard.clone();
+        witness.on_maximize_change(2, Some(Rc::new(move |maximized| sink.borrow_mut().push(maximized)))).expect("witness");
+      };
+      if toggler_first {
+        add_changer();
+        add_witness();
+      } else {
+        add_witness();
+        add_changer();
+      }
+      window.toggle_maximize().expect("maximise");
+      assert_eq!((heard.borrow().clone(), calls.get()), (vec![true, false], 2), "toggler first: {toggler_first}");
+      // The refused change was made: the window is maximised again, and no one was told.
+      assert!(window.is_maximized());
+      for w in [&changer, &witness] {
+        w.dispose();
+      }
+      toggler.dispose();
+      window.dispose();
+    }
+  });
+}
+
+/// Round 4, P4: a tab frame's move listeners are told while it is minimised too, as the tag's tab
+/// frame told them; another window's are not.
+#[test]
+fn a_tab_frames_move_is_told_while_it_is_minimised() {
+  on_ui_thread(|runtime| {
+    for tab in [true, false] {
+      let tab_strip_height = tab.then_some(32);
+      let window = Window::create(WindowInit { tab_strip_height, no_activate: true, bounds: Some(Rect::new(140, 140, 400, 300)), ..init("rt minimised move") }).expect("window");
+      window.show().expect("show");
+      runtime.pump();
+      let moves = Rc::new(Cell::new(0));
+      let count = moves.clone();
+      window.on_move(window.id, Some(Rc::new(move |_| count.set(count.get() + 1)))).expect("move");
+      window.minimize();
+      runtime.pump();
+      assert!(window.is_minimized());
+      assert_eq!(moves.get() > 0, tab, "tab frame: {tab}, moves while minimising: {}", moves.get());
+      window.dispose();
+    }
+  });
+}
+
+/// Round 4, P6: a window Sweetview did not make is subclassed with its first listener and let go
+/// with its last, as at the tag: wrapping it to read its bounds gives it no subclass. Whether
+/// Sweetview's subclass is on it is read by installing another, which the platform refuses then.
+#[test]
+fn a_wrapped_window_is_subclassed_only_while_it_has_a_listener() {
+  on_ui_thread(|runtime| {
+    let own = runtime
+      .with_target(|target| tao::window::WindowBuilder::new().with_visible(false).with_title("rt lazy subclass").build(target))
+      .expect("target")
+      .expect("window");
+    let handle = platform::handle_value(&own);
+    let subclassed = || BorrowedWindow::with_handle_value(handle, |w| platform::WindowSubclass::install(w, |_| false).is_err()).expect("a window");
+    let wrapped = Window::adopt(handle).expect("adopt");
+    assert!(wrapped.bounds().width > 0 && !subclassed(), "wrapped to read its bounds: no subclass");
+    wrapped.on_resize(1, Some(Rc::new(|_| {}))).expect("listen");
+    wrapped.on_close_request(Some(Rc::new(|| {}))).expect("listen");
+    assert!(subclassed(), "subclassed with its first listener");
+    wrapped.on_resize(1, None).expect("stop");
+    assert!(subclassed(), "a listener is left");
+    wrapped.on_close_request(None).expect("stop");
+    assert!(!subclassed(), "let go with its last listener");
+    wrapped.on_maximize_change(2, Some(Rc::new(|_| {}))).expect("listen again");
+    assert!(subclassed());
+    wrapped.dispose();
+    assert!(!subclassed(), "let go when its wrapper is disposed");
+    drop(own);
+  });
+}
+
+/// Review round 5, R5-2: a window Sweetview did not make that its application destroys while a
+/// wrapper with no listener (so no subclass) still holds it is not handed back by a later
+/// `adopt` of its handle: that throws, as for any value that names no window, and the stale
+/// record is let go.
+#[test]
+fn adopting_the_handle_of_a_destroyed_window_throws_even_while_an_old_wrapper_remains() {
+  on_ui_thread(|runtime| {
+    let own = runtime
+      .with_target(|target| tao::window::WindowBuilder::new().with_visible(false).with_title("rt destroyed under a wrapper").build(target))
+      .expect("target")
+      .expect("window");
+    let handle = platform::handle_value(&own);
+    let wrapped = Window::adopt(handle).expect("adopt");
+    platform::destroy_now(own);
+    let again = Window::adopt(handle);
+    assert!(matches!(&again, Err(e) if e.to_string().contains("not a window")), "{:?}", again.as_ref().err());
+    assert!(!wrapped.is_visible(), "the old wrapper reads the window as gone");
+    wrapped.dispose();
+  });
+}
+
+/// Review round 5, R5-5: a frameless window's system-menu Maximize (the `SC_MAXIMIZE` the menu
+/// posts) is the OS's maximise: the window is zoomed over the whole screen, and neither
+/// `is_maximized` nor a maximise listener reports it, as the page says; Restore gives it back.
+#[test]
+fn a_frameless_windows_system_menu_maximize_is_the_oss_and_is_not_reported() {
+  on_ui_thread(|runtime| {
+    let window = Window::create(WindowInit { frame: false, no_activate: true, bounds: Some(Rect::new(140, 140, 320, 240)), ..init("rt frameless sc maximize") }).expect("window");
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    let sink = seen.clone();
+    window.on_maximize_change(1, Some(Rc::new(move |m| sink.borrow_mut().push(m)))).expect("listener");
+    window.show().expect("show");
+    runtime.pump();
+    let command = |sc: usize| platform::test_support::send(window.handle(), 0x0112, sc, 0); // WM_SYSCOMMAND
+    command(0xf030); // SC_MAXIMIZE
+    runtime.pump();
+    assert!(native(&window, |w| platform::is_zoomed(w)), "the OS maximised it");
+    let screen = screen::of_window(window.handle()).expect("screen").bounds;
+    assert!(window.bounds().width >= screen.width && window.bounds().height >= screen.height, "over the whole screen: {:?}", window.bounds());
+    assert_eq!((window.is_maximized(), seen.borrow().clone()), (false, vec![]), "not reported");
+    command(0xf120); // SC_RESTORE
+    runtime.pump();
+    assert_eq!(window.bounds(), Rect::new(140, 140, 320, 240));
+    window.dispose();
+  });
+}
+
 #[test]
 fn is_minimized_follows_the_os_for_an_owned_and_an_adopted_window() {
   on_ui_thread(|runtime| {
@@ -239,7 +509,7 @@ fn content_size_is_the_client_area_at_the_windows_scale_and_a_maximise_change_is
 
     let seen = Rc::new(RefCell::new(Vec::new()));
     let sink = seen.clone();
-    window.on_maximize_change(Some(Rc::new(move |maximized| sink.borrow_mut().push(maximized)))).expect("listener");
+    window.on_maximize_change(window.id, Some(Rc::new(move |maximized| sink.borrow_mut().push(maximized)))).expect("listener");
     window.show().expect("show");
     runtime.pump();
     window.toggle_maximize().expect("maximise");
@@ -247,7 +517,7 @@ fn content_size_is_the_client_area_at_the_windows_scale_and_a_maximise_change_is
     window.show().expect("restore, maximised");
     window.toggle_maximize().expect("restore");
     assert_eq!(*seen.borrow(), vec![true, false]);
-    window.on_maximize_change(None).expect("removed");
+    window.on_maximize_change(window.id, None).expect("removed");
     window.toggle_maximize().expect("maximise again");
     assert_eq!(*seen.borrow(), vec![true, false]);
     window.dispose();
@@ -269,31 +539,31 @@ fn maximise_listeners_see_each_change_in_order_when_a_listener_changes_the_state
     let toggle = toggler.clone();
     // A restores the window as soon as it hears it was maximised.
     window
-      .on_maximize_change(Some(Rc::new(move |maximized| {
+      .on_maximize_change(window.id, Some(Rc::new(move |maximized| {
         sink_a.borrow_mut().push(maximized);
         if maximized {
           toggle.toggle_maximize().expect("restore from inside");
         }
       })))
       .expect("listener A");
-    other.on_maximize_change(Some(Rc::new(move |maximized| sink_b.borrow_mut().push(maximized)))).expect("listener B");
+    other.on_maximize_change(other.id, Some(Rc::new(move |maximized| sink_b.borrow_mut().push(maximized)))).expect("listener B");
     window.toggle_maximize().expect("maximise");
     assert!(!window.is_maximized(), "restored by A");
     assert_eq!(*seen_a.borrow(), vec![true, false]);
-    // B is told the change A made, at once; the one A was told of is then told to no one after A.
-    assert_eq!(*seen_b.borrow(), vec![false], "B ends with the window's state");
-    window.on_maximize_change(None).expect("A removed");
-    other.on_maximize_change(None).expect("B removed");
+    // B is told the change A was told of, then, once that delivery is done, the one A made.
+    assert_eq!(*seen_b.borrow(), vec![true, false], "B ends with the window's state");
+    window.on_maximize_change(window.id, None).expect("A removed");
+    other.on_maximize_change(other.id, None).expect("B removed");
 
     // A resize listener that restores the window while it is being maximised.
     let seen = Rc::new(RefCell::new(Vec::new()));
     let sink = seen.clone();
-    window.on_maximize_change(Some(Rc::new(move |maximized| sink.borrow_mut().push(maximized)))).expect("listener");
+    window.on_maximize_change(window.id, Some(Rc::new(move |maximized| sink.borrow_mut().push(maximized)))).expect("listener");
     let restorer = toggler.clone();
     let restored = Rc::new(Cell::new(false));
     let once = restored.clone();
     other
-      .on_resize(Some(Rc::new(move |_bounds| {
+      .on_resize(other.id, Some(Rc::new(move |_bounds| {
         if !once.replace(true) {
           restorer.toggle_maximize().expect("restore from a resize listener");
         }
@@ -321,7 +591,7 @@ fn a_maximise_listener_subscribed_while_minimised_hears_no_change_on_restore() {
     assert!(native(&window, |w| platform::is_minimized(w)));
     let seen = Rc::new(RefCell::new(Vec::new()));
     let sink = seen.clone();
-    window.on_maximize_change(Some(Rc::new(move |maximized| sink.borrow_mut().push(maximized)))).expect("listener");
+    window.on_maximize_change(window.id, Some(Rc::new(move |maximized| sink.borrow_mut().push(maximized)))).expect("listener");
     window.show().expect("restore, maximised");
     assert!(window.is_maximized());
     assert_eq!(*seen.borrow(), Vec::<bool>::new(), "restoring to the state it had is no change");
@@ -346,7 +616,7 @@ fn a_maximise_listener_hears_each_change_once_and_ends_with_the_windows_state() 
       let register_changer = || {
         let (sink, toggle, done) = (by_changer.clone(), toggler.clone(), Rc::new(Cell::new(false)));
         changer
-          .on_maximize_change(Some(Rc::new(move |maximized| {
+          .on_maximize_change(changer.id, Some(Rc::new(move |maximized| {
             sink.borrow_mut().push(maximized);
             if maximized && !done.replace(true) {
               toggle.toggle_maximize().expect("restore");
@@ -359,7 +629,7 @@ fn a_maximise_listener_hears_each_change_once_and_ends_with_the_windows_state() 
       };
       let register_listener = || {
         let sink = by_listener.clone();
-        listener.on_maximize_change(Some(Rc::new(move |maximized| sink.borrow_mut().push(maximized)))).expect("listener");
+        listener.on_maximize_change(listener.id, Some(Rc::new(move |maximized| sink.borrow_mut().push(maximized)))).expect("listener");
       };
       if changer_first {
         register_changer();
@@ -400,18 +670,18 @@ fn a_maximise_change_goes_to_the_listeners_subscribed_when_it_happened() {
     let heard_late = Rc::new(RefCell::new(Vec::new()));
     let (remove, add, late_sink) = (second.clone(), late.clone(), heard_late.clone());
     first
-      .on_maximize_change(Some(Rc::new(move |_| {
-        remove.on_maximize_change(None).expect("remove the second");
+      .on_maximize_change(first.id, Some(Rc::new(move |_| {
+        remove.on_maximize_change(remove.id, None).expect("remove the second");
         let sink = late_sink.clone();
-        add.on_maximize_change(Some(Rc::new(move |maximized| sink.borrow_mut().push(maximized)))).expect("add one late");
+        add.on_maximize_change(add.id, Some(Rc::new(move |maximized| sink.borrow_mut().push(maximized)))).expect("add one late");
       })))
       .expect("first");
     let sink = heard_second.clone();
-    second.on_maximize_change(Some(Rc::new(move |maximized| sink.borrow_mut().push(maximized)))).expect("second");
+    second.on_maximize_change(second.id, Some(Rc::new(move |maximized| sink.borrow_mut().push(maximized)))).expect("second");
     window.toggle_maximize().expect("maximise");
     assert_eq!(*heard_second.borrow(), Vec::<bool>::new(), "removed during delivery");
     assert_eq!(*heard_late.borrow(), Vec::<bool>::new(), "added during delivery");
-    first.on_maximize_change(None).expect("first removed");
+    first.on_maximize_change(first.id, None).expect("first removed");
     window.toggle_maximize().expect("restore");
     assert_eq!(*heard_late.borrow(), vec![false], "the next change reaches the late one");
     for w in [&first, &second, &late] {
@@ -423,10 +693,10 @@ fn a_maximise_change_goes_to_the_listeners_subscribed_when_it_happened() {
     let window = Rc::new(Window::create(WindowInit { frame: false, bounds: Some(Rect::new(140, 140, 320, 240)), ..init("rt sentence 2 dispose") }).expect("window"));
     let other = Window::adopt(window.handle()).expect("other");
     let owner = window.clone();
-    window.on_maximize_change(Some(Rc::new(move |_| owner.dispose()))).expect("disposer");
+    window.on_maximize_change(window.id, Some(Rc::new(move |_| owner.dispose()))).expect("disposer");
     let heard = Rc::new(RefCell::new(Vec::new()));
     let sink = heard.clone();
-    other.on_maximize_change(Some(Rc::new(move |maximized| sink.borrow_mut().push(maximized)))).expect("other");
+    other.on_maximize_change(other.id, Some(Rc::new(move |maximized| sink.borrow_mut().push(maximized)))).expect("other");
     window.toggle_maximize().expect("maximise");
     assert_eq!(*heard.borrow(), Vec::<bool>::new(), "the window was disposed during delivery");
     other.dispose();
@@ -446,18 +716,18 @@ fn a_maximise_listener_that_changes_the_state_every_time_does_not_hang() {
     let calls = Rc::new(Cell::new(0));
     let count = calls.clone();
     runaway
-      .on_maximize_change(Some(Rc::new(move |_| {
+      .on_maximize_change(runaway.id, Some(Rc::new(move |_| {
         count.set(count.get() + 1);
         toggle.toggle_maximize().expect("toggle");
       })))
       .expect("runaway");
     window.toggle_maximize().expect("maximise");
     assert!(calls.get() <= 2, "told {} times", calls.get());
-    runaway.on_maximize_change(None).expect("removed");
+    runaway.on_maximize_change(runaway.id, None).expect("removed");
     // Usable: its state is its own, and the next change is told.
     let seen = Rc::new(RefCell::new(Vec::new()));
     let sink = seen.clone();
-    window.on_maximize_change(Some(Rc::new(move |maximized| sink.borrow_mut().push(maximized)))).expect("listener");
+    window.on_maximize_change(window.id, Some(Rc::new(move |maximized| sink.borrow_mut().push(maximized)))).expect("listener");
     let before = window.is_maximized();
     window.toggle_maximize().expect("toggle");
     assert_eq!(*seen.borrow(), vec![!before]);
@@ -479,6 +749,7 @@ fn a_frameless_maximise_larger_than_the_work_area_is_still_a_maximise() {
     let start = window.bounds(); // the minimum applies from the start
     window.toggle_maximize().expect("maximise");
     assert!(window.is_maximized(), "maximised: {:?}", window.bounds());
+    assert_eq!(window.bounds(), area, "maximised to the work area");
     window.toggle_maximize().expect("restore");
     assert_eq!((window.is_maximized(), window.bounds()), (false, start));
     window.dispose();
@@ -503,7 +774,7 @@ fn a_window_wrapped_in_any_state_reports_only_real_maximise_changes() {
       let wrapped = Window::adopt(platform::handle_value(&own)).expect("adopt");
       let seen = Rc::new(RefCell::new(Vec::new()));
       let sink = seen.clone();
-      wrapped.on_maximize_change(Some(Rc::new(move |maximized| sink.borrow_mut().push(maximized)))).expect("listener");
+      wrapped.on_maximize_change(wrapped.id, Some(Rc::new(move |maximized| sink.borrow_mut().push(maximized)))).expect("listener");
       own.set_minimized(false);
       runtime.pump();
       assert_eq!(*seen.borrow(), Vec::<bool>::new(), "maximised {maximised}, minimised {minimised}: restoring to its state is no change");
@@ -534,7 +805,7 @@ fn owned_windows_give_every_handle_back() {
       i += 1;
       let w = Window::create(WindowInit { opacity: Some(0.9), hide_from_taskbar: i % 2 == 0, icon: Some(ico.clone()), ..init("rt count") })
         .expect("window");
-      w.on_resize(Some(Rc::new(|_| {}))).expect("resize");
+      w.on_resize(w.id, Some(Rc::new(|_| {}))).expect("resize");
       w.set_hit_regions(Some(vec![]), None).expect("regions");
       let borrowed = Window::adopt(w.handle()).expect("adopt");
       assert!(with_mount_target(w.handle(), |_| ()).is_some());

@@ -6,11 +6,12 @@ mod environment;
 mod handlers;
 mod host;
 mod istream;
+mod attempts;
 mod pump;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
 
-pub use self::environment::{create_environment, default_user_data_folder};
+pub use self::environment::{create_environment, default_user_data_folder, release_shared as release_thread_environment};
 pub use self::host::{Layout, Webview};
 
 use std::cell::{Cell, RefCell};
@@ -155,6 +156,10 @@ impl WebviewExtras {
     /// and navigation handlers to `webview`. Call it before the webview's first
     /// navigation, so the first document is served and gets the drop script.
     pub fn attach(webview: &Webview, options: ExtrasOptions) -> Result<Self, ErrorCode> {
+        #[cfg(any(test, feature = "test-support"))]
+        if test_support::FAIL_NEXT_ATTACH.with(|fail| fail.replace(false)) {
+            return Err(ErrorCode::Unspecified);
+        }
         let inner = Rc::new(Inner {
             shared: Shared::new(options.wake_ui),
             controller: webview.controller().clone(),
@@ -551,8 +556,23 @@ impl Inner {
         *self.registrations.borrow_mut() = registrations;
         *self.filters.borrow_mut() = filters;
 
-        // The drop script is the same in every document and starts disabled.
-        self.add_script(FILE_DROP_SCRIPT, None)
+        // The drop script is the same in every document and starts disabled. Waited for, pumping
+        // this thread's messages, as the fork's `embed` waits for its scripts (`add_init_script`,
+        // `add_user_script`, `win32_edge.hh` 1585 to 1592): a new webview has no navigation in
+        // flight, so nothing of this thread's has to run for WebView2 to answer. Not waiting let
+        // what an application does right after making a webview run ahead of WebView2 having its
+        // first document (measured: a strip's page answered 40 ms later than under `wry`, whose
+        // build waited for its scripts too, and the tabs fixture's theme check lost the race).
+        let done = Rc::new(Cell::new(false));
+        let seen = done.clone();
+        let handler = ScriptAdded::create(move |_| seen.set(true));
+        self.add_script(FILE_DROP_SCRIPT, Some(&handler))?;
+        drop(handler);
+        match self::pump::pump_while(|| !done.get()) {
+            self::pump::PumpEnd::Done => Ok(()),
+            // A `WM_QUIT` meanwhile ends the wait, consumed, as the controller's creation does.
+            self::pump::PumpEnd::Quit | self::pump::PumpEnd::Failed => Err(windows::core::Error::from(windows::Win32::Foundation::E_ABORT)),
+        }
     }
 
     /// `AddScriptToExecuteOnDocumentCreated`, with the handler that receives the

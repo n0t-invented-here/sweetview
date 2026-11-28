@@ -252,18 +252,15 @@ pub(crate) fn release_all() {
   drop(built);
 }
 
-/// `windowMenu`: shows the system menu (Restore, Move, Size, Minimize,
-/// Maximize, Close) of the window `owner` names at the cursor, with its items
-/// enabled for the window's maximised state, and carries out the chosen
-/// command as the title bar's own menu does. A value that names no window, or a
-/// window of another thread, shows nothing.
+/// `windowMenu` and `Window#showSystemMenu`: shows the system menu (Restore,
+/// Move, Size, Minimize, Maximize, Close) of the window `owner` names at the
+/// cursor and carries out the chosen command, as tag `pre-rust-rewrite`'s
+/// `windowMenu(hwnd)` did for every window (see the platform crate's
+/// `show_system_menu`). A value that names no window, or a window of another
+/// thread, shows nothing.
 pub fn window_menu(owner: isize) -> Result<()> {
   Runtime::get()?;
   let cursor = screen::cursor()?;
-  // One of Sweetview's own windows: its state as Sweetview knows it (a frameless window's maximise is its own).
-  if let Some(shown) = crate::window::show_own_system_menu(owner, cursor) {
-    return shown;
-  }
   BorrowedWindow::with_handle_value(owner, |owner| {
     if is_on_this_thread(owner) {
       show_system_menu(owner, cursor);

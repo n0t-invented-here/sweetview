@@ -4,7 +4,7 @@
 //! is given, the WebView2 controller created on that child, the two settings
 //! the fork sets, and nothing else. `wry` is not involved: its creation path
 //! registers handlers and writes settings the fork never did, with no way to
-//! leave them out (DECISIONS D45).
+//! leave them out (DECISIONS D48).
 //!
 //! The steps, each with the fork's lines:
 //!
@@ -14,10 +14,11 @@
 //!   uses `DefWindowProcW` for everything else;
 //! * the controller: `CreateCoreWebView2Controller` on the widget (241),
 //!   pumping this thread's messages until it completes (`embed`, 1895 to
-//!   1906); a `WM_QUIT` meanwhile cancels (1904); a failure other than
-//!   `ERROR_INVALID_STATE` or `E_ABORT` (which give up at once, 255 to 262)
-//!   is tried again, up to 60 attempts, 200 ms apart when the call itself
-//!   fails (`try_create_environment`, 404 to 425);
+//!   1906); a `WM_QUIT` meanwhile cancels (1904); each attempt makes its
+//!   environment and starts the controller on that one, under one budget of
+//!   60 attempts (`try_create_environment`, 234 to 266 and 404 to 425, the
+//!   rules in `attempts.rs`); `ERROR_INVALID_STATE` or `E_ABORT` in the
+//!   controller's completion gives up (255 to 262);
 //! * the settings: `AreDevToolsEnabled` from `debug` and `IsStatusBarEnabled`
 //!   false (1909 to 1923), and no other;
 //! * shown: the controller's bounds set to the widget's client area,
@@ -35,7 +36,6 @@ use std::collections::HashMap;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::rc::Rc;
 use std::sync::OnceLock;
-use std::time::Duration;
 
 use sweetview_http::ErrorCode;
 use sweetview_platform_window::BorrowedWindow;
@@ -46,7 +46,7 @@ use webview2_com::Microsoft::Web::WebView2::Win32::{
 };
 use windows::core::{w, Interface, HSTRING, PCWSTR};
 use windows::Win32::Foundation::{
-    ERROR_INVALID_STATE, E_ABORT, E_POINTER, E_UNEXPECTED, HINSTANCE, HWND, LPARAM, LRESULT, RECT,
+    ERROR_INVALID_STATE, E_POINTER, E_UNEXPECTED, HINSTANCE, HWND, LPARAM, LRESULT, RECT,
     WPARAM,
 };
 use windows::Win32::Graphics::Gdi::UpdateWindow;
@@ -59,11 +59,9 @@ use windows::Win32::UI::WindowsAndMessaging::{
     ShowWindow, SW_HIDE, SW_SHOW, WM_NCDESTROY, WM_SIZE, WNDCLASSEXW, WS_CHILD, WS_EX_CONTROLPARENT,
 };
 
+use super::attempts::Failed;
 use super::pump::{pump_while, PumpEnd};
 
-/// The fork's attempts and the wait between them (`m_max_attempts`, `m_sleep_ms`).
-const MAX_ATTEMPTS: u32 = 60;
-const RETRY_WAIT: Duration = Duration::from_millis(200);
 
 /// The fork's widget class name.
 const WIDGET_CLASS: PCWSTR = w!("webview_widget");
@@ -76,7 +74,10 @@ thread_local! {
     /// handle value the system may have given to another window since.
     static WIDGETS: RefCell<HashMap<isize, (u64, Option<ICoreWebView2Controller>)>> = RefCell::new(HashMap::new());
     static NEXT_WIDGET: Cell<u64> = const { Cell::new(1) };
-    /// The watch on this thread's windows' moves, while any widget of it exists.
+    /// The watch on this thread's windows' moves, from the thread's first widget
+    /// on: unhooking it when the last widget went and hooking again with the
+    /// next cost a kernel handle each time (measured: 9 over 8 lives, against
+    /// WebView2's own 8 with the hook kept).
     static MOVE_WATCH: RefCell<Option<MoveWatch>> = const { RefCell::new(None) };
     /// The widgets that fill their parent's client area (`Layout::Fill`, or
     /// `fill_parent` since their last `set_bounds`), by handle value.
@@ -207,13 +208,11 @@ extern "system" fn widget_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPA
             note_first_shown(hwnd);
         }
         if msg == WM_NCDESTROY {
-            let _ = WIDGETS.try_with(|widgets| widgets.borrow_mut().remove(&key(hwnd)));
+            // The entry (with its controller reference) is taken out, then released once the
+            // borrow has ended.
+            let gone = WIDGETS.try_with(|widgets| widgets.borrow_mut().remove(&key(hwnd))).ok().flatten();
+            drop(gone);
             let _ = FILLING.try_with(|filling| filling.borrow_mut().remove(&key(hwnd)));
-            // The last widget of the thread gone, the watch goes.
-            if WIDGETS.try_with(|widgets| widgets.borrow().is_empty()).unwrap_or(false) {
-                let watch = MOVE_WATCH.try_with(|watch| watch.borrow_mut().take()).ok().flatten();
-                drop(watch);
-            }
             #[cfg(any(test, feature = "test-support"))]
             let _ = FIRST_SHOWN.try_with(|shown| shown.borrow_mut().remove(&key(hwnd)));
         }
@@ -338,12 +337,11 @@ impl Drop for Widget {
         if !self.alive() {
             return;
         }
-        // Its controller is not sized again from here on.
-        let _ = WIDGETS.try_with(|widgets| {
-            if let Some(entry) = widgets.borrow_mut().get_mut(&key(self.hwnd)) {
-                entry.1 = None;
-            }
-        });
+        // Its controller is not sized again from here on. The reference is taken out of the
+        // table and released after the borrow ends: a release that sends the widget a message
+        // finds the table free.
+        let held = WIDGETS.try_with(|widgets| widgets.borrow_mut().get_mut(&key(self.hwnd)).and_then(|entry| entry.1.take())).ok().flatten();
+        drop(held);
         // SAFETY: `alive` says the window this value made still exists under this handle; it is
         // a window of this thread, and its `WM_NCDESTROY` removes the entry.
         let _ = unsafe { DestroyWindow(self.hwnd) };
@@ -373,15 +371,43 @@ fn guarded_completion(on_done: impl FnOnce(windows::core::Result<ICoreWebView2Co
     })
 }
 
-/// A failure the fork does not try again.
-fn gives_up(code: windows::core::HRESULT) -> bool {
-    code == windows::core::HRESULT::from_win32(ERROR_INVALID_STATE.0) || code == E_ABORT
-}
 
 /// One webview: its widget and its WebView2 controller. Not `Send`, not `Sync`.
 /// Dropping it closes the controller and destroys the widget.
+/// A WebView2 controller this crate made, closed when dropped (the fork's
+/// `deinit`, 574): owned from the moment WebView2 hands it over, so a failure
+/// before the `Webview` exists still closes it before its widget goes.
+struct Controller(ICoreWebView2Controller);
+
+impl std::ops::Deref for Controller {
+    type Target = ICoreWebView2Controller;
+    fn deref(&self) -> &ICoreWebView2Controller {
+        &self.0
+    }
+}
+
+impl Drop for Controller {
+    fn drop(&mut self) {
+        // SAFETY: `self.0` is this value's COM reference until it drops, after this call;
+        // closing a controller already closed (as `WebviewExtras` does first) is a no-op.
+        let _ = unsafe { self.0.Close() };
+        #[cfg(test)]
+        CLOSED.with(|closed| closed.set(closed.get() + 1));
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Tests only: fail the creation right after the controller exists, and keep
+    /// a reference to that controller for the test to look at.
+    static FAIL_AFTER_CONTROLLER: RefCell<Option<Option<ICoreWebView2Controller>>> = const { RefCell::new(None) };
+    /// Tests only: how many controllers this thread has closed.
+    static CLOSED: Cell<u32> = const { Cell::new(0) };
+}
+
 pub struct Webview {
-    controller: ICoreWebView2Controller,
+    /// First, so it is closed before the widget, the last field, is destroyed.
+    controller: Controller,
     webview: ICoreWebView2,
     environment: ICoreWebView2Environment,
     /// Last, so it goes after the controller is closed.
@@ -400,10 +426,12 @@ impl Webview {
     /// WebView2's default background from before the webview is first shown,
     /// so it never shows WebView2's own white while the page starts.
     pub fn create(parent: &BorrowedWindow<'_>, layout: Layout, devtools: bool, background: Option<(u8, u8, u8)>) -> Result<Self, ErrorCode> {
-        Self::create_on(&super::environment::shared()?, parent, layout, devtools, background)
+        super::environment::prepare()?;
+        Self::create_with(super::environment::for_attempt, parent, layout, devtools, background)
     }
 
-    /// [`create`](Self::create) on `environment`.
+    /// [`create`](Self::create) on `environment` at every attempt.
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn create_on(
         environment: &ICoreWebView2Environment,
         parent: &BorrowedWindow<'_>,
@@ -411,9 +439,31 @@ impl Webview {
         devtools: bool,
         background: Option<(u8, u8, u8)>,
     ) -> Result<Self, ErrorCode> {
+        Self::create_with(|_| Ok(environment.clone()), parent, layout, devtools, background)
+    }
+
+    /// The fork's attempts (`attempts.rs`): each makes its environment with
+    /// `environment` and the controller on it, in the widget.
+    fn create_with(
+        environment: impl FnMut(u32) -> Result<ICoreWebView2Environment, Failed>,
+        parent: &BorrowedWindow<'_>,
+        layout: Layout,
+        devtools: bool,
+        background: Option<(u8, u8, u8)>,
+    ) -> Result<Self, ErrorCode> {
         let parent = HWND(sweetview_platform_window::handle_value(parent) as *mut _);
         let widget = Widget::create(parent)?;
-        let controller = create_controller(environment, widget.hwnd)?;
+        let hwnd = widget.hwnd;
+        let (environment, controller) =
+            super::attempts::attempt(environment, |environment| create_controller_once(environment, hwnd), || std::thread::sleep(super::attempts::RETRY_WAIT))?;
+        // Owned at once: from here on any failure closes it, and then the widget goes.
+        let controller = Controller(controller);
+        let environment = &environment;
+        #[cfg(test)]
+        if FAIL_AFTER_CONTROLLER.with(|fail| fail.borrow().is_some()) {
+            FAIL_AFTER_CONTROLLER.with(|fail| *fail.borrow_mut() = Some(Some(controller.0.clone())));
+            return Err(ErrorCode::Unspecified);
+        }
         // SAFETY: `controller` is the COM reference WebView2 just handed over; no arguments.
         let webview = unsafe { controller.CoreWebView2() }.map_err(|_| ErrorCode::InvalidState)?;
         // SAFETY: `webview` is the COM reference just returned; no arguments.
@@ -423,7 +473,7 @@ impl Webview {
         // SAFETY: as above.
         unsafe { settings.SetIsStatusBarEnabled(false) }.map_err(|_| ErrorCode::Unspecified)?;
         let made = Self { controller, webview, environment: environment.clone(), widget };
-        made.widget.set_controller(&made.controller);
+        made.widget.set_controller(&made.controller.0);
         // Before the widget is first shown (it is made without `WS_VISIBLE`), so nothing is
         // painted in WebView2's own white first.
         if let Some((r, g, b)) = background {
@@ -445,7 +495,7 @@ impl Webview {
     }
 
     pub(crate) fn controller(&self) -> &ICoreWebView2Controller {
-        &self.controller
+        &self.controller.0
     }
 
     pub(crate) fn core(&self) -> &ICoreWebView2 {
@@ -562,52 +612,34 @@ impl Webview {
     }
 }
 
-impl Drop for Webview {
-    fn drop(&mut self) {
-        // SAFETY: `self.controller` is this value's COM reference until it drops, after this call;
-        // closing a controller already closed (as `WebviewExtras` does first) is a no-op.
-        let _ = unsafe { self.controller.Close() };
-        // The widget, the last field, is destroyed after this.
-    }
-}
 
-/// `CreateCoreWebView2Controller` on `widget`, with the fork's retry, pumping
-/// this thread's messages until each attempt completes.
-fn create_controller(environment: &ICoreWebView2Environment, widget: HWND) -> Result<ICoreWebView2Controller, ErrorCode> {
-    for _ in 0..MAX_ATTEMPTS {
-        let slot: Rc<RefCell<Option<windows::core::Result<ICoreWebView2Controller>>>> = Rc::default();
-        let handler = {
-            let slot = slot.clone();
-            CreateCoreWebView2ControllerCompletedHandler::create(guarded_completion(move |outcome| {
-                *slot.borrow_mut() = Some(outcome);
-            }))
-        };
-        // SAFETY: `environment` is a live COM reference the caller holds, `widget` a window of
-        // this thread that outlives the attempt, and `handler` a live COM object WebView2 keeps
-        // its own reference to until it completes.
-        let started = unsafe { environment.CreateCoreWebView2Controller(widget, &handler) };
-        drop(handler);
-        if let Err(error) = started {
-            if gives_up(error.code()) {
-                return Err(ErrorCode::InvalidState);
-            }
-            std::thread::sleep(RETRY_WAIT);
-            continue;
-        }
-        match pump_while(|| slot.borrow().is_none()) {
-            PumpEnd::Done => {}
-            PumpEnd::Quit => return Err(ErrorCode::Canceled),
-            PumpEnd::Failed => return Err(ErrorCode::InvalidState),
-        }
-        let outcome = slot.borrow_mut().take();
-        match outcome {
-            Some(Ok(controller)) => return Ok(controller),
-            Some(Err(error)) if gives_up(error.code()) => return Err(ErrorCode::InvalidState),
-            // The fork tries again at once, through the same attempt counter.
-            _ => {}
-        }
+/// One `CreateCoreWebView2Controller` on `widget`, pumping this thread's
+/// messages until it completes (the fork's `embed` wait loop).
+fn create_controller_once(environment: &ICoreWebView2Environment, widget: HWND) -> Result<ICoreWebView2Controller, Failed> {
+    let slot: Rc<RefCell<Option<windows::core::Result<ICoreWebView2Controller>>>> = Rc::default();
+    let handler = {
+        let slot = slot.clone();
+        CreateCoreWebView2ControllerCompletedHandler::create(guarded_completion(move |outcome| {
+            *slot.borrow_mut() = Some(outcome);
+        }))
+    };
+    // SAFETY: `environment` is a live COM reference the caller holds, `widget` a window of
+    // this thread that outlives the attempt, and `handler` a live COM object WebView2 keeps
+    // its own reference to until it completes.
+    let started = unsafe { environment.CreateCoreWebView2Controller(widget, &handler) };
+    drop(handler);
+    started.map_err(|error| Failed::AtOnce(error.code()))?;
+    match pump_while(|| slot.borrow().is_none()) {
+        PumpEnd::Done => {}
+        PumpEnd::Quit => return Err(Failed::Quit),
+        PumpEnd::Failed => return Err(Failed::Completed(windows::core::HRESULT::from_win32(ERROR_INVALID_STATE.0))),
     }
-    Err(ErrorCode::InvalidState)
+    let outcome = slot.borrow_mut().take();
+    match outcome {
+        Some(Ok(controller)) => Ok(controller),
+        Some(Err(error)) => Err(Failed::Completed(error.code())),
+        None => Err(Failed::Completed(windows::core::HRESULT::from_win32(ERROR_INVALID_STATE.0))),
+    }
 }
 
 #[cfg(test)]
@@ -653,10 +685,52 @@ mod tests {
         drop(orphan);
     }
 
+    // W3: a thread that made a webview and ends, with nothing let go of early, gives back its
+    // WebView2 environment in its thread's teardown without faulting (the process survives
+    // the join), three times over.
     #[test]
-    fn the_two_failures_the_fork_gives_up_on() {
-        assert!(gives_up(windows::core::HRESULT::from_win32(ERROR_INVALID_STATE.0)));
-        assert!(gives_up(E_ABORT));
-        assert!(!gives_up(E_FAIL));
+    fn a_thread_that_made_a_webview_ends_cleanly() {
+        for round in 0..3 {
+            let ended = std::thread::spawn(move || {
+                use tao::event_loop::EventLoopBuilder;
+                use tao::platform::windows::EventLoopBuilderExtWindows;
+                let event_loop = EventLoopBuilder::new().with_any_thread(true).build();
+                let parent = tao::window::WindowBuilder::new().with_visible(false).build(&event_loop).expect("parent");
+                let webview = Webview::create(&BorrowedWindow::of(&parent), Layout::Fill, false, None).expect("webview");
+                drop(webview);
+                drop(parent);
+                drop(event_loop);
+                round
+            })
+            .join();
+            assert_eq!(ended.ok(), Some(round), "round {round}: the thread ended");
+        }
     }
+
+    // W3: a failure after WebView2 has handed the controller over and before the `Webview`
+    // exists (here forced right after it) closes that controller, and its widget goes after it.
+    #[test]
+    fn a_creation_that_fails_after_the_controller_exists_closes_it() {
+        use tao::event_loop::EventLoopBuilder;
+        use tao::platform::windows::EventLoopBuilderExtWindows;
+        use windows::Win32::UI::WindowsAndMessaging::FindWindowExW;
+        let event_loop = EventLoopBuilder::new().with_any_thread(true).build();
+        let parent = tao::window::WindowBuilder::new().with_visible(false).build(&event_loop).expect("parent");
+        let parent_hwnd = HWND(sweetview_platform_window::handle_value(&BorrowedWindow::of(&parent)) as *mut _);
+        FAIL_AFTER_CONTROLLER.with(|fail| *fail.borrow_mut() = Some(None));
+        let closed_before = CLOSED.with(Cell::get);
+        let failed = Webview::create(&BorrowedWindow::of(&parent), Layout::Fill, false, None);
+        let kept = FAIL_AFTER_CONTROLLER.with(|fail| fail.borrow_mut().take()).flatten();
+        assert_eq!(failed.err(), Some(ErrorCode::Unspecified), "the forced failure");
+        let controller = kept.expect("the controller existed when the creation failed");
+        // WebView2 answers a closed controller's calls as an open one's here, so what is counted
+        // is the close this crate's owning type made.
+        assert_eq!(CLOSED.with(Cell::get), closed_before + 1, "the controller was closed");
+        // SAFETY: `parent_hwnd` is the test's window; no class or name filters beyond the widget's.
+        let widget = unsafe { FindWindowExW(Some(parent_hwnd), None, WIDGET_CLASS, PCWSTR::null()) };
+        assert!(widget.map(|w| w.is_invalid()).unwrap_or(true), "the widget went with it");
+        drop(controller);
+        super::super::environment::release_shared();
+    }
+
 }

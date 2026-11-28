@@ -149,7 +149,7 @@ describe.skipIf(!onWindows)("Windows behaviour an application notices", () => {
     });
   }, 60_000);
 
-  test("tabs: the frame is a Window with tabs, getTabFrame gives its strip and page, close requests reach onClose, the tab menus act on any window of the thread, tab.webview.window wraps the frame", async () => {
+  test("tabs: the frame is a Window with tabs, getTabFrame gives its strip and page, close requests reach onClose, the tab menus act on any window of the thread, tab.webview.window is the window the tab is in, after a tear-off and a merge too", async () => {
     expect(await runChild(fixture("tabs.ts"))).toEqual({
       frameOfTabbedWindow: true,
       frameOfPlainWindow: true,
@@ -165,7 +165,7 @@ describe.skipIf(!onWindows)("Windows behaviour an application notices", () => {
       requestCloseReachesOnClose: true,
       windowKeptByListener: true,
       tabWindowIsLogical: true,
-      tabWebviewWindowWrapsFrame: true,
+      tabWebviewWindowIsTheTabsWindow: { opened: true, tornOff: true, merged: true },
     });
   }, 120_000);
 
@@ -209,38 +209,37 @@ describe.skipIf(!onWindows)("Windows behaviour an application notices", () => {
     }
   }, 120_000);
 
-  test("a close request disposes a Window with no onClose listener (and ends createApp's run()); onClose: () => win.hide() keeps it, as createOverlayWindow's window did", async () => {
+  test("a close request disposes a Window with no onClose listener (and ends createApp's run()); a tray application's closeToTrayOnLastWindow hides the last visible window and disposes any other", async () => {
     expect(await runChild(fixture("close-request.ts"))).toEqual({
       windowWithoutListener: { disposed: true, osWindowExists: false },
-      windowWithHide: { disposed: false, osWindowExists: true, visible: false },
-      appWithHide: { disposed: false, osWindowExists: true, visible: false, webviewAlive: true },
+      closeToTrayLastWindow: { disposed: false, osWindowExists: true, visible: false, onHideTold: true },
+      closeToTrayAnotherVisible: { disposed: true, osWindowExists: false, onHideTold: false },
+      appCloseToTray: { disposed: false, osWindowExists: true, visible: false, webviewAlive: true },
       appWithoutListener: { runReturned: true, disposed: true, osWindowExists: false },
     });
   }, 120_000);
 
-  test("width and height: bounds is the outer frame; RawWebview#size sets the client size in DIPs on createApp's own window, as 0.x did", async () => {
+  test("width and height: contentSize is the page area in DIPs, centred, the page filling it; bounds is the outer frame; not both", async () => {
     expect(await runChild(fixture("client-size.ts"))).toEqual({
       framedBoundsAreOuter: true,
-      sizeNoneSetsClientDips: true,
-      sizeNoneKeepsResizable: true,
-      sizeKeepsTopLeft: true,
-      sizeDoesNotShow: true,
+      contentSizeIsClientDips: true,
+      contentSizeIsCentred: true,
+      contentSizeKeepsResizable: true,
+      contentSizeDoesNotShow: true,
       pageFillsClient: true,
-      sizeFixedSetsClientDips: true,
-      sizeFixedNotResizable: true,
+      fixedContentSizeIsClientDips: true,
+      fixedNotResizable: true,
+      boundsAndContentSizeRefused: true,
       framelessClientIsBounds: true,
     });
   }, 120_000);
 
-  test("popupMenuAtCursor opens the menu upward from the cursor; Menu.popup and popupMenu open it downward from the point, and Menu.popup with { above: true } upward", async () => {
+  test("Menu.popup opens the menu downward from the point or the cursor, and with { above: true } upward, as a tray menu opens", async () => {
     expect(await runChild(fixture("popup-direction.ts"))).toEqual({
-      atCursorAsks: { at: null, above: true },
       menuPopupAtCursorAsks: { at: null, above: false },
       menuPopupAtPointAsks: true,
-      popupMenuAtPointAsks: true,
       menuPopupAboveAtCursorAsks: { at: null, above: true },
       menuPopupAboveAtPointAsks: true,
-      aboveOpensUpward: true,
       menuPopupOpensDownward: true,
       menuPopupAboveOpensUpward: true,
     });
@@ -349,7 +348,9 @@ describe.skipIf(!onWindows)("Windows behaviour an application notices", () => {
     expect(native).not.toContain("function reported");
   }, 420_000);
 
-  test.todo("onCallbackError is told about the faults of @n1h/sweetview (uiMethods, deferredUiMethods, onRequest, the ready hooks, the worker): it needs a way to the reporter that is no entry point, which rust-rewrite-no-win32-subpaths is to provide");
+  // In 1.0 onCallbackError is not told about the faults @n1h/sweetview catches itself (uiMethods,
+  // deferredUiMethods, onRequest, the ready hooks, the worker): no code moves between the packages
+  // (D44, the owner's ruling). The test above pins that they print and answer as with no listener.
 });
 
 // Part A, "Scripts run by path" and the subpaths of `@n1h/sweetview-native`: what an installed

@@ -38,6 +38,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 use crate::toast_xml::{app_id_key, display_name, toast_xml, validate_app_id};
+use sweetview_shell_data::toast::copy_wide;
 use crate::{ico, BalloonEvent, ForcedPath, Notification, NotifierOptions, NotifyError, Shown, ToastEvent};
 
 /// The shell's balloon events, as today: `wParam` is the icon's uID, the low
@@ -91,18 +92,6 @@ fn hresult_error(method: &str) -> impl Fn(windows::core::Error) -> NotifyError +
 
 fn last_error() -> i32 {
   std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
-}
-
-/// Copies `value` into a fixed wide-character field, truncated so the NUL still
-/// fits, as today's `setWide` does.
-fn copy_wide(field: &mut [u16], value: &str) {
-  let room = field.len().saturating_sub(1);
-  let mut written = 0;
-  for (slot, unit) in field.iter_mut().zip(value.encode_utf16().take(room)) {
-    *slot = unit;
-    written += 1;
-  }
-  field[written..].fill(0);
 }
 
 // ---- the toast handlers ------------------------------------------------------
@@ -1111,15 +1100,6 @@ mod tests {
     assert_eq!(live_toast_handlers(), before, "every subscription was ended and its handler released");
   }
 
-  #[test]
-  fn copy_wide_truncates_so_the_nul_fits() {
-    let mut field = [0xffffu16; 4];
-    copy_wide(&mut field, "abcdef");
-    assert_eq!(field, [97, 98, 99, 0]);
-    copy_wide(&mut field, "x");
-    assert_eq!(field, [120, 0, 0, 0]);
-  }
-
   /// What `notifier.test.ts` "registers an AUMID and shows real WinRT toasts
   /// with independently routed clicks" proves, against real WinRT.
   #[test]
@@ -1132,7 +1112,9 @@ mod tests {
     // A real IToastNotifier.Show under this app id, on a notifier of its own: a toast, not a fallback.
     {
       let real = Notifier::new(options.clone(), |_, _| {}).expect("notifier");
-      let Some(Shown::Toast(_)) = real.show(&note("really shown")) else { panic!("WinRT toasts are unavailable on this machine") };
+      // Title and body with every character XML gives a meaning: WinRT accepts the document they make.
+      let marked = Notification { title: "<Title> & \"quotes\"".into(), body: "It’s <body> & 'more'".into(), ..note("really shown") };
+      let Some(Shown::Toast(_)) = real.show(&marked) else { panic!("WinRT toasts are unavailable on this machine, or refused the document") };
       assert!(real.toasts_available());
       assert_eq!(real.balloons_shown(), 0, "the real toast did not fall back");
     }
@@ -1204,7 +1186,7 @@ mod tests {
     let options = NotifierOptions { app_id: Some(app_id.clone()), app_name: Some("Sweetview fallback test".into()), icon_ico: None };
     let notifier = Notifier::new(options, on_click).expect("notifier");
     assert!(matches!(notifier.show(&note("winrt")), Some(Shown::Toast(_))));
-    assert!(display_name_of(&app_id).is_some(), "the explicit app id was registered");
+    assert_eq!(display_name_of(&app_id).as_deref(), Some("Sweetview fallback test"), "the explicit app id was registered under the app's name");
     notifier.force_path(ForcedPath::ToastShowFails);
     let fallback = Notification { data_json: Some("[1]".into()), ..note("fallback") };
     let Some(Shown::Balloon(uid)) = notifier.show(&fallback) else { panic!("the balloon did not take over") };
@@ -1255,10 +1237,19 @@ mod tests {
     .expect("notifier");
     notifier.force_path(ForcedPath::BalloonOnly);
     let Some(Shown::Balloon(uid)) = notifier.show(&note("drop me")) else { panic!("balloon") };
+    let Some(Shown::Balloon(queued)) = notifier.show(&note("queued")) else { panic!("balloon") };
+    // Both clicks are posted before either is dispatched: the one queued behind the click that
+    // drops the notifier is never delivered.
     assert!(notifier.simulate_balloon_event(uid, BalloonEvent::Clicked));
+    assert!(notifier.simulate_balloon_event(queued, BalloonEvent::Clicked));
     *slot.borrow_mut() = Some(notifier);
     pump_until(|| calls.get() == 1);
-    assert_eq!(calls.get(), 1);
+    let settle = Instant::now() + Duration::from_millis(100);
+    while Instant::now() < settle {
+      pump();
+      std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(calls.get(), 1, "the queued click was not delivered");
     assert!(slot.borrow().is_none());
   }
 

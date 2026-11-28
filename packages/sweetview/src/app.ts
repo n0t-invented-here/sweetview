@@ -89,6 +89,8 @@ export type TabOptions<M extends MethodMap = MethodMap> = WebViewOptions<M> & {
 export type TabAttachHooks = {
   /** The tab's current logical host: file-drop demand comes from it and drops over the webview are delivered to it. */
   fileDropHost(): Window;
+  /** What `webview.window` names, read each time: the window the tab is in now. Without it, the window the webview was attached to. */
+  window?(): Window;
   /** Replaces `window.show()` on the borrowed child window for `showOnReady` and the ready watchdog. */
   revealWindow?(): void;
   /**
@@ -237,9 +239,37 @@ export function unrefWorker(worker: Worker | undefined): void {
   (worker as (Worker & { unref(): void }) | undefined)?.unref();
 }
 
+/**
+ * Internal. Calls each `onEvent` listener with one event of the worker's. On Windows each runs in
+ * its own `try`, and what one throws is added to `errors` (the drain throws them when it ends).
+ * Until the macOS goal, macOS keeps the tag's loop: a listener's throw leaves the drain at once.
+ */
+export function callEventListeners(listeners: Iterable<(event: { name: string; payload: unknown }) => void>, name: string, payload: unknown, errors: unknown[]): void {
+  if (macosKeepsTagPath()) {
+    for (const fn of listeners) fn({ name, payload });
+    return;
+  }
+  for (const fn of listeners) {
+    try {
+      fn({ name, payload });
+    } catch (err) {
+      errors.push(err);
+    }
+  }
+}
+
+/**
+ * Internal. Whether a path that sees the worker fail prints its line. On Windows only the first
+ * path does, so one failure is printed once. Until the macOS goal, macOS prints from every path,
+ * as at the tag.
+ */
+export function printsWorkerFailure(alreadyFailed: boolean, down: boolean): boolean {
+  return macosKeepsTagPath() || !(alreadyFailed || down);
+}
+
 export class WebView<M extends MethodMap = MethodMap, E extends EventMap = EventMap> {
   readonly raw: RawWebview;
-  readonly window: Window;
+  readonly #window: () => Window;
   readonly #emit: (name: string, payload: unknown) => void;
   readonly #notify: (method: string, params: unknown) => void;
   readonly #onEvent: (fn: (event: AnyEvent<E>) => void) => () => void;
@@ -249,7 +279,7 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
 
   private constructor(parts: {
     raw: RawWebview;
-    window: Window;
+    window: () => Window;
     emit: (name: string, payload: unknown) => void;
     notify: (method: string, params: unknown) => void;
     onEvent: (fn: (event: AnyEvent<E>) => void) => () => void;
@@ -258,13 +288,21 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
     dispose: () => void;
   }) {
     this.raw = parts.raw;
-    this.window = parts.window;
+    // Until the macOS goal (D42) macOS keeps the tag's own enumerable `window` (`Object.keys`, a
+    // spread); on Windows the accessor below follows a tab's window through tear-off and merge.
+    if (macosKeepsTagPath()) Object.defineProperty(this, "window", { value: parts.window(), enumerable: true, writable: true, configurable: true });
+    this.#window = parts.window;
     this.#emit = parts.emit;
     this.#notify = parts.notify;
     this.#onEvent = parts.onEvent;
     this.#run = parts.run;
     this.#quit = parts.quit;
     this.#dispose = parts.dispose;
+  }
+
+  /** The window the webview is in; for a tab on Windows, the tabbed window the tab is in now (`tab.window`). */
+  get window(): Window {
+    return this.#window();
   }
 
   /** Mounts a webview inside an existing Layer 1 Window. */
@@ -494,13 +532,7 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
             if (frame.ok) raw.return(frame.seq, 0, JSON.stringify(frame.result ?? null));
             else raw.return(frame.seq, 1, JSON.stringify({ message: frame.error }));
           } else if (frame.kind === "event") {
-            for (const fn of taps) {
-              try {
-                fn({ name: frame.name, payload: frame.payload });
-              } catch (err) {
-                listenerErrors.push(err);
-              }
-            }
+            callEventListeners(taps, frame.name, frame.payload, listenerErrors);
             if (isLive()) emit(frame.name, frame.payload);
           }
         }
@@ -512,7 +544,7 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
       // The worker ended. The first path to see it (its crash frame in the drain, Worker.onerror,
       // Worker.onmessageerror) prints the line and fails the worker; the others print nothing.
       const workerFailed = (reason: string, line: unknown[]) => {
-        if (workerFailure !== undefined || down) return;
+        if (!printsWorkerFailure(workerFailure !== undefined, down)) return;
         console.error(...line);
         failWorker(reason);
       };
@@ -652,8 +684,8 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
       const respond =(seq: string, status: number, value: unknown) => {
         if (isLive()) raw.return(seq, status, JSON.stringify(value ?? null));
       };
-      const replyError = (seq: string, error: unknown) => {
-        respond(seq, 1, { message: messageOfThrown(error) });
+      const replyError = (seq: string, error: unknown, readFailed?: (failure: unknown) => void) => {
+        respond(seq, 1, { message: messageOfThrown(error, readFailed) });
       };
       // The worker is gone (an uncaught error, or a message it sent could not be read): fail
       // everything waiting on it, then refuse new work for it instead of letting it hang.
@@ -688,7 +720,7 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
         assembler.clear();
         requestResponses.clear();
       };
-      const invoke = ({ seq, method, fn, params }: UiJob) => {
+      const invoke = ({ seq, method, fn, params }: UiJob, readFailed?: (failure: unknown) => void) => {
         try {
           const result = fn(params);
           if ((typeof result === "object" && result !== null || typeof result === "function")
@@ -699,7 +731,7 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
           }
           respond(seq, 0, result);
         } catch (err) {
-          replyError(seq, err);
+          replyError(seq, err, readFailed);
         }
       };
       const scheduleDeferred = () => {
@@ -711,10 +743,16 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
             try {
               // Keep the scheduled flag set during handlers. A modal loop may
               // pump more RPC messages while the current dialog is open.
+              // On the main branch the first value of a batch whose read threw ended the batch, and
+              // the native dispatch's catch printed `sweetview: UI dispatch failed:` for what the
+              // read threw: every call is answered now, and that line is printed once the batch is
+              // done, with a listener too (a fault of this package's, not told: D44).
+              let readFailure: { error: unknown } | undefined;
               for (const job of queue.splice(0)) {
                 if (!isLive()) break;
-                invoke(job);
+                invoke(job, (error) => void (readFailure ??= { error }));
               }
+              if (readFailure) console.error("sweetview: UI dispatch failed:", readFailure.error);
             } finally {
               deferScheduled = false;
               scheduleDeferred();
@@ -851,7 +889,7 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
 
       const webview = new WebView<M, E>({
         raw,
-        window,
+        window: tabHooks?.window ?? (() => window),
         emit,
         notify(method, params) {
           if (worker && workerFailure !== undefined) console.error(`sweetview: ${method}: ${workerFailure}`);
