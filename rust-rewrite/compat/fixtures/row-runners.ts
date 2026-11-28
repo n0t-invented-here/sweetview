@@ -521,6 +521,15 @@ export const RUNNERS: Record<string, Runner> = {
     }
     must(!ctx.os.isWindow(hwnd), "dispose removes the tray and its window");
   }),
+  "WebView.openTab": desktop(async (value, ctx) => {
+    const win = ctx.window({ tabs: true, noActivate: true });
+    const tab = await value.openTab(win, { title: "compat tab", assets: { "index.html": new TextEncoder().encode("<!doctype html><title>tab</title>") } });
+    try {
+      must(tab.window === win && tab.title === "compat tab" && tab.webview.raw.unsafeHandle !== null, "a tab of the tabbed window, with its webview", tab.title);
+    } finally {
+      tab.close();
+    }
+  }),
   "WebView.attach": desktop(async (value, ctx) => {
     const win = ctx.window({ bounds: { x: 80, y: 80, width: 400, height: 300 } });
     const view = await value.attach(win, { assets: { "index.html": new TextEncoder().encode("<!doctype html><title>attached</title>") } });
@@ -702,6 +711,25 @@ export const RUNNERS: Record<string, Runner> = {
     const zoomed = await ctx.until(() => ctx.os.user32.IsZoomed(hwndOf(win)) !== 0, 2000);
     win.toggleMaximize();
     must(zoomed && (await ctx.until(() => ctx.os.user32.IsZoomed(hwndOf(win)) === 0, 2000)), "maximised, then restored");
+  }),
+  "Window#onMaximizeChange": desktop(async (_value, ctx) => {
+    const win = ctx.window({ noActivate: true });
+    const seen: boolean[] = [];
+    const off = win.onMaximizeChange((maximized: boolean) => seen.push(maximized));
+    win.show();
+    win.toggleMaximize();
+    await ctx.until(() => seen.length === 1, 2000);
+    win.toggleMaximize();
+    await ctx.until(() => seen.length === 2, 2000);
+    off();
+    win.toggleMaximize();
+    must(same(seen, [true, false]) && ctx.os.user32.IsZoomed(hwndOf(win)) !== 0, "maximised and restored, each reported once; nothing after unsubscribing", seen);
+  }),
+  "Window#showSystemMenu": desktop(async (_value, ctx) => {
+    const win = ctx.window({ noActivate: true });
+    win.show();
+    const { result, seen } = await popupRun(ctx, () => win.showSystemMenu());
+    must(seen && result === undefined && !ctx.os.user32.IsIconic(hwndOf(win)) && win.isVisible(), "the system menu opened and, dismissed, did nothing", { seen });
   }),
   "Window#isMaximized": desktop(async (_value, ctx) => {
     const win = ctx.window({ noActivate: true });

@@ -231,7 +231,7 @@ view.run();
 
 `WebView.attach(window, options: WebViewOptions<M>): Promise<WebView<M, E>>`
 
-Mounts a webview inside an existing `Window` created by `new Window(...)` or `Window.fromHandle(...)`. Geometry (in DIPs), DPI scale, `resizable`, `transparent`, and default `title` are read directly from `window`, so callers never duplicate window options. The window stays hidden; call `win.show()`, or set `showOnReady`.
+Mounts a webview inside an existing `Window` created by `new Window(...)` or `Window.fromHandle(...)`. Geometry (the window's own: its client area, in physical pixels on Windows and points on macOS), DPI scale, `resizable`, `transparent`, `backgroundColor`, and default `title` are read directly from `window`, so callers never duplicate window options. The window stays hidden; call `win.show()`, or set `showOnReady`.
 
 What `WebView.attach` does, in order:
 
@@ -242,7 +242,7 @@ What `WebView.attach` does, in order:
 5. Refuses a disposed window, or one whose handle is null, and checks `ringBytes`.
 6. Creates the `RawWebview` inside `window.handle` using the window's bounds, scale and `resizable` hint, then restores the window's styles and outer bounds in case the engine changed them.
 7. Applies `title` (and mirrors it onto an untitled owned `window`).
-8. Clears the browser background when `window` was created with `transparent: true`, and applies `allowExternalDrop` when it is set.
+8. Clears the browser background when `window` was created with `transparent: true`, or, on Windows, sets it to the window's `backgroundColor` when it has one (what shows before the page paints), and applies `allowExternalDrop` when it is set.
 9. Allocates the shared `Ring`, subscribes webview file drops to the window's `onFileDrop` listeners, and starts `worker` if configured.
 10. Registers the request handler when `onRequest` is set.
 11. Binds `__sweetview_rpc`: the reserved ready method first, then `uiMethods`, then `deferredUiMethods`, then the worker. The binding exists before the first navigation and dispatches by method name only; see [the trust boundary](#the-rpc-trust-boundary). A direct-URL webview with no UI methods, no worker and no ready options gets no binding.
@@ -389,10 +389,16 @@ only.
 import { createApp } from "@n1h/sweetview";
 import index from "./index.html";
 
-const app = await createApp({ title: "Notes", page: index, worker: "./worker.ts" });
+const app = await createApp({ title: "Notes", page: index, worker: "./worker.ts", contentSize: { width: 1100, height: 720 } });
 app.window.show();
 app.run();
 ```
+
+`contentSize` is the page's size in CSS pixels: the window is centred on the
+primary screen and its frame sized around the page at that screen's scale, so
+the page looks the same size at 100 % and at 150 %. `bounds` places the outer
+frame in physical pixels instead; give one or the other
+([WindowOptions](native/windows.md#windowoptions)).
 
 Layer 2 declarative helper that combines `new Window(options)` with `WebView.attach` (or native tab setup when `options.tabs` is `true`). `options` is both `WindowOptions` and `WebViewOptions`.
 
@@ -483,7 +489,7 @@ are HTML-escaped; `head` and `body` are inserted verbatim.
 
 ### windowChromeMethods
 
-Re-exported from [`@n1h/sweetview/window-chrome`](window-chrome.md) together with `WindowChromeInfo`, `WindowChromeKind`, `WindowChromeMethodTable`, `WindowChromeMethods`, and `WindowChromeOptions`.
+Re-exported from [`@n1h/sweetview/window-chrome`](window-chrome.md) together with `windowChromeEvents`, `WindowChromeEvents`, `WindowChromeInfo`, `WindowChromeKind`, `WindowChromeMethodTable`, `WindowChromeMethods`, and `WindowChromeOptions`.
 
 ### Ring
 

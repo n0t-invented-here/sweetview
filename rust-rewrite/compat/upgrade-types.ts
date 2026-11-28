@@ -218,6 +218,7 @@ import type { FrameWindow as FrameWindow__sweetview_native__win32__tab_window } 
 import type { NativeEngine as NativeEngine__sweetview_native__internal } from "@n1h/sweetview-native/internal";
 
 export type AppOptions__sweetview_bounds = AppOptions__sweetview["bounds"];
+export type AppOptions__sweetview_contentSize = AppOptions__sweetview["contentSize"];
 export type AppOptions__sweetview_resizable = AppOptions__sweetview["resizable"];
 export type AppOptions__sweetview_transparent = AppOptions__sweetview["transparent"];
 export type App__sweetview_dispose = App__sweetview["dispose"];
@@ -279,6 +280,8 @@ export type Window__sweetview_native_hide = Window__sweetview_native["hide"];
 export type Window__sweetview_native_minimize = Window__sweetview_native["minimize"];
 export type Window__sweetview_native_moveTo = Window__sweetview_native["moveTo"];
 export type Window__sweetview_native_onClose = Window__sweetview_native["onClose"];
+export type Window__sweetview_native_onMaximizeChange = Window__sweetview_native["onMaximizeChange"];
+export type Window__sweetview_native_showSystemMenu = Window__sweetview_native["showSystemMenu"];
 export type Window__sweetview_native_onFileDrop = Window__sweetview_native["onFileDrop"];
 export type Window__sweetview_native_onMove = Window__sweetview_native["onMove"];
 export type Window__sweetview_native_onResize = Window__sweetview_native["onResize"];
@@ -305,6 +308,9 @@ export type NativeEngine__sweetview_native__internal_reparent = NativeEngine__sw
 export type NativeEngine__sweetview_native__internal_setBounds = NativeEngine__sweetview_native__internal["setBounds"];
 export type NativeEngine__sweetview_native__internal_setVisible = NativeEngine__sweetview_native__internal["setVisible"];
 export type Tab__sweetview_window = Tab__sweetview["window"];
+export type Tab__sweetview_close = Tab__sweetview["close"];
+export type Tab__sweetview_moveToNewWindow = Tab__sweetview["moveToNewWindow"];
+export type Tab__sweetview_select = Tab__sweetview["select"];
 export type Webview__sweetview_native_destroy = Webview__sweetview_native["destroy"];
 
 // Types an application declares in its own code (rows whose "Write now" is a declaration).

@@ -131,9 +131,10 @@ returns, or a `WM_COMMAND` carries, names the item's `click`. Sweetview owns
 the menu, its submenus and its item bitmaps until `destroyMenu(built)`, which
 is safe to call twice; `built.bitmaps` is always empty.
 
-`windowMenu(hwnd)` of `@n1h/sweetview-native/win32/tab-window` shows the
-system menu (Restore, Move, Size, Minimize, Maximize, Close) of any window of
-the UI thread at the cursor, with Restore, Move, Size and Maximize enabled as
+[`Window#showSystemMenu()`](windows.md#window-members) shows a `Window`'s
+system menu; `windowMenu(hwnd)` of `@n1h/sweetview-native/win32/tab-window`,
+which it calls, shows the system menu (Restore, Move, Size, Minimize,
+Maximize, Close) of any window of the UI thread at the cursor, with Restore, Move, Size and Maximize enabled as
 the window's maximised state allows, and carries out the chosen command as the
 title bar's own menu does.
 

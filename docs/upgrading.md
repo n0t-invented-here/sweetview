@@ -124,7 +124,7 @@ this page: it imports each new form and checks that it is what the row says.
   valid `.ico` throws `sweetview: the tray icon could not be decoded: …`.
   `pickFolder` returns `null` for a virtual folder such as "This PC" and when
   the dialog fails, where before it disabled OK or threw.
-- **Two additions.** `Menu.popup(owner, menu, at, { above: true })` opens a menu upward from the point or the cursor, as the tray's does, and `Window#isMinimized()` says whether a window is minimised (`isVisible()` is true for a minimised window too), so neither needs an internal import or an `IsIconic` call of your own.
+- **Additions.** `Menu.popup(owner, menu, at, { above: true })` opens a menu upward, as the tray's does; `Window#isMinimized()`, `Window#onMaximizeChange(fn)` and `Window#showSystemMenu()` answer what needed `IsIconic`, a timer polling `isMaximized()` and the internal `windowMenu`; `WindowOptions` `contentSize` (the page's size in CSS pixels, centred) and `backgroundColor` size a window from its page at any screen scale and colour it before the page paints; `windowChromeEvents` sends maximise changes to a page-drawn chrome.
 - **Notifications on Windows.** A `Notifier` shows a WinRT toast and needs
   no `Tray`. 0.x showed the balloon of the application's tray icon (and threw
   without a tray), which Windows shows under the name of the running
@@ -527,8 +527,8 @@ Every other option (`page`, `title`, `assets`, `index`, `worker`, `debug`, `uiMe
 
 | Old | Write now | Change |
 |---|---|---|
-| `width` | `import type { AppOptions } from "@n1h/sweetview"`; `AppOptions#bounds` | not the same quantity: `width` was the page's client width in DIPs (1100 by default), which the library applied to the window, its own or the one given as `window`; `bounds: { x, y, width, height }` is the window's outer frame in physical pixels (320 by default). With `window`, drop it: the window already has its bounds (for a frameless overlay, the same size). To keep a page `width` DIPs wide in a framed window, set it after `createApp`: `app.webview.raw.size = { width, height, hint: SizeHint.NONE }` (`SizeHint.FIXED` for a window that is not resizable); it sizes the frame around that client area, as the library did, without moving or showing the window |
-| `height` | `import type { AppOptions } from "@n1h/sweetview"`; `AppOptions#bounds` | not the same quantity: `height` was the page's client height in DIPs (800 by default); `bounds` is the outer frame in physical pixels (240 by default); drop it, or set the client size with `app.webview.raw.size`, as for `width` |
+| `width` | `import type { AppOptions } from "@n1h/sweetview"`; `AppOptions#contentSize` | the same quantity, in one option with `height`: `contentSize: { width, height }` is the page's size in DIPs (CSS pixels), the frame sized around it at the screen's scale and the window centred on the primary work area, as 0.x's was. 0.x defaulted to 1100 x 800; without `contentSize` or `bounds` a window is 320 x 240 outer, so pass `contentSize: { width: 1100, height: 800 }` to keep that size. `bounds` (the outer frame in physical pixels) is the other way to place a window; give one, not both. With `window`, drop it: the window already has its size |
+| `height` | `import type { AppOptions } from "@n1h/sweetview"`; `AppOptions#contentSize` | the same quantity: the `height` of `contentSize`, as for `width` |
 | `window` | `import { WebView } from "@n1h/sweetview"`; `WebView.attach(window, options)` | mount the page in a window you made: `WebView.attach(win, options)`; it keeps the window's size (the library resized it to `width` x `height`), and showing the window and what a close request does are yours, as before |
 | `transparent` | `import type { AppOptions } from "@n1h/sweetview"`; `AppOptions#transparent` | a window option now; it makes the window and the page background transparent |
 | `resizable` | `import type { AppOptions } from "@n1h/sweetview"`; `AppOptions#resizable` | a window option; defaults to `true` for a framed window (with `window` it defaulted to `false`) |
@@ -1157,7 +1157,7 @@ in it, so an import of either by file path follows these rows too.
 | `GW_CHILD` | `import { WebView } from "@n1h/sweetview"`; `WebView.attach(window, options)` | Sweetview places and sizes the webview inside the window itself |
 | `HKEY_CURRENT_USER` | `import { registerUrlScheme } from "@n1h/sweetview-native"`; `registerUrlScheme(scheme, options)` | the registry writes are internal |
 | `HTCAPTION` | `import { Window } from "@n1h/sweetview-native"`; `Window#startDrag()` | the OS move loop from a page's pointer-down |
-| `HWND_MESSAGE` | `import { dlopen } from "bun:ffi"`; `dlopen("user32.dll", { … })` | for a message window of your own, call `CreateWindowExW` from your own table |
+| `HWND_MESSAGE` | `import { Window } from "@n1h/sweetview-native"`; `new Window(options)` | a hidden `new Window()` is the owner a menu or dialog needs (`Menu.popup`, `pickFolder`), and `dispose()` is `destroy()`; the other uses each have a public call: a second instance's arguments (`WM_COPYDATA`) arrive at `singleInstance`'s `onSecondInstance`, work handed to the UI thread is a `deferredUiMethods` handler, a global hotkey is `installKeyboardHook`, the tray's `TaskbarCreated` is Sweetview's own, and the clipboard, notifications and the tray need no window of yours; only a system broadcast Sweetview reports nothing of (`WM_POWERBROADCAST`, `WM_DEVICECHANGE`, `WM_QUERYENDSESSION`) still needs a window of your own from your own `dlopen` table |
 | `HWND_NOTOPMOST` | `import { Window } from "@n1h/sweetview-native"`; `Window#setTopmost(on)` | `setTopmost(false)` |
 | `HWND_TOPMOST` | `import { Window } from "@n1h/sweetview-native"`; `Window#setTopmost(on)` | or `topmost: true` |
 | `ICON_BIG` | `import { Window } from "@n1h/sweetview-native"`; `Window#setIcon(icon)` | both icon sizes come from the `.ico` |
@@ -1209,7 +1209,7 @@ in it, so an import of either by file path follows these rows too.
 | `WM_RBUTTONUP` | `import { Tray } from "@n1h/sweetview-native"`; `new Tray(options)` | the tray's right-click menu is `menu` |
 | `WM_SETICON` | `import { Window } from "@n1h/sweetview-native"`; `Window#setIcon(icon)` | sets the title bar, taskbar and Alt+Tab icon |
 | `WM_SETTINGCHANGE` | `import { Window } from "@n1h/sweetview-native"`; `new Window(options)` | `appearance: "system"` follows the system's light or dark setting |
-| `WM_SIZE` | `import { Window } from "@n1h/sweetview-native"`; `Window#onResize(handler)` | use the event |
+| `WM_SIZE` | `import { Window } from "@n1h/sweetview-native"`; `Window#onResize(handler)`; `Window#onMaximizeChange(handler)` | use the events: `onResize` for the new bounds, `onMaximizeChange` for `SIZE_MAXIMIZED` and `SIZE_RESTORED`, once per change |
 | `WM_TIMER` | `import { runEventLoop } from "@n1h/sweetview-native"`; `runEventLoop(options)` | Bun's own timers run while `runEventLoop` pumps the loop |
 | `WS_CLIPCHILDREN` | `import { WebView } from "@n1h/sweetview"`; `WebView.attach(window, options)` | Sweetview hosts the webview in the window itself |
 | `WS_EX_APPWINDOW` | `import { Window } from "@n1h/sweetview-native"`; `new Window(options)` | `hideFromTaskbar: false`, the default |
@@ -1280,7 +1280,7 @@ in it, so an import of either by file path follows these rows too.
 | `setDarkWindows` | `import { Window } from "@n1h/sweetview-native"`; `new Window(options)` | `appearance: "system"` follows the system's setting |
 | `showTabPopupMenu` | `import { showTabPopupMenu } from "@n1h/sweetview-native/win32/tab-window"`; `showTabPopupMenu(owner, template)` | unchanged: the menu `Menu.popup(owner, menu)` shows, at the cursor, for any window of the thread |
 | `windowExists` | `import { Window } from "@n1h/sweetview-native"`; `Window.fromHandle(handle)` | throws `sweetview: not a window: 0x…` for a handle that names no window |
-| `windowMenu` | `import { windowMenu } from "@n1h/sweetview-native/win32/tab-window"`; `windowMenu(hwnd)` | unchanged: the system menu of any window of the thread; for a tab frame, `FrameWindow#showSystemMenu()` is the same menu |
+| `windowMenu` | `import { Window } from "@n1h/sweetview-native"`; `Window#showSystemMenu()` | the system menu of a `Window` (a page-drawn title bar's right click; `window.systemMenu` of the window chrome), its choice carried out; `windowMenu(hwnd)` stays internal |
 
 #### `FrameWindow` and `FrameCallbacks` members that changed
 
@@ -1292,12 +1292,12 @@ engine of the webview moves, shows, hides and re-parents it.
 | Old | Write now | Change |
 |---|---|---|
 | `stripPane` | `import type { FrameWindow } from "@n1h/sweetview-native/win32/tab-window"`; `FrameWindow#stripBounds` | the strip's rectangle in the frame's client area, physical pixels: make the strip's webview there |
-| `createPane(…)` | `import { createChildWebview } from "@n1h/sweetview-native/internal"`; `createChildWebview(debug, frame.hwnd, frame.pageRect())` | a child webview of the frame, at a rectangle of its client area |
-| `adoptPane(…)` | `import type { NativeEngine } from "@n1h/sweetview-native/internal"`; `NativeEngine#reparent` | `engineOf(webview).reparent(frame.hwnd)` moves the webview into another frame without reloading it |
-| `placePane(…)` | `import type { NativeEngine } from "@n1h/sweetview-native/internal"`; `NativeEngine#setBounds` | `engineOf(webview).setBounds(frame.pageRect())` |
-| `showPane(…)` | `import type { NativeEngine } from "@n1h/sweetview-native/internal"`; `NativeEngine#setVisible` | `engineOf(webview).setVisible(true)` |
-| `hidePane(…)` | `import type { NativeEngine } from "@n1h/sweetview-native/internal"`; `NativeEngine#setVisible` | `engineOf(webview).setVisible(false)` |
-| `destroyPane(…)` | `import { Webview } from "@n1h/sweetview-native"`; `Webview#destroy` | destroy the child webview; there is no pane window |
+| `createPane(…)` | `import { WebView } from "@n1h/sweetview"`; `WebView.openTab(window, options)` | a tab of a `tabs: true` window, its webview made and laid out in the frame's page area by the tabs library |
+| `adoptPane(…)` | `import type { Tab } from "@n1h/sweetview"`; `Tab#moveToNewWindow` | a tab moves to a window of its own (and the user drags it into another); `app.mergeAllWindows()` brings torn-off tabs back, without reloading them |
+| `placePane(…)` | `import type { Tab } from "@n1h/sweetview"`; `Tab#select` | the tabs library places the shown tab in the page area and keeps it there on every resize; a layout of several webviews of your own in one window has no public call |
+| `showPane(…)` | `import type { Tab } from "@n1h/sweetview"`; `Tab#select` | selecting a tab shows it and hides the one shown before |
+| `hidePane(…)` | `import type { Tab } from "@n1h/sweetview"`; `Tab#select` | a tab is hidden when another is selected |
+| `destroyPane(…)` | `import type { Tab } from "@n1h/sweetview"`; `Tab#close` | closes the tab and destroys its webview |
 | `layout()` | `import type { FrameWindow } from "@n1h/sweetview-native/win32/tab-window"`; `FrameWindow#pageRect`; `FrameWindow#pageSize` | on each `Window#onResize`, place the strip at `stripBounds()` and the shown tab at `pageRect()` |
 | `destroy()` | `import { Window } from "@n1h/sweetview-native"`; `Window#dispose()` | dispose the `Window` the frame belongs to |
 | `stripRect()` | `import type { FrameWindow } from "@n1h/sweetview-native/win32/tab-window"`; `FrameWindow#stripRect` | unchanged: the strip on the screen; new members `stripBounds`, `pageRect`, `pageSize`, `requestClose`, `showSystemMenu`, `setBounds` and `hide` |
@@ -1344,8 +1344,8 @@ path follows these rows too.
 |---|---|---|
 | `MessageHandler` | `type MessageHandler = (message: number, wParam: bigint, lParam: bigint) => void` | declare the type in your own code |
 | `MessageWindow` | `type MessageWindow = { readonly hwnd: bigint; readonly destroy: () => void }` | declare the type in your own code |
-| `createMessageWindow` | `import { Window } from "@n1h/sweetview-native"`; `new Window(options)`; `Window#dispose()` | an owner for `Menu.popup` or `pickFolder` is a `Window`, hidden until `show()`, and `dispose()` is `destroy()`; for a window whose messages your own code handles, call `CreateWindowExW` from your own `dlopen` table with a `JSCallback` window procedure, and `Window.fromHandle` serves it |
-| `createMessageWindowRaw` | `import { dlopen } from "bun:ffi"`; `dlopen("user32.dll", { … })` | Sweetview's own message windows are internal; for one of your own, call `CreateWindowExW` with `HWND_MESSAGE` from your own table and a `JSCallback` window procedure |
+| `createMessageWindow` | `import { Window } from "@n1h/sweetview-native"`; `new Window(options)`; `Window#dispose()` | a hidden `new Window()` is the owner a menu or dialog needs (`Menu.popup`, `pickFolder`), and `dispose()` is `destroy()`; the other uses each have a public call: a second instance's arguments (`WM_COPYDATA`) arrive at `singleInstance`'s `onSecondInstance`, work handed to the UI thread is a `deferredUiMethods` handler, a global hotkey is `installKeyboardHook`, the tray's `TaskbarCreated` is Sweetview's own, and the clipboard, notifications and the tray need no window of yours; only a system broadcast Sweetview reports nothing of (`WM_POWERBROADCAST`, `WM_DEVICECHANGE`, `WM_QUERYENDSESSION`) still needs a window of your own from your own `dlopen` table |
+| `createMessageWindowRaw` | `import { Window } from "@n1h/sweetview-native"`; `new Window(options)`; `Window#dispose()` | Sweetview's own message windows are internal; a hidden `new Window()` is the owner a menu or dialog needs (`Menu.popup`, `pickFolder`), and `dispose()` is `destroy()`; the other uses each have a public call: a second instance's arguments (`WM_COPYDATA`) arrive at `singleInstance`'s `onSecondInstance`, work handed to the UI thread is a `deferredUiMethods` handler, a global hotkey is `installKeyboardHook`, the tray's `TaskbarCreated` is Sweetview's own, and the clipboard, notifications and the tray need no window of yours; only a system broadcast Sweetview reports nothing of (`WM_POWERBROADCAST`, `WM_DEVICECHANGE`, `WM_QUERYENDSESSION`) still needs a window of your own from your own `dlopen` table |
 
 ### `@n1h/sweetview-native/darwin/objc`
 
