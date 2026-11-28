@@ -1,7 +1,19 @@
 //! Reading an `.ico` file's directory and picking the image for a size, without an
 //! OS call, in `sweetview-window-logic`, and named here as before.
 
-pub use sweetview_window_logic::ico::{parse_ico, pick_ico_entry_keeping_first as pick_entry, IcoEntry};
+use crate::NotifyError;
+
+pub use sweetview_window_logic::ico::IcoEntry;
+
+/// The images an `.ico` file lists, each checked to lie inside the file.
+pub fn parse_ico(bytes: &[u8]) -> Result<Vec<IcoEntry>, NotifyError> {
+  sweetview_window_logic::ico::parse_ico(bytes).map_err(NotifyError)
+}
+
+/// The entry `want` pixels wide, else the smallest wider one, else the first of the widest.
+pub fn pick_entry(entries: &[IcoEntry], want: u32) -> Result<IcoEntry, NotifyError> {
+  sweetview_window_logic::ico::pick_ico_entry_keeping_first(entries, want).map_err(NotifyError)
+}
 
 #[cfg(test)]
 pub(crate) mod tests {
