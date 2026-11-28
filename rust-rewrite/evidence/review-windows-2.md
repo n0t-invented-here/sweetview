@@ -296,6 +296,23 @@ The fix is in `crates/sweetview-platform-loop/src/windows.rs`: the signal window
 
 Tests: `an_interval_ticks_inside_a_popup_menu_opened_from_a_deferred_job_in_both_loop_modes` (`crates/sweetview-runtime/src/runtime.rs`): a real popup menu owned by a hidden `tao` window, opened from a deferred job in both loop modes, with a watchdog that closes a stuck menu; every menu's first tick within 250 ms. On the code before the fix it failed (all 16 menus' first ticks 327 to 559 ms after the menu opened); it passes now. "native timers inside a tray menu opened from a deferred job (D38)" (`packages/sweetview-native/src/modal-loop.test.ts`, fixture `test/fixtures/timers-in-tray-menu.ts`), both loop modes, through a real tray: on the tree before the fix 6 of 8 menus in each mode never ticked; it passes now. "a process that exits with a native interval still set ends cleanly", in the same file. The probe (`rust-rewrite/local/timer-menu-probe.ts`): before, 29 of 100 menus (fresh) and 31 of 100 (old) with no tick inside; after, 0 of 300 in each mode. D20's entry that recorded the state as unexplained points at D38; W1.8's evidence states the condition; `rust-rewrite/OWNER-ACTIONS.md` section 5 has the `tao` behaviour as an upstream note. Nothing of it is open.
 
+The new tests in the whole `bun test` run on the merged tree (`f17e601` merged into this branch; 494 pass, 17 skip, 0 fail across 47 files):
+
+```
+(pass) native timers inside a tray menu opened from a deferred job (D38) > blocking loop: an interval set just before the right click ticks inside every menu [2503.27ms]
+(pass) native timers inside a tray menu opened from a deferred job (D38) > pumped loop: an interval set just before the right click ticks inside every menu [2383.91ms]
+(pass) native timers inside a tray menu opened from a deferred job (D38) > a process that exits with a native interval still set ends cleanly [886.76ms]
+```
+
+and the runtime test, before and after the fix:
+
+```
+before (SetTimer): test runtime::tests::an_interval_ticks_inside_a_popup_menu_opened_from_a_deferred_job_in_both_loop_modes ... FAILED
+    "pumped round 0: 3 ticks, first after Some(326.8364ms), rescued false",
+    ... every pumped and blocking round between 519 and 559 ms ...
+after:             test runtime::tests::an_interval_ticks_inside_a_popup_menu_opened_from_a_deferred_job_in_both_loop_modes ... ok
+```
+
 ### G2
 
 **Fixed.** `Runtime::pump` (`crates/sweetview-runtime/src/runtime.rs`) returns `true` at once when either loop mode is running, before it posts anything or sets a timer, which is what its doc comment and `pumpEvents`'s say; so a nested call costs nothing, under `run_blocking` too. The guard is a `PumpGuard`, a value set when the pump starts whose `Drop` cancels the timer and empties `pump_guard`, so every way out of the pump releases it, the unwind `tao` raises again for a handler's panic included. The test `a_nested_pump_does_nothing_and_every_way_out_of_a_pump_cancels_its_guard` calls `pump()` 100 times from a drain inside a pump and asserts that the outer pump's guard is the same timer afterwards, that only that one timer is set inside (`SignalWindow::timers_set_for_tests`), that the guard still gives `tao` its event while the outer pump runs, and that no timer is left set afterwards; then a listener panics inside a pump, the panic comes out of `pump`, no timer is left set, and the loop pumps again. Decision D40.
