@@ -13,8 +13,10 @@ root module requires the native webview library from the optional peer
 `@n1h/sweetview-webview-bun` ([the webview](webview-library.md)).
 `WebView.attach` and `createApp` support Windows and macOS.
 
-Most apps need one call and one loop: `createApp` with a `page` and a
-`worker`, then `app.window.show()` and `app.run()`, as in the
+Most apps need one call and one loop: `createApp` with a `page`, a
+`worker` and `showOnReady: true` (the page calls `signalReady()` once it has
+rendered, and the window appears then, never before its page has painted),
+then `app.run()`, as in the
 [Quickstart](../README.md#quickstart) and the
 [single-window example](#single-window-with-createapp). Read
 [the event loop](#the-event-loop) first: which loop an app runs decides where
@@ -56,7 +58,7 @@ One process has one OS event loop, on the UI thread, the main thread of the Bun 
 
 ### `run()`: the blocking loop
 
-`webview.run()` (and `app.run()` on a non-tabbed app) runs the platform's own blocking loop: on Windows the Rust runtime's loop (`tao`'s, with Sweetview's signal window for wakes and timers); on macOS, until the macOS goal of the Rust rewrite, the webview library's `webview_run`, which is `[NSApp run]`. It returns when `quit()` is called, or when the window the webview is attached to is disposed (closing a window with no `onClose` listener disposes it). When `run()` returns, it tears its own webview down: the worker is terminated, the drain callback released, and the webview destroyed, in that order. Everything else the application made (its window, trays, notifiers, other windows) stays until the application's process ends, so code after `run()` and a second `run()` can still use it ([the end of the application](#the-end-of-the-application)). How `createApp` decides when to quit is under [Closing and quitting](#closing-and-quitting).
+`webview.run()` (and `app.run()` on a non-tabbed app) runs the platform's own blocking loop: on Windows the Rust runtime's loop (`tao`'s, with Sweetview's signal window for wakes and timers); on macOS, until the macOS goal of the Rust rewrite, the webview library's `webview_run`, which is `[NSApp run]`. It returns when `quit()` is called, or when the window the webview is attached to is disposed (closing a window with no `onClose` listener disposes it). When `run()` returns, it tears its own webview down: its window is hidden, then the worker is terminated, the drain callback released, and the webview destroyed, in that order, so the window is never on the screen with its page gone. Everything else the application made (its window, trays, notifiers, other windows) stays until the application's process ends, so code after `run()` and a second `run()` can still use it ([the end of the application](#the-end-of-the-application)); the window a `run()` hid is shown again when a webview attached to it runs next (with `showOnReady`, once its page is ready), or by `show()`. How `createApp` decides when to quit is under [Closing and quitting](#closing-and-quitting).
 
 Calling `app.dispose()`, `view.dispose()` or `win.dispose()` while `run()` is active (from a `uiMethods` handler, a tray or menu click, or a window callback) never tears the native window or webview down re-entrantly inside the running loop. It stops the worker and the watchdogs and requests loop exit with `quit()`; the webview is destroyed and the native window released as `run()` unwinds.
 
@@ -83,7 +85,9 @@ import { Tray, Window } from "@n1h/sweetview/native";
 const mainJs = new Blob([
   `window.__sweetview_emit = (name, payload) => {
      if (name === "tick") document.getElementById("tick").textContent = new Date(payload).toLocaleTimeString();
-   };`,
+   };
+   // The page is drawn: what signalReady() of @n1h/sweetview/page sends, for a page with no bundler.
+   window.__sweetview_rpc("__sweetview.ready", null);`,
 ]);
 
 const win = new Window({ title: "Hello", bounds: { x: 200, y: 200, width: 640, height: 480 } });
@@ -92,6 +96,8 @@ const view = await WebView.attach(win, {
     "index.html": indexHtml({ title: "Hello", css: "", body: '<h1>Hello</h1><p id="tick"></p>' }),
     "main.js": mainJs,
   },
+  showOnReady: true, // the window appears once the page says it is ready
+  readyTimeoutMs: 15_000,
 });
 const tray = new Tray({
   tooltip: "Hello",
@@ -100,7 +106,6 @@ const tray = new Tray({
     { label: "Quit", click: quitEventLoop },
   ],
 });
-win.show();
 // unref(): the application's own timer does not keep the process alive after Quit.
 setInterval(() => view.emit("tick", Date.now()), 1000).unref();
 await runEventLoop();
@@ -150,15 +155,17 @@ What is released, in this order:
 
 1. input hooks (`installMouseHook`, `installKeyboardHook`): a system-wide
    hook that no loop answers holds up the desktop's input;
-2. webviews: each one's worker is terminated and its drain released, then
+2. every window still on the screen is hidden, so none is seen with its
+   page gone while the rest goes;
+3. webviews: each one's worker is terminated and its drain released, then
    the webview is destroyed, before the window it lives in;
-3. tray icons;
-4. notifiers: their click handlers end and their hidden notification icons
+4. tray icons;
+5. notifiers: their click handlers end and their hidden notification icons
    go, but the notifications they showed are left for the user to read (see
    below);
-5. single-instance locks, so the next launch becomes the primary;
-6. windows, a tabbed window with its tabs, a torn-off window too;
-7. on Windows, whatever the binding still holds (menus handed out by
+6. single-instance locks, so the next launch becomes the primary;
+7. windows, a tabbed window with its tabs, a torn-off window too;
+8. on Windows, whatever the binding still holds (menus handed out by
    `buildMenu`, native timeouts, callbacks), in the same order. A step that
    fails is reported on stderr and the others still run.
 
@@ -207,8 +214,8 @@ import { Window } from "@n1h/sweetview/native";
 import page from "./index.html";
 
 const win = new Window({ title: "Notes", bounds: { x: 120, y: 120, width: 960, height: 640 } });
-const view = await WebView.attach(win, { page, worker: "./worker.ts" });
-win.show();
+// Shown once the page calls signalReady() (@n1h/sweetview/page) after its first render.
+const view = await WebView.attach(win, { page, worker: "./worker.ts", showOnReady: true, readyTimeoutMs: 15_000 });
 view.run();
 ```
 
@@ -260,6 +267,8 @@ A webview lives until one of these happens, each of which runs the same teardown
 - `webview.dispose()` (or `app.dispose()`) is called. Inside `run()`, this stops the worker and watchdogs and calls `quit()`; the webview is destroyed when the loop returns.
 - The `Window` it is attached to is disposed directly, with `win.dispose()` or by closing a window that has no `onClose` listener. Inside `run()`, disposing the window ends the loop, and `run()` finishes the teardown when the loop returns.
 
+When its window goes too (`run()` returning, the window disposed, the application ending), the window is hidden first, so it is never on the screen with its page gone; when the window stays (`webview.dispose()` alone), it shows the backdrop of its `appearance` where the page was ([what a person sees at Quit](#closing-and-quitting)).
+
 A webview on a borrowed window (a tab's child window, or a `Window.fromHandle` wrapper) is torn down by its owner instead: disposing that window stops the webview's watchdog, deferred calls and file drops, and the tab driver (or your code) disposes the webview. After teardown, `emit` and RPC replies are dropped silently.
 
 #### Errors
@@ -304,8 +313,8 @@ const win = new Window({ title: "Browser", bounds: { x: 100, y: 100, width: 1040
 win.onClose(() => quitEventLoop());
 
 const loop = runEventLoop();
-await WebView.openTab(win, { page: tabPage, title: "New Tab" });
-win.show();
+// The window appears once the tab's page calls signalReady() after its first render.
+await WebView.openTab(win, { page: tabPage, title: "New Tab", showOnReady: true, readyTimeoutMs: 15_000 });
 await loop;
 ```
 
@@ -389,8 +398,8 @@ only.
 import { createApp } from "@n1h/sweetview";
 import index from "./index.html";
 
-const app = await createApp({ title: "Notes", page: index, worker: "./worker.ts" });
-app.window.show();
+// The window appears once the page calls signalReady() after its first render.
+const app = await createApp({ title: "Notes", page: index, worker: "./worker.ts", showOnReady: true, readyTimeoutMs: 15_000 });
 app.run();
 ```
 
@@ -407,6 +416,29 @@ The two kinds of app end differently.
 
 - **Single-window app, blocking `app.run()`.** Without an `onClose` option, closing the window disposes it. Disposing the window `app.webview` is attached to always ends `app.run()`: the webview's own window-dispose hook stops the worker and calls `quit()`, even when another owned window (a settings window, say) is still visible. To keep the process running after the main window closes, pass `onClose` (for example `onClose: () => app.window.hide()`) and call `app.quit()` yourself when the app should end. With `onClose`, nothing quits automatically.
 - **Tabbed app, `runEventLoop()`.** Without an `onClose` option, disposing `app.window` calls `quitEventLoop()` only when `Window.visibleWindows()` is empty afterwards, so a visible torn-off window or any other visible owned window keeps the loop running. With `onClose`, nothing quits automatically; the [multi-tab example](#multi-tab-app) quits from it.
+
+What a person sees at Quit (a tray's Quit calling `app.quit()`, say): the
+window goes from the screen with its page still drawn on it, and its taskbar
+button goes with it; nothing is ever shown in it without its page. In order:
+
+1. the loop ends (`run()` returns, or `runEventLoop()`'s promise resolves);
+2. under `run()`, its window is hidden, then its worker is terminated and its
+   webview destroyed; the window itself stays, for code after `run()`;
+3. the script's last line has run and the process ends by itself, a few
+   milliseconds later: Sweetview's release hides every window still on the
+   screen, destroys the webviews, removes the tray icons and the notifiers'
+   hidden icons, gives up the single-instance lock and destroys the windows
+   ([the end of the application](#the-end-of-the-application)).
+
+The same holds for a window closed or disposed while the application runs
+(`win.dispose()`, `app.dispose()`, a close with no `onClose` listener, a
+tabbed window closed with its tabs): the window is hidden, its webviews are
+destroyed, then the window is destroyed, and what it held is given back. A
+window that stays while its webview goes (`view.dispose()` on a window kept
+for a new webview, the last tab of a tabbed window disposed while an
+`onClose` listener keeps the window) shows its backdrop, the colour of its
+`appearance` ([`WindowOptions`](native/windows.md#windowoptions)), until a
+page covers it again, never white.
 
 ### App and AppOptions
 
@@ -425,9 +457,9 @@ call `WebView.openTab(origin, ...)` to open the tab there
 | `mergeAllWindows()` | Nothing to merge. | Merges torn-off windows back into `app.window`. |
 | `emit(name, payload)`, `notify(method, ...params)` | `webview.emit` and `webview.notify`. | Send nothing; they log `sweetview: app.emit() is unavailable on a tabbed app; emit on a specific tab.webview instead` (or the `app.notify()` equivalent) with `console.error`. |
 | `onEvent(fn)` | `webview.onEvent(fn)`. | Registers nothing and returns an inert unsubscribe function; subscribe on each `tab.webview` instead. |
-| `run()` | Blocks in `webview.run()`; returns `void`. After a `dispose()` made inside the loop, it disposes the window once the loop unwinds. The window and everything else are released when the process ends ([the end of the application](#the-end-of-the-application)). | Returns the promise of `runEventLoop()`; `await` it. The tabs and windows are released when the process ends. |
+| `run()` | Blocks in `webview.run()`; returns `void`. As it returns, the window is hidden before the webview goes ([what a person sees at Quit](#closing-and-quitting)). After a `dispose()` made inside the loop, it disposes the window once the loop unwinds. The window and everything else are released when the process ends ([the end of the application](#the-end-of-the-application)). | Returns the promise of `runEventLoop()`; `await` it. The tabs and windows are released when the process ends. |
 | `quit()` | `webview.quit()`. | `quitEventLoop()`. |
-| `dispose()` | Disposes the webview, then the window (inside `run()`, the window waits for `run()` to return). Not needed at the end of the application. Idempotent. | Closes `app.window` and the tabs in it. Torn-off windows created by `moveToNewWindow()` or tab tear-off have their own lifetime; dispose them (or their tabs) separately, or merge them back first with `mergeAllWindows()`. At the end of the application every window is released, torn-off ones included. Idempotent. |
+| `dispose()` | Hides the window, destroys the webview, then destroys the window (inside `run()`, the window waits for `run()` to return). Not needed at the end of the application. Idempotent. | Closes `app.window` and the tabs in it. Torn-off windows created by `moveToNewWindow()` or tab tear-off have their own lifetime; dispose them (or their tabs) separately, or merge them back first with `mergeAllWindows()`. At the end of the application every window is released, torn-off ones included. Idempotent. |
 
 ### Asset
 
@@ -770,11 +802,12 @@ const app = await createApp<Methods, Events>({
   page: index,
   worker: "./app-worker.ts",
   uiMethods: { "window.size": () => 800 },
+  showOnReady: true, // the page calls signalReady() once it has rendered
+  readyTimeoutMs: 15_000,
 });
 
 app.onEvent((event) => console.log(event.name, event.payload.count));
 app.notify("notes.list");
-app.window.show();
 app.run();
 ```
 
@@ -798,12 +831,13 @@ const app = await createApp({
 });
 
 function open(origin?: Window): Promise<Tab> {
-  // origin is the window that asked for the tab (main or torn-off); without it, the main window
-  return origin ? WebView.openTab(origin, { page: tabPage, title: "New Tab" }) : app.openTab({ page: tabPage, title: "New Tab" });
+  // origin is the window that asked for the tab (main or torn-off); without it, the main window.
+  // showOnReady shows a hidden window once the tab's page calls signalReady() after its first render.
+  const options = { page: tabPage, title: "New Tab", showOnReady: true, readyTimeoutMs: 15_000 };
+  return origin ? WebView.openTab(origin, options) : app.openTab(options);
 }
 
 const loop = app.run();
 await open();
-app.window.show(); // opening a tab without showOnReady does not show the window
 await loop;
 ```

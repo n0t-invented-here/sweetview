@@ -136,7 +136,7 @@ import type { WindowChromeInfo, WindowChromeKind, WindowChromeMethods } from "@n
 | `window.resize` | `ResizeEdge` | `void` | Calls `window.startResize(edge)`. Both Windows and macOS drag the requested edge or corner with the cursor while the left mouse button is held. |
 | `window.minimize` | `void` | `void` | Calls `window.minimize()`. |
 | `window.maximize` | `void` | `void` | Calls `window.toggleMaximize()`: maximised, or back to the previous bounds when already maximised. |
-| `window.close` | `void` | `void` | Calls the `onClose` option. Without one, it calls `window.hide()`: the window disappears and the app keeps running. |
+| `window.close` | `void` | `void` | Calls the `onClose` option. Without one, it calls `window.close()`, what the OS close button does: the window's `onClose` listeners run, or, with none, the window is disposed (destroyed). |
 
 `WindowChromeInfo` is `{ chrome: WindowChromeKind; maximized: boolean }`:
 
@@ -149,12 +149,12 @@ import type { WindowChromeInfo, WindowChromeKind, WindowChromeMethods } from "@n
 
 `windowChromeMethods(window, options?: WindowChromeOptions): WindowChromeMethodTable`
 
-Builds the `window.*` handlers for one window; pass the result as `uiMethods` (or spread it into yours) on `WebView.attach` or `createApp` ([app.md](app.md)). `window` is a `Window` from `@n1h/sweetview/native` ([Windows and screens](native/windows.md)), or any object with its `hide`, `isMaximized`, `startDrag`, `startResize`, `minimize` and `toggleMaximize` methods, such as a test double. Create a real one with `frame: false` (and usually `transparent: true`) for a page-drawn chrome.
+Builds the `window.*` handlers for one window; pass the result as `uiMethods` (or spread it into yours) on `WebView.attach` or `createApp` ([app.md](app.md)). `window` is a `Window` from `@n1h/sweetview/native` ([Windows and screens](native/windows.md)), or any object with its `close`, `isMaximized`, `startDrag`, `startResize`, `minimize` and `toggleMaximize` methods, such as a test double. Create a real one with `frame: false` (and usually `transparent: true`) for a page-drawn chrome.
 
 | `WindowChromeOptions` field | Default | Meaning |
 |---|---|---|
 | `chrome` | `"page"` | What `window.info` reports. Pass `"os"` when the same page is hosted in a plain framed window. |
-| `onClose` | `() => window.hide()` | What `window.close` does. The default hides the window and does not quit, so a tray or a menu can show it again. Pass `app.quit` (or `view.quit`) for a main window, so the close button ends the app. |
+| `onClose` | `() => window.close()` | What `window.close` does. The default closes the window as its OS close button would: a window with an `onClose` listener of its own (one that hides it to a tray, say) does what that listener does, and one with none is destroyed. Pass `app.quit` (or `view.quit`) for a main window, so the close button ends the app. |
 
 `windowChromeMethods`, `WindowChromeInfo`, `WindowChromeKind`, `WindowChromeMethods`, `WindowChromeMethodTable` and `WindowChromeOptions` are also exported from the root `@n1h/sweetview`. The page half (`windowChromeControls`, `resizeHandles`) is only in `@n1h/sweetview/window-chrome`.
 

@@ -86,7 +86,7 @@ display. Multiply page coordinates by `win.scale()` to get window units.
 | `minWidth`, `minHeight` | `number` | none | Minimum outer size, enforced by OS resizing and by `startResize`. |
 | `frame` | `boolean` | `true` | OS title bar and borders (`true`) or frameless (`false`). |
 | `resizable` | `boolean` | same as `frame` | Whether the OS frame resizes. |
-| `appearance` | `"system" \| "light" \| "dark"` | `"system"` | Theme of a framed window's title bar. |
+| `appearance` | `"system" \| "light" \| "dark"` | `"system"` | Theme of a framed window's title bar, and on Windows the colour the window paints where no page is drawn: before its page's first paint, or once its webview has gone from a window that stays (a dark grey, `#15161a`, or a near-white, `#f9f9fb`, the same a tabbed window's page area shows; `"system"` takes the system's theme when the window is made). A webview made in the window shows the same colour until its page paints. A `transparent` or `colorKey` window paints nothing there. Give a dark page `"dark"`. |
 | `icon` | `Icon` | from `identity`, else the stock icon | Windows title bar, taskbar and Alt+Tab icon. Ignored on macOS. |
 | `tabs` | `boolean` | `false` | A native tabbed container; see [Tabbed](#tabbed). |
 | `transparent` | `boolean` | `false` | Per-pixel alpha; see [Transparent](#transparent). |
@@ -195,8 +195,9 @@ the menu bar. See [`setActivationPolicy`](menus-and-tray.md#setactivationpolicy)
 | `setClickThrough(on)`, `setHitRegions(polygons, refine?)` | See [overlays](overlays-and-hit-regions.md). |
 | `onResize(fn)`, `onMove(fn)` | Called with the new outer `Rect`. |
 | `onClose(fn)`, `onFileDrop(fn)` | See [Closing](#closing) and [File drops](#file-drops). |
+| `close()` | Asks the window to close, as its close button does: its `onClose` listeners run, or, with none, an owned window is disposed (destroyed). A wrapper from `fromHandle` with no listener is left alone. What a page-drawn close button calls ([window chrome](../window-chrome.md)). |
 | `onNewTab(fn: (origin: Window) => void)`, `onTabSelect(fn)`, `onTabClose(fn)` | Tab events; see [Tabbed](#tabbed). |
-| `dispose()` | Destroys an owned window, or detaches a wrapper's hooks. Releases timers, subclass hooks, observers and icons. A webview attached to an owned window is torn down with it ([lifecycle](../app.md#lifecycle)). Every window is disposed when the application ends ([the end of the application](../app.md#the-end-of-the-application)); call it for one that should go before that. Safe to call twice. |
+| `dispose()` | Destroys an owned window, or detaches a wrapper's hooks. Releases timers, subclass hooks, observers and icons. A webview attached to an owned window is torn down with it ([lifecycle](../app.md#lifecycle)), in this order: the window is hidden, its webviews are destroyed, then the window is destroyed, so it is never on the screen with its page gone. Every window is disposed when the application ends ([the end of the application](../app.md#the-end-of-the-application)); call it for one that should go before that. Safe to call twice. |
 
 Every `on*` method accepts any number of listeners and returns a function
 that removes that one subscription. A listener that throws is logged with
@@ -268,7 +269,8 @@ and macOS zoom do not use the 160 x 120 floor; they use the OS limits and
 Alt+F4 or Cmd+W, and `performClose:` on macOS. Once at least one listener is
 registered, the window stays open and the listener decides what happens:
 `hide()`, `dispose()`, or quitting the app. With no listener, closing an
-owned window destroys and disposes it. Closing a window never ends the event
+owned window destroys and disposes it: what it held (its webview, timers,
+hooks, icons) is given back at once, not kept in a hidden window. Closing a window never ends the event
 loop by itself; `createApp` adds that behaviour for its main window.
 
 ```ts

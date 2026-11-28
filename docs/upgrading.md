@@ -608,7 +608,7 @@ These types keep their names; one member each changed.
 | Old | Write now | Change |
 |---|---|---|
 | `WindowChromeOptions.close` | `import type { WindowChromeOptions } from "@n1h/sweetview/window-chrome"`; `WindowChromeOptions#onClose` | renamed `onClose` |
-| `windowChromeMethods(overlay, options)` | `import { windowChromeMethods } from "@n1h/sweetview"`; `windowChromeMethods(window, options)` | takes a `Window` (anything with its `hide`, `isMaximized`, `startDrag`, `startResize`, `minimize`, `toggleMaximize`) |
+| `windowChromeMethods(overlay, options)` | `import { windowChromeMethods } from "@n1h/sweetview"`; `windowChromeMethods(window, options)` | takes a `Window` (anything with its `close`, `isMaximized`, `startDrag`, `startResize`, `minimize`, `toggleMaximize`) |
 | `WsHost.close()` | `import type { WsHost } from "@n1h/sweetview/ipc-ws"`; `WsHost#dispose` | renamed `dispose` |
 | `WsTransport.close()` | `import type { WsTransport } from "@n1h/sweetview/ipc-ws"`; `WsTransport#dispose` | renamed `dispose` |
 | `NotifierOptions.onClick` (0.1.x) | `import type { NotifierOptions } from "@n1h/sweetview/native"`; `NotifierOptions#onClick` | called with `{ id, data }` of the clicked notification (0.2.x already did) |
