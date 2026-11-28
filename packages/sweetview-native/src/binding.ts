@@ -1,7 +1,8 @@
 // Internal. Loads the Rust binding, `sweetview.<target>.node`.
 //
 // The `require` of the prebuilt file is a literal string per target, which is
-// the form `bun build --compile` embeds into the executable. The same call
+// the form `bun build --compile` embeds into the executable; a build for
+// Windows without the file fails then (`requireWindowsBinding`). The same call
 // works inside a `Worker`: the first thread to load the binding is the UI
 // thread, and a later one gets the functions that are callable from any thread.
 //
@@ -36,6 +37,18 @@ function isMissing(err: unknown): boolean {
   return (err as { code?: unknown } | null)?.code === "MODULE_NOT_FOUND";
 }
 
+// The literal `require` of the prebuilt file, outside any `try` on purpose: Bun's bundler lets a
+// `require` it cannot resolve through only inside a `try`, so out here a `bun build --compile` for
+// Windows made without the file fails at build time ("Could not resolve"), instead of making an
+// executable that fails when it starts. Bun puts the target's platform in place of
+// `process.platform` when it compiles, so a build for another OS (`--target=bun-darwin-arm64`)
+// drops the `require` and does not need the Windows file. (Only this form drops it: the `require`
+// inside the `if`. Behind an early `if (process.platform !== "win32") throw` it is still resolved.)
+function requireWindowsBinding(): NativeBinding {
+  if (process.platform === "win32") return require("../prebuilt/sweetview.win32-x64-msvc.node") as NativeBinding;
+  throw new Error(`sweetview: the Windows binding does not load on ${process.platform}`);
+}
+
 function load(): NativeBinding {
   if (customPath !== undefined) {
     try {
@@ -48,7 +61,7 @@ function load(): NativeBinding {
   switch (target) {
     case "win32-x64":
       try {
-        return require("../prebuilt/sweetview.win32-x64-msvc.node") as NativeBinding;
+        return requireWindowsBinding();
       } catch (err) {
         fail("@n1h/sweetview-native/prebuilt/sweetview.win32-x64-msvc.node", err, isMissing(err) ? NOT_BUILT : undefined);
       }
