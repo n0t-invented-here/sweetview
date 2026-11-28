@@ -1,8 +1,8 @@
 //! What a person does to Sweetview's windows, done with real input on the shared desktop
 //! (`SendInput`, never a posted message), and read back from the OS: the rows of
-//! `rust-rewrite/PORT-STATUS.md` that a simulated message could not prove. Each test takes the
-//! desktop's input turn for its own run, and refuses to judge (`not run: ...`) when the desktop is
-//! not its own.
+//! `rust-rewrite/PORT-STATUS.md` that a simulated message could not prove. Each test judges the
+//! desktop itself within a few seconds (the foreground it needs, no button held, its window not
+//! covered) and refuses to judge (`not run: ...`) when the desktop is not its own.
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -85,7 +85,6 @@ fn close_button(handle: isize, bounds: Rect) -> Option<(i32, i32)> {
 /// they reach the listener once and the window stays.
 #[test]
 fn a_person_closes_a_framed_window_with_its_close_button_and_with_alt_f4() {
-  let _turn = os::input_turn("prove");
   on_ui_thread(|runtime| {
     let _back = InputBack::here();
     for (by_key, listening) in [(false, false), (false, true), (true, false), (true, true)] {
@@ -101,7 +100,8 @@ fn a_person_closes_a_framed_window_with_its_close_button_and_with_alt_f4() {
       window.show().expect("show");
       pump_until(runtime.as_ref(), 300, || false);
       if by_key {
-        if !os::take_foreground(handle) {
+        // The foreground, asked for again for up to three seconds (another session may hold it).
+        if !pump_until(runtime.as_ref(), 3000, || os::take_foreground(handle)) {
           panic!("not run: {how}: the test's window could not take the foreground (it is with {:#x})", os::foreground());
         }
         os::send_key(VK_MENU, false);
@@ -111,7 +111,7 @@ fn a_person_closes_a_framed_window_with_its_close_button_and_with_alt_f4() {
       } else {
         let outer = window.bounds();
         let Some((x, y)) = close_button(handle, outer) else { panic!("the window answers HTCLOSE nowhere on its caption: {outer:?}") };
-        if os::buttons_down() || os::window_at(x, y) != handle {
+        if !pump_until(runtime.as_ref(), 3000, || !os::buttons_down() && os::window_at(x, y) == handle) {
           panic!("not run: {how}: a button is held, or another window ({:#x}) is over the test's at {x},{y}", os::window_at(x, y));
         }
         os::set_cursor(x, y);

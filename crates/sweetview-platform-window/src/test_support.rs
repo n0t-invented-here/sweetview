@@ -228,40 +228,6 @@ pub fn key_is_down(virtual_key: u16) -> bool {
   state < 0
 }
 
-/// This session's turn at the shared desktop's real input, for a test that drives it: the
-/// file `%TEMP%\upgrade-evidence\input-turn.txt` names whoever has it. Taken once no one else
-/// holds it (looked at every half second, for up to twenty minutes), released when dropped, a
-/// failing test's unwind included.
-pub struct InputTurn(std::path::PathBuf);
-
-/// Waits for, then takes, the desktop's input turn under `word`. Panics `not run: ...` when the
-/// turn does not come.
-pub fn input_turn(word: &str) -> InputTurn {
-  let dir = std::env::temp_dir().join("upgrade-evidence");
-  let path = dir.join("input-turn.txt");
-  let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20 * 60);
-  loop {
-    let _ = std::fs::create_dir_all(&dir);
-    // Created only when absent: two sessions cannot both take it.
-    if let Ok(mut file) = std::fs::OpenOptions::new().write(true).create_new(true).open(&path) {
-      use std::io::Write;
-      let _ = file.write_all(word.as_bytes());
-      return InputTurn(path);
-    }
-    if std::time::Instant::now() > deadline {
-      let holder = std::fs::read_to_string(&path).unwrap_or_default();
-      panic!("not run: the desktop's input turn stayed with {holder:?} for twenty minutes");
-    }
-    std::thread::sleep(std::time::Duration::from_millis(500));
-  }
-}
-
-impl Drop for InputTurn {
-  fn drop(&mut self) {
-    let _ = std::fs::remove_file(&self.0);
-  }
-}
-
 /// Whether any mouse button is held down.
 pub fn buttons_down() -> bool {
   [VK_LBUTTON, VK_RBUTTON, VK_MBUTTON].into_iter().any(|key| key_is_down(key.0))
