@@ -170,13 +170,13 @@ function registryDark(): boolean {
 const iconOf = (hwnd: bigint) => BigInt(user32.SendMessageW(hwnd, 0x007f, 1n, 0n));
 const rectEq = (a: Rect, b: Rect) => a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
 
-/** The frame's webview children (`wry`'s `WRY_WEBVIEW` containers), in client coordinates. */
+/** The frame's webview children (each webview's `webview_widget` container, the C++ library's class), in client coordinates. */
 function webviewChildren(frame: bigint): { rect: Rect; visible: boolean }[] {
   const out: { rect: Rect; visible: boolean }[] = [];
   const name = Buffer.alloc(128);
   for (let child = user32.GetWindow(frame, 5); child !== 0n; child = user32.GetWindow(child, 2)) {
     const length = user32.GetClassNameW(child, ptr(name), 64);
-    if (name.toString("utf16le", 0, length * 2) !== "WRY_WEBVIEW") continue;
+    if (name.toString("utf16le", 0, length * 2) !== "webview_widget") continue;
     const r = windowRect(child);
     const p = new Int32Array([r.x, r.y]);
     user32.ScreenToClient(frame, ptr(p));
