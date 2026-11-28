@@ -1556,7 +1556,7 @@ Windows toasts are made by the binding; `Notifier` is the public form.
 
 #### `packages/sweetview-native/src/win32/tray.ts`
 
-The balloon a tray icon showed is a notification: `Notifier` shows it itself, with the active tray's icon. `createTray`, `currentTray` and `Win32Tray` are still there.
+The balloon a tray icon showed is a notification: `Notifier` shows it itself, with the active tray's icon. The tray itself is the public `Tray`, made with `createTray(options)` from `@n1h/sweetview/native`: its icon, tooltip, menu and click handler, each settable while it lives (`setIcon`, `setTooltip`, `setMenu`).
 
 | Old | Write now | Change |
 |---|---|---|

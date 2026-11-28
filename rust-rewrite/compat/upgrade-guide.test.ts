@@ -393,6 +393,13 @@ describe("docs/upgrading.md", () => {
     for (const old of ROWS_OF_ANOTHER_CHANGE) expect(rows.some((r) => r.old === `\`${old}\``)).toBe(true);
   });
 
+  test("every runner is the runner of a row, so none is left that nothing runs", () => {
+    const targets = new Set(valueRows().flatMap((r) => r.targets));
+    // Runners that others call (`RUNNERS["…"]` in row-runners.ts) run through those.
+    const called = new Set([...readFileSync(join(import.meta.dir, "fixtures", "row-runners.ts"), "utf8").matchAll(/RUNNERS\["([^"]+)"\]|RUNNERS\.([\w$]+)!/g)].map((m) => m[1] ?? m[2]!));
+    expect(Object.keys(RUNNERS).filter((key) => !targets.has(key) && !called.has(key))).toEqual([]);
+  });
+
   test.skipIf(process.platform !== "win32")("every row's new form runs", async () => {
     const jobs = new Map<string, { key: string; target: string; name: string; spec: string; where: "here" | "desktop" }>();
     for (const r of valueRows()) {

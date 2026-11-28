@@ -159,8 +159,8 @@ What is released, in this order:
    below);
 5. single-instance locks, so the next launch becomes the primary;
 6. windows, a tabbed window with its tabs, a torn-off window too;
-7. on Windows, whatever the binding still holds (menus handed out by
-   `buildMenu`, native timeouts, callbacks), in the same order. A step that
+7. on Windows, whatever the native layer still holds for the application
+   (menus, timers and callbacks it made), in the same order. A step that
    fails is reported on stderr and the others still run.
 
 **Notifications shown before the end stay.** A notification the application

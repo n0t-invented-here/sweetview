@@ -42,6 +42,20 @@ describe("an internal the guide now says the true thing about", () => {
   });
 });
 
+describe("internals named in passing", () => {
+  test("docs/app.md's list of what the end of the application releases names no internal call", () => {
+    const list = read("docs/app.md").replace(/\s+/g, " ");
+    const step = list.slice(list.indexOf("7. on Windows, whatever the binding still holds"), list.indexOf("A step that fails"));
+    expect({ step, namesBuildMenu: /buildMenu/.test(step), namesNativeTimeouts: /native timeouts/.test(step) }).toEqual({ step, namesBuildMenu: false, namesNativeTimeouts: false });
+  });
+
+  test("the guide's win32/tray.ts note says what the public Tray covers, not that the file's exports are still there", () => {
+    const at = guideLines.indexOf("#### `packages/sweetview-native/src/win32/tray.ts`");
+    const note = guideLines.slice(at + 1, at + 4).join(" ");
+    expect({ stillThere: /are still there/.test(note), namesTray: /`createTray\(options\)`/.test(note) }).toEqual({ stillThere: false, namesTray: true });
+  });
+});
+
 describe("the system menu of a window by its handle (the tag's windowMenu(hwnd))", () => {
   const page = read("docs/native/menus-and-tray.md");
   const guideRow = row("`@n1h/sweetview-native/win32/tab-window`", "`windowMenu`");

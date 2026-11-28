@@ -774,31 +774,9 @@ export const RUNNERS: Record<string, Runner> = {
   }),
 
   // ---- functions: the UI thread, windows and webviews ----------------------------------------------------------
-  popupMenuAtCursor: desktop(async (fn, ctx) => {
-    const owner = ctx.window();
-    const { result, seen } = await popupRun(ctx, () => fn(hwndOf(owner), MENU));
-    must(seen && result === false, "the menu opened and, dismissed, chose nothing", { seen, result });
-  }),
-  windowMenu: desktop(async (fn, ctx) => {
-    const win = ctx.window();
-    win.show();
-    const { seen } = await popupRun(ctx, () => fn(hwndOf(win)));
-    must(seen && !ctx.os.user32.IsIconic(hwndOf(win)), "the system menu of a plain window opened and, dismissed, did nothing", seen);
-  }),
   resolveMenu: here((fn) => {
     const template = [{ label: "A", click() {} }];
     must(fn(template) === template && fn(() => template) === template && same(fn(undefined), []), "a template, a function of one, or nothing");
-  }),
-  createChildWebview: desktop((fn, ctx) => {
-    const { getTabFrame } = require("../../../packages/sweetview-native/src/win32/tab-window");
-    const tabbed = ctx.window({ tabs: true });
-    const frame = getTabFrame(hwndOf(tabbed));
-    const view = fn(false, frame.hwnd, frame.pageRect());
-    try {
-      must(view.unsafeHandle !== null, "a webview made as a child of the frame");
-    } finally {
-      view.destroy();
-    }
   }),
   createWindow: desktop((fn, ctx) => {
     const { Window } = require("@n1h/sweetview-native");
