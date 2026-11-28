@@ -365,6 +365,10 @@ impl Core {
       platform::SystemCommand::Maximize if !self.chrome.frame => {
         if minimized_now {
           self.restore_from_minimized();
+          // Un-minimising ran the resize listeners, which may have disposed the window.
+          if !self.alive.get() {
+            return Ok(());
+          }
         }
         if !self.maximized_now() {
           self.toggle_frameless_maximize()?;
