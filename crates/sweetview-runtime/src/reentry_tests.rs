@@ -306,7 +306,7 @@ fn a_trays_click_menu_function_or_chosen_item_disposes_the_tray_from_inside_its_
     // Should a menu open anyway, it is dismissed, and the assertion below fails.
     let menu_seen = Rc::new(Cell::new(false));
     let seen = menu_seen.clone();
-    when_menu_opens(&runtime, move |menu_window| {
+    let watch = when_menu_opens(&runtime, move |menu_window| {
       seen.set(true);
       os::press_keys(menu_window, &[VK_ESCAPE]);
     });
@@ -316,6 +316,9 @@ fn a_trays_click_menu_function_or_chosen_item_disposes_the_tray_from_inside_its_
     assert_eq!(opened.get(), 1);
     assert!(!menu_seen.get() && os::open_popup_menu() == 0, "no menu opened for a disposed tray");
     assert!(!alive(handle));
+    // It saw no menu, so it is still armed: left so, it would take the next step's menu and
+    // press Escape on it.
+    watch.cancel();
 
     // The chosen item.
     let me: Slot<Tray> = slot();
@@ -337,11 +340,17 @@ fn a_trays_click_menu_function_or_chosen_item_disposes_the_tray_from_inside_its_
     );
     *me.borrow_mut() = Rc::downgrade(&tray);
     let handle = tray.window_handle_value();
-    when_menu_opens(&runtime, |menu_window| os::press_keys(menu_window, &[VK_DOWN, VK_RETURN]));
+    let menu_opened = Rc::new(Cell::new(false));
+    let opened = menu_opened.clone();
+    when_menu_opens(&runtime, move |menu_window| {
+      opened.set(true);
+      os::press_keys(menu_window, &[VK_DOWN, VK_RETURN]);
+    });
     post_tray(handle, &[WM_RBUTTONDOWN, WM_RBUTTONUP]);
     pump_until(&runtime, 5000, || chosen.get() == 1);
     pump_until(&runtime, 100, || false);
-    assert_eq!(chosen.get(), 1);
+    assert!(menu_opened.get(), "the tray's menu opened");
+    assert_eq!(chosen.get(), 1, "the item chosen in it was called");
     assert_eq!(os::open_popup_menu(), 0);
     assert!(!alive(handle));
   });

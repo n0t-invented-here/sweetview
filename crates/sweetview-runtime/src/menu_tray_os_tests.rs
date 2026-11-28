@@ -62,10 +62,27 @@ fn item(id: u32, label: &str) -> MenuItem {
   MenuItem::Item { id, label: label.into(), enabled: true, checked: false, icon: None }
 }
 
+/// The watcher [`when_menu_opens`] armed. A step that expects no menu cancels it, so the watcher
+/// does not live on (up to 5 s) and take the next step's menu.
+pub(crate) struct MenuWatch {
+  id: Rc<Cell<Option<TimeoutId>>>,
+  runtime: Rc<Runtime>,
+}
+
+impl MenuWatch {
+  /// Ends the watcher; nothing when it has already seen its menu or given up.
+  pub(crate) fn cancel(self) {
+    if let Some(id) = self.id.take() {
+      self.runtime.clear_timeout(id);
+    }
+  }
+}
+
 /// Runs `step` from inside the popup menu's own modal loop once a popup menu of this process is
 /// open, on a native interval (which the menu loop dispatches). A menu still open 3 s later is
-/// closed, so a failing test never leaves one up.
-pub(crate) fn when_menu_opens(runtime: &Rc<Runtime>, step: impl FnOnce(isize) + 'static) {
+/// closed, so a failing test never leaves one up. Until it sees a menu (or 5 s pass) the watcher
+/// takes the next menu this process opens, whoever opens it: cancel it when no menu is expected.
+pub(crate) fn when_menu_opens(runtime: &Rc<Runtime>, step: impl FnOnce(isize) + 'static) -> MenuWatch {
   let started = Instant::now();
   let step = RefCell::new(Some(step));
   let id: Rc<Cell<Option<TimeoutId>>> = Rc::default();
@@ -95,6 +112,7 @@ pub(crate) fn when_menu_opens(runtime: &Rc<Runtime>, step: impl FnOnce(isize) + 
     })
     .expect("watcher");
   id.set(Some(interval));
+  MenuWatch { id, runtime: runtime.clone() }
 }
 
 /// A rectangle as (left, top, right, bottom).
