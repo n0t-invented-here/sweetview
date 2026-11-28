@@ -63,7 +63,7 @@ The Rust exists. The proof is a simulated message, a test hook, a test that did 
 | Tab keyboard shortcuts | Only Ctrl+T and Ctrl+W are typed for real; the other eleven go through a test hook. |
 | Snap and shadow of the tabbed frame | No test. |
 | "No click-through flip while a mouse button is down" | Pure logic only; never with a held button. |
-| Requests from a shared worker; an external drop being refused | No test. |
+| An external drop being refused (`allowExternalDrop: false`) | The setting is read back from WebView2 (`allows_external_drop`, in `sweetview-platform-webview`'s `tests/requests.rs`); no real drag from outside the application is made: that needs an OLE drag driven by real input, from another application or a COM drag source in the test, which is not built. |
 | The name a toast shows with no identity | Pure logic; the toast is not read. |
 | A whole application compiled to one executable | Tested on a copied loader; the demos' compile recipes are not in the test run. |
 
@@ -88,6 +88,7 @@ The Rust exists. The proof is a simulated message, a test hook, a test that did 
 | Per-pixel transparency of a `transparent` window | The screen read through a frameless `transparent` window whose webview has a transparent background, over a window of a known colour: the page's opaque square shows its own colour and the window behind shows through everywhere else: `person_tests::a_transparent_window_shows_its_pages_opaque_shape_and_the_window_behind_everywhere_else` |
 | `writeIconFiles` | Writes `app.ico` and `AppIcon.icns` byte for byte into a folder it makes, returns their paths in that order, and writes only the files it is given: `build.test.ts` "writeIconFiles writes app.ico and AppIcon.icns into a folder it makes, ..." |
 | UI-thread calls from a `Worker` | `new Window`, `Window.fromHandle`, `Screen.all`, `Screen.primary`, `Screen.at`, `Screen.cursor`, `createTray` and `Menu.popup`, called from a `Worker`, throw `sweetview: this call must be made on the UI thread`: `binding.test.ts` "the public window, screen, tray and menu calls made from a Worker throw that they must be made on the UI thread" |
+| Requests from a shared worker | A shared worker's own script and a `fetch` it makes are both answered by the request handler: `sweetview-platform-webview` `tests/shared_worker.rs` `requests_from_a_shared_worker_reach_the_request_handler` |
 
 ## The Rust itself
 
