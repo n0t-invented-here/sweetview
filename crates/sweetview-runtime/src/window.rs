@@ -169,14 +169,15 @@ struct Core {
   restore: Cell<Option<Rect>>,
   /// Whether the window was maximised when that was last looked at, for `on_maximize_change`.
   maximized: Cell<bool>,
-  /// True while the maximise listeners are being told of a change: a change
-  /// one of them makes is told after every listener has heard the first.
-  noting_maximized: Cell<bool>,
+  /// How many changes of the maximised state have been noticed: a delivery stops
+  /// once a later change has been told in its place.
+  maximize_changes: Cell<u64>,
+  /// How many deliveries of a maximise change are on the stack: 1 while the
+  /// listeners hear a change, 2 while they hear one a listener made then.
+  maximize_telling: Cell<u32>,
   /// The window's `backgroundColor` (red, green, blue); `None` without one, or for a transparent
   /// window. A webview made in the window starts with it (`background_of`).
   background: Cell<Option<(u8, u8, u8)>>,
-  /// Changes of the maximised state not told yet, in the order they happened.
-  maximize_queue: RefCell<std::collections::VecDeque<bool>>,
   icons: RefCell<Option<WindowIcons>>,
   /// Live wrappers of this window.
   wrappers: Cell<usize>,
@@ -242,9 +243,9 @@ impl Core {
       gesture_timer: Cell::new(None),
       restore: Cell::new(None),
       maximized: Cell::new(false),
-      noting_maximized: Cell::new(false),
+      maximize_changes: Cell::new(0),
+      maximize_telling: Cell::new(0),
       background: Cell::new(None),
-      maximize_queue: RefCell::new(std::collections::VecDeque::new()),
       icons: RefCell::new(None),
       wrappers: Cell::new(0),
       tab,
@@ -271,35 +272,45 @@ impl Core {
   }
 
   /// Tells the maximise listeners when the window's maximised state changed
-  /// since it was last looked at. A minimised window is not looked at: it
-  /// keeps the state it is restored to.
+  /// since it was last looked at (`onMaximizeChange`'s sentences, in
+  /// `docs/native/windows.md`). A minimised window is not looked at: it keeps
+  /// the state it is restored to.
   ///
-  /// Every change is queued where it is noticed, and told from the queue in
-  /// order: one a listener makes while being told (it restores the window and
-  /// maximises it again, say) is told after every listener has heard the one
-  /// before it, so each listener hears every change, once, in order, and ends
-  /// with the window's own state.
+  /// 1. A change is told to each listener once, after it happened. One a
+  ///    listener makes while being told is told at once, from inside that call,
+  ///    and the older change is told to no one after it: so the last value each
+  ///    listener heard is the window's state.
+  /// 2. A change goes to the listeners subscribed when it happened: one removed,
+  ///    or the window disposed, during delivery hears nothing more.
+  /// 3. A change made while the listeners are told of one a listener made is a
+  ///    fault, as re-entry is everywhere in the package (D40, D44): it is
+  ///    printed and not told, and the window keeps its state.
   fn note_maximized(&self) {
     let minimized = self.with_native(|window| platform::is_minimized(window)).unwrap_or(true);
-    if self.alive.get() && !minimized {
-      let now = self.maximized_now();
-      if self.maximized.replace(now) != now {
-        self.maximize_queue.borrow_mut().push_back(now);
-      }
-    }
-    if self.noting_maximized.get() {
+    if !self.alive.get() || minimized {
       return;
     }
-    self.noting_maximized.set(true);
-    let _told = scopeguard_reset(&self.noting_maximized);
-    loop {
-      let Some(next) = self.maximize_queue.borrow_mut().pop_front() else { return };
-      if !self.alive.get() {
-        self.maximize_queue.borrow_mut().clear();
+    let now = self.maximized_now();
+    if self.maximized.replace(now) == now {
+      return;
+    }
+    let change = self.maximize_changes.get() + 1;
+    self.maximize_changes.set(change);
+    if self.maximize_telling.get() >= 2 {
+      eprintln!("sweetview: an onMaximizeChange listener changed the window's maximised state while being told of a change a listener made; that change is not told");
+      return;
+    }
+    let _depth = telling(&self.maximize_telling);
+    let subscribed: Vec<(u64, BoolListener)> = self.listeners.borrow().maximize.clone();
+    for (wrapper, listener) in subscribed {
+      // Disposed, or told a later change already: nothing more of this one.
+      if !self.alive.get() || self.maximize_changes.get() != change {
         return;
       }
-      let listeners: Vec<BoolListener> = self.listeners.borrow().maximize.iter().map(|(_, l)| l.clone()).collect();
-      listeners.iter().for_each(|l| l(next));
+      let still = self.listeners.borrow().maximize.iter().any(|(w, _)| *w == wrapper);
+      if still {
+        listener(now);
+      }
     }
   }
 
@@ -593,15 +604,16 @@ fn cursor_position() -> Result<Point> {
   screen::cursor()
 }
 
-/// Sets `flag` back to false when dropped, an unwind included.
-fn scopeguard_reset(flag: &Cell<bool>) -> impl Drop + '_ {
-  struct Reset<'a>(&'a Cell<bool>);
-  impl Drop for Reset<'_> {
+/// Counts one more delivery on the stack for as long as it lives, an unwind included.
+fn telling(depth: &Cell<u32>) -> impl Drop + '_ {
+  struct Depth<'a>(&'a Cell<u32>);
+  impl Drop for Depth<'_> {
     fn drop(&mut self) {
-      self.0.set(false);
+      self.0.set(self.0.get().saturating_sub(1));
     }
   }
-  Reset(flag)
+  depth.set(depth.get() + 1);
+  Depth(depth)
 }
 
 /// The subclass procedure's handler: runs inside whichever message loop

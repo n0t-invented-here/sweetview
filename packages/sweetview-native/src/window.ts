@@ -574,7 +574,11 @@ export class Window {
    * is restored, by any means: a framed window's button, snap gesture, title
    * bar double click and system menu; a frameless window's `toggleMaximize()`
    * (filling its work area) and system menu; `toggleMaximize()` for both. Minimizing and restoring to the same
-   * state reports nothing. Returns the function that removes this listener.
+   * state reports nothing. A listener hears a change once, and the last value
+   * each heard is `isMaximized()`; a change goes to the listeners subscribed
+   * when it happened; a change made while the listeners hear one a listener
+   * made is printed and not told (docs/native/windows.md). Returns the
+   * function that removes this listener.
    */
   onMaximizeChange(handler: (maximized: boolean) => void): () => void {
     return this.#inner.onMaximizeChange(handler);

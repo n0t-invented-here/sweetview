@@ -254,8 +254,9 @@ fn content_size_is_the_client_area_at_the_windows_scale_and_a_maximise_change_is
   });
 }
 
-/// Review finding 3: every maximise listener sees each change in order and ends with the window's
-/// own state, when a listener changes the state from inside its call, or a resize listener does.
+/// Review finding 3, as `onMaximizeChange`'s sentence 1 says it since round 3: every maximise
+/// listener ends with the window's own state, when a listener changes the state from inside its
+/// call, or a resize listener does.
 #[test]
 fn maximise_listeners_see_each_change_in_order_when_a_listener_changes_the_state() {
   on_ui_thread(|_runtime| {
@@ -279,7 +280,8 @@ fn maximise_listeners_see_each_change_in_order_when_a_listener_changes_the_state
     window.toggle_maximize().expect("maximise");
     assert!(!window.is_maximized(), "restored by A");
     assert_eq!(*seen_a.borrow(), vec![true, false]);
-    assert_eq!(*seen_b.borrow(), vec![true, false], "B ends with the window's state");
+    // B is told the change A made, at once; the one A was told of is then told to no one after A.
+    assert_eq!(*seen_b.borrow(), vec![false], "B ends with the window's state");
     window.on_maximize_change(None).expect("A removed");
     other.on_maximize_change(None).expect("B removed");
 
@@ -329,33 +331,34 @@ fn a_maximise_listener_subscribed_while_minimised_hears_no_change_on_restore() {
   });
 }
 
-/// Review round 2, finding 3. Class: every order of listeners (the one that changes the state
-/// first or last), a listener that changes the state more than once from inside its call, and a
-/// resize listener that changes it: every transition is told once, in order, to every listener.
+/// Round 3, measure B, `onMaximizeChange`'s sentences. 1: a listener hears a change once, after it
+/// happened, and the last value each listener heard is what `is_maximized` then returns, also when a
+/// listener changes the state itself (once, or there and back), in either order of listeners.
 #[test]
-fn every_maximise_transition_is_told_once_in_order_to_every_listener() {
+fn a_maximise_listener_hears_each_change_once_and_ends_with_the_windows_state() {
   on_ui_thread(|_runtime| {
-    for changer_first in [true, false] {
-      let window = Window::create(WindowInit { frame: false, bounds: Some(Rect::new(140, 140, 320, 240)), ..init("rt every transition") }).expect("window");
+    for (changer_first, there_and_back) in [(true, false), (false, false), (true, true), (false, true)] {
+      let window = Window::create(WindowInit { frame: false, bounds: Some(Rect::new(140, 140, 320, 240)), ..init("rt sentence 1") }).expect("window");
       let changer = Window::adopt(window.handle()).expect("the changer's wrapper");
       let listener = Window::adopt(window.handle()).expect("the listener's wrapper");
       let toggler = Rc::new(Window::adopt(window.handle()).expect("a wrapper to toggle with"));
-      let (heard_by_changer, heard_by_listener) = (Rc::new(RefCell::new(Vec::new())), Rc::new(RefCell::new(Vec::new())));
+      let (by_changer, by_listener) = (Rc::new(RefCell::new(Vec::new())), Rc::new(RefCell::new(Vec::new())));
       let register_changer = || {
-        let (sink, toggle, done) = (heard_by_changer.clone(), toggler.clone(), Rc::new(Cell::new(false)));
+        let (sink, toggle, done) = (by_changer.clone(), toggler.clone(), Rc::new(Cell::new(false)));
         changer
           .on_maximize_change(Some(Rc::new(move |maximized| {
             sink.borrow_mut().push(maximized);
-            // Restores and maximises again, once, from inside its call.
             if maximized && !done.replace(true) {
               toggle.toggle_maximize().expect("restore");
-              toggle.toggle_maximize().expect("maximise again");
+              if there_and_back {
+                toggle.toggle_maximize().expect("and maximise again");
+              }
             }
           })))
           .expect("changer");
       };
       let register_listener = || {
-        let sink = heard_by_listener.clone();
+        let sink = by_listener.clone();
         listener.on_maximize_change(Some(Rc::new(move |maximized| sink.borrow_mut().push(maximized)))).expect("listener");
       };
       if changer_first {
@@ -366,19 +369,103 @@ fn every_maximise_transition_is_told_once_in_order_to_every_listener() {
         register_changer();
       }
       window.toggle_maximize().expect("maximise");
-      assert!(window.is_maximized());
-      assert_eq!(*heard_by_changer.borrow(), vec![true, false, true], "changer first: {changer_first}");
-      assert_eq!(*heard_by_listener.borrow(), vec![true, false, true], "changer first: {changer_first}");
+      let state = window.is_maximized();
+      assert_eq!(state, there_and_back);
+      for heard in [&by_changer, &by_listener] {
+        let heard = heard.borrow();
+        assert_eq!(heard.last(), Some(&state), "first {changer_first}, back {there_and_back}: {heard:?}");
+        // Never the same change twice in a row.
+        assert!(heard.windows(2).all(|pair| pair[0] != pair[1]), "first {changer_first}, back {there_and_back}: {heard:?}");
+      }
       for wrapper in [&changer, &listener] {
         wrapper.dispose();
       }
       toggler.dispose();
       window.dispose();
     }
-
   });
 }
 
+/// Sentence 2: a change goes to the listeners subscribed when it happened. One removed, or the
+/// window disposed, during delivery hears nothing more; one added during delivery does not hear it.
+#[test]
+fn a_maximise_change_goes_to_the_listeners_subscribed_when_it_happened() {
+  on_ui_thread(|_runtime| {
+    // Removed by the listener before it.
+    let window = Window::create(WindowInit { frame: false, bounds: Some(Rect::new(140, 140, 320, 240)), ..init("rt sentence 2") }).expect("window");
+    let first = Rc::new(Window::adopt(window.handle()).expect("first"));
+    let second = Rc::new(Window::adopt(window.handle()).expect("second"));
+    let late = Rc::new(Window::adopt(window.handle()).expect("late"));
+    let heard_second = Rc::new(RefCell::new(Vec::new()));
+    let heard_late = Rc::new(RefCell::new(Vec::new()));
+    let (remove, add, late_sink) = (second.clone(), late.clone(), heard_late.clone());
+    first
+      .on_maximize_change(Some(Rc::new(move |_| {
+        remove.on_maximize_change(None).expect("remove the second");
+        let sink = late_sink.clone();
+        add.on_maximize_change(Some(Rc::new(move |maximized| sink.borrow_mut().push(maximized)))).expect("add one late");
+      })))
+      .expect("first");
+    let sink = heard_second.clone();
+    second.on_maximize_change(Some(Rc::new(move |maximized| sink.borrow_mut().push(maximized)))).expect("second");
+    window.toggle_maximize().expect("maximise");
+    assert_eq!(*heard_second.borrow(), Vec::<bool>::new(), "removed during delivery");
+    assert_eq!(*heard_late.borrow(), Vec::<bool>::new(), "added during delivery");
+    first.on_maximize_change(None).expect("first removed");
+    window.toggle_maximize().expect("restore");
+    assert_eq!(*heard_late.borrow(), vec![false], "the next change reaches the late one");
+    for w in [&first, &second, &late] {
+      w.dispose();
+    }
+    window.dispose();
+
+    // The window disposed by the listener before it.
+    let window = Rc::new(Window::create(WindowInit { frame: false, bounds: Some(Rect::new(140, 140, 320, 240)), ..init("rt sentence 2 dispose") }).expect("window"));
+    let other = Window::adopt(window.handle()).expect("other");
+    let owner = window.clone();
+    window.on_maximize_change(Some(Rc::new(move |_| owner.dispose()))).expect("disposer");
+    let heard = Rc::new(RefCell::new(Vec::new()));
+    let sink = heard.clone();
+    other.on_maximize_change(Some(Rc::new(move |maximized| sink.borrow_mut().push(maximized)))).expect("other");
+    window.toggle_maximize().expect("maximise");
+    assert_eq!(*heard.borrow(), Vec::<bool>::new(), "the window was disposed during delivery");
+    other.dispose();
+  });
+}
+
+/// Sentence 3: a listener that changes the state every time it is told does not hang the
+/// application: the change made while it is told of its own change is not told (a fault, printed),
+/// and the window stays usable.
+#[test]
+fn a_maximise_listener_that_changes_the_state_every_time_does_not_hang() {
+  on_ui_thread(|_runtime| {
+    let window = Window::create(WindowInit { frame: false, bounds: Some(Rect::new(140, 140, 320, 240)), ..init("rt sentence 3") }).expect("window");
+    let runaway = Window::adopt(window.handle()).expect("runaway");
+    let toggler = Rc::new(Window::adopt(window.handle()).expect("toggler"));
+    let toggle = toggler.clone();
+    let calls = Rc::new(Cell::new(0));
+    let count = calls.clone();
+    runaway
+      .on_maximize_change(Some(Rc::new(move |_| {
+        count.set(count.get() + 1);
+        toggle.toggle_maximize().expect("toggle");
+      })))
+      .expect("runaway");
+    window.toggle_maximize().expect("maximise");
+    assert!(calls.get() <= 2, "told {} times", calls.get());
+    runaway.on_maximize_change(None).expect("removed");
+    // Usable: its state is its own, and the next change is told.
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    let sink = seen.clone();
+    window.on_maximize_change(Some(Rc::new(move |maximized| sink.borrow_mut().push(maximized)))).expect("listener");
+    let before = window.is_maximized();
+    window.toggle_maximize().expect("toggle");
+    assert_eq!(*seen.borrow(), vec![!before]);
+    runaway.dispose();
+    toggler.dispose();
+    window.dispose();
+  });
+}
 /// Review round 2, M6: a frameless window whose minimum size is larger than the work area is
 /// maximised by `toggle_maximize` (at the work area's origin, at its minimum size), as at tag
 /// `pre-rust-rewrite`, and the next toggle gives back the bounds it had.
