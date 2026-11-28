@@ -30,3 +30,14 @@ test("the tray demos run the 1.0 start off macOS only, and the tag's start and c
   const all = { macFlag: true, closeToTrayOffMac: true, tagCloseOnMac: true, showOnReadyOffMac: true, tagShowOnMac: true, pageSignalsOffMac: true };
   expect(seen).toEqual({ "demos/web-app/app.ts": all, "demos/menubar-notify/app.ts": all });
 });
+
+test("the desktop pet appears when its page has drawn it, off macOS; on macOS it is shown at once, as at the tag", () => {
+  const a = read("demos/desktop-pet/app.ts");
+  const p = read("demos/desktop-pet/frontend/main.ts");
+  expect({
+    macFlag: a.includes('const MAC_TAG_PATH = process.platform === "darwin";'),
+    showOnReadyOffMac: a.includes("showOnReady: !MAC_TAG_PATH,"),
+    tagShowOnMac: a.includes("if (MAC_TAG_PATH) overlay.show();") && !/^overlay\.show\(\);/m.test(a),
+    pageSignalsOffMac: /if \(!macTagPath\) void signalReady\(\);/.test(p),
+  }).toEqual({ macFlag: true, showOnReadyOffMac: true, tagShowOnMac: true, pageSignalsOffMac: true });
+});
