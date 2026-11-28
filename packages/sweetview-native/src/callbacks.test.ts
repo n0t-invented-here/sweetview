@@ -1087,7 +1087,7 @@ describe.if(onWindows)("onCallbackError's sink in the binding", () => {
 
   // What the binding's own catch does with each kind of thrown value (review 3, item 2 and Q1): it
   // reads nothing of the value, leaves nothing pending, and follows no cause.
-  const VALUES = ["string", "number", "null", "undefined", "symbol", "no prototype", "toString throws", "plain object", "error", "error whose cause is itself"];
+  const VALUES = ["string", "number", "null", "undefined", "symbol", "no prototype", "toString throws", "plain object", "error", "error whose cause is itself", "error whose message throws"];
   test("every kind of value thrown past the TypeScript catches reaches a listener as it is, and the next call into the binding works", async () => {
     const { r, exitCode, stderr } = await spawnSink("values-listen");
     expect(exitCode).toBe(0);
@@ -1104,6 +1104,8 @@ describe.if(onWindows)("onCallbackError's sink in the binding", () => {
       wrapped("[object Object]"),
       { name: "a native timeout", kind: "internal", message: "boom", isThrown: true, causeIsThrown: false },
       { name: "a native timeout", kind: "internal", message: "loop", isThrown: true, causeIsThrown: true },
+      // The thrown object itself, its unreadable message left to the listener (review 4, C3).
+      { name: "a native timeout", kind: "internal", message: "(its message throws)", isThrown: true, causeIsThrown: false },
     ]);
     expect(stderr).toBe("");
   });
@@ -1128,6 +1130,8 @@ describe.if(onWindows)("onCallbackError's sink in the binding", () => {
       line("[object Object]"),
       line("Error: boom"),
       line("Error: loop"),
+      // Its String() reads the message, which throws: no text, as napi's coercion gave none.
+      line(""),
     ]);
   });
 
@@ -1182,7 +1186,7 @@ describe.if(onWindows)("onCallbackError and the raw webview class", () => {
   // C1): a value whose reading threw left the TypeScript catch for the binding's own there.
   test("with no listener, the raw webview's faults print the main branch's lines, once each", async () => {
     const { r, exitCode, stderr } = await runFixture("webview-errors.ts", ["none"]);
-    expect({ exitCode, proxy: r.page?.proxy, promiseThenGetter: r.page?.promiseThenGetter, bindProxy: r.page?.bindProxy }).toEqual({ exitCode: 0, proxy: 500, promiseThenGetter: 500, bindProxy: "rejected" });
+    expect({ exitCode, proxy: r.page?.proxy, promiseThenGetter: r.page?.promiseThenGetter, bindProxy: r.page?.bindProxy, rawThrows: r.page?.rawThrows }).toEqual({ exitCode: 0, proxy: 500, promiseThenGetter: 500, bindProxy: "rejected", rawThrows: "unanswered" });
     expect(stderr.split(/\r?\n/).filter((line) => line.startsWith("sweetview:"))).toEqual([
       "sweetview: a binding threw: Error: getPrototypeOf trap",
       "sweetview: a binding threw: Error: raw throws",
@@ -1211,6 +1215,7 @@ describe.if(onWindows)("onCallbackError and the raw webview class", () => {
       promiseThenGetter: 500,
       promiseThenThrows: 500,
       thenable: 200,
+      rawThrows: "unanswered",
     });
     expect(r.told).toEqual(
       [

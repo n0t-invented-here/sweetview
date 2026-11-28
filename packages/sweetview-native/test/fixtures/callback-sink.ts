@@ -113,6 +113,7 @@ if (mode === "values" || mode === "values-listen") {
     ["plain object", () => ({ a: 1 })],
     ["error", () => new Error("boom")],
     ["error whose cause is itself", () => { const e = new Error("loop") as Error & { cause?: unknown }; e.cause = e; return e; }],
+    ["error whose message throws", () => Object.defineProperty(new Error("hidden"), "message", { get() { throw new Error("message getter"); } })],
   ];
   const told: { name?: string; kind: string; message: string; isThrown: boolean; causeIsThrown: boolean }[] = [];
   let off = () => {};
@@ -120,7 +121,13 @@ if (mode === "values" || mode === "values-listen") {
     const { onCallbackError } = await import("../../src/callback-errors");
     off = onCallbackError((error, source) => {
       const thrown = current;
-      told.push({ name: source.name, kind: source.kind, message: error.message, isThrown: error === thrown, causeIsThrown: error.cause === thrown });
+      let message: string;
+      try {
+        message = error.message;
+      } catch {
+        message = "(its message throws)";
+      }
+      told.push({ name: source.name, kind: source.kind, message, isThrown: error === thrown, causeIsThrown: error.cause === thrown });
     });
   }
   let current: unknown;
