@@ -172,6 +172,9 @@ struct Core {
   /// True while the maximise listeners are being told of a change: a change
   /// one of them makes is told after every listener has heard the first.
   noting_maximized: Cell<bool>,
+  /// The window's `backgroundColor` (red, green, blue); `None` without one, or for a transparent
+  /// window. A webview made in the window starts with it (`background_of`).
+  background: Cell<Option<(u8, u8, u8)>>,
   /// Changes of the maximised state not told yet, in the order they happened.
   maximize_queue: RefCell<std::collections::VecDeque<bool>>,
   /// How many resizes and moves have begun to be told: one told later supersedes an older one
@@ -192,6 +195,13 @@ thread_local! {
   /// for a later turn to be destroyed.
   static UNDESTROYED: RefCell<Vec<Rc<tao::window::Window>>> = const { RefCell::new(Vec::new()) };
   static NEXT_WRAPPER: Cell<u64> = const { Cell::new(1) };
+}
+
+/// The `backgroundColor` of the Sweetview window `handle` names (a wrapper of
+/// one shares it), for a webview made in it to start with; `None` for any
+/// other window, or one without a colour.
+pub fn background_of(handle: isize) -> Option<(u8, u8, u8)> {
+  core_of(handle).and_then(|core| core.background.get())
 }
 
 /// Shows the system menu of the window `handle` names when it is one of
@@ -237,6 +247,7 @@ impl Core {
       restore: Cell::new(None),
       maximized: Cell::new(false),
       noting_maximized: Cell::new(false),
+      background: Cell::new(None),
       maximize_queue: RefCell::new(std::collections::VecDeque::new()),
       resizes_told: Cell::new(0),
       moves_told: Cell::new(0),
@@ -754,6 +765,7 @@ impl Window {
     let min = MinSize::from_options(init.min_width, init.min_height);
     let min_options = (init.min_width, init.min_height);
     let core = Core::new(handle, Some(tao), Chrome { frame, resizable }, init.no_activate, min, init.topmost, tab);
+    core.background.set(background);
     WINDOWS.with(|w| w.borrow_mut().insert(core.handle, core.clone()));
     // From here on a failure must not leave a half-made window behind.
     let made = Self::finish(&core, &init, color_key, bounds, min_options);

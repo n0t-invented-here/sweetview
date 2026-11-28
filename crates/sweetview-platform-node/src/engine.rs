@@ -15,18 +15,18 @@ pub struct Engine(imp::Engine);
 
 #[napi]
 impl Engine {
-  /// Fills `window` with a webview; with `null`, in a window of the webview's own.
-  /// `background` (`0xrrggbb`) is what the browser paints before a page does, from its start.
+  /// Fills `window` with a webview; with `null`, in a window of the webview's own. In a
+  /// Sweetview window with a `backgroundColor`, the browser has that colour from its start.
   #[napi(factory, catch_unwind)]
-  pub fn create(debug: bool, window: Option<BigInt>, background: Option<u32>) -> napi::Result<Engine> {
-    imp::Engine::create(debug, window, background).map(Engine)
+  pub fn create(debug: bool, window: Option<BigInt>) -> napi::Result<Engine> {
+    imp::Engine::create(debug, window).map(Engine)
   }
 
-  /// A child of `window`, at a rectangle of its client area in physical pixels.
-  /// `background` (`0xrrggbb`) is what the browser paints before a page does, from its start.
+  /// A child of `window`, at a rectangle of its client area in physical pixels. With
+  /// `pageBackground`, a page of the window (a tab) has the window's `backgroundColor` from its start.
   #[napi(factory, catch_unwind)]
-  pub fn create_child(debug: bool, window: BigInt, bounds: Rect, background: Option<u32>) -> napi::Result<Engine> {
-    imp::Engine::create_child(debug, window, bounds.into(), background).map(Engine)
+  pub fn create_child(debug: bool, window: BigInt, bounds: Rect, page_background: Option<bool>) -> napi::Result<Engine> {
+    imp::Engine::create_child(debug, window, bounds.into(), page_background).map(Engine)
   }
 
   /// The live webview a handle names, or null.

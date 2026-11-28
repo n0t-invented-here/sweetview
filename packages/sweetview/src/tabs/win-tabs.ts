@@ -740,9 +740,8 @@ export const winTabsDriver: TabsDriver = {
     const hooks: TabAttachHooks = {
       fileDropHost: () => logicalHost().window,
       // Hidden until present() shows it as the selected tab.
-      mountChild: () => ({ window: host.frame.hwnd, bounds: host.frame.pageRect(), visible: false }),
-      // A tab's page area shows the tabbed window's backgroundColor until its page paints, as the frame's page area does.
-      backgroundColor: () => getWindowMeta(logicalHost().window).backgroundColor,
+      // A tab is a page of the frame: it starts with the tabbed window's backgroundColor, as the frame's page area shows.
+      mountChild: () => ({ window: host.frame.hwnd, bounds: host.frame.pageRect(), visible: false, pageBackground: true }),
       revealWindow: () => {
         const h = logicalHost();
         if (!h.closed && !isWindowDisposed(h.window) && !h.window.isVisible()) h.window.show();

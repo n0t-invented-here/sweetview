@@ -129,15 +129,15 @@ export interface WindowInit {
  */
 export declare class Engine {
   /**
-   * Fills `window` with a webview; with `null`, in a window of the webview's own.
-   * `background` (`0xrrggbb`) is what the browser paints before a page does, from its start.
+   * Fills `window` with a webview; with `null`, in a window of the webview's own. In a
+   * Sweetview window with a `backgroundColor`, the browser has that colour from its start.
    */
-  static create(debug: boolean, window?: bigint | undefined | null, background?: number | undefined | null): Engine
+  static create(debug: boolean, window?: bigint | undefined | null): Engine
   /**
-   * A child of `window`, at a rectangle of its client area in physical pixels.
-   * `background` (`0xrrggbb`) is what the browser paints before a page does, from its start.
+   * A child of `window`, at a rectangle of its client area in physical pixels. With
+   * `pageBackground`, a page of the window (a tab) has the window's `backgroundColor` from its start.
    */
-  static createChild(debug: boolean, window: bigint, bounds: Rect, background?: number | undefined | null): Engine
+  static createChild(debug: boolean, window: bigint, bounds: Rect, pageBackground?: boolean | undefined | null): Engine
   /** The live webview a handle names, or null. */
   static fromHandle(handle: number): Engine | null
   /** The number that names this webview to the functions a Worker calls. */

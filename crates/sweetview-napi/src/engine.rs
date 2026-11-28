@@ -59,29 +59,28 @@ fn handle_value(window: &BigInt) -> isize {
   value as isize
 }
 
-/// `0xrrggbb` as red, green and blue.
-fn rgb(value: u32) -> (u8, u8, u8) {
-  (((value >> 16) & 0xff) as u8, ((value >> 8) & 0xff) as u8, (value & 0xff) as u8)
-}
-
 /// One webview. See `packages/sweetview-native/src/webview.ts` for the API applications use.
 pub struct Engine {
   inner: runtime::Engine,
 }
 
 impl Engine {
-  /// Fills `window` with a webview; with `null`, in a window of the webview's own.
-  /// `background` (`0xrrggbb`) is the browser's background from its start.
-  pub fn create(debug: bool, window: Option<BigInt>, background: Option<u32>) -> napi::Result<Engine> {
+  /// Fills `window` with a webview; with `null`, in a window of the webview's own. In a
+  /// Sweetview window with a `backgroundColor`, the browser has that colour from its start.
+  pub fn create(debug: bool, window: Option<BigInt>) -> napi::Result<Engine> {
     let host = window.as_ref().map_or(Host::Own, |window| Host::Fill(handle_value(window)));
-    Ok(Engine { inner: runtime::Engine::create(debug, host, background.map(rgb)).or_throw()? })
+    let background = window.as_ref().and_then(|window| sweetview_runtime::window::background_of(handle_value(window)));
+    Ok(Engine { inner: runtime::Engine::create(debug, host, background).or_throw()? })
   }
 
-  /// A child of `window`, at a rectangle of its client area.
-  /// `background` (`0xrrggbb`) is the browser's background from its start.
-  pub fn create_child(debug: bool, window: BigInt, bounds: Rect, background: Option<u32>) -> napi::Result<Engine> {
-    let host = Host::Child(handle_value(&window), bounds_of(bounds));
-    Ok(Engine { inner: runtime::Engine::create(debug, host, background.map(rgb)).or_throw()? })
+  /// A child of `window`, at a rectangle of its client area. With `page_background`, a page of
+  /// the window (a tab of its tabbed window) has the window's `backgroundColor` from its start; any
+  /// other child (the tab strip) keeps its own.
+  pub fn create_child(debug: bool, window: BigInt, bounds: Rect, page_background: Option<bool>) -> napi::Result<Engine> {
+    let handle = handle_value(&window);
+    let host = Host::Child(handle, bounds_of(bounds));
+    let background = if page_background == Some(true) { sweetview_runtime::window::background_of(handle) } else { None };
+    Ok(Engine { inner: runtime::Engine::create(debug, host, background).or_throw()? })
   }
 
   /// The live webview a handle names, or null.

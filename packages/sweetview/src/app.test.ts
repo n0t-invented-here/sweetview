@@ -5,7 +5,7 @@
 
 import { describe, expect, test } from "bun:test";
 import { createApp, WebView } from "./index";
-import { Window, closeToTrayOnLastWindow, onOpenUrl, pumpEvents } from "@n1h/sweetview-native";
+import { RawWebview, SizeHint, Window, closeToTrayOnLastWindow, onOpenUrl, pumpEvents } from "@n1h/sweetview-native";
 import { emitActivationUrl } from "@n1h/sweetview-native/internal";
 import { _resetActivationForTest } from "../../sweetview-native/src/activation";
 
@@ -515,6 +515,109 @@ describe.if(onWindows)("WebView & createApp (win32)", () => {
     }
     expect(tabSeen.has("#ffffff")).toBe(false);
   }, 90_000);
+
+  test("a webview made while another is being made takes nothing of it: the colour belongs to the window each is made in", async () => {
+    // Review round 2, finding 2. Class: a webview made from inside the creation of another (a native
+    // timer fires while WebView2 starts), for every creation path: a window's webview and a tab's.
+    const { clientSize, clientToScreen, screenPixel } = await import("../../sweetview-native/test/win32-os");
+    const { scheduleNativeTimeout } = await import("@n1h/sweetview-native/internal");
+    const plainPixel = async (open: (during: () => void) => Promise<unknown>) => {
+      const plain = new Window({ title: "app.test plain", topmost: true, noActivate: true, bounds: { x: 700, y: 140, width: 320, height: 220 } });
+      let inner: RawWebview | undefined;
+      try {
+        let made = false;
+        // The first native timer that fires inside the other creation makes a webview in the plain window.
+        const during = () => {
+          const tick = () => {
+            if (made) return;
+            made = true;
+            inner = new RawWebview(false, { width: 300, height: 200, hint: SizeHint.NONE }, plain.handle);
+          };
+          scheduleNativeTimeout(1, tick);
+        };
+        await open(during);
+        expect(made).toBe(true);
+        // Light, and transparent: what shows is the browser's own background.
+        // A green stripe at the top (the webview is there), transparent below (the browser's own background).
+        inner!.setHTML('<style>html,body{background:transparent;margin:0}#m{height:16px;background:#00ff00}</style><div id="m"></div>');
+        plain.show();
+        const hwnd = BigInt(plain.handle!);
+        let seen = { mark: "", below: "" };
+        const deadline = performance.now() + 8000;
+        do {
+          pumpEvents();
+          const size = clientSize(hwnd);
+          const mark = clientToScreen(hwnd, size.width >> 1, 8);
+          const below = clientToScreen(hwnd, size.width >> 1, size.height >> 1);
+          seen = { mark: screenPixel(mark.x, mark.y), below: screenPixel(below.x, below.y) };
+          if (seen.mark === "#00ff00" && seen.below !== "" ) break;
+          Bun.sleepSync(20);
+        } while (performance.now() < deadline);
+        return seen;
+      } finally {
+        inner?.destroy();
+        plain.dispose();
+      }
+    };
+    // A window's webview, made in a blue window.
+    const blue = new Window({ title: "app.test blue attach", backgroundColor: "#2040a0", noActivate: true, bounds: { x: 100, y: 140, width: 320, height: 220 } });
+    try {
+      // The webview is there, and what shows below its stripe is nothing of the blue window's colour.
+      const seen = await plainPixel(async (during) => {
+        during();
+        await WebView.attach(blue, { url: "about:blank" });
+      });
+      expect(seen.mark).toBe("#00ff00");
+      expect(seen.below).not.toBe("#2040a0");
+    } finally {
+      blue.dispose();
+    }
+    // A tab's webview, made in a red tabbed window.
+    const red = new Window({ tabs: true, title: "app.test red tab", backgroundColor: "#a02020", noActivate: true, bounds: { x: 100, y: 400, width: 520, height: 340 } });
+    try {
+      const seen = await plainPixel(async (during) => {
+        during();
+        await WebView.openTab(red, { title: "tab", url: "about:blank" });
+      });
+      expect(seen.mark).toBe("#00ff00");
+      expect(seen.below).not.toBe("#a02020");
+    } finally {
+      red.dispose();
+    }
+  }, 90_000);
+
+  test("a tabbed window's strip keeps its own backdrop as it starts, not the page's backgroundColor", async () => {
+    // Review round 2, M5: the strip's webview took the page's colour through its frame's wrapper.
+    const { clientSize, clientToScreen, screenPixel } = await import("../../sweetview-native/test/win32-os");
+    const { scheduleNativeTimeout } = await import("@n1h/sweetview-native/internal");
+    const { STRIP_HEIGHT } = await import("@n1h/sweetview-native/win32/strip-shared");
+    const red = "#a02020";
+    const tabbed = new Window({ tabs: true, title: "app.test strip backdrop", backgroundColor: red, topmost: true, noActivate: true, bounds: { x: 120, y: 160, width: 600, height: 380 } });
+    const frame = BigInt(tabbed.handle!);
+    const seen = new Set<string>();
+    let sampling = true;
+    const sample = () => {
+      if (!sampling) return;
+      const strip = Math.round(STRIP_HEIGHT * tabbed.scale());
+      // In the strip, right of where the first tab is drawn.
+      const at = clientToScreen(frame, clientSize(frame).width - 200, strip >> 1);
+      seen.add(screenPixel(at.x, at.y));
+      scheduleNativeTimeout(2, sample);
+    };
+    try {
+      tabbed.show();
+      sample();
+      // The first tab, opened while the window is visible, makes the strip.
+      await WebView.openTab(tabbed, { title: "first", url: "about:blank" });
+      const settled = performance.now() + 500;
+      pumpUntil(() => performance.now() > settled, 1000);
+    } finally {
+      sampling = false;
+      tabbed.dispose();
+    }
+    expect(seen.size).toBeGreaterThan(0);
+    expect(seen.has(red)).toBe(false);
+  }, 60_000);
 
   test("close-to-tray can intercept the default close on a createApp window", async () => {
     const { WM_CLOSE, user32 } = await import("../../sweetview-native/test/win32-os");

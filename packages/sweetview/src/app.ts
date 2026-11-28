@@ -11,7 +11,7 @@ import { createFrameAssembler, type AnyEvent, type EventMap, type MethodMap, typ
 import { RequestResponseAssembler, requestError, runNativeRequest, type NativeRequestResponse, type StreamingResponseFrame } from "./request-response";
 import type { HttpRequestMessage, InitMessage, NativeRequest, NativeResponse, WorkerCrashFrame } from "./messages";
 import { RawWebview, SizeHint, Window, quitEventLoop, runEventLoop, signalReady, type Rect, type TabHandle, type WindowOptions } from "@n1h/sweetview-native";
-import { createChildWebview, withStartBackground, discardQuit, emitWindowFileDrop, engineOf, getWindowMeta, holdWindowNativeDispose, isWindowDisposed, macosKeepsTagPath, onWindowDispose, onWindowFileDropListenersChange, preserveWindowGeometry, releaseAtEnd, scheduleNativeTimeout, windowFileDropCount } from "@n1h/sweetview-native/internal";
+import { createChildWebview, discardQuit, emitWindowFileDrop, engineOf, getWindowMeta, holdWindowNativeDispose, isWindowDisposed, macosKeepsTagPath, onWindowDispose, onWindowFileDropListenersChange, preserveWindowGeometry, releaseAtEnd, scheduleNativeTimeout, windowFileDropCount } from "@n1h/sweetview-native/internal";
 import { Ring } from "./ring";
 import { webviewEngine, type WebviewHost, type WorkerWake } from "./webview-host";
 import { ASSET_ORIGIN } from "./webview-lib";
@@ -123,9 +123,8 @@ export type TabAttachHooks = {
    * the window's title, styles and bounds alone. The strip and the tabs of a
    * tabbed window are such children of its frame.
    */
-  mountChild?(): { window: bigint; bounds: Rect; visible: boolean };
-  /** The browser's background before the page paints, in place of the window's own `backgroundColor`: a tab's, from its tabbed window. */
-  backgroundColor?(): string | undefined;
+  mountChild?(): { window: bigint; bounds: Rect; visible: boolean; pageBackground?: boolean };
+
 };
 
 /** Internal options key for `TabAttachHooks` (not exported from the package entry). */
@@ -358,14 +357,11 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
       // either kept or destroyed, so it is never created on, or left bound to, a dead HWND.
       const releaseCreateHold = meta.owned ? holdWindowNativeDispose(window) : undefined;
       try {
-        // The window's backgroundColor (a tab's: its tabbed window's) is WebView2's background from
-        // the moment it is made, so it never shows WebView2's white while it starts (macOS: until its goal, nothing).
-        const colour = meta.transparent || macosKeepsTagPath() ? undefined : (tabHooks?.backgroundColor?.() ?? meta.backgroundColor);
-        const created = withStartBackground(colour === undefined ? undefined : Number.parseInt(colour.slice(1), 16), () =>
-          child
-            ? createChildWebview(options.debug ?? false, child.window, child.bounds)
-            : new RawWebview(options.debug ?? false, { width: widthDips, height: heightDips, hint }, host),
-        );
+        // On Windows the binding gives the webview the backgroundColor of the window it is made in
+        // (a tab's: its tabbed window's) from the moment WebView2 makes it.
+        const created = child
+          ? createChildWebview(options.debug ?? false, child.window, child.bounds, child.pageBackground === true)
+          : new RawWebview(options.debug ?? false, { width: widthDips, height: heightDips, hint }, host);
         // A tab is shown by its driver once it is selected, never over the tab on show while it loads.
         if (child && !child.visible) engineOf(created)?.setVisible(false);
         if (created.unsafeHandle === null || Number(created.unsafeHandle) === 0) {
