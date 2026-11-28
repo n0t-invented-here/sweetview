@@ -440,3 +440,19 @@ pub fn top_level_windows_of_process() -> usize {
     }
     count
 }
+
+/// Moves the top-level window `webview` is in by (`dx`, `dy`) physical
+/// pixels, as dragging its frame would (`SetWindowPos`), keeping its size.
+pub fn move_top_level_by(webview: &Webview, dx: i32, dy: i32) {
+    use windows::Win32::UI::WindowsAndMessaging::{GetAncestor, GetWindowRect, SetWindowPos, GA_ROOT, SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER};
+    let window = container(webview).expect("a live webview");
+    // SAFETY: `GetAncestor` takes a handle value and a flag, and reads no memory of ours.
+    let root = unsafe { GetAncestor(window, GA_ROOT) };
+    let mut rect = windows::Win32::Foundation::RECT::default();
+    // SAFETY: `root` is a handle value (a stale one fails the call) and `rect` a local RECT
+    // for the call to fill.
+    unsafe { GetWindowRect(root, &mut rect) }.expect("GetWindowRect");
+    // SAFETY: `root` is a top-level window of this thread (the test's); the numbers are
+    // passed by value.
+    unsafe { SetWindowPos(root, None, rect.left + dx, rect.top + dy, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE) }.expect("SetWindowPos");
+}

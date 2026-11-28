@@ -51,6 +51,9 @@ use windows::Win32::Foundation::{
 };
 use windows::Win32::Graphics::Gdi::UpdateWindow;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::System::Threading::GetCurrentThreadId;
+use windows::Win32::UI::Accessibility::{SetWinEventHook, UnhookWinEvent, HWINEVENTHOOK};
+use windows::Win32::UI::WindowsAndMessaging::{IsChild, CHILDID_SELF, EVENT_OBJECT_LOCATIONCHANGE, OBJID_WINDOW, WINEVENT_OUTOFCONTEXT};
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, GetClientRect, MoveWindow, RegisterClassExW, SetParent,
     ShowWindow, SW_HIDE, SW_SHOW, WM_NCDESTROY, WM_SIZE, WNDCLASSEXW, WS_CHILD, WS_EX_CONTROLPARENT,
@@ -73,6 +76,8 @@ thread_local! {
     /// handle value the system may have given to another window since.
     static WIDGETS: RefCell<HashMap<isize, (u64, Option<ICoreWebView2Controller>)>> = RefCell::new(HashMap::new());
     static NEXT_WIDGET: Cell<u64> = const { Cell::new(1) };
+    /// The watch on this thread's windows' moves, while any widget of it exists.
+    static MOVE_WATCH: RefCell<Option<MoveWatch>> = const { RefCell::new(None) };
     /// Tests only: each widget's controller's default background (alpha, red,
     /// green, blue) when the widget was first shown, read in its
     /// `WM_SHOWWINDOW`; `None` inside when it had no controller then.
@@ -112,6 +117,67 @@ fn key(hwnd: HWND) -> isize {
     hwnd.0 as isize
 }
 
+/// A WinEvent hook on this thread's windows' location changes
+/// (`EVENT_OBJECT_LOCATIONCHANGE`, out of context, so delivered through this
+/// thread's message loop, whichever loop that is). Each time a window moves,
+/// the controller of every widget in it (or the widget itself) is told
+/// (`NotifyParentWindowPositionChanged`), as WebView2 asks, so what WebView2
+/// places on the screen itself (a `<select>`'s list, a tooltip, the input it
+/// routes) follows the window. Nothing is attached to any window: a window
+/// the application gave is not subclassed. The C++ fork told WebView2 of no
+/// move; `wry`, which this crate replaced, did from its subclass of the
+/// parent, and without it a click on a page moved into a window that was then
+/// placed missed what it was aimed at. Unhooked in `Drop`.
+struct MoveWatch(HWINEVENTHOOK);
+
+impl MoveWatch {
+    fn start() -> Option<Self> {
+        // SAFETY: no arguments; reads no memory.
+        let thread = unsafe { GetCurrentThreadId() };
+        // SAFETY: the range is one event; no module, as the procedure is out of context; the
+        // procedure is a `'static` fn of this crate; the events are this thread's windows'.
+        let hook = unsafe { SetWinEventHook(EVENT_OBJECT_LOCATIONCHANGE, EVENT_OBJECT_LOCATIONCHANGE, None, Some(window_moved), 0, thread, WINEVENT_OUTOFCONTEXT) };
+        (!hook.is_invalid()).then_some(Self(hook))
+    }
+}
+
+impl Drop for MoveWatch {
+    fn drop(&mut self) {
+        // SAFETY: the hook this value set and has not unhooked.
+        let _ = unsafe { UnhookWinEvent(self.0) };
+    }
+}
+
+/// The hook's procedure: `hwnd` (a window, not one of its objects) moved or
+/// was resized; tells the controllers of the widgets it holds. The
+/// controllers are taken out of the table before any is called, so a call
+/// that sends a widget a message finds the table free.
+extern "system" fn window_moved(_hook: HWINEVENTHOOK, _event: u32, hwnd: HWND, object: i32, child: i32, _thread: u32, _time: u32) {
+    let _ = catch_unwind(AssertUnwindSafe(|| {
+        if object != OBJID_WINDOW.0 || child != CHILDID_SELF as i32 || hwnd.is_invalid() {
+            return;
+        }
+        let controllers: Vec<ICoreWebView2Controller> = WIDGETS
+            .try_with(|widgets| {
+                widgets
+                    .borrow()
+                    .iter()
+                    .filter(|(widget, _)| {
+                        let widget = HWND(**widget as *mut _);
+                        // SAFETY: two handle values; the call reads no memory through them.
+                        widget == hwnd || unsafe { IsChild(hwnd, widget) }.as_bool()
+                    })
+                    .filter_map(|(_, (_, controller))| controller.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+        for controller in controllers {
+            // SAFETY: `controller` is a COM reference this frame owns; no arguments.
+            let _ = unsafe { controller.NotifyParentWindowPositionChanged() };
+        }
+    }));
+}
+
 /// The widget class's procedure: `WM_SIZE` sizes the widget's controller to
 /// the client area (the fork's `resize_webview`), `WM_NCDESTROY` forgets the
 /// widget, everything else is `DefWindowProcW`. Nothing unwinds out of it.
@@ -127,6 +193,11 @@ extern "system" fn widget_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPA
         }
         if msg == WM_NCDESTROY {
             let _ = WIDGETS.try_with(|widgets| widgets.borrow_mut().remove(&key(hwnd)));
+            // The last widget of the thread gone, the watch goes.
+            if WIDGETS.try_with(|widgets| widgets.borrow().is_empty()).unwrap_or(false) {
+                let watch = MOVE_WATCH.try_with(|watch| watch.borrow_mut().take()).ok().flatten();
+                drop(watch);
+            }
             #[cfg(any(test, feature = "test-support"))]
             let _ = FIRST_SHOWN.try_with(|shown| shown.borrow_mut().remove(&key(hwnd)));
         }
@@ -197,6 +268,12 @@ impl Widget {
         let hwnd = created.map_err(|_| ErrorCode::InvalidState)?;
         let number = NEXT_WIDGET.with(|n| n.replace(n.get() + 1));
         WIDGETS.with(|widgets| widgets.borrow_mut().insert(key(hwnd), (number, None)));
+        MOVE_WATCH.with(|watch| {
+            let mut watch = watch.borrow_mut();
+            if watch.is_none() {
+                *watch = MoveWatch::start();
+            }
+        });
         Ok(Self { hwnd, number })
     }
 

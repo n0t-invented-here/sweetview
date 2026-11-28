@@ -822,3 +822,41 @@ fn a_popup_is_registered_for_only_while_a_handler_is_set_and_then_goes_to_it_and
     }
   });
 }
+
+#[test]
+fn webview2_is_told_each_time_the_window_moves_in_every_kind_of_host() {
+  on_ui_thread(|runtime| {
+    let _finish = Finish(&runtime);
+    // A webview whose window moves without WebView2 being told
+    // (`NotifyParentWindowPositionChanged`) places what it draws itself at the window's old
+    // place: a `<select>`'s list, a tooltip, and the input it routes (a click on a torn-off
+    // tab's page missed its link). The page's `screenX`/`screenY` are WebView2's idea of
+    // where it is: after a real move of the top-level window they follow it.
+    for host in HOSTS {
+      let (engine, _windows) = make(host, |_| ());
+      if host == "own window" {
+        engine.show_own_window();
+      }
+      let reports = load(&runtime, &engine, PAGE);
+      let ask = |mark: &str| -> (f64, f64, f64) {
+        reports.borrow_mut().clear();
+        engine.eval(&format!("report('{mark} ' + screenX + ' ' + screenY + ' ' + devicePixelRatio)"));
+        assert!(pump_until(&runtime, Duration::from_secs(3), || reports.borrow().iter().any(|r| r.contains(mark))), "{host}: the page answered");
+        let said = reports.borrow().iter().find(|r| r.contains(mark)).cloned().unwrap_or_default();
+        let numbers: Vec<f64> = said.trim_matches(|c| c == '[' || c == ']' || c == '"').split(' ').skip(1).filter_map(|n| n.trim_matches('"').parse().ok()).collect();
+        assert_eq!(numbers.len(), 3, "{host}: {said}");
+        (numbers[0], numbers[1], numbers[2])
+      };
+      let (x0, y0, scale) = ask("before");
+      let (dx, dy) = (120, 80);
+      webview_of(&engine, |webview| test_support::move_top_level_by(webview, dx, dy));
+      settle(&runtime, Duration::from_millis(500));
+      let (x1, y1, _) = ask("after");
+      let want = (f64::from(dx) / scale, f64::from(dy) / scale);
+      eprintln!("-- {host}: screenX/Y {x0},{y0} -> {x1},{y1} (scale {scale}), moved by {want:?}");
+      assert!(((x1 - x0) - want.0).abs() <= 1.0 && ((y1 - y0) - want.1).abs() <= 1.0, "{host}: WebView2 follows the move: {x0},{y0} -> {x1},{y1}, want +{want:?}");
+      engine.destroy();
+      settle(&runtime, Duration::from_millis(100));
+    }
+  });
+}
