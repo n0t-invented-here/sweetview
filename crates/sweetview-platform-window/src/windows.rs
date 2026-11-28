@@ -22,7 +22,7 @@ use sweetview_window_logic::ico::{parse_ico, pick_ico_entry};
 use tao::platform::windows::{MonitorHandleExtWindows, WindowExtWindows};
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, RECT, WPARAM};
-use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, MonitorFromWindow, HMONITOR, MONITORINFO, MONITOR_DEFAULTTONULL};
+use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, MonitorFromWindow, HMONITOR, MONITORINFO, MONITOR_DEFAULTTONEAREST};
 use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetActiveWindow, GetAsyncKeyState, ReleaseCapture, VK_LBUTTON, VK_MBUTTON, VK_RBUTTON};
@@ -704,13 +704,21 @@ pub fn left_button_down() -> bool {
 /// most, else the nearest, and for a minimised window the one its restored position is on. `None`
 /// when the handle names no window or the monitor is not among `monitors`.
 pub fn monitor_of(window: &impl NativeWindow, monitors: impl IntoIterator<Item = tao::monitor::MonitorHandle>) -> Option<tao::monitor::MonitorHandle> {
-  // SAFETY: `MonitorFromWindow` takes the handle by value and reads no memory of ours; the OS
-  // validates the handle, and with `MONITOR_DEFAULTTONULL` an invalid one answers null.
-  let monitor = unsafe { MonitorFromWindow(window.hwnd(), MONITOR_DEFAULTTONULL) };
-  if monitor.is_invalid() {
+  let monitor = monitor_handle_of(window.hwnd())?;
+  monitors.into_iter().find(|m| m.hmonitor() == monitor)
+}
+
+/// The monitor handle value `MonitorFromWindow` answers for `hwnd` with `MONITOR_DEFAULTTONEAREST`,
+/// as at tag `pre-rust-rewrite`: a window off every screen is on the nearest. `None` only for a
+/// handle that names no window.
+fn monitor_handle_of(hwnd: HWND) -> Option<isize> {
+  if !is_window_handle(hwnd) {
     return None;
   }
-  monitors.into_iter().find(|m| m.hmonitor() == monitor.0 as isize)
+  // SAFETY: `MonitorFromWindow` takes the handle by value and reads no memory of ours; the OS
+  // validates the handle.
+  let monitor = unsafe { MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST) };
+  (!monitor.is_invalid()).then_some(monitor.0 as isize)
 }
 
 /// The part of a monitor windows should use: its bounds less the taskbar.
