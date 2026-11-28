@@ -1,4 +1,4 @@
-// An application whose start-up failed ends by itself (decision D43): under
+// An application whose start-up failed ends by itself (decision D46): under
 // runEventLoop, the loop holds the process only while the application has
 // something a person can reach. Each test runs test/fixtures/loop-ends.ts in a
 // process of its own, with a WebView2 profile of its own. Nothing here injects
@@ -42,8 +42,8 @@ async function run(mode: string): Promise<{ exitCode: number | null; stdout: str
   }
 }
 
-describe.if(process.platform === "win32")("the pumped loop holds the process only while something can be reached (D43)", () => {
-  for (const mode of ["failed-tab", "failed-app", "hidden-window"]) {
+describe.if(process.platform === "win32")("the pumped loop holds the process only while something can be reached (D46)", () => {
+  for (const mode of ["failed-tab", "failed-app", "last-window"]) {
     test(
       `${mode}: with nothing left to reach, the process ends by itself with the code the application set`,
       async () => {
@@ -53,7 +53,7 @@ describe.if(process.platform === "win32")("the pumped loop holds the process onl
         // The loop ended by itself: the code after it ran.
         expect(result.stdout).toContain("LOOP-RESOLVED");
         expect(result.stdout).not.toContain("STILL");
-        if (mode !== "hidden-window") expect(result.stdout).toContain("CAUGHT ");
+        if (mode !== "last-window") expect(result.stdout).toContain("CAUGHT ");
         // The window it made was released before the process went.
         if (mode !== "failed-app") expect(result.stdout).toContain('"windowExists":false');
       },
@@ -61,7 +61,7 @@ describe.if(process.platform === "win32")("the pumped loop holds the process onl
     );
   }
 
-  for (const mode of ["tray", "visible", "hidden-after", "webview"]) {
+  for (const mode of ["tray", "visible", "hidden-after", "webview", "hidden-window"]) {
     test(
       `${mode}: the loop keeps the process running`,
       async () => {

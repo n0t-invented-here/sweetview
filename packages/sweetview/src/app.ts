@@ -11,7 +11,7 @@ import { createFrameAssembler, type AnyEvent, type EventMap, type MethodMap, typ
 import { RequestResponseAssembler, requestError, runNativeRequest, type NativeRequestResponse, type StreamingResponseFrame } from "./request-response";
 import type { HttpRequestMessage, InitMessage, NativeRequest, NativeResponse, WorkerCrashFrame } from "./messages";
 import { RawWebview, SizeHint, Window, quitEventLoop, runEventLoop, signalReady, type Rect, type TabHandle, type WindowOptions } from "@n1h/sweetview-native";
-import { addReachable, concealWindow, createChildWebview, discardQuit, emitWindowFileDrop, engineOf, getWindowMeta, holdWindowNativeDispose, isWindowDisposed, macosKeepsTagPath, markHiddenAtRunEnd, onWindowDispose, onWindowFileDropListenersChange, preserveWindowGeometry, releaseAtEnd, scheduleNativeTimeout, takeHiddenAtRunEnd, windowFileDropCount } from "@n1h/sweetview-native/internal";
+import { createChildWebview, discardQuit, emitWindowFileDrop, engineOf, getWindowMeta, holdWindowNativeDispose, isWindowDisposed, macosKeepsTagPath, onWindowDispose, onWindowFileDropListenersChange, preserveWindowGeometry, releaseAtEnd, scheduleNativeTimeout, windowFileDropCount } from "@n1h/sweetview-native/internal";
 import { Ring } from "./ring";
 import { webviewEngine, type WebviewHost, type WorkerWake } from "./webview-host";
 import { ASSET_ORIGIN } from "./webview-lib";
@@ -90,7 +90,7 @@ export type TabAttachHooks = {
   fileDropHost(): Window;
   /**
    * True for a webview that is the window's own chrome (the Windows tab strip), not one the
-   * application made: it does not keep the pumped loop running by itself (D43).
+   * application made: it does not keep the pumped loop running by itself (D46).
    */
   chrome?: boolean;
   /** Replaces `window.show()` on the borrowed child window for `showOnReady` and the ready watchdog. */
@@ -170,11 +170,15 @@ export type TabsDriver = {
 };
 
 let tabsDriver: TabsDriver | undefined;
-/** Webviews and tabs being made: they keep the pumped loop holding the process (D43). */
-let starting = 0;
-/** One token per live WebView that is not a window's own chrome. */
-const liveViews = new Set<object>();
-addReachable(() => starting > 0 || liveViews.size > 0);
+/** Windows the end of a blocking run() hid before its webview went, to show again when a webview in one runs next (D46). */
+const hiddenAtRunEnd = new WeakSet<Window>();
+
+/**
+ * Registers a webview or tab being made with the end of the application, as an `app` entry
+ * with nothing to release yet (what it makes registers itself as it is made): while it is
+ * there, the pumped loop counts the application as reachable (D46). Returns the unregister.
+ */
+const makingAWebView = (): (() => void) => releaseAtEnd("app", () => {});
 export function registerTabsDriver(driver: TabsDriver): void {
   tabsDriver = driver;
 }
@@ -280,12 +284,13 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
     window: Window,
     options: WebViewOptions<M>,
   ): Promise<WebView<M, E>> {
-    // A webview being made keeps the pumped loop holding the process until it is made or fails (D43).
-    starting++;
+    // A webview being made keeps the pumped loop running until it is made or fails (D46); a
+    // tab strip is the window's own chrome and does not.
+    const making = (options as InternalWebViewOptions<M>)[tabAttachHooks]?.chrome ? undefined : makingAWebView();
     try {
       return await WebView.#attach<M, E>(window, options);
     } finally {
-      starting--;
+      making?.();
     }
   }
 
@@ -420,6 +425,8 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
           throw new Error(`sweetview: webview_set_background_color failed (${err})`);
         }
       }
+      // On Windows the webview was made with its window's colour as the browser's background
+      // (backgroundColor, or appearance's; a tab's, its tabbed window's), in the runtime (D46).
       if (options.allowExternalDrop !== undefined) {
         const error = engineHost.setAllowExternalDrop(options.allowExternalDrop);
         if (error !== undefined && error !== 0) throw new Error(`sweetview: webview_set_allow_external_drop failed (${error})`);
@@ -447,7 +454,6 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
       let down = false;
       // Takes back the dispose registered for the end of the application.
       let unregisterAtEnd: (() => void) | undefined;
-      const liveToken = {};
       const isLive = () => !down && !isWindowDisposed(window) && raw.unsafeHandle !== null;
       const completeRequest = ({ id, status, headers, body }: NativeRequestResponse) => {
         pendingWorkerRequests.delete(BigInt(id));
@@ -623,7 +629,6 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
         if (down) return;
         down = true;
         unregisterAtEnd?.();
-        liveViews.delete(liveToken);
         if (tabHooks) tabHooks.rebindFileDrop = undefined;
         unsubscribeWindowDispose();
         cancelStartup();
@@ -874,7 +879,7 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
           const releaseWindowDispose = meta.owned ? holdWindowNativeDispose(window) : undefined;
           // A window the end of an earlier run() hid (below) is shown again for this one: now,
           // or with showOnReady once this page is ready.
-          if (meta.owned && takeHiddenAtRunEnd(window) && !isWindowDisposed(window) && !window.isVisible()) {
+          if (hiddenAtRunEnd.delete(window) && !isWindowDisposed(window) && !window.isVisible()) {
             if (!options.showOnReady || isReady) window.show();
           }
           running = true;
@@ -884,10 +889,14 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
             running = false;
             try {
               // Off the screen before its webview goes, so the window is never seen with its
-              // client area empty (D43). It stays alive for code after run() and a second run(),
+              // client area empty (D46). It stays alive for code after run() and a second run(),
               // which shows it again; the end of the application destroys it. A window disposed
               // inside the loop was hidden by its dispose and is destroyed below.
-              if (meta.owned && !child && !isWindowDisposed(window) && concealWindow(window)) markHiddenAtRunEnd(window);
+              // macOS keeps the tag's order until its goal (D42).
+              if (!macosKeepsTagPath() && meta.owned && !child && !isWindowDisposed(window) && window.isVisible()) {
+                window.hide();
+                hiddenAtRunEnd.add(window);
+              }
               shutdown();
             } finally {
               releaseWindowDispose?.();
@@ -906,10 +915,10 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
           discardQuit();
         },
       });
-      // Disposed when the application ends, before the windows: its worker stops and its webview goes.
-      unregisterAtEnd = releaseAtEnd("app", () => webview.dispose());
-      // Its page and worker can still act: it keeps the pumped loop running until it goes (D43).
-      if (!tabHooks?.chrome) liveViews.add(liveToken);
+      // Disposed when the application ends, before the windows: its worker stops and its webview
+      // goes. An `app` entry also keeps the pumped loop running (D46); a tab strip, the window's
+      // own chrome, is a `webview` entry, released after the tabs and not counted.
+      unregisterAtEnd = releaseAtEnd(tabHooks?.chrome ? "webview" : "app", () => webview.dispose());
       return webview;
     } catch (err) {
       if (raw.unsafeHandle !== null) {
@@ -929,8 +938,9 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
     if (!tabsDriver) {
       throw new Error("sweetview: tabs driver is not loaded");
     }
-    starting++;
-    return tabsDriver.openTab<M, E>(window, options).finally(() => starting--);
+    // A tab being made keeps the pumped loop running until it is made or fails (D46).
+    const making = makingAWebView();
+    return tabsDriver.openTab<M, E>(window, options).finally(making);
   }
 
   emit<N extends keyof E & string>(name: N, payload: E[N]): void {
@@ -1049,7 +1059,7 @@ export async function createApp<M extends MethodMap = MethodMap, E extends Event
         disposed = true;
         unsubAutoQuit?.();
         // Outside run(), the window's dispose hides it, then destroys the webview (its dispose
-        // hook), then the window (D43). Inside run(), the webview ends the loop, and run()
+        // hook), then the window (D46). Inside run(), the webview ends the loop, and run()
         // hides the window, destroys the webview and then disposes the window.
         if (macosKeepsTagPath()) {
           // The tag's order until the macOS goal (D42).

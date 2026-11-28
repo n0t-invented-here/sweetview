@@ -1,11 +1,13 @@
 // The pumped loop holds the process only while the application has something
-// a person can reach (decision D43). An application in a process of its own
+// a person can reach (decision D46). An application in a process of its own
 // runs runEventLoop() and then, by SWEETVIEW_LOOP_TEST:
 //
 //   failed-tab      createApp({ tabs: true }); its first openTab fails (a bad option) and the error
 //                   is caught; nothing else: the loop must end by itself and the process with exit code 3
 //   failed-app      createApp fails (a bad option) and the error is caught: the same
-//   hidden-window   a window never shown, with no webview, and nothing else: the same
+//   last-window     a window shown, then disposed, with nothing else: the same
+//   hidden-window   a window never shown, with no webview, and nothing else, the application
+//                   having had nothing yet: it must keep running (the loop may start first)
 //   tray            a hidden window and a tray icon: it must keep running
 //   visible         a visible window: it must keep running
 //   hidden-after    a window shown, then hidden (to a tray that is not there): it must keep running
@@ -45,9 +47,16 @@ try {
     await app.openTab({ assets: { "index.html": indexHtml({ title: "t", css: "" }) }, onRequest: "worker" });
   } else if (mode === "failed-app") {
     await createApp({ title: "loop-ends", bounds, noActivate: true, onRequest: "worker" });
+  } else if (mode === "last-window") {
+    const win = new Window({ title: "loop-ends", bounds, noActivate: true });
+    watch(win);
+    win.show();
+    await Bun.sleep(100);
+    process.exitCode = 3;
+    win.dispose();
   } else if (mode === "hidden-window") {
     watch(new Window({ title: "loop-ends", bounds, noActivate: true }));
-    process.exitCode = 3;
+    keepsRunning();
   } else if (mode === "tray") {
     watch(new Window({ title: "loop-ends", bounds, noActivate: true }));
     createTray({ tooltip: "sweetview loop-ends fixture", menu: () => [{ label: "Quit", click: quitEventLoop }] });

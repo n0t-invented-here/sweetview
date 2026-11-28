@@ -65,6 +65,17 @@ Positions and sizes are in window units:
 | Windows | physical pixels (the process is per-monitor DPI aware) | top-left corner of the primary monitor |
 | macOS | points | top-left corner of the primary screen (Sweetview flips AppKit's bottom-left origin) |
 
+`options.contentSize` is the other way to size a window, from its page:
+the page area in device-independent pixels (CSS pixels), with the window
+centred on the primary screen's work area and its frame sized around the page
+at that screen's scale. `{ contentSize: { width: 1100, height: 720 } }` is a
+1100 x 720 page at 100 % (a 1100 x 720 client area) and at 150 % (1650 x 1080
+physical pixels), the same size to the eye. A window that would not fit is cut
+to the work area. Give `bounds` or `contentSize`, not both: both throw
+`sweetview: bounds and contentSize cannot both be given`. On macOS, where
+points already are CSS pixels, it is the content rectangle AppKit frames;
+a macOS tabbed window takes it as its frame's size until the macOS goal.
+
 `options.bounds`, `bounds()`, `setBounds()`, `moveTo()`, `resize()`,
 `onMove` and `onResize` all use the outer frame: the rectangle that includes
 the title bar and borders of a framed window. The same numbers place a window
@@ -82,20 +93,22 @@ display. Multiply page coordinates by `win.scale()` to get window units.
 |---|---|---|---|
 | `title` | `string` | `identity.appName`, else `""` | Title bar text. |
 | `identity` | `AppIdentity` | none | Default title and Windows icon. |
-| `bounds` | `Rect` | 320 x 240 centered on the primary work area; tabbed windows 1040 x 720 | Initial outer frame. |
+| `bounds` | `Rect` | 320 x 240 centered on the primary work area; tabbed windows a 1040 x 720 page | Initial outer frame, window units. Not with `contentSize`. |
+| `contentSize` | `{ width: number; height: number }` | none | The page area in CSS pixels, centered on the primary work area; see [Coordinates](#coordinates). A tabbed window's page is below its strip. Not with `bounds`. |
 | `minWidth`, `minHeight` | `number` | none | Minimum outer size, enforced by OS resizing and by `startResize`. |
 | `frame` | `boolean` | `true` | OS title bar and borders (`true`) or frameless (`false`). |
 | `resizable` | `boolean` | same as `frame` | Whether the OS frame resizes. |
-| `appearance` | `"system" \| "light" \| "dark"` | `"system"` | Theme of a framed window's title bar, and on Windows the colour the window paints where no page is drawn: before its page's first paint, or once its webview has gone from a window that stays (a dark grey, `#15161a`, or a near-white, `#f9f9fb`, the same a tabbed window's page area shows; `"system"` takes the system's theme when the window is made). A webview made in the window shows the same colour until its page paints. A `transparent` or `colorKey` window paints nothing there. Give a dark page `"dark"`. |
+| `appearance` | `"system" \| "light" \| "dark"` | `"system"` | Theme of a framed window's title bar, and, with no `backgroundColor`, of what the window shows where nothing has painted (see `backgroundColor`). |
 | `icon` | `Icon` | from `identity`, else the stock icon | Windows title bar, taskbar and Alt+Tab icon. Ignored on macOS. |
 | `tabs` | `boolean` | `false` | A native tabbed container; see [Tabbed](#tabbed). |
 | `transparent` | `boolean` | `false` | Per-pixel alpha; see [Transparent](#transparent). |
 | `colorKey` | `string` | none | Windows-only 1-bit color key; see [overlays](overlays-and-hit-regions.md#colorkey-vs-transparent). |
+| `backgroundColor` | `string` | `appearance`'s: on Windows `#15161a` dark, `#f9f9fb` light, the colours a tabbed window's page area shows (`"system"` takes the system's theme when the window is made); none for a `colorKey` window | `"#rrggbb"`: what the window shows where nothing has painted: before its page paints, behind a page that leaves its background transparent, and after its webview has gone, never the white of a client area nothing paints. The webview `WebView.attach` mounts takes it as the browser's background too, and a tabbed window's page area and its tabs' webviews. Not applied to a `transparent` window (it shows what is behind it). Anything else throws `sweetview: background color must be #rrggbb, got <text>`. macOS: accepted and ignored until the macOS goal. |
 | `opacity` | `number` | none | Whole-window opacity, clamped to `0..1`. |
 | `topmost` | `boolean` | `false` | Above normal windows. |
 | `hideFromTaskbar` | `boolean` | `false` | Omitted from the taskbar and app switcher. |
 | `noActivate` | `boolean` | `false` | Never takes focus when shown or clicked. |
-| `onResize`, `onMove`, `onClose`, `onFileDrop`, `onNewTab`, `onTabSelect`, `onTabClose` | callbacks | none | Subscribed at construction; the same as calling the matching method afterwards. |
+| `onResize`, `onMaximizeChange`, `onMove`, `onClose`, `onFileDrop`, `onNewTab`, `onTabSelect`, `onTabClose` | callbacks | none | Subscribed at construction; the same as calling the matching method afterwards. |
 
 `opacity`, `topmost`, `hideFromTaskbar` and `noActivate` apply to framed,
 frameless and tabbed windows alike.
@@ -182,20 +195,22 @@ the menu bar. See [`setActivationPolicy`](menus-and-tray.md#setactivationpolicy)
 |---|---|
 | `handle` | `HWND` on Windows, `NSWindow*` on macOS, `null` for a macOS tabbed window. |
 | `Window.visibleWindows()` | Visible windows this process created with `new Window`, minimized ones included. Wrappers from `fromHandle` are not listed. |
-| `isVisible()`, `show()`, `hide()`, `toggle()` | Visibility. `show()` restores a minimized Windows window and activates the app on macOS, unless `noActivate`. |
+| `isVisible()`, `show()`, `hide()`, `toggle()` | Visibility. `isVisible()` is true for a minimized window too; see `isMinimized()`. `show()` restores a minimized Windows window and activates the app on macOS, unless `noActivate`. |
 | `bounds()`, `setBounds(rect)` | Outer frame rectangle. |
 | `moveTo(x, y)`, `resize(width, height)` | Moves the outer top-left corner keeping the size; resizes keeping the top-left corner. |
 | `scale()` | Window units per CSS pixel; see [Coordinates](#coordinates). |
 | `setTitle(title)` | Title bar text. |
 | `setIcon(icon)` | Windows: title bar, taskbar and Alt+Tab icon from `icon.windows.ico`; `undefined` restores the stock icon. macOS: no-op. [Why](event-loop-and-icons.md#app-icon-vs-window-icon). |
 | `minimize()` | Minimizes. |
+| `isMinimized()` | Whether the window is minimized: `IsIconic` on Windows (created, frameless, tabbed and `fromHandle` windows alike), `isMiniaturized` on macOS (a tabbed window: its active tab). `isVisible()` is also true for a minimized window, so "on screen" is `isVisible() && !isMinimized()`. A window made hidden, or restored by `show()`, reads `false`. |
 | `toggleMaximize()`, `isMaximized()` | Framed Windows: `SW_MAXIMIZE` / `SW_RESTORE` and `IsZoomed`. Frameless Windows: work area vs saved bounds. macOS: `zoom:` and `isZoomed`. |
+| `onMaximizeChange(fn: (maximized: boolean) => void)` | Called with `true` when the window becomes maximized and `false` when it is restored, by any means: the frame's button, a snap gesture, a title bar double click, the system menu, `toggleMaximize()` (a frameless window: filling its work area). Once per change: minimizing a maximized window and restoring it reports nothing. Windows: from the window's `WM_SIZE`; macOS: from its resize notifications and `isZoomed`. Replaces polling `isMaximized()`. |
+| `showSystemMenu()` | Windows: the window's system menu (Restore, Move, Size, Minimize, Maximize, Close) at the cursor, the choice carried out as the title bar's own menu does; for a page-drawn title bar's right click ([window chrome](../window-chrome.md)). Blocks until it closes. macOS: does nothing; AppKit windows have no such menu. |
 | `setTopmost(on)` | Changes `topmost` after creation. |
 | `startDrag()`, `startResize(edge)` | Page-driven move and resize; see [below](#moving-and-resizing-from-the-page). |
 | `setClickThrough(on)`, `setHitRegions(polygons, refine?)` | See [overlays](overlays-and-hit-regions.md). |
 | `onResize(fn)`, `onMove(fn)` | Called with the new outer `Rect`. |
 | `onClose(fn)`, `onFileDrop(fn)` | See [Closing](#closing) and [File drops](#file-drops). |
-| `close()` | Asks the window to close, as its close button does: its `onClose` listeners run, or, with none, an owned window is disposed (destroyed). A wrapper from `fromHandle` with no listener is left alone. What a page-drawn close button calls ([window chrome](../window-chrome.md)). |
 | `onNewTab(fn: (origin: Window) => void)`, `onTabSelect(fn)`, `onTabClose(fn)` | Tab events; see [Tabbed](#tabbed). |
 | `dispose()` | Destroys an owned window, or detaches a wrapper's hooks. Releases timers, subclass hooks, observers and icons. A webview attached to an owned window is torn down with it ([lifecycle](../app.md#lifecycle)), in this order: the window is hidden, its webviews are destroyed, then the window is destroyed, so it is never on the screen with its page gone. On Windows every window is disposed when the application ends ([the end of the application](../app.md#the-end-of-the-application)); call it for one that should go before that. Safe to call twice. |
 

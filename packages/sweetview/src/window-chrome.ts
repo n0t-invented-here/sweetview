@@ -9,7 +9,9 @@
 // imports nothing native (the native and ipc imports are type-only):
 //
 //   UI thread:  uiMethods: { ...windowChromeMethods(settingsWindow, { chrome: "page" }), ... }
+//               windowChromeEvents(settingsWindow, view);   // after WebView.attach: maximise changes reach the page
 //   page:       const chrome = windowChromeControls(webviewTransport());
+//               chrome.onMaximizeChange((maximized) => …);
 //               <div onPointerDown={chrome.onTitlePointerDown}>…</div>
 //               {resizeHandles().map((h) => <div key={h.edge} style={{ position: "absolute", ...h.style }} onPointerDown={chrome.onHandlePointerDown(h.edge)} />)}
 //
@@ -35,8 +37,16 @@ export type WindowChromeMethods = {
   "window.minimize": [void, void];
   /** Toggles: maximised <-> previous bounds. */
   "window.maximize": [void, void];
+  /** The page's title bar was right-clicked: the window's system menu at the cursor (Windows; nothing on macOS). */
+  "window.systemMenu": [void, void];
   /** What the page's close button does; `windowChromeMethods` hides the window unless told otherwise. */
   "window.close": [void, void];
+};
+
+/** The UI-thread event a page-drawn chrome listens to. Add to the app's event map: `type Events = WindowChromeEvents & { … }`. */
+export type WindowChromeEvents = {
+  /** The window became maximised or was restored, by any means (`Window#onMaximizeChange`). */
+  "window.maximized": { maximized: boolean };
 };
 
 export type WindowChromeMethodTable = { [K in keyof WindowChromeMethods]: (params: WindowChromeMethods[K][0]) => WindowChromeMethods[K][1] };
@@ -44,42 +54,55 @@ export type WindowChromeMethodTable = { [K in keyof WindowChromeMethods]: (param
 export type WindowChromeOptions = {
   /** What `window.info` reports; the page renders bare when it says "os". Default "page". */
   chrome?: WindowChromeKind;
-  /**
-   * What the close button does. Default: `window.close()`, what the OS close button does: the
-   * window's `onClose` listeners run, or, with none, the window is disposed. Pass `() => app.quit()`
-   * for a main window.
-   */
+  /** What the close button does. Default: hide the window (a tray or a menu shows it again); pass `() => app.quit()` for a main window. */
   onClose?: () => void;
 };
 
 /** The UI-thread half: the `window.*` methods, answered by the window they are given. Spread into `uiMethods`. */
-export function windowChromeMethods(window: Pick<Window, "close" | "hide" | "isMaximized" | "startDrag" | "startResize" | "minimize" | "toggleMaximize">, options: WindowChromeOptions = {}): WindowChromeMethodTable {
+export function windowChromeMethods(
+  window: Pick<Window, "hide" | "isMaximized" | "startDrag" | "startResize" | "minimize" | "toggleMaximize"> & Partial<Pick<Window, "showSystemMenu">>,
+  options: WindowChromeOptions = {},
+): WindowChromeMethodTable {
   const chrome = options.chrome ?? "page";
-  // macOS keeps the tag's default, hiding the window, until its goal (D42). The same test as
-  // macosKeepsTagPath() of @n1h/sweetview-native, written out: the page half of this module is
-  // bundled into pages, which must not import the native package.
-  const macosKeepsTagPath = () => typeof process !== "undefined" && process.platform === "darwin";
-  const onClose = options.onClose ?? (() => (macosKeepsTagPath() ? window.hide() : window.close()));
+  const onClose = options.onClose ?? (() => window.hide());
   return {
     "window.info": () => ({ chrome, maximized: window.isMaximized() }),
     "window.drag": () => window.startDrag(),
     "window.resize": (edge) => window.startResize(edge),
     "window.minimize": () => window.minimize(),
     "window.maximize": () => window.toggleMaximize(),
+    "window.systemMenu": () => window.showSystemMenu?.(),
     "window.close": onClose,
   };
 }
 
+/**
+ * The UI-thread half of the maximise state: sends `window.maximized` to the
+ * page each time `window` becomes maximised or is restored (by its frame, a
+ * snap gesture, a double click on the page's title bar, `toggleMaximize()`).
+ * Call it once the webview is attached; returns the function that stops it.
+ */
+export function windowChromeEvents(
+  window: Pick<Window, "onMaximizeChange">,
+  view: { emit(name: "window.maximized", payload: { maximized: boolean }): void },
+): () => void {
+  return window.onMaximizeChange((maximized) => view.emit("window.maximized", { maximized }));
+}
+
 /** The page half: what to call from the chrome's elements. Framework-free; pass `webviewTransport()`. */
 export type WindowChromeControls = {
-  /** Whether to draw the chrome at all, and the maximised state (for the restore glyph and square corners). Ask again after `toggleMaximize`. */
+  /** Whether to draw the chrome at all, and the maximised state (for the restore glyph and square corners) when the page asks. */
   info(): Promise<WindowChromeInfo>;
+  /** Called with each change of the maximised state, which `windowChromeEvents` sends from the UI thread. Returns the function that stops it. */
+  onMaximizeChange(fn: (maximized: boolean) => void): () => void;
   /** For the title bar's pointer-down: a primary-button press hands the move to the OS. Other buttons are ignored. */
   onTitlePointerDown(event: { button: number }): void;
   /** For a resize handle's pointer-down, one handler per edge. */
   onHandlePointerDown(edge: ResizeEdge): (event: { button: number }) => void;
   minimize(): void;
   toggleMaximize(): void;
+  /** For the title bar's context menu event: the window's system menu (call `preventDefault()` on the event yourself). */
+  showSystemMenu(): void;
   close(): void;
 };
 
@@ -87,6 +110,10 @@ export function windowChromeControls(transport: Transport): WindowChromeControls
   const call = <K extends keyof WindowChromeMethods>(method: K, params: WindowChromeMethods[K][0] | null = null) => transport.notify(method, params);
   return {
     info: () => transport.call("window.info", null) as Promise<WindowChromeInfo>,
+    onMaximizeChange: (fn) =>
+      transport.onEvent((name, payload) => {
+        if (name === "window.maximized") fn((payload as WindowChromeEvents["window.maximized"]).maximized);
+      }),
     onTitlePointerDown: (e) => {
       if (e.button === 0) call("window.drag");
     },
@@ -95,6 +122,7 @@ export function windowChromeControls(transport: Transport): WindowChromeControls
     },
     minimize: () => call("window.minimize"),
     toggleMaximize: () => call("window.maximize"),
+    showSystemMenu: () => call("window.systemMenu"),
     close: () => call("window.close"),
   };
 }

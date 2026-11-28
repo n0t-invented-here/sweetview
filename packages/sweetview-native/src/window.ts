@@ -9,11 +9,19 @@
 import type { HitPolygon } from "./hit-regions";
 import type { AppIdentity, AppIdentityIcon } from "@n1h/sweetview-settings";
 import { icoFromRgba, type Icon } from "./icon";
-import { addReachable, releaseAtEnd } from "./lifetime";
+import { addReachable, noteReachable, releaseAtEnd } from "./lifetime";
 import { backend, macosKeepsTagPath } from "./platform";
 import type { Point, Rect, WindowHandle } from "./types";
 
 export type { Point, Rect, WindowHandle } from "./types";
+
+/** `#rrggbb` (the `#` optional, either case) as `#rrggbb`; throws for anything else. */
+function backgroundColorOf(text: string | undefined): string | undefined {
+  if (text === undefined) return undefined;
+  const hex = text.startsWith("#") ? text.slice(1) : text;
+  if (!/^[0-9a-fA-F]{6}$/.test(hex)) throw new Error(`sweetview: background color must be #rrggbb, got ${text}`);
+  return `#${hex.toLowerCase()}`;
+}
 
 /** A framed window's title bar and frame: light, dark, or following the system. */
 export type Appearance = "system" | "light" | "dark";
@@ -41,8 +49,20 @@ export type WindowOptions = {
   /** Supplies the default title and window icon. */
   identity?: AppIdentity;
   title?: string;
-  /** Outer frame bounds. Default: 320x240 centered on the primary work area. */
+  /**
+   * Outer frame bounds, in window units (physical pixels on Windows, points on
+   * macOS). Default: 320x240 centered on the primary work area. Not with
+   * `contentSize`.
+   */
   bounds?: Rect;
+  /**
+   * The page area's size in device-independent pixels (CSS pixels of the page),
+   * the window centered on the primary screen's work area: the frame is sized
+   * around it at that screen's scale, so the page is the same size to the eye
+   * on a screen of any scale. A tabbed window's page area is below its strip.
+   * Not with `bounds`.
+   */
+  contentSize?: { width: number; height: number };
   /** Minimum outer size (optional). */
   minWidth?: number;
   minHeight?: number;
@@ -74,6 +94,16 @@ export type WindowOptions = {
    *   `transparent: true` with a transparent page background instead.
    */
   colorKey?: string;
+  /**
+   * What the window shows where nothing has painted (`"#rrggbb"`): before its
+   * page paints, behind a loading page and after its webview has gone; the
+   * attached webview's own background before its page paints is the same
+   * color. Default: what the system or `appearance` gives. Not applied to a
+   * `transparent` window, which shows what is behind it.
+   * - Windows: the window's background and WebView2's default background.
+   * - macOS: accepted and ignored until the macOS goal of the Rust rewrite.
+   */
+  backgroundColor?: string;
   /** Whole-window opacity, 0..1. */
   opacity?: number;
   /** Keep above normal windows. Default: false. */
@@ -100,6 +130,8 @@ export type WindowOptions = {
   noActivate?: boolean;
   /** Declarative callbacks (used by createWindow; also accepted by new Window). */
   onResize?: (bounds: Rect) => void;
+  /** Called with `true` when the window becomes maximized and `false` when it is restored, by any means. */
+  onMaximizeChange?: (maximized: boolean) => void;
   onMove?: (bounds: Rect) => void;
   onClose?: () => void;
   onFileDrop?: (paths: string[]) => void;
@@ -114,6 +146,8 @@ export interface WindowMeta {
   /** Current topmost state (initial `WindowOptions.topmost`, updated by `Window.setTopmost`). */
   topmost?: boolean;
   readonly opacity?: number;
+  /** `WindowOptions.backgroundColor` as `#rrggbb`; absent when not given or the window is transparent. */
+  readonly backgroundColor?: string;
   readonly hideFromTaskbar?: boolean;
   readonly noActivate?: boolean;
   readonly frame: boolean;
@@ -149,12 +183,15 @@ export interface WindowBackend {
   minimize(): void;
   toggleMaximize(): void;
   isMaximized(): boolean;
+  isMinimized(): boolean;
+  showSystemMenu(): void;
   setTopmost(on: boolean): void;
   startDrag(): void;
   startResize(edge: ResizeEdge): void;
   setClickThrough(on: boolean): void;
   setHitRegions(polygons: HitPolygon[] | null, refine?: HitRefiner): void;
   onResize(handler: (bounds: Rect) => void): () => void;
+  onMaximizeChange(handler: (maximized: boolean) => void): () => void;
   onMove(handler: (bounds: Rect) => void): () => void;
   onClose(handler: () => void): () => void;
   onFileDrop(handler: (paths: string[]) => void): () => void;
@@ -188,12 +225,15 @@ const windowDisposeHooks = new WeakMap<Window, Set<() => void>>();
 const windowDisposed = new WeakSet<Window>();
 const ownedWindows = new Set<Window>();
 // A window the application has shown, visible or hidden since (to a tray, say), keeps the pumped
-// loop running until it is disposed; one never shown and alone does not (D43).
+// loop running until it is disposed; one never shown and alone does not (D46).
 const shownWindows = new WeakSet<Window>();
 addReachable(() => {
   let any = false;
   for (const win of ownedWindows) {
-    if (win.isVisible()) shownWindows.add(win);
+    if (win.isVisible()) {
+      shownWindows.add(win);
+      noteReachable();
+    }
     if (shownWindows.has(win)) any = true;
   }
   return any;
@@ -202,9 +242,6 @@ addReachable(() => {
 // waits for the last hold to be released.
 const windowNativeDisposeHolds = new WeakMap<Window, number>();
 const windowPendingNativeDispose = new WeakSet<Window>();
-// Windows the end of a blocking run() hid before its webview went (D43), to be shown again when
-// a webview in the same window runs next. The application's own show() or hide() forgets the mark.
-const windowsHiddenAtRunEnd = new WeakSet<Window>();
 
 type FileDropListener = (paths: string[]) => void;
 type FileDropChange = (hasListeners: boolean) => void;
@@ -305,12 +342,11 @@ export function holdWindowNativeDispose(win: Window): () => void {
 }
 
 /**
- * Internal: hides a visible window this process made, without touching its run-end mark. It is
- * the first instant of a teardown, so no window is on the screen with its webview gone and its
- * client area empty (D43): the window and its webviews are destroyed right after. A failure is
- * logged and the teardown goes on. Returns whether it hid the window.
+ * Hides a visible window this process made, as the first instant of its teardown, so no window
+ * is on the screen with its webview gone and its client area empty (D46): its webviews and the
+ * window are destroyed right after. A failure is logged and the teardown goes on.
  */
-export function concealWindow(win: Window): boolean {
+function concealWindow(win: Window): boolean {
   // macOS keeps the tag's teardown order until its goal (D42): nothing is ordered out first there.
   if (macosKeepsTagPath() || !windowMetaMap.get(win)?.owned) return false;
   const inner = windowBackendMap.get(win);
@@ -323,16 +359,6 @@ export function concealWindow(win: Window): boolean {
     console.error("sweetview: hiding a window before its teardown threw:", err);
     return false;
   }
-}
-
-/** Internal: the end of a blocking run() hid this window before its webview went (D43). */
-export function markHiddenAtRunEnd(win: Window): void {
-  windowsHiddenAtRunEnd.add(win);
-}
-
-/** Internal: whether the end of a blocking run() hid this window and nothing has shown or hidden it since; forgets the mark. */
-export function takeHiddenAtRunEnd(win: Window): boolean {
-  return windowsHiddenAtRunEnd.delete(win);
 }
 
 /** Internal check for whether Window.dispose() has already run. */
@@ -399,7 +425,6 @@ export class Window {
   #unsubscribeNativeDrop?: () => void;
   readonly #unregister: () => void;
   readonly #unregisterConceal: () => void;
-  readonly #closeHandlers = new Set<() => void>();
   readonly #tabListeners: TabListeners = {
     newTab: new Set(),
     tabSelect: new Set(),
@@ -418,10 +443,13 @@ export class Window {
       const transparent = options.transparent ?? false;
       const tabs = options.tabs ?? false;
       const appearance = options.appearance ?? "system";
+      if (options.bounds !== undefined && options.contentSize !== undefined) throw new Error("sweetview: bounds and contentSize cannot both be given");
+      const backgroundColor = backgroundColorOf(options.backgroundColor);
       this.#meta = {
         title: options.title ?? options.identity?.appName ?? "",
         topmost: options.topmost ?? false,
         opacity: options.opacity,
+        backgroundColor: transparent && !tabs ? undefined : backgroundColor,
         hideFromTaskbar: options.hideFromTaskbar ?? false,
         noActivate: options.noActivate ?? false,
         frame,
@@ -438,10 +466,12 @@ export class Window {
         ...options, frame, resizable, transparent, tabs, appearance,
         title: this.#meta.title,
         icon: this.#meta.icon,
+        backgroundColor,
       });
       this.#inner.setOwnerDispose?.(() => this.dispose());
       this.handle = this.#inner.handle;
       if (options.onResize) this.onResize(options.onResize);
+      if (options.onMaximizeChange) this.onMaximizeChange(options.onMaximizeChange);
       if (options.onMove) this.onMove(options.onMove);
       if (options.onClose) this.onClose(options.onClose);
       if (options.onFileDrop) this.onFileDrop(options.onFileDrop);
@@ -454,7 +484,7 @@ export class Window {
     windowBackendMap.set(this, this.#inner);
     windowTabListeners.set(this, this.#tabListeners);
     // Disposed when the application ends, after its webviews and trays; hidden before any of
-    // them goes, so no window is seen with its webview gone (D43).
+    // them goes, so no window is seen with its webview gone (D46).
     this.#unregister = releaseAtEnd("window", () => this.dispose());
     this.#unregisterConceal = releaseAtEnd("conceal", () => void concealWindow(this));
   }
@@ -484,16 +514,14 @@ export class Window {
     return this.#inner.isVisible();
   }
   show(): void {
-    windowsHiddenAtRunEnd.delete(this);
     shownWindows.add(this);
+    noteReachable();
     this.#inner.show();
   }
   hide(): void {
-    windowsHiddenAtRunEnd.delete(this);
     this.#inner.hide();
   }
   toggle(): void {
-    windowsHiddenAtRunEnd.delete(this);
     this.#inner.toggle();
   }
 
@@ -531,6 +559,23 @@ export class Window {
   isMaximized(): boolean {
     return this.#inner.isMaximized();
   }
+  /**
+   * True while the window is minimised (`IsIconic` on Windows, `isMiniaturized`
+   * on macOS). `isVisible()` stays true for a minimised window; a hidden window
+   * that is not minimised reads as false.
+   */
+  isMinimized(): boolean {
+    return this.#inner.isMinimized();
+  }
+  /**
+   * Shows the window's system menu (Restore, Move, Size, Minimize, Maximize,
+   * Close) at the cursor and carries out the chosen command, as a right click
+   * on an OS title bar does: for a page-drawn title bar's right click. Blocks
+   * until the menu closes. macOS has no such menu: does nothing.
+   */
+  showSystemMenu(): void {
+    this.#inner.showSystemMenu();
+  }
   setTopmost(on: boolean): void {
     this.#meta.topmost = on;
     this.#inner.setTopmost(on);
@@ -554,37 +599,21 @@ export class Window {
   onResize(handler: (bounds: Rect) => void): () => void {
     return this.#inner.onResize(handler);
   }
+  /**
+   * Called with `true` when the window becomes maximized and `false` when it
+   * is restored, by any means: the frame's button, a snap gesture, a double
+   * click on the title bar, `toggleMaximize()` (a frameless window: filling
+   * its work area). Minimizing and restoring to the same state reports
+   * nothing. Returns the function that removes this listener.
+   */
+  onMaximizeChange(handler: (maximized: boolean) => void): () => void {
+    return this.#inner.onMaximizeChange(handler);
+  }
   onMove(handler: (bounds: Rect) => void): () => void {
     return this.#inner.onMove(handler);
   }
   onClose(handler: () => void): () => void {
-    if (windowDisposed.has(this)) return () => {};
-    const entry = () => handler();
-    const unsubscribe = this.#inner.onClose(entry);
-    this.#closeHandlers.add(entry);
-    return () => {
-      if (!this.#closeHandlers.delete(entry)) return;
-      unsubscribe();
-    };
-  }
-
-  /**
-   * Asks the window to close, as its close button does: its `onClose` listeners run, or, when it
-   * has none, a window this process made is disposed (destroyed) and an adopted one is left alone.
-   */
-  close(): void {
-    if (windowDisposed.has(this)) return;
-    if (this.#closeHandlers.size === 0) {
-      if (this.#meta.owned) this.dispose();
-      return;
-    }
-    for (const handler of [...this.#closeHandlers]) {
-      try {
-        handler();
-      } catch (err) {
-        console.error("sweetview: onClose handler threw:", err);
-      }
-    }
+    return this.#inner.onClose(handler);
   }
   onFileDrop(handler: (paths: string[]) => void): () => void {
     if (windowDisposed.has(this)) return () => {};
@@ -626,13 +655,11 @@ export class Window {
   dispose(): void {
     if (windowDisposed.has(this)) return;
     // Off the screen first, then its webviews (the dispose hooks), then the window: never a
-    // window on the screen with its webview gone and its client area empty (D43).
+    // window on the screen with its webview gone and its client area empty (D46).
     concealWindow(this);
-    windowsHiddenAtRunEnd.delete(this);
     windowDisposed.add(this);
     this.#unregister();
     this.#unregisterConceal();
-    this.#closeHandlers.clear();
     ownedWindows.delete(this);
     const hooks = windowDisposeHooks.get(this);
     if (hooks) {

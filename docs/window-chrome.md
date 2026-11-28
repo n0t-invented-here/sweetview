@@ -1,10 +1,11 @@
 # @n1h/sweetview/window-chrome
 
-A window chrome drawn by the page: the title bar, the minimise, maximise and close buttons and the resize handles are HTML, and the UI thread carries them out on the native window. The module has two halves joined by one method table: `windowChromeMethods` runs on the UI thread, and `windowChromeControls` and `resizeHandles` run in the browser page. Its imports from `@n1h/sweetview/ipc` and `@n1h/sweetview/native` are type-only, so it loads neither `bun:ffi` nor the webview library and a page bundle can import it.
+A window chrome drawn by the page: the title bar, the minimise, maximise and close buttons and the resize handles are HTML, and the UI thread carries them out on the native window. The module has two halves joined by one method table and one event: `windowChromeMethods` and `windowChromeEvents` run on the UI thread, and `windowChromeControls` and `resizeHandles` run in the browser page. Its imports from `@n1h/sweetview/ipc` and `@n1h/sweetview/native` are type-only, so it loads neither `bun:ffi` nor the webview library and a page bundle can import it.
 
 - [Example](#example)
 - [The contract](#the-contract)
 - [UI thread: windowChromeMethods](#ui-thread-windowchromemethods)
+- [UI thread: windowChromeEvents](#ui-thread-windowchromeevents)
 - [Page: windowChromeControls and resizeHandles](#page-windowchromecontrols-and-resizehandles)
   - [windowChromeControls](#windowchromecontrols)
   - [resizeHandles](#resizehandles)
@@ -18,14 +19,15 @@ and resize handles, in three files. Run it with `bun run host.ts`.
 // host.ts, the UI thread
 import { WebView } from "@n1h/sweetview";
 import { Window } from "@n1h/sweetview/native";
-import { windowChromeMethods, type WindowChromeMethods } from "@n1h/sweetview/window-chrome";
+import { windowChromeEvents, windowChromeMethods, type WindowChromeEvents, type WindowChromeMethods } from "@n1h/sweetview/window-chrome";
 import page from "./index.html";
 
-const win = new Window({ frame: false, transparent: true, bounds: { x: 100, y: 100, width: 900, height: 640 } });
-const view = await WebView.attach<WindowChromeMethods>(win, {
+const win = new Window({ frame: false, transparent: true, contentSize: { width: 900, height: 640 } });
+const view = await WebView.attach<WindowChromeMethods, WindowChromeEvents>(win, {
   page,
   uiMethods: windowChromeMethods(win, { onClose: () => view.quit() }), // the close button ends the app
 });
+windowChromeEvents(win, view); // each maximise change reaches the page
 win.show();
 view.run();
 ```
@@ -59,7 +61,7 @@ view.run();
           <button id="close" aria-label="Close">&#10005;</button>
         </span>
       </div>
-      <main>Drag the title bar, double-click it, or drag an edge.</main>
+      <main>Drag the title bar, double-click or right-click it, or drag an edge.</main>
     </div>
     <script type="module" src="./page.ts"></script>
   </body>
@@ -90,29 +92,30 @@ const handles = resizeHandles().map((h) => {
   return el;
 });
 
-// Nothing reports maximise changes, so ask again after each toggle.
-const refresh = async () => {
-  const { maximized } = await chrome.info();
+// The maximised state, as the page first asks it and as every change reports it.
+const showMaximized = (maximized: boolean) => {
   frame.classList.toggle("maximized", maximized);
   maximizeButton.setAttribute("aria-label", maximized ? "Restore" : "Maximise");
   for (const el of handles) el.hidden = maximized; // no resizing while maximised
 };
-const toggleMaximize = () => {
-  chrome.toggleMaximize();
-  setTimeout(() => void refresh(), 50);
-};
+const toggleMaximize = () => chrome.toggleMaximize();
 
 const info = await chrome.info();
 if (info.chrome === "page") {
+  chrome.onMaximizeChange(showMaximized); // the button, a double click, a snap gesture, the system menu
   titleBar.addEventListener("pointerdown", chrome.onTitlePointerDown);
   titleBar.addEventListener("dblclick", toggleMaximize);
+  titleBar.addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+    chrome.showSystemMenu(); // Restore, Move, Size, Minimize, Maximize, Close, as an OS title bar has
+  });
   // A press on a button must not start a window drag, and a double-click on one must not maximise.
   buttons.addEventListener("pointerdown", (e) => e.stopPropagation());
   buttons.addEventListener("dblclick", (e) => e.stopPropagation());
   document.getElementById("minimize")!.addEventListener("click", () => chrome.minimize());
   maximizeButton.addEventListener("click", toggleMaximize);
   document.getElementById("close")!.addEventListener("click", () => chrome.close());
-  await refresh();
+  showMaximized(info.maximized);
 } else {
   titleBar.hidden = true; // an OS frame draws the chrome
   for (const el of handles) el.hidden = true;
@@ -123,10 +126,10 @@ if (info.chrome === "page") {
 
 ## The contract
 
-`WindowChromeMethods` is the method map both halves share, as `[params, result]` pairs. Add it to the method map `M` that `WebView.attach` or `createApp` is called with: `type Methods = WindowChromeMethods & { ... }`. `WindowChromeMethodTable` is the matching handler table (one function per method, from params to result), which `windowChromeMethods` returns.
+`WindowChromeMethods` is the method map both halves share, as `[params, result]` pairs. Add it to the method map `M` that `WebView.attach` or `createApp` is called with: `type Methods = WindowChromeMethods & { ... }`. `WindowChromeEvents` is the one event the UI thread sends, `"window.maximized": { maximized: boolean }`; add it to the event map `E`: `type Events = WindowChromeEvents & { ... }`. `WindowChromeMethodTable` is the matching handler table (one function per method, from params to result), which `windowChromeMethods` returns.
 
 ```ts
-import type { WindowChromeInfo, WindowChromeKind, WindowChromeMethods } from "@n1h/sweetview/window-chrome";
+import type { WindowChromeEvents, WindowChromeInfo, WindowChromeKind, WindowChromeMethods } from "@n1h/sweetview/window-chrome";
 ```
 
 | Method | Params | Result | What `windowChromeMethods` does on the UI thread |
@@ -136,7 +139,8 @@ import type { WindowChromeInfo, WindowChromeKind, WindowChromeMethods } from "@n
 | `window.resize` | `ResizeEdge` | `void` | Calls `window.startResize(edge)`. Both Windows and macOS drag the requested edge or corner with the cursor while the left mouse button is held. |
 | `window.minimize` | `void` | `void` | Calls `window.minimize()`. |
 | `window.maximize` | `void` | `void` | Calls `window.toggleMaximize()`: maximised, or back to the previous bounds when already maximised. |
-| `window.close` | `void` | `void` | Calls the `onClose` option. Without one, it calls `window.close()`, what the OS close button does: the window's `onClose` listeners run, or, with none, the window is disposed (destroyed). |
+| `window.systemMenu` | `void` | `void` | Calls `window.showSystemMenu()`: on Windows the window's system menu (Restore, Move, Size, Minimize, Maximize, Close) at the cursor, its choice carried out; on macOS nothing. A window object without `showSystemMenu` (a test double) does nothing. |
+| `window.close` | `void` | `void` | Calls the `onClose` option. Without one, it calls `window.hide()`: the window disappears and the app keeps running. |
 
 `WindowChromeInfo` is `{ chrome: WindowChromeKind; maximized: boolean }`:
 
@@ -149,14 +153,20 @@ import type { WindowChromeInfo, WindowChromeKind, WindowChromeMethods } from "@n
 
 `windowChromeMethods(window, options?: WindowChromeOptions): WindowChromeMethodTable`
 
-Builds the `window.*` handlers for one window; pass the result as `uiMethods` (or spread it into yours) on `WebView.attach` or `createApp` ([app.md](app.md)). `window` is a `Window` from `@n1h/sweetview/native` ([Windows and screens](native/windows.md)), or any object with its `close`, `isMaximized`, `startDrag`, `startResize`, `minimize` and `toggleMaximize` methods, such as a test double. Create a real one with `frame: false` (and usually `transparent: true`) for a page-drawn chrome.
+Builds the `window.*` handlers for one window; pass the result as `uiMethods` (or spread it into yours) on `WebView.attach` or `createApp` ([app.md](app.md)). `window` is a `Window` from `@n1h/sweetview/native` ([Windows and screens](native/windows.md)), or any object with its `hide`, `isMaximized`, `startDrag`, `startResize`, `minimize` and `toggleMaximize` methods, such as a test double. Create a real one with `frame: false` (and usually `transparent: true`) for a page-drawn chrome.
 
 | `WindowChromeOptions` field | Default | Meaning |
 |---|---|---|
 | `chrome` | `"page"` | What `window.info` reports. Pass `"os"` when the same page is hosted in a plain framed window. |
-| `onClose` | `() => window.close()` | What `window.close` does. The default closes the window as its OS close button would: a window with an `onClose` listener of its own (one that hides it to a tray, say) does what that listener does, and one with none is destroyed. Pass `app.quit` (or `view.quit`) for a main window, so the close button ends the app. |
+| `onClose` | `() => window.hide()` | What `window.close` does. The default hides the window and does not quit, so a tray or a menu can show it again. Pass `app.quit` (or `view.quit`) for a main window, so the close button ends the app. |
 
-`windowChromeMethods`, `WindowChromeInfo`, `WindowChromeKind`, `WindowChromeMethods`, `WindowChromeMethodTable` and `WindowChromeOptions` are also exported from the root `@n1h/sweetview`. The page half (`windowChromeControls`, `resizeHandles`) is only in `@n1h/sweetview/window-chrome`.
+## UI thread: windowChromeEvents
+
+`windowChromeEvents(window, view): () => void`
+
+Sends `window.maximized` with `{ maximized }` to the page each time `window` becomes maximised or is restored, by any means: the page's maximise button or a double click on its title bar, a snap gesture, the system menu, `toggleMaximize()` from anywhere ([`Window#onMaximizeChange`](native/windows.md#window-members)). `view` is the `WebView` (or `App`) the page runs in, whose event map includes `WindowChromeEvents`. Call it once the webview is attached; it returns the function that stops it. An event sent before the page subscribed is not kept, which is why the page asks `info()` once when it loads.
+
+`windowChromeMethods`, `windowChromeEvents`, `WindowChromeEvents`, `WindowChromeInfo`, `WindowChromeKind`, `WindowChromeMethods`, `WindowChromeMethodTable` and `WindowChromeOptions` are also exported from the root `@n1h/sweetview`. The page half (`windowChromeControls`, `resizeHandles`) is only in `@n1h/sweetview/window-chrome`.
 
 Throws: on Windows, the `window.resize` handler throws `sweetview: SetTimer failed (<code>)` when the resize timer cannot be created; `WebView` passes the message to the page as a failed call.
 
@@ -182,14 +192,16 @@ import { resizeHandles, windowChromeControls, type ResizeHandle, type WindowChro
 
 | Member | Meaning |
 |---|---|
-| `info(): Promise<WindowChromeInfo>` | Calls `window.info` and resolves with the answer. Tells the page whether to draw the chrome at all, and the maximised state for the restore glyph, square corners and hidden resize handles. Nothing reports later changes, so call it again after `toggleMaximize`. Rejects when the call fails. |
+| `info(): Promise<WindowChromeInfo>` | Calls `window.info` and resolves with the answer. Tells the page whether to draw the chrome at all, and the maximised state for the restore glyph, square corners and hidden resize handles when the page loads; `onMaximizeChange` reports every change after that. Rejects when the call fails. |
+| `onMaximizeChange(fn: (maximized: boolean) => void): () => void` | Calls `fn` with each `window.maximized` event the UI thread sends ([`windowChromeEvents`](#ui-thread-windowchromeevents)). Returns the function that stops it. |
 | `onTitlePointerDown(event)` | For the title bar's pointer-down. A primary-button press (`event.button` 0) sends `window.drag`. Other buttons are ignored. Buttons inside the title bar stop `pointerdown` propagation so a click on them does not start a drag. |
 | `onHandlePointerDown(edge)` | Returns the pointer-down handler for one resize handle. A primary-button press sends `window.resize` with `edge`. Other buttons are ignored. |
 | `minimize()` | Sends `window.minimize`. |
 | `toggleMaximize()` | Sends `window.maximize`. |
+| `showSystemMenu()` | Sends `window.systemMenu`: for the title bar's `contextmenu` event (call `preventDefault()` on it). |
 | `close()` | Sends `window.close`. |
 
-Every member except `info` sends through `transport.notify` and returns without waiting. With `webviewTransport()`, a failure on the UI thread is logged to the page's console as `<method> failed: <message>`.
+Every member except `info` and `onMaximizeChange` sends through `transport.notify` and returns without waiting. With `webviewTransport()`, a failure on the UI thread is logged to the page's console as `<method> failed: <message>`.
 
 ### resizeHandles
 

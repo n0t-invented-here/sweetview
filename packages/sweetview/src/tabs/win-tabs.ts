@@ -22,7 +22,6 @@ import {
 import { asHwnd } from "@n1h/sweetview-native/win32/window";
 import { Window } from "@n1h/sweetview-native";
 import {
-  concealWindow,
   emitWindowNewTab,
   emitWindowTabClose,
   emitWindowTabSelect,
@@ -455,8 +454,8 @@ function showContextMenu(host: WinTabHost, record: WinTabRecord | undefined): vo
 function disposeHost(host: WinTabHost): void {
   if (host.closed) return;
   host.closed = true;
-  // Off the screen before its tabs' webviews go, then destroyed with them (D43).
-  concealWindow(host.window);
+  // Off the screen before its tabs' webviews and its strip go, then destroyed with them (D46).
+  if (!isWindowDisposed(host.window) && host.window.isVisible()) host.window.hide();
   hosts.delete(host.window);
   const idx = hostOrder.indexOf(host);
   if (idx !== -1) hostOrder.splice(idx, 1);
@@ -614,7 +613,7 @@ async function ensureHost(window: Window): Promise<WinTabHost> {
         "strip.closeWindow": () => fromStrip(() => requestClose(host)),
       },
       [tabAttachHooks]: {
-        // The strip is the window's chrome: it does not keep the loop running by itself (D43).
+        // The strip is the window's chrome: it does not keep the loop running by itself (D46).
         chrome: true,
         fileDropHost: () => host.window,
         mountChild: () => ({ window: frame.hwnd, bounds: frame.stripBounds(), visible: true }),

@@ -66,7 +66,7 @@ While `run()` runs, Bun's event loop on the UI thread does not turn: no `setTime
 
 ### `runEventLoop`: the loop on a Bun timer
 
-`runEventLoop` from `@n1h/sweetview/native` (also re-exported from `@n1h/sweetview`) never blocks. Every `intervalMs` (default 16) it calls `pumpEvents`, which dispatches every OS event waiting for the thread and returns: the Rust runtime's pump of `tao`'s loop on Windows, `nextEventMatchingMask:` / `sendEvent:` on macOS with `finishLaunching` once. Between pumps the thread is Bun's, so `setTimeout`, promises and I/O work on the UI thread and the app needs no worker. The returned promise resolves when `quitEventLoop()` is called, or when the OS ends the loop (`WM_QUIT` on Windows). A click reaches its handler at most one interval late; a menu, once open, tracks at native speed inside the pump.
+`runEventLoop` from `@n1h/sweetview/native` (also re-exported from `@n1h/sweetview`) never blocks. Every `intervalMs` (default 16) it calls `pumpEvents`, which dispatches every OS event waiting for the thread and returns: the Rust runtime's pump of `tao`'s loop on Windows, `nextEventMatchingMask:` / `sendEvent:` on macOS with `finishLaunching` once. Between pumps the thread is Bun's, so `setTimeout`, promises and I/O work on the UI thread and the app needs no worker. The returned promise resolves when `quitEventLoop()` is called, or when the OS ends the loop (`WM_QUIT` on Windows). On Windows it also ends by itself when the last thing a person could reach goes: once the application has had a window it showed, a tray icon, a notifier, a single-instance lock, an input hook, a webview, or a webview or tab being made, the first pump at which none of them is left ends the loop. That ends an application whose start-up failed with its error caught (the webview or tab it was making went) and one whose last window was disposed with nothing else left; a window hidden to a tray still counts, and before the application has had anything the loop waits, so it can be started before the windows are made. macOS keeps the loop it had at the tag. A click reaches its handler at most one interval late; a menu, once open, tracks at native speed inside the pump.
 
 A worker is therefore required for async work in a `run()` app, and optional under `runEventLoop()`: the `worker` option still works there, but the UI thread can also run the app's logic itself.
 
@@ -239,7 +239,7 @@ view.run();
 
 `WebView.attach(window, options: WebViewOptions<M>): Promise<WebView<M, E>>`
 
-Mounts a webview inside an existing `Window` created by `new Window(...)` or `Window.fromHandle(...)`. Geometry (in DIPs), DPI scale, `resizable`, `transparent`, and default `title` are read directly from `window`, so callers never duplicate window options. The window stays hidden; call `win.show()`, or set `showOnReady`.
+Mounts a webview inside an existing `Window` created by `new Window(...)` or `Window.fromHandle(...)`. Geometry (the window's own: its client area, in physical pixels on Windows and points on macOS), DPI scale, `resizable`, `transparent`, `backgroundColor`, and default `title` are read directly from `window`, so callers never duplicate window options. The window stays hidden; call `win.show()`, or set `showOnReady`.
 
 What `WebView.attach` does, in order:
 
@@ -250,7 +250,7 @@ What `WebView.attach` does, in order:
 5. Refuses a disposed window, or one whose handle is null, and checks `ringBytes`.
 6. Creates the `RawWebview` inside `window.handle` using the window's bounds, scale and `resizable` hint, then restores the window's styles and outer bounds in case the engine changed them.
 7. Applies `title` (and mirrors it onto an untitled owned `window`).
-8. Clears the browser background when `window` was created with `transparent: true`, and applies `allowExternalDrop` when it is set.
+8. Clears the browser background when `window` was created with `transparent: true`, or, on Windows, sets it to the window's `backgroundColor` when it has one (what shows before the page paints), and applies `allowExternalDrop` when it is set.
 9. Allocates the shared `Ring`, subscribes webview file drops to the window's `onFileDrop` listeners, and starts `worker` if configured.
 10. Registers the request handler when `onRequest` is set.
 11. Binds `__sweetview_rpc`: the reserved ready method first, then `uiMethods`, then `deferredUiMethods`, then the worker. The binding exists before the first navigation and dispatches by method name only; see [the trust boundary](#the-rpc-trust-boundary). A direct-URL webview with no UI methods, no worker and no ready options gets no binding.
@@ -400,9 +400,15 @@ import { createApp } from "@n1h/sweetview";
 import index from "./index.html";
 
 // The window appears once the page calls signalReady() after its first render.
-const app = await createApp({ title: "Notes", page: index, worker: "./worker.ts", showOnReady: true, readyTimeoutMs: 15_000 });
+const app = await createApp({ title: "Notes", page: index, worker: "./worker.ts", contentSize: { width: 1100, height: 720 }, showOnReady: true, readyTimeoutMs: 15_000 });
 app.run();
 ```
+
+`contentSize` is the page's size in CSS pixels: the window is centred on the
+primary screen and its frame sized around the page at that screen's scale, so
+the page looks the same size at 100 % and at 150 %. `bounds` places the outer
+frame in physical pixels instead; give one or the other
+([WindowOptions](native/windows.md#windowoptions)).
 
 Layer 2 declarative helper that combines `new Window(options)` with `WebView.attach` (or native tab setup when `options.tabs` is `true`). `options` is both `WindowOptions` and `WebViewOptions`.
 
@@ -516,7 +522,7 @@ are HTML-escaped; `head` and `body` are inserted verbatim.
 
 ### windowChromeMethods
 
-Re-exported from [`@n1h/sweetview/window-chrome`](window-chrome.md) together with `WindowChromeInfo`, `WindowChromeKind`, `WindowChromeMethodTable`, `WindowChromeMethods`, and `WindowChromeOptions`.
+Re-exported from [`@n1h/sweetview/window-chrome`](window-chrome.md) together with `windowChromeEvents`, `WindowChromeEvents`, `WindowChromeInfo`, `WindowChromeKind`, `WindowChromeMethodTable`, `WindowChromeMethods`, and `WindowChromeOptions`.
 
 ### Ring
 
