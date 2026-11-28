@@ -30,7 +30,7 @@ mod platform;
 #[path = "unported.rs"]
 mod platform;
 
-pub use com::{ComApartment, ComError};
+pub use com::{hold_com_for_the_process, ComApartment, ComError};
 pub use loop_host::{AlreadyRunning, LoopHost};
 pub use platform::{
   discard_quit, dispatch_waiting, messages_waiting, peek_without_removing_for_tests, post_quit_for_tests, resource_counts, SignalWindow, Waker,

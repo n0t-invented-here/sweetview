@@ -220,6 +220,21 @@ describe.skipIf(!onWindows)("Windows behaviour an application notices", () => {
     });
   }, 120_000);
 
+  test("the window's background: with no backgroundColor, neither transparent nor colour-keyed, a window paints its appearance's page colour (#15161a dark, #f9f9fb light) where it painted white", async () => {
+    // What each window erases its background with; #ff00ff is a window that paints nothing.
+    expect(await runChild(fixture("window-backdrop.ts"))).toEqual({ dark: "#15161a", light: "#f9f9fb", backgroundColor: "#336699", transparent: "#ff00ff" });
+  }, 120_000);
+
+  test("the window after run(): hidden before its webview goes and still a window (isVisible() false, not in Window.visibleWindows()); the next run() and show() bring it back; the application's own hide() stands", async () => {
+    const after = { isVisible: false, osVisible: false, alive: true, listed: false };
+    expect(await runChild(fixture("run-end-hidden.ts"))).toEqual({
+      afterRun: after,
+      secondRun: { whileRunning: true, after },
+      afterShow: { isVisible: true, osVisible: true, alive: true, listed: true },
+      ownHide: { whileRunning: false, after },
+    });
+  }, 120_000);
+
   test("width and height: contentSize is the page area in DIPs, centred, the page filling it; bounds is the outer frame; not both", async () => {
     expect(await runChild(fixture("client-size.ts"))).toEqual({
       framedBoundsAreOuter: true,

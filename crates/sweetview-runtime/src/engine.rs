@@ -115,6 +115,16 @@ thread_local! {
   static UNDROPPED: RefCell<Vec<Weak<Inner>>> = const { RefCell::new(Vec::new()) };
 }
 
+/// Whether a webview made in the window `handle` was destroyed and its drop still waits for a
+/// later turn (a webview callback was on the stack): the window must outlive it (D49).
+pub(crate) fn drop_waits_in(handle: isize) -> bool {
+  UNDROPPED
+    .try_with(|all| {
+      all.borrow().iter().filter_map(Weak::upgrade).any(|inner| inner.window_value.get() == handle && inner.live.try_borrow().map(|live| live.is_some()).unwrap_or(true))
+    })
+    .unwrap_or(false)
+}
+
 /// Destroys every webview of this thread that is still alive, and drops those whose drop was
 /// waiting for a later turn of the loop, unless a webview's callback is on the stack now (the
 /// process is ending from inside one): those are left to the OS. Each webview goes before the
@@ -816,6 +826,11 @@ impl Inner {
         let Live { extras, webview, window } = live;
         if let HostWindow::Filled(value) = window {
           crate::window::set_page_focus(value, None);
+        }
+        // A standalone webview's own window leaves the screen first, so it is never seen with
+        // its page gone, on every path that ends it (D49, R1 of its first review).
+        if let HostWindow::Own { window, .. } = &window {
+          window.set_visible(false);
         }
         drop(extras);
         drop(webview);

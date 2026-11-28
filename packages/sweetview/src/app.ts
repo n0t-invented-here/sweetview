@@ -11,7 +11,7 @@ import { createFrameAssembler, type AnyEvent, type EventMap, type MethodMap, typ
 import { RequestResponseAssembler, requestError, runNativeRequest, type NativeRequestResponse, type StreamingResponseFrame } from "./request-response";
 import type { HttpRequestMessage, InitMessage, NativeRequest, NativeResponse, WorkerCrashFrame } from "./messages";
 import { Window, quitEventLoop, runEventLoop, signalReady, type Rect, type TabHandle, type WindowOptions } from "@n1h/sweetview-native";
-import { discardQuit, emitWindowFileDrop, getWindowMeta, holdWindowNativeDispose, isWindowDisposed, macosKeepsTagPath, onWindowDispose, onWindowFileDropListenersChange, preserveWindowGeometry, releaseAtEnd, scheduleNativeTimeout, windowFileDropCount } from "@n1h/sweetview-native/internal";
+import { discardQuit, emitWindowFileDrop, getWindowBackend, getWindowMeta, holdWindowNativeDispose, isWindowDisposed, macosKeepsTagPath, onWindowDispose, onWindowFileDropListenersChange, preserveWindowGeometry, releaseAtEnd, scheduleNativeTimeout, windowFileDropCount } from "@n1h/sweetview-native/internal";
 import { createChildWebview, engineOf, RawWebview, SizeHint } from "./raw-webview";
 import { Ring } from "./ring";
 import { messageOfThrown } from "./thrown-text";
@@ -92,8 +92,13 @@ export type TabAttachHooks = {
   fileDropHost(): Window;
   /** What `webview.window` names, read each time: the window the tab is in now. Without it, the window the webview was attached to. */
   window?(): Window;
-  /** Replaces `window.show()` on the borrowed child window for `showOnReady` and the ready watchdog. */
-  revealWindow?(): void;
+  /**
+   * Replaces `window.show()` on the borrowed child window for `showOnReady` and the ready
+   * watchdog. `drawn`, for the ready signal's reveal, calls its argument once the tab's page has
+   * drawn a frame since it was asked (D49); `fallbackMs` is the tab's `readyTimeoutMs`. The
+   * watchdog's reveal passes neither, and shows at once.
+   */
+  revealWindow?(drawn?: (done: () => void) => void, fallbackMs?: number): void;
   /**
    * Set by `WebView.attach`: re-subscribes file-drop demand to the current
    * `fileDropHost()`. The driver calls it after the tab's logical host
@@ -133,6 +138,52 @@ export type TabAttachHooks = {
 
 /** Internal options key for `TabAttachHooks` (not exported from the package entry). */
 export const tabAttachHooks: unique symbol = Symbol("sweetview.tabAttachHooks");
+
+/**
+ * Asks a webview's page to say when a frame of it has been presented (`DRAWN_SCRIPT`) and calls
+ * `done` then. At once for a webview with no RPC binding, and when the webview goes first. A
+ * callback, not a promise: a blocking `run()` turns no promise continuation until it returns.
+ * Inside the package only.
+ */
+// The page's answer once a frame of it has been presented: its first paint's entry, which the
+// engine records when the frame is presented; for a page that has painted before, two
+// animation frames.
+const DRAWN_SCRIPT = `(() => {
+  const drawn = () => window.__sweetview_rpc("__sweetview.drawn", null);
+  if (performance.getEntriesByType("paint").length > 0) return requestAnimationFrame(() => requestAnimationFrame(drawn));
+  new PerformanceObserver((_, observer) => { observer.disconnect(); drawn(); }).observe({ type: "paint" });
+})()`;
+const drawnRequests = new WeakMap<RawWebview, (done: () => void) => void>();
+export function afterNextDraw(raw: RawWebview, done: () => void): void {
+  const request = drawnRequests.get(raw);
+  if (request) request(done);
+  else done();
+}
+
+/**
+ * Sweetview's reveal of a window whose page has to draw first (D49): the window is shown cloaked
+ * (visible to its webviews, so they draw, and off the screen) and put on the screen once
+ * `drawn` calls back: WebView2's render window is otherwise on the screen before its first frame,
+ * which shows light. `fallbackMs` (the page's `readyTimeoutMs`) puts it on the screen if that
+ * never comes. Where DWM refuses the cloak, and on macOS (D42), it is shown at once, as
+ * `show()` shows it. An application's own `show()` is never this.
+ */
+export function revealWhenDrawn(window: Window, drawn: (done: () => void) => void, fallbackMs: number | undefined): void {
+  const backend = getWindowBackend(window);
+  if (macosKeepsTagPath() || backend.showCloaked === undefined) {
+    window.show();
+    return;
+  }
+  if (!backend.showCloaked()) return;
+  let stopFallback: (() => void) | undefined;
+  const uncloak = () => {
+    stopFallback?.();
+    stopFallback = undefined;
+    backend.uncloak?.();
+  };
+  if (fallbackMs !== undefined && fallbackMs > 0) stopFallback = scheduleNativeTimeout(fallbackMs, uncloak);
+  drawn(uncloak);
+}
 
 type InternalWebViewOptions<M extends MethodMap> = WebViewOptions<M> & { [tabAttachHooks]?: TabAttachHooks };
 
@@ -443,6 +494,8 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
           throw new Error(`sweetview: webview_set_background_color failed (${err})`);
         }
       }
+      // On Windows the webview was made with its window's colour as the browser's background
+      // (backgroundColor, or appearance's; a tab's, its tabbed window's), in the runtime (D49).
       if (options.allowExternalDrop !== undefined) {
         const error = engineHost.setAllowExternalDrop(options.allowExternalDrop);
         if (error !== undefined && error !== 0) throw new Error(`sweetview: webview_set_allow_external_drop failed (${error})`);
@@ -580,6 +633,16 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
         cancelWatchdog?.();
         cancelWatchdog = undefined;
       };
+      // The page's frames asked for since the last one drawn (afterNextDraw).
+      const drawnWaiters: (() => void)[] = [];
+      const settleDrawn = () => {
+        for (const done of drawnWaiters.splice(0)) done();
+      };
+      const requestDrawn = (done: () => void) => {
+        if (!isLive()) return done();
+        drawnWaiters.push(done);
+        if (drawnWaiters.length === 1) raw.eval(DRAWN_SCRIPT);
+      };
       const clearDispatches = () => {
         queue.length = 0;
         cancelDispatch?.();
@@ -659,6 +722,7 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
         unsubscribeWindowDispose();
         cancelStartup();
         clearDispatches();
+        settleDrawn();
         assembler.clear();
         requestResponses.clear();
         // Destroying the webview aborts native streams, including any waiting for their next chunk.
@@ -765,10 +829,14 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
           for (const { seq } of queue.splice(0)) replyError(seq, err);
         }
       };
-      const showWhenReady = () => {
+      // `afterReady`: the ready signal's reveal, put on the screen once the page has drawn since
+      // (D49); the watchdog's shows at once.
+      const showWhenReady = (afterReady: boolean) => {
         if (!isLive() || !options.showOnReady) return;
-        if (tabHooks?.revealWindow) tabHooks.revealWindow();
-        else if (!window.isVisible()) window.show();
+        if (tabHooks?.revealWindow) tabHooks.revealWindow(afterReady ? requestDrawn : undefined, options.readyTimeoutMs);
+        else if (window.isVisible()) return;
+        else if (afterReady) revealWhenDrawn(window, requestDrawn, options.readyTimeoutMs);
+        else window.show();
       };
       const callReadyHook = (name: string, hook: (() => void) | undefined) => {
         try {
@@ -825,6 +893,7 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
           options.showOnReady === true ||
           options.readyTimeoutMs !== undefined ||
           options.onReady !== undefined;
+        if (needsRpc) drawnRequests.set(raw, requestDrawn);
         if (needsRpc) raw.bindRaw("__sweetview_rpc", (seq, req) => {
           if (!isLive()) return;
           try {
@@ -835,8 +904,13 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
                 cancelStartup();
                 signalReady();
                 callReadyHook("onReady", options.onReady);
-                showWhenReady();
+                showWhenReady(true);
               }
+              respond(seq, 0, null);
+              return;
+            }
+            if (method === "__sweetview.drawn") {
+              settleDrawn();
               respond(seq, 0, null);
               return;
             }
@@ -879,7 +953,7 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
             if (!isLive() || isReady) return;
             raw.setHTML(options.readyFallbackHtml ?? startupErrorHtml);
             callReadyHook("onReadyTimeout", options.onReadyTimeout);
-            showWhenReady();
+            showWhenReady(false);
           });
         }
       } catch (err) {
@@ -907,12 +981,24 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
           // Keep the owned native window alive until webview_destroy has run:
           // a window.dispose() or native close inside the loop only ends it.
           const releaseWindowDispose = meta.owned ? holdWindowNativeDispose(window) : undefined;
+          // A window the end of an earlier run() hid (below) is shown again for this one: now,
+          // or with showOnReady once this page is ready.
+          // Only when nothing but Sweetview hid it since: the application's own hide() stands.
+          if (getWindowBackend(window).takeHiddenAtRunEnd?.() && !isWindowDisposed(window) && !window.isVisible()) {
+            if (!options.showOnReady || isReady) window.show();
+          }
           running = true;
           try {
             engineHost.run();
           } finally {
             running = false;
             try {
+              // Off the screen before its webview goes, so the window is never seen with its
+              // client area empty (D49). It stays alive for code after run() and a second run(),
+              // which shows it again; the end of the application destroys it. A window disposed
+              // inside the loop was hidden by its dispose and is destroyed below.
+              // macOS keeps the tag's order until its goal (D42).
+              if (!macosKeepsTagPath() && meta.owned && !child && !isWindowDisposed(window)) getWindowBackend(window).hideAtRunEnd?.();
               shutdown();
             } finally {
               releaseWindowDispose?.();
@@ -1073,8 +1159,17 @@ export async function createApp<M extends MethodMap = MethodMap, E extends Event
         if (disposed) return;
         disposed = true;
         unsubAutoQuit?.();
-        webview.dispose();
+        // Outside run(), the window's dispose hides it, then destroys the webview (its dispose
+        // hook), then the window (D49). Inside run(), the webview ends the loop, and run()
+        // hides the window, destroys the webview and then disposes the window.
+        if (macosKeepsTagPath()) {
+          // The tag's order until the macOS goal (D42).
+          webview.dispose();
+          if (!inRun) window.dispose();
+          return;
+        }
         if (!inRun) window.dispose();
+        webview.dispose();
       },
     };
   } catch (err) {

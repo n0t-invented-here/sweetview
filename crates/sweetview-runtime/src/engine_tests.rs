@@ -967,6 +967,100 @@ fn a_page_filling_a_window_follows_its_client_area_whoever_made_the_window() {
   });
 }
 
+/// The order a webview and the window it is in go (D49, R1 and R3 of its first review), read
+/// inside the `WM_DESTROY` of WebView2's own window under the webview's widget
+/// (`Chrome_WidgetWin_0`), which closing the controller destroys.
+mod teardown_order {
+  use std::cell::Cell;
+
+  use sweetview_platform_window::test_support::{first_child, post_close, watch_destroy};
+
+  use super::*;
+
+  /// WebView2's own window under the webview's widget.
+  fn browser_window(engine: &Engine) -> isize {
+    let container = engine.inner.with_live(|live| test_support::container_value(&live.webview)).flatten().expect("the webview's widget");
+    BorrowedWindow::with_handle_value(container, |c| first_child(c)).flatten().expect("WebView2's window under the widget")
+  }
+
+  /// A standalone webview (its own window) shown, and `end` run: whether its own window was still
+  /// on the screen at the moment the webview went.
+  fn on_screen_as_it_goes(runtime: &Rc<Runtime>, end: fn(&Engine, isize)) -> Option<bool> {
+    let engine = Engine::create(false, Host::Own, None).expect("a standalone webview");
+    engine.show_own_window();
+    let window = engine
+      .inner
+      .with_live(|live| {
+        let HostWindow::Own { window, .. } = &live.window else { panic!("its own window") };
+        window_value_of(window)
+      })
+      .expect("live");
+    let browser = browser_window(&engine);
+    let seen = Rc::new(Cell::new(None));
+    let record = seen.clone();
+    let watch = BorrowedWindow::with_handle_value(browser, |b| {
+      watch_destroy(b, move || record.set(BorrowedWindow::with_handle_value(window, |w| sweetview_platform_window::is_visible(w))))
+    })
+    .expect("WebView2's window")
+    .expect("watched");
+    end(&engine, window);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while seen.get().is_none() && Instant::now() < deadline {
+      runtime.pump();
+    }
+    drop(watch);
+    seen.get()
+  }
+
+  /// R1: a standalone webview's window leaves the screen before the webview goes, on every path
+  /// that ends it: `destroy()`, a close of its own window (the title bar's, `WM_CLOSE`), and the
+  /// release at the end of the application. `Some(false)`: the window was hidden, and still a
+  /// window, when the webview went.
+  #[test]
+  fn a_standalone_webviews_window_leaves_the_screen_before_the_webview_goes() {
+    on_ui_thread(|runtime| {
+      assert_eq!(on_screen_as_it_goes(&runtime, |engine, _| engine.destroy()), Some(false), "destroy()");
+      assert_eq!(
+        on_screen_as_it_goes(&runtime, |_, window| {
+          BorrowedWindow::with_handle_value(window, |w| post_close(w));
+        }),
+        Some(false),
+        "its own window closed"
+      );
+      assert_eq!(on_screen_as_it_goes(&runtime, |_, _| release_all()), Some(false), "the release at the end");
+    });
+  }
+
+  /// R3: a webview whose drop waits because a webview callback is on the stack (a synchronous
+  /// handler that disposes the application) still goes before the window it fills. Inside a
+  /// callback scope the webview is destroyed, then its window disposed; once the scope is left
+  /// and the loop turns, the order the two went in is read from their `WM_DESTROY`s.
+  #[test]
+  fn a_webview_whose_drop_waits_for_a_callback_still_goes_before_its_window() {
+    on_ui_thread(|runtime| {
+      let window = Window::create(WindowInit { title: "rt r3".into(), frame: true, resizable: true, no_activate: true, ..Default::default() }).expect("window");
+      let handle = window.handle();
+      let engine = Engine::create(false, Host::Fill(handle), crate::window::background_of(handle)).expect("webview");
+      let browser = browser_window(&engine);
+      let order = Rc::new(RefCell::new(Vec::new()));
+      let (to_webview, to_window) = (order.clone(), order.clone());
+      let watch_webview = BorrowedWindow::with_handle_value(browser, |b| watch_destroy(b, move || to_webview.borrow_mut().push("webview"))).expect("WebView2's window").expect("watched");
+      let watch_window = BorrowedWindow::with_handle_value(handle, |w| watch_destroy(w, move || to_window.borrow_mut().push("window"))).expect("the window").expect("watched");
+      {
+        let _in_a_callback = CallbackScope::enter();
+        engine.destroy();
+        window.dispose();
+      }
+      let deadline = Instant::now() + Duration::from_secs(5);
+      while order.borrow().len() < 2 && Instant::now() < deadline {
+        runtime.pump();
+      }
+      drop((watch_webview, watch_window));
+      assert_eq!(*order.borrow(), ["webview", "window"]);
+    });
+  }
+}
+
 #[test]
 fn a_webview_whose_setup_fails_leaves_no_listener_of_its_own_window() {
   on_ui_thread(|runtime| {
