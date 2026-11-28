@@ -41,25 +41,38 @@ pub fn parse_ico(bytes: &[u8]) -> Result<Vec<IcoEntry>, String> {
   Ok(entries)
 }
 
-/// The image of `width == want`, else the smallest larger one, else the largest.
-pub fn pick_ico_entry(entries: &[IcoEntry], want: u32) -> Result<IcoEntry, String> {
-  if let Some(exact) = entries.iter().find(|e| e.width == want) {
-    return Ok(*exact);
-  }
-  let larger = entries.iter().filter(|e| e.width > want).min_by_key(|e| e.width);
-  larger.or_else(|| entries.iter().max_by_key(|e| e.width)).copied().ok_or_else(|| ".ico has no images".into())
+/// Which of several equally wide largest images a pick falls back to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WidestTie {
+  /// The first, as the sort of `icon.ts` keeps it: the notifier's balloon and tray icon.
+  First,
+  /// The last: the window's icon.
+  Last,
 }
 
-/// As [`pick_ico_entry`], except that of equally wide largest images it keeps the
-/// first, as the sort of `icon.ts` does; the notifier's balloon and tray icon pick so.
-pub fn pick_ico_entry_keeping_first(entries: &[IcoEntry], want: u32) -> Result<IcoEntry, String> {
+/// The image of `width == want`, else the smallest larger one, else the largest,
+/// of equally wide largest ones the one `tie` names.
+pub fn select_ico_entry(entries: &[IcoEntry], want: u32, tie: WidestTie) -> Result<IcoEntry, String> {
   if let Some(exact) = entries.iter().find(|e| e.width == want) {
     return Ok(*exact);
   }
   let larger = entries.iter().filter(|e| e.width > want).min_by_key(|e| e.width);
   // `max_by_key` keeps the last of equals; reversed, it keeps the first.
-  let widest = entries.iter().rev().max_by_key(|e| e.width);
+  let widest = match tie {
+    WidestTie::First => entries.iter().rev().max_by_key(|e| e.width),
+    WidestTie::Last => entries.iter().max_by_key(|e| e.width),
+  };
   larger.or(widest).copied().ok_or_else(|| ".ico has no images".into())
+}
+
+/// The window's pick: [`select_ico_entry`] keeping the last of equally wide largest images.
+pub fn pick_ico_entry(entries: &[IcoEntry], want: u32) -> Result<IcoEntry, String> {
+  select_ico_entry(entries, want, WidestTie::Last)
+}
+
+/// The notifier's pick: [`select_ico_entry`] keeping the first of equally wide largest images.
+pub fn pick_ico_entry_keeping_first(entries: &[IcoEntry], want: u32) -> Result<IcoEntry, String> {
+  select_ico_entry(entries, want, WidestTie::First)
 }
 
 #[cfg(test)]
@@ -104,6 +117,7 @@ mod tests {
   #[test]
   fn the_notifiers_pick_is_exact_then_smallest_larger_then_the_first_largest() {
     let entries = parse_ico(&ico(&[(16, 4), (32, 4)])).expect("parse");
+    assert_eq!(entries.iter().map(|e| e.width).collect::<Vec<_>>(), [16, 32], "one entry per image, in order");
     assert_eq!(pick_ico_entry_keeping_first(&entries, 16).map(|e| e.width), Ok(16));
     assert_eq!(pick_ico_entry_keeping_first(&entries, 24).map(|e| e.width), Ok(32));
     assert_eq!(pick_ico_entry_keeping_first(&entries, 48).map(|e| e.width), Ok(32));
