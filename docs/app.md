@@ -353,7 +353,7 @@ trusted ([the RPC trust boundary](#the-rpc-trust-boundary)).
 | `debug` | `boolean` | `false` | Enables devtools and the context menu. |
 | `uiMethods` | `UiMethods<M>` | `{}` | Synchronous handlers answered on the UI thread before consulting the worker. |
 | `deferredUiMethods` | `UiMethods<M>` | `{}` | Synchronous handlers invoked on a later native UI tick. |
-| `showOnReady` | `boolean` | `false` | Reveals the window when the page signals readiness or the watchdog fires. |
+| `showOnReady` | `boolean` | `false` | Reveals the window when the page signals readiness or the watchdog fires. On Windows the ready signal's reveal shows the window off the screen (DWM's cloak) and puts it on the screen once the page has drawn since (two animation frames the host asks the page for), so the browser's own surface is never seen before its first frame; with `readyTimeoutMs` set, the window is put on the screen after that long if the page never draws. The watchdog's reveal shows it at once. On macOS it is shown on the signal. |
 | `readyTimeoutMs` | `number` | disabled | A positive value up to 2147483647 arms a native startup watchdog; zero, a negative value or `NaN` leaves it off. |
 | `onReady`, `onReadyTimeout` | `() => void` | none | UI-thread hooks for the first ready handshake and for watchdog expiry. |
 | `readyFallbackHtml` | `string` | built-in error page | HTML shown on watchdog expiry. |
@@ -387,7 +387,9 @@ Explorer or Finder. See [file drops](native/windows.md#file-drops).
 
 Tabs are host-aware: `showOnReady` and the ready watchdog reveal the tab's
 current logical host (its tabbed window) if that host is hidden, not the
-borrowed window the webview was attached to. They do not force the tab to be selected; call
+borrowed window the webview was attached to; on Windows the ready signal's
+reveal puts it on the screen once the tab's page and the tab strip have drawn,
+as for a window without tabs ([`showOnReady`](#webviewoptions)). They do not force the tab to be selected; call
 `tab.select()` when a specific tab should be in front. File drops over a tab's webview go to the `onFileDrop` listeners of the tab's
 current `tab.window`. After a tear-off or merge, drops go to the new host
 only.
