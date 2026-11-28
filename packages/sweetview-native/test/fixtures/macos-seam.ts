@@ -138,6 +138,23 @@ if (native && internal) {
     result.permissions = { status: permissions.status(1), request: permissions.request(2), ready: permissions.ready(0), needed: permissions.needed(1), autoRequest: permissions.autoRequest };
     completeWebviewRequest(9, 3n, { status: 204 });
     result.calls = calls.filter(([name]) => name !== "Webview");
+
+    // onCallbackError: on macOS a listener that is set is not called, and a catch prints what it
+    // printed on the main branch. The reporter is no entry point, so it is imported by its path.
+    const { reportCallbackError } = await import("../../src/callback-errors");
+    const told: string[] = [];
+    const printed: unknown[][] = [];
+    const originalError = console.error;
+    console.error = (...args: unknown[]) => void printed.push(args.map((a) => (a instanceof Error ? a.message : a)));
+    const off = native.onCallbackError((error, source) => void told.push(`${source.kind}: ${error.message}`));
+    try {
+      reportCallbackError("tray.onClick", new Error("mac boom"), "sweetview: message window handler threw:");
+      reportCallbackError("window.onClose", new Error("mac close"), "sweetview: onClose handler threw:");
+    } finally {
+      off();
+      console.error = originalError;
+    }
+    result.callbackErrors = { told, printed };
   }
 }
 

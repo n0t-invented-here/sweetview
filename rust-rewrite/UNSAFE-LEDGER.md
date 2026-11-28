@@ -158,7 +158,7 @@ All of it reaches WebView2 through the objects `wry` 0.58.2 hands out (`WebViewE
 
 ### `crates/sweetview-platform-window/src/folder_dialog.rs` (9)
 
-- **The folder dialog** (9: `CoCreateInstance`, `GetOptions`, `SetOptions`, `SetTitle`, `Show`, `GetResult`, `GetDisplayName`, `PWSTR::as_wide`, `CoTaskMemFree`). Looked for: `rfd` 0.18.0 `FileDialog::pick_folder` (https://docs.rs/rfd/0.18.0/rfd/struct.FileDialog.html#method.pick_folder), which answers `None` for a COM failure as for a cancel, so `pickFolder` could not throw as it did at tag `pre-rust-rewrite` (D44). `windows` 0.62.2 has the typed `IFileOpenDialog` (https://docs.rs/windows/0.62.2/windows/Win32/UI/Shell/struct.IFileOpenDialog.html) and marks its methods `unsafe`. The interfaces are owned values released on drop; the path COM allocates is read once and freed once, after the read.
+- **The folder dialog** (9: `CoCreateInstance`, `GetOptions`, `SetOptions`, `SetTitle`, `Show`, `GetResult`, `GetDisplayName`, `PWSTR::as_wide`, `CoTaskMemFree`). Looked for: `rfd` 0.18.0 `FileDialog::pick_folder` (https://docs.rs/rfd/0.18.0/rfd/struct.FileDialog.html#method.pick_folder), which answers `None` for a COM failure as for a cancel, so `pickFolder` could not throw as it did at tag `pre-rust-rewrite` (D45). `windows` 0.62.2 has the typed `IFileOpenDialog` (https://docs.rs/windows/0.62.2/windows/Win32/UI/Shell/struct.IFileOpenDialog.html) and marks its methods `unsafe`. The interfaces are owned values released on drop; the path COM allocates is read once and freed once, after the read.
 
 ### `crates/sweetview-platform-window/src/metrics.rs` (1, test)
 

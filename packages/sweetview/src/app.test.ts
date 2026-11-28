@@ -1151,3 +1151,126 @@ describe.if(process.platform === "darwin")("WebView, createApp & tabs (darwin)",
     expect(t3.webview.raw.unsafeHandle).toBeNull();
   });
 });
+
+// Three faults of an application's callbacks that once took more than their own call down (review
+// 2, item 9), run by test/fixtures/app-faults.ts in a process of its own with a WebView2 profile
+// of its own. No input is injected.
+describe.if(onWindows)("a fault in one callback of createApp stays in that callback", () => {
+  type Seen = Record<string, unknown> & { events: string[] };
+  type Run = { exitCode: number; seen: Seen | null; tapped: string[]; told: string[]; stderr: string };
+  const runs = new Map<string, Promise<Run>>();
+  const faults = (mode: "" | "listen" | "crash-event" = ""): Promise<Run> => {
+    let run = runs.get(mode);
+    if (!run) runs.set(mode, (run = (async () => {
+      const { mkdtempSync, rmSync } = await import("node:fs");
+      const { tmpdir } = await import("node:os");
+      const { join } = await import("node:path");
+      const { fileURLToPath } = await import("node:url");
+      const profile = mkdtempSync(join(tmpdir(), "sweetview-app-faults-"));
+      try {
+        const proc = Bun.spawn([process.execPath, fileURLToPath(new URL("../test/fixtures/app-faults.ts", import.meta.url)), ...(mode ? [mode] : [])], {
+          env: { ...process.env, WEBVIEW2_USER_DATA_FOLDER: profile },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const limit = setTimeout(() => process.kill(proc.pid), 60_000);
+        const [stdout, stderr, exitCode] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
+        clearTimeout(limit);
+        const line = stdout.split(/\r?\n/).find((l) => l.startsWith("RESULT "));
+        const result = line ? (JSON.parse(line.slice("RESULT ".length)) as { seen: Seen | null; tapped: string[]; told: string[] }) : { seen: null, tapped: [], told: [] };
+        return { exitCode, stderr, ...result };
+      } finally {
+        // WebView2's processes can hold the profile for a moment after the fixture's exit.
+        for (let attempt = 0; attempt < 50; attempt++) {
+          try {
+            rmSync(profile, { recursive: true, force: true });
+            break;
+          } catch {
+            await Bun.sleep(100);
+          }
+        }
+      }
+    })()));
+    return run;
+  };
+
+  test("a UI-thread method that throws a value that cannot be turned into text has its call rejected, and the rest of its deferred batch is answered", async () => {
+    const { exitCode, seen } = await faults();
+    expect(exitCode).toBe(0);
+    expect({
+      deferredUnreadable: seen?.deferredUnreadable,
+      deferredOk: seen?.deferredOk,
+      deferredNoPrototype: seen?.deferredNoPrototype,
+      uiUnreadable: seen?.uiUnreadable,
+    }).toEqual({
+      deferredUnreadable: "rejected: [object Object]",
+      deferredOk: "resolved: ok",
+      deferredNoPrototype: "rejected: [object Object]",
+      uiUnreadable: "rejected: [object Object]",
+    });
+  }, LIVE_TEST_MS * 3);
+
+  test("a worker method that throws a value that cannot be read sends its error reply: the page's call is rejected and the worker lives on", async () => {
+    const { seen, stderr } = await faults();
+    expect({ workerUnreadable: seen?.workerUnreadable, workerNoPrototype: seen?.workerNoPrototype, ticks: seen?.ticks }).toEqual({
+      workerUnreadable: "rejected: [object Object]",
+      workerNoPrototype: "rejected: [object Object]",
+      ticks: "resolved: ticked",
+    });
+    // The worker ends once, by the crash the page asks for last, not by these calls.
+    expect(stderr.match(/^sweetview: the worker failed:/gm)?.length).toBe(1);
+    expect(stderr).not.toContain("getPrototypeOf trap");
+  }, LIVE_TEST_MS * 3);
+
+  test("an onEvent listener that throws: the other listeners and the page still get each event, the reply behind them arrives, and the error is printed as before", async () => {
+    const { seen, tapped, stderr } = await faults();
+    expect(tapped).toEqual(["tick 1", "tick 2", "tick 7"]);
+    expect(seen?.events).toEqual(["tick 1", "tick 2", "tick 7"]);
+    expect(seen?.ticks).toBe("resolved: ticked");
+    expect(stderr).toMatch(/^sweetview: UI dispatch failed:/m);
+    expect(stderr).toContain("onEvent listener");
+  }, LIVE_TEST_MS * 3);
+
+  // Several onEvent listeners throwing in one delivery (review 3, Q4): one AggregateError holding
+  // each, printed once with no listener and told once with one.
+  test("two onEvent listeners that throw on one event: both errors, together, printed once with no onCallbackError listener and told once with one", async () => {
+    const without = await faults();
+    expect(without.stderr.match(/^sweetview: UI dispatch failed:/gm)?.length).toBe(2);
+    expect(without.stderr).toContain("error: onEvent listener 7");
+    expect(without.stderr).toContain("error: another onEvent listener 7");
+    const withListener = await faults("listen");
+    expect(withListener.told.filter((t) => t.includes("7"))).toEqual(["worker: sweetview: 2 onEvent listeners threw [onEvent listener 7, another onEvent listener 7]"]);
+    expect(withListener.seen?.tock).toBe("resolved: tocked");
+  }, LIVE_TEST_MS * 3);
+
+  test("a worker that crashes is printed once", async () => {
+    const { stderr } = await faults();
+    expect(stderr.match(/^sweetview: the worker failed:/gm)?.length).toBe(1);
+    expect(stderr).toContain("worker crash");
+  }, LIVE_TEST_MS * 3);
+
+  // What docs/native.md and docs/app.md say an onCallbackError listener hears of in a createApp
+  // application, and what it does not (review 2, item 4).
+  test("with an onCallbackError listener, an onEvent listener's throw is told as the worker kind and not printed; a UI-thread method's throw and the worker's crash are not told", async () => {
+    const { exitCode, seen, tapped, told, stderr } = await faults("listen");
+    expect(exitCode).toBe(0);
+    expect(told).toEqual(["worker: onEvent listener 1", "worker: sweetview: 2 onEvent listeners threw [onEvent listener 7, another onEvent listener 7]"]);
+    expect(stderr).not.toMatch(/^sweetview: UI dispatch failed:/m);
+    expect(tapped).toEqual(["tick 1", "tick 2", "tick 7"]);
+    expect(seen?.deferredUnreadable).toBe("rejected: [object Object]");
+    expect(stderr.match(/^sweetview: the worker failed:/gm)?.length).toBe(1);
+  }, LIVE_TEST_MS * 3);
+
+  // What docs/app.md and docs/native.md say of an onEvent listener's throw during the cleanup after
+  // the worker failed (review 3, item 4): the cleanup is @n1h/sweetview's own catch, which prints
+  // its line as on the main branch, with a listener set too; the listener is not told.
+  test("an event queued before the worker's crash, delivered by the cleanup after Worker.onerror: an onEvent listener's throw is printed by that cleanup, not told", async () => {
+    const { exitCode, tapped, told, stderr } = await faults("crash-event");
+    expect(exitCode).toBe(0);
+    expect(tapped).toEqual(["tick 99"]);
+    expect(told).toEqual([]);
+    expect(stderr.match(/^sweetview: draining the failed worker's replies threw:/gm)?.length).toBe(1);
+    expect(stderr).toContain("onEvent listener 99");
+    expect(stderr.match(/^sweetview: the worker failed:/gm)?.length).toBe(1);
+  }, LIVE_TEST_MS * 3);
+});

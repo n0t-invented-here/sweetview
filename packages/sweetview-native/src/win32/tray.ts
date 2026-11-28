@@ -6,6 +6,7 @@
 // blocking loop owns the thread, and calls these handlers from that loop.
 
 import { binding } from "../binding";
+import { reportCallbackError, type CallbackKind } from "../callback-errors";
 import { resolveMenu, type MenuSource } from "../menu";
 import type { TrayBackend, TrayOptions } from "../tray";
 import { iconBytes, menuData } from "./menu";
@@ -22,14 +23,14 @@ let active: Win32Tray | undefined;
 /** The most recently created tray that has not been disposed. */
 export const currentTray = (): Win32Tray | undefined => active;
 
-const report = (err: unknown) => console.error("sweetview: message window handler threw:", err);
+const report = (kind: CallbackKind, err: unknown) => reportCallbackError(kind, err, "sweetview: message window handler threw:");
 
-/** An application handler as the binding calls it: an exception is logged, never thrown into the OS loop. */
-const guarded = (handler: () => void) => () => {
+/** An application handler as the binding calls it: an exception is reported, never thrown into the OS loop. */
+const guarded = (kind: CallbackKind, handler: () => void) => () => {
   try {
     handler();
   } catch (err) {
-    report(err);
+    report(kind, err);
   }
 };
 
@@ -45,22 +46,22 @@ export function createTray(options: TrayOptions): Win32Tray {
       handlers = built.handlers;
       return built.data;
     } catch (err) {
-      report(err);
+      report("tray.menu", err);
       return [];
     }
   };
   const menuChosen = (id: number) => {
     const handler = handlers.get(id);
     handlers = new Map();
-    if (handler) guarded(handler)();
+    if (handler) guarded("menu.click", handler)();
   };
 
   const native = new (binding().Tray)(
     options.tooltip ?? "",
     iconBytes(options.icon) ?? null,
     menu !== undefined,
-    options.onClick ? guarded(() => options.onClick?.()) : null,
-    options.onDoubleClick ? guarded(() => options.onDoubleClick?.()) : null,
+    options.onClick ? guarded("tray.onClick", () => options.onClick?.()) : null,
+    options.onDoubleClick ? guarded("tray.onDoubleClick", () => options.onDoubleClick?.()) : null,
     openMenu,
     menuChosen,
   );

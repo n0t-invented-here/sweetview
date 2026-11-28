@@ -158,6 +158,22 @@ export function ownMessageWindows(className: string): bigint[] {
   return windowsOf(HWND_MESSAGE, className);
 }
 
+/**
+ * Hands `payload` to this process's single-instance window for `appId`, as a second instance does:
+ * WM_COPYDATA tagged "SWV1". Returns what the window answered (1 for a payload it took), or -1
+ * when there is no such window.
+ */
+export function handOffToInstance(appId: string, payload: unknown): number {
+  const hwnd = windowsOf(HWND_MESSAGE, "SweetviewSingleInstanceWindow", `sweetview.instance.${appId}`)[0];
+  if (hwnd === undefined) return -1;
+  const bytes = new Uint8Array(Buffer.from(JSON.stringify(payload), "utf8"));
+  const data = new DataView(new ArrayBuffer(24)); // COPYDATASTRUCT on x64
+  data.setBigUint64(0, 0x53575631n, true); // dwData: "SWV1"
+  data.setUint32(8, bytes.length, true);
+  data.setBigUint64(16, BigInt(ptr(bytes)), true);
+  return Number(user32.SendMessageW(hwnd, 0x004a /* WM_COPYDATA */, 0n, BigInt(ptr(data.buffer))));
+}
+
 function windowsOf(parent: bigint, className: string, title?: string): bigint[] {
   const cls = wide(className);
   const name = title === undefined ? null : wide(title);

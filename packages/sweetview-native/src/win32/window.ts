@@ -8,6 +8,7 @@
 // the message Sweetview has always used for that handler.
 
 import { binding } from "../binding";
+import { reportCallbackError } from "../callback-errors";
 import type { Window as NativeWindow } from "../../prebuilt/binding";
 import { packRegions } from "../hit-regions";
 import type { Rect, WindowBackend, WindowHandle, WindowOptions } from "../window";
@@ -32,12 +33,14 @@ export function _debugTrackedCount(hwnd: bigint): number {
 
 type RectHandler = (bounds: Rect) => void;
 
-function callEach<T>(handlers: Set<(value: T) => void>, value: T, name: string): void {
+type ListenerName = "onResize" | "onMove" | "onClose" | "onFileDrop" | "onMaximizeChange";
+
+function callEach<T>(handlers: Set<(value: T) => void>, value: T, name: ListenerName): void {
   for (const fn of [...handlers]) {
     try {
       fn(value);
     } catch (err) {
-      console.error(`sweetview: ${name} handler threw:`, err);
+      reportCallbackError(`window.${name}`, err, `sweetview: ${name} handler threw:`);
     }
   }
 }
@@ -48,7 +51,7 @@ function callEach<T>(handlers: Set<(value: T) => void>, value: T, name: string):
  * removed or once the window is disposed, and stopped once a later change (one a handler made) has
  * been delivered in its place, so the last value each handler heard is the window's state.
  */
-function callEachCurrent<T>(handlers: Set<(value: T) => void>, value: T, name: string, live: () => boolean, delivery: { count: number }): void {
+function callEachCurrent<T>(handlers: Set<(value: T) => void>, value: T, name: ListenerName, live: () => boolean, delivery: { count: number }): void {
   const mine = ++delivery.count;
   for (const fn of [...handlers]) {
     if (!live() || delivery.count !== mine) return;
@@ -56,7 +59,7 @@ function callEachCurrent<T>(handlers: Set<(value: T) => void>, value: T, name: s
     try {
       fn(value);
     } catch (err) {
-      console.error(`sweetview: ${name} handler threw:`, err);
+      reportCallbackError(`window.${name}`, err, `sweetview: ${name} handler threw:`);
     }
   }
 }
@@ -67,7 +70,7 @@ function callEachCurrent<T>(handlers: Set<(value: T) => void>, value: T, name: s
  * Resizes and moves go to a snapshot of the handlers, as at the tag; with
  * `current`, `onMaximizeChange`'s rule above.
  */
-function subscription<T>(register: (listener: ((value: T) => void) | null) => void, name: string, current?: { live: () => boolean }) {
+function subscription<T>(register: (listener: ((value: T) => void) | null) => void, name: ListenerName, current?: { live: () => boolean }) {
   const handlers = new Set<(value: T) => void>();
   const delivery = { count: 0 };
   return {
@@ -176,7 +179,7 @@ function wrap(native: NativeWindow, owned: boolean, tabbed = false): WindowBacke
             try {
               refine({ x, y }, (solid) => native.answerHit(seq, solid));
             } catch (err) {
-              console.error("sweetview: hit region poll threw:", err);
+              reportCallbackError("hitRegions.refine", err, "sweetview: hit region poll threw:");
             }
           }
         : null;

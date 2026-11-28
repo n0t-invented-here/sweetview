@@ -7,6 +7,7 @@
 // frame coordinates on both Windows and macOS.
 
 import type { HitPolygon } from "./hit-regions";
+import { reportCallbackError } from "./callback-errors";
 import type { AppIdentity, AppIdentityIcon } from "@n1h/sweetview-settings";
 import { icoFromRgba, type Icon } from "./icon";
 import { releaseAtEnd } from "./lifetime";
@@ -245,7 +246,7 @@ export function emitWindowFileDrop(win: Window, paths: string[]): void {
     try {
       handler(paths);
     } catch (err) {
-      console.error("sweetview: onFileDrop handler threw:", err);
+      reportCallbackError("window.onFileDrop", err, "sweetview: onFileDrop handler threw:");
     }
   }
 }
@@ -345,7 +346,7 @@ export function emitWindowNewTab(win: Window, origin: Window = win): void {
     try {
       fn(origin);
     } catch (err) {
-      console.error("sweetview: onNewTab handler threw:", err);
+      reportCallbackError("window.onNewTab", err, "sweetview: onNewTab handler threw:");
     }
   }
 }
@@ -357,7 +358,7 @@ export function emitWindowTabSelect(win: Window, tab: TabHandle): void {
     try {
       fn(tab);
     } catch (err) {
-      console.error("sweetview: onTabSelect handler threw:", err);
+      reportCallbackError("window.onTabSelect", err, "sweetview: onTabSelect handler threw:");
     }
   }
 }
@@ -369,7 +370,7 @@ export function emitWindowTabClose(win: Window, tab: TabHandle): void {
     try {
       fn(tab);
     } catch (err) {
-      console.error("sweetview: onTabClose handler threw:", err);
+      reportCallbackError("window.onTabClose", err, "sweetview: onTabClose handler threw:");
     }
   }
 }
@@ -638,7 +639,7 @@ export class Window {
         try {
           fn();
         } catch (err) {
-          console.error("sweetview: window dispose hook threw:", err);
+          reportCallbackError("internal", err, "sweetview: window dispose hook threw:");
         }
       }
     }

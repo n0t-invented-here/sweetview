@@ -2,7 +2,7 @@
 //! calls tag `pre-rust-rewrite` made, so a COM failure is an error that names
 //! its step, as it threw there. `rfd` 0.18.0 answers `None` for every failure
 //! as for a cancel (`src/backend/win_cid/file_dialog.rs`, `run(self).ok()`),
-//! which cannot carry that (D44).
+//! which cannot carry that (D45).
 //!
 //! The calling thread must be in a single-threaded COM apartment, as the
 //! runtime's UI thread is. The dialog runs its own message loop until it closes.

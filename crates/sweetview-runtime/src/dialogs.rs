@@ -1,5 +1,5 @@
 //! The folder dialog: on Windows the platform crate's `IFileOpenDialog`, whose
-//! COM failures are errors (D44); elsewhere `rfd`.
+//! COM failures are errors (D45); elsewhere `rfd`.
 
 use sweetview_platform_window::BorrowedWindow;
 

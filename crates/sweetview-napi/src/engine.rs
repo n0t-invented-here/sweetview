@@ -150,7 +150,7 @@ impl Engine {
   }
 
   pub fn bind(&self, env: Env, name: String, callback: BindingFn<'_>) -> napi::Result<i32> {
-    let callback = JsCallback::new(env, &callback, "a binding")?;
+    let callback = JsCallback::named(env, &callback, "a binding", &name)?;
     let code = self.inner.bind(
       &name,
       Rc::new(move |seq, params| {

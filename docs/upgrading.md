@@ -112,6 +112,25 @@ this page: it imports each new form and checks that it is what the row says.
   subscribing to events (`onClose`, `onResize`, `onMaximizeChange`, `onMove`,
   `onFileDrop`) on a wrapper of a window that belongs to another thread throws
   `sweetview: a window of another thread cannot be observed`.
+- **Exceptions thrown by your callbacks.** An exception thrown by a handler
+  Sweetview calls on the UI thread (a tray's or a menu item's click, a
+  `Window` listener, a notification click, a hit-region refiner, an input
+  hook, a page's UI-thread method, a request handler) is caught by Sweetview
+  and never reaches `process.on("uncaughtException")` by itself. With no
+  listener, most are logged with `console.error`
+  (`sweetview: message window handler threw: …`,
+  `sweetview: onClose handler threw: …`), and a page's UI-thread method or a
+  request handler that throws only rejects the call or answers `500`. One
+  listener, set once, is told about the native module's and an `onEvent`
+  listener's, with the kind of callback each came from:
+  [`onCallbackError`](native.md#exceptions-thrown-by-your-callbacks). One kind
+  changed from 0.x on Windows: the input hooks. 0.x's were the bindings
+  package's (`@n1h/sweetview-webview-bun` 2.x), which does not catch a
+  handler's exception: Bun throws it at the JavaScript that called into the
+  native loop (`run()` or `pumpEvents()`), which passes it on unless
+  something there catches it. On Windows a hook handler's exception is now
+  caught, logged and reported like the others, and the event is not
+  swallowed.
 - **Window styles.** A frameless `Window` (`frame: false`) no longer has
   `WS_POPUP` in `GWL_STYLE`: it is an undecorated top-level window. An
   application that reads the style itself sees the difference;
@@ -215,11 +234,20 @@ this page: it imports each new form and checks that it is what the row says.
     host's or transport's `close()` is `dispose()`.
 11. If you set `WEBVIEW_PATH`, set `SWEETVIEW_NATIVE_PATH` to a binding you
     built instead, or nothing to use the one in the package.
-12. Check what an overlay application notices, in [What changed for every
+12. Faults: if the application relied on a `process.on("uncaughtException")`
+    listener for faults in its callbacks, set
+    [`onCallbackError`](native.md#exceptions-thrown-by-your-callbacks) once,
+    beside it: `onCallbackError((error) => void process.emit("uncaughtException", error, "uncaughtException"))`
+    hands the native module's faults to that listener, or call the
+    application's own reporter there. A shipped executable has no console, so
+    without it these faults reach nobody. A page's own calls fail in the page:
+    `await` them there. On macOS, until its goal, the listener is not called
+    and the faults are printed as before.
+13. Check what an overlay application notices, in [What changed for every
     application](#what-changed-for-every-application): the opaque
     `unsafeHandle`, the error messages, the UI-thread checks, the frameless
     style.
-13. Look up each remaining import in [Part A](#part-a-published-0x-packages).
+14. Look up each remaining import in [Part A](#part-a-published-0x-packages).
 
 ### B. The `v1-drafting` API
 

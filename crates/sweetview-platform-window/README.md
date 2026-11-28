@@ -17,7 +17,7 @@ Job: the window-level OS calls `tao` has no API for, and the events of any windo
 | `WindowIcons` | caption and taskbar icons from `.ico` bytes, the best image for each size; dropping it destroys only icons no live window shows (an adopted window that is released keeps its icons) | `tao`'s `set_window_icon` (`ICON_SMALL`) and `WindowExtWindows::set_taskbar_icon` (`ICON_BIG`) take an RGBA image each (`Icon::from_rgba`), so each `.ico` entry would be decoded and scaled here instead of by `CreateIconFromResourceEx`, and `None` would clear the icons instead of setting the stock one; an adopted window has no `tao` window |
 | `mouse_buttons_down`, `left_button_down` | `GetAsyncKeyState` | no `tao` API outside its event handler |
 | `work_area` | a monitor's work area | `tao`'s `MonitorHandle` has bounds and scale, not the work area |
-| `pick_folder` | the folder dialog (`IFileOpenDialog`), modal to an owner; a step COM refuses is an error naming it | `rfd`'s `pick_folder` answers a failure as a cancel (D44) |
+| `pick_folder` | the folder dialog (`IFileOpenDialog`), modal to an owner; a step COM refuses is an error naming it | `rfd`'s `pick_folder` answers a failure as a cancel (D45) |
 | `monitor_of` | the monitor the OS has a window on, for a minimised window the one its restored position is on (`MonitorFromWindow`) | `tao`'s `current_monitor` exists only for its own windows |
 | `GeometrySnapshot` | styles and outer bounds across a webview mount (`preserveGeometry`) | no `tao` API |
 | `chrome` | frame and resizability of an adopted window, from its styles | `tao` wraps only windows it made |

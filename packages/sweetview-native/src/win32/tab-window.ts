@@ -10,6 +10,7 @@
 // Zero webview imports: stays strictly inside @n1h/sweetview/native.
 
 import { binding } from "../binding";
+import { reportCallbackError } from "../callback-errors";
 import type { TabFrame as NativeTabFrame, Window as NativeWindow } from "../../prebuilt/binding";
 import type { MenuTemplate } from "../menu";
 import { popupMenu } from "./menu";
@@ -71,7 +72,7 @@ function callEach(list: Set<FrameCallbacks>, call: (c: FrameCallbacks) => void, 
     try {
       call(callbacks);
     } catch (err) {
-      console.error(`sweetview: a tab frame's ${name} callback threw:`, err);
+      reportCallbackError("internal", err, `sweetview: a tab frame's ${name} callback threw:`);
     }
   }
 }
