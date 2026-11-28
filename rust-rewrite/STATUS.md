@@ -12,6 +12,7 @@ The Windows goal is **not complete**. This file says what is on the main branch,
 - **Reviews and audits judge the intent**, not literal readings that serve nobody.
 - **An upgrade is a migration.** An upgraded application uses 1.0 as designed: a closed window is destroyed and its memory given back, windows are revealed by the ready signal, and no old behaviour, workaround or internal is carried over.
 - **An application ends at its loop.** Nothing after `run()` is required of it.
+- **The packages stay as organised.** No package is merged into another and no code moves between packages.
 - **No copies of the owner's applications** are made anywhere; they are upgraded in place on branches. Their names, paths and behaviour never enter anything tracked here.
 - **Hosted CI is not used.**
 - **The orchestrating session writes no code**; it delegates, integrates and documents.
@@ -90,8 +91,8 @@ Two real applications are being upgraded in place, each on a branch of its own r
 
 Each is a choice made so the work goes on; the owner overturns any of them with a word.
 
-- **Internals are sealed by making Sweetview one package.** The eight packages become `@n1h/sweetview` with its documented entry points (`/native`, `/page`, `/worker`, `/ipc` and its transports, `/settings-store`, `/build`, `/window-chrome`), and no internal module is importable. Reason: the facade needs about thirty internals of the native package, so no arrangement of two packages removes `/internal` without adding exports; and the owner's own checklist for 1.0, at the repository root, asks for exactly this ("Consolidate Sweetview into one package ... seal OS internals"). It moves nearly every file, so it is done after the open branches land. Alternative: keep eight packages and move `createApp`, `WebView`, the tabs and the worker wake into the native package.
-- **`onCallbackError` then reports the facade's faults too** (`uiMethods`, `deferredUiMethods`, `onRequest`, the ready hooks, the worker's crash and rejected calls, the tab machinery), since one package can reach its own reporter. Its name and shape stay as built.
+- **The eight packages stay exactly as they are organised. This is the owner's ruling, not a default: no package is merged into another, and no code moves between packages.** (A default written here earlier, to make Sweetview one package, was wrong and is withdrawn; nothing was done under it.) So the entries the packages use to reach one another (`/internal`, `/win32/*`) stay, for Sweetview's own packages only: no document, guide row, demo or example sends an application to one, a guard test pins the list by name, and none is turned into public API. That is what branch `rust-rewrite-no-win32-subpaths` delivers.
+- **`onCallbackError` reports the native package's callbacks and the raw webview's; the facade's own catches are not reported**, and the pages say so. Its name and shape stay as built.
 - **A capability that was reachable only through internals gets no public call**, and the guide says so for each.
 - **Where `wry` and the old library differ, the old library's behaviour wins** (zoom, pinch and swipe on; no bound on a streamed body's backlog; focus only for a window Sweetview owns).
 - **A call that existed before the rewrite keeps its behaviour**: `showOnReady` stays opt-in, the page chrome's close button still hides, a pumped loop does not end by itself. The demos use `showOnReady`.
@@ -100,7 +101,6 @@ Each is a choice made so the work goes on; the owner overturns any of them with 
 
 ## Decisions the owner can still make
 
-- **How internals are sealed.** `@n1h/sweetview` reaches about thirty internals of `@n1h/sweetview-native` through `/internal` and `/win32/*`, so those entries cannot leave the `exports` map while the two are separate packages. The ways out: one package with its internals sealed; or `createApp`, `WebView`, the tabs and the worker wake moved into the native package; or the entries kept, with the guard test and no document naming them.
 - **Capabilities that were reachable only through internals and have no public call** (`evidence/api-audit.md`, rows I1 to I4 and K1 to K10): an `HMENU` for an application's own `TrackPopupMenu`; the strip and page rectangles of a tabbed frame; a timer or job that runs inside the native and modal loops; whether the system is in dark mode; a webview at given bounds inside an application's own window; an activation event and a foreground query; a close request as the title bar's button makes it; the navigation-failed event, the new-window handler and the DevTools protocol; the strip height. By the ruling that internals are never exposed, none gets a public call unless the owner names it.
 
 - Finding 12: track the prebuilt binding in git, or keep building it on demand (D34).
