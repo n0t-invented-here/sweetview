@@ -85,9 +85,10 @@ module runs, it throws `sweetview: this call must be made on the UI thread`.
 
 - With no listener set, Sweetview does what it always did: the
   `console.error` line in the table below.
-- With a listener set, the listener is called in place of that line. The
-  callback's fallback still applies: a hook lets the event through, a menu
-  function that throws opens no menu, a close request is still taken.
+- With a listener set, the listener is called in place of that line, and
+  before the callback's fallback, which still applies: a hook lets the event
+  through, a menu function that throws opens no menu, a close request is
+  still taken.
 - A listener that throws never takes the application down: Sweetview
   catches it, prints its own line for the original error and
   `sweetview: an onCallbackError handler threw:` for the listener's, and
@@ -162,9 +163,12 @@ onCallbackError((error, { kind, name }) => {
 });
 ```
 
-An application whose `process.on("uncaughtException")` listener already
-writes its fault log and exits hands the faults on with one line:
-`onCallbackError((error) => void process.emit("uncaughtException", error, "uncaughtException"))`.
+On Windows, a fault caught at a callback boundary never reaches
+`process.on("uncaughtException")`, and the application goes on: one whose
+`uncaughtException` listener writes its fault log writes these faults from
+its `onCallbackError` listener, as above. On macOS, until its goal, no
+listener is called; the faults are printed as the paragraph on macOS above
+says.
 
 In the page, `await` each call (or `catch` it): a call a page never awaits
 is rejected unseen there, whatever the UI thread does with the fault.

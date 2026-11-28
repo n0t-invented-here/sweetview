@@ -50,23 +50,31 @@ after them give every export its row.
 7. **The end.** Delete the teardown lines after the loop and, on Windows, any `unload()`:
    the last line is `app.run()`, and Sweetview releases what it made (on
    macOS, until its goal, keep them).
-8. **Faults in your callbacks.** An exception thrown by a UI-thread callback
-   or an input hook is caught and printed, and no longer reaches
-   `uncaughtException`; a packaged application, which has no console, sees
-   it only through `onCallbackError`
-   ([exceptions](#what-changed-for-every-application)).
+8. **Faults in your callbacks.** On Windows, an exception Sweetview catches
+   at a callback boundary (a UI-thread callback, an input hook) is printed
+   and no longer reaches `uncaughtException`
+   ([exceptions](#what-changed-for-every-application)); a `Menu.popup`
+   item's `click`, which runs after the menu has closed, throws to the
+   caller of `Menu.popup` instead. `onCallbackError`
+   is told of the faults
+   [its list](native.md#exceptions-thrown-by-your-callbacks) names, and not
+   of a throwing `onReady` or `onReadyTimeout` (printed), a `uiMethods`
+   handler's (an RPC error to the page), the facade's other catches, or any
+   on macOS, where until its goal the faults are handled as before.
 9. **Notifications.** Pass the application's identity
    (`identity: defineAppIdentity({ appId, appName })`), or toasts show as
    "Sweetview"; no tray is needed first.
 10. **Menus and the window's own state.** `Menu.popup(owner, menu, at)` opens
-    downward and, with `{ above: true }`, upward as a tray menu does;
+    downward and, with `{ above: true }`, upward as a tray menu does (on
+    Windows; macOS ignores it);
     `Window#isMinimized()`, `Window#onMaximizeChange(fn)` and
     `Window#showSystemMenu()` replace an application's own `IsIconic`, a
     polling timer and the system menu's internal call.
-11. **Threads and handles.** `Clipboard`, `singleInstance` and the other
-    UI-thread calls throw from a `Worker`; `Window.fromHandle` throws for a
-    handle that names no window. `Webview.unsafeHandle` is an opaque number,
-    not a pointer. A worker of your own written against the init message gets
+11. **Threads and handles.** On Windows, `Clipboard`, `singleInstance` and
+    the other UI-thread calls throw from a `Worker`, and `Window.fromHandle`
+    throws for a handle that names no window (on macOS only nil is refused).
+    On Windows, `Webview.unsafeHandle` is an opaque number, not a pointer
+    (on macOS it is still the library's pointer). A worker of your own written against the init message gets
     `wake` in place of its four old fields.
 12. **The loop.** `app.run()`, or `runEventLoop()` to keep Bun's event loop
     on the UI thread. On Windows, `pumpEvents()` inside a running loop does
@@ -1244,7 +1252,7 @@ Windows and macOS alike, nothing tells an application to keep importing it.
 | `forwardWindowTabEvents` | no public call in 1.0 | forwarding one window's tab events to another window's listeners: no public call in 1.0; `Window#onNewTab(handler)`, `Window#onTabSelect(handler)` and `Window#onTabClose(handler)` observe each window's own |
 | `getWindowBackend` | no public call in 1.0 | a window's platform backend object: no public call in 1.0; the `Window` methods are what an application calls |
 | `getWindowMeta` | no public call in 1.0 | the options a `Window` was made with, as Sweetview keeps them: no public call in 1.0; `Window#bounds()` reads a window's current frame, not the options it was made with |
-| `holdWindowNativeDispose` | no public call in 1.0 | keeping a window's native window after `Window#dispose()` until a hold is released: no public call in 1.0; `Window#dispose()` releases it at once, except while a webview is being made in the window (`WebView.attach`, while WebView2 creates it) or a `WebView#run()` of the window is in progress: the release then waits until that has finished |
+| `holdWindowNativeDispose` | no public call in 1.0 | keeping a window's native window after `Window#dispose()` until a hold is released: no public call in 1.0; `Window#dispose()` releases it at once, except while a webview is being made in the window (`WebView.attach`, while WebView2 creates it) or a `WebView#run()` of the window is in progress: the release then waits until that has finished. Disposing a `Window` made by `Window.fromHandle` never destroys the application's own window |
 | `isWindowDisposed` | no public call in 1.0 | whether `Window#dispose()` has run: no public call in 1.0 |
 | `onWindowDispose` | no public call in 1.0 | a function run just before a window is disposed: no public call in 1.0; `Window#onClose(handler)` observes a close request |
 | `onWindowFileDropListenersChange` | no public call in 1.0 | notice that a window's file-drop listeners changed: no public call in 1.0; `Window#onFileDrop(handler)` returns the function that removes its own listener |

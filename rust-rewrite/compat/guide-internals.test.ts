@@ -120,7 +120,7 @@ describe("rows and paragraphs say what the code does, no more", () => {
     const attachPara = attach.slice(attach.indexOf("Mounts a webview inside an existing `Window`"), attach.indexOf("Mounts a webview inside an existing `Window`") + 900);
     expect({
       metaTabsField: /`tabs` field/.test(meta) || /of those, a `Window` gives its bounds/.test(meta) || !/reads a window's current frame, not the options it was made with/.test(meta),
-      holdSaysWhenItWaits: /a `WebView#run\(\)` of the window is in progress/.test(hold) && /`WebView\.attach`, while WebView2 creates it/.test(hold) && !/releases it at once \|/.test(hold),
+      holdSaysWhenItWaits: /a `WebView#run\(\)` of the window is in progress/.test(hold) && /`WebView\.attach`, while WebView2 creates it/.test(hold) && /made by `Window\.fromHandle` never destroys the application's own window/.test(hold) &&!/releases it at once \|/.test(hold),
       trayClickAtConstruction: /click handler, given when it is made/.test(tray),
       pumpsSayWindows: pumps.length === 5 && pumps.every((l) => /On Windows/.test(l) && /on macOS/.test(l)),
       attachKeepsShown: /already shown stays shown/.test(attachPara),

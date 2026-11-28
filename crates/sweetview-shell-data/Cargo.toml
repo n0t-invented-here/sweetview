@@ -1,0 +1,12 @@
+[package]
+name = "sweetview-shell-data"
+description = "The data the shell integrations and notifications write, read and check: names, registry values, payloads, text encodings and toast XML."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde_json.workspace = true
