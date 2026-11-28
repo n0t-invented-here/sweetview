@@ -570,7 +570,7 @@ describe.if(onWindows)("WebView & createApp (win32)", () => {
     // transparent below a stripe, so the pixel below the stripe is the browser's background the
     // binding applied, green and never the other window's.
     const { scheduleNativeTimeout } = await import("../../sweetview-native/src/internal");
-    const { clientToScreen, screenPixel } = await import("../../sweetview-native/test/win32-os");
+    const { clientToScreen, screenPixel, windowAt } = await import("../../sweetview-native/test/win32-os");
     const { binding } = await import("../../sweetview-native/src/binding");
     const native = binding() as unknown as { Engine: Record<string, (...args: unknown[]) => unknown> };
     const RealEngine = native.Engine;
@@ -590,7 +590,7 @@ describe.if(onWindows)("WebView & createApp (win32)", () => {
     for (const key of ["create", "createChild"]) Object.defineProperty(facade, key, { value: during(key) });
     native.Engine = facade;
     const inner = async (open: () => Promise<unknown>) => {
-      const plain = new Window({ title: "app.test own colour", backgroundColor: "#30a050", noActivate: true, bounds: { x: 700, y: 140, width: 320, height: 220 } });
+      const plain = new Window({ title: "app.test own colour", backgroundColor: "#30a050", topmost: true, noActivate: true, bounds: { x: 700, y: 140, width: 320, height: 220 } });
       let made: RawWebview | undefined;
       calls.length = 0;
       try {
@@ -614,12 +614,22 @@ describe.if(onWindows)("WebView & createApp (win32)", () => {
         made?.navigate("data:text/html," + encodeURIComponent(`<style>html,body{background:transparent;margin:0}#m{height:16px;background:#ff00ff}</style><div id="m"></div>`));
         plain.show();
         const hwnd = BigInt(plain.handle!);
-        let seen = { mark: "", below: "" };
-        for (const end = performance.now() + 8000; performance.now() < end; Bun.sleepSync(20)) {
+        const [mark, below] = [clientToScreen(hwnd, 150, 8), clientToScreen(hwnd, 150, 120)];
+        const read = () => ({ mark: screenPixel(mark.x, mark.y), below: screenPixel(below.x, below.y) });
+        // Judged only once the page has painted its stripe: until then the screen shows the state
+        // before the page (or another window), which says nothing of the browser's background.
+        let seen = read();
+        for (const end = performance.now() + 20_000; seen.mark !== "#ff00ff" && performance.now() < end; Bun.sleepSync(20)) {
           pumpEvents();
-          const [mark, below] = [clientToScreen(hwnd, 150, 8), clientToScreen(hwnd, 150, 120)];
-          seen = { mark: screenPixel(mark.x, mark.y), below: screenPixel(below.x, below.y) };
-          if (seen.mark === "#ff00ff" && seen.below === "#30a050") break;
+          seen = read();
+        }
+        if (seen.mark !== "#ff00ff") {
+          const over = windowAt(mark.x, mark.y);
+          throw new Error(`not judged: the page's stripe never showed at ${mark.x},${mark.y} (read ${seen.mark}; the window there is ${over === hwnd ? "the test's own" : `0x${over.toString(16)}, not the test's`})`);
+        }
+        for (const end = performance.now() + 3000; seen.below !== "#30a050" && performance.now() < end; Bun.sleepSync(20)) {
+          pumpEvents();
+          seen = read();
         }
         return { madeInside, seen };
       } finally {
