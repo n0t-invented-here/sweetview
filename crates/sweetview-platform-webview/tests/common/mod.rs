@@ -93,6 +93,12 @@ impl Ctx {
     /// A visible 480x360 window with a webview whose IPC messages are kept,
     /// the extras attached, and `index.html` set as an asset (not yet loaded).
     pub fn view(&self) -> View {
+        self.view_built(|builder| builder, true)
+    }
+
+    /// [`view`](Self::view), with `customize` applied to the builder after the
+    /// harness's own options, and the extras attached only when `attach`.
+    pub fn view_built(&self, customize: impl FnOnce(WebViewBuilder<'_>) -> WebViewBuilder<'_>, attach: bool) -> View {
         let window = WindowBuilder::new()
             .with_title("sweetview-platform-webview test")
             .with_inner_size(LogicalSize::new(480.0, 360.0))
@@ -105,21 +111,24 @@ impl Ctx {
         let mut context = WebContext::new(Some(
             std::env::temp_dir().join(format!("sweetview-platform-webview-test-{}", std::process::id())),
         ));
-        let webview = WebViewBuilder::new_with_web_context(&mut context)
-            .with_ipc_handler(move |request| sink.borrow_mut().push(request.into_body()))
-            .build(&window)
-            .expect("webview");
+        // Built as the runtime builds its webviews: WebView2's own page behaviour.
+        let webview = sweetview_platform_webview::with_page_behaviour(WebViewBuilder::new_with_web_context(&mut context))
+            .with_ipc_handler(move |request| sink.borrow_mut().push(request.into_body()));
+        let webview = customize(webview).build(&window).expect("webview");
         let wakes = Arc::new(AtomicUsize::new(0));
         let counter = wakes.clone();
-        let extras = WebviewExtras::attach(
-            &webview,
-            ExtrasOptions { wake_ui: Arc::new(move || {
-                counter.fetch_add(1, Ordering::SeqCst);
-            }) },
-        )
-        .expect("attach");
-        assert_eq!(extras.set_asset("index.html", "text/html; charset=utf-8", INDEX_HTML.as_bytes().to_vec()).code(), 0);
-        View { extras: Some(extras), webview: Some(webview), window: Some(window), messages, wakes }
+        let extras = attach.then(|| {
+            let extras = WebviewExtras::attach(
+                &webview,
+                ExtrasOptions { wake_ui: Arc::new(move || {
+                    counter.fetch_add(1, Ordering::SeqCst);
+                }) },
+            )
+            .expect("attach");
+            assert_eq!(extras.set_asset("index.html", "text/html; charset=utf-8", INDEX_HTML.as_bytes().to_vec()).code(), 0);
+            extras
+        });
+        View { extras, webview: Some(webview), window: Some(window), messages, wakes }
     }
 
     /// Pumps the loop (and the extras' queue) until `done` or `timeout`.

@@ -134,6 +134,21 @@ pub fn set_background_color(webview: &wry::WebView, r: u8, g: u8, b: u8, a: u8) 
     }
 }
 
+/// The page behaviour the C++ fork's webview had, as far as `wry` has a builder
+/// option for it. The fork changed none of these WebView2 settings, so an
+/// application had WebView2's defaults; `wry` turns them off unless asked:
+///
+/// * `with_hotkeys_zoom(true)`: `IsZoomControlEnabled` and `IsPinchZoomEnabled`
+///   on (Ctrl+wheel, Ctrl+plus, Ctrl+minus, Ctrl+0 and touch pinch zoom the page);
+/// * `with_back_forward_navigation_gestures(true)`: `IsSwipeNavigationEnabled`
+///   on (a horizontal swipe on a touch screen goes back and forward).
+///
+/// The two settings `wry` sets with no option (the status bar off, CSS
+/// `app-region` support on) are put back by [`WebviewExtras::attach`].
+pub fn with_page_behaviour(builder: wry::WebViewBuilder<'_>) -> wry::WebViewBuilder<'_> {
+    builder.with_hotkeys_zoom(true).with_back_forward_navigation_gestures(true)
+}
+
 /// Whether `key` is down, from the thread's keyboard state.
 fn key_down(key: VIRTUAL_KEY) -> bool {
     // SAFETY: `GetKeyState` takes a plain integer and reads the calling thread's
@@ -143,10 +158,13 @@ fn key_down(key: VIRTUAL_KEY) -> bool {
 }
 
 impl WebviewExtras {
-    /// Adds the request handler (with its filters on both origins), the file
-    /// drop script and its message handler, and the accelerator key and
-    /// navigation handlers to `webview`. Call it before the webview's first
-    /// navigation, so the first document is served and gets the drop script.
+    /// Puts back the status bar and turns CSS `app-region` support off (the
+    /// WebView2 defaults `wry` changes), and adds the request handler (with its
+    /// filters on both origins), the file drop script and its message handler,
+    /// and the accelerator key and navigation handlers to `webview`. Call it
+    /// before the webview's first navigation, so the first document is served,
+    /// gets the drop script and has those settings. Build the webview with
+    /// [`with_page_behaviour`] for the rest of WebView2's defaults.
     pub fn attach(webview: &wry::WebView, options: ExtrasOptions) -> Result<Self, ErrorCode> {
         let inner = Rc::new(Inner {
             shared: Shared::new(options.wake_ui),
@@ -167,6 +185,7 @@ impl WebviewExtras {
             scripts_outstanding: Cell::new(0),
             scripts_registered: RefCell::new(None),
         });
+        inner.restore_page_settings().map_err(|_| ErrorCode::Unspecified)?;
         // On failure `inner` drops here, and with it every registration and filter made so far.
         inner.register().map_err(|_| ErrorCode::Unspecified)?;
         Ok(Self { inner })
@@ -391,6 +410,29 @@ impl Drop for WebviewExtras {
 }
 
 impl Inner {
+    /// Puts back the two WebView2 defaults `wry` changes with no builder option
+    /// (the rest is [`with_page_behaviour`]): the status bar that shows a link's
+    /// address while the pointer is over it, and CSS `app-region` support off,
+    /// so a page whose stylesheet marks a `-webkit-app-region: drag` area (for
+    /// another shell) does not drag the window here and still gets its mouse
+    /// events. `attach` comes before the first navigation, so the first
+    /// document already has both. A runtime without `ICoreWebView2Settings9` (before
+    /// 1.0.2420) has no `app-region` support to turn off.
+    fn restore_page_settings(&self) -> windows::core::Result<()> {
+        // SAFETY: `self.webview` is a COM reference `Inner` holds to the live ICoreWebView2
+        // taken from `wry`; `Settings` takes no arguments and returns an owned reference.
+        let settings = unsafe { self.webview.Settings() }?;
+        // SAFETY: `settings` is the COM reference just returned, owned by this frame; the flag
+        // is passed by value.
+        unsafe { settings.SetIsStatusBarEnabled(true) }?;
+        if let Ok(settings9) = settings.cast::<ICoreWebView2Settings9>() {
+            // SAFETY: `settings9` is a COM reference this frame holds (from `cast`) to the same
+            // settings object; the flag is passed by value.
+            unsafe { settings9.SetIsNonClientRegionSupportEnabled(false) }?;
+        }
+        Ok(())
+    }
+
     fn register(self: &Rc<Self>) -> windows::core::Result<()> {
         // Every request to either origin reaches the handler. Each filter is
         // owned: if anything below fails, the filters added so far are removed

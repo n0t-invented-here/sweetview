@@ -8,6 +8,10 @@
 //!   handler, on `http://webview.localhost` and `http://frames.webview.localhost`,
 //!   with deferred requests answered later from any thread through
 //!   [`Responder`], streamed bodies included;
+//! * the page behaviour WebView2 has by default and `wry` changes (zoom,
+//!   pinch zoom, swipe navigation, the status bar, CSS `app-region`): half of
+//!   it through `wry`'s own builder options ([`with_page_behaviour`], which
+//!   the caller applies), the rest in `attach`;
 //! * file drop paths, external drop control and the default background colour;
 //! * accelerator keys, navigation failures, focus and popup position for tabs.
 //!
@@ -38,7 +42,7 @@ mod platform;
 
 #[cfg(windows)]
 pub use platform::{create_environment, default_user_data_folder};
-pub use platform::{set_background_color, UserScript, WebviewExtras};
+pub use platform::{set_background_color, with_page_behaviour, UserScript, WebviewExtras};
 pub use shared::Responder;
 pub use sweetview_http::ErrorCode;
 

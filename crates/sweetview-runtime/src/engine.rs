@@ -222,7 +222,9 @@ impl Engine {
     let message_slot = slot.clone();
     let popup_handler = new_window.clone();
     let popup_runtime = Rc::downgrade(&runtime);
-    let builder = WebViewBuilder::new()
+    // WebView2's own zoom, pinch zoom and swipe navigation, which the C++ library left on and
+    // `wry` turns off; the status bar and CSS `app-region` are put back by `WebviewExtras::attach`.
+    let builder = sweetview_platform_webview::with_page_behaviour(WebViewBuilder::new())
       .with_devtools(debug)
       // How `wry` grants the clipboard-read permission the C++ library granted.
       .with_clipboard(true)

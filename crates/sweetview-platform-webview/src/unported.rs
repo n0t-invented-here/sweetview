@@ -22,6 +22,12 @@ pub struct WebviewExtras {
     _not_send: PhantomData<Rc<()>>,
 }
 
+/// The builder options of the Windows webview's page behaviour. This platform's
+/// webview is not built here yet: the builder is returned as it is.
+pub fn with_page_behaviour(builder: wry::WebViewBuilder<'_>) -> wry::WebViewBuilder<'_> {
+    builder
+}
+
 /// Sets the colour painted behind the page. Not served on this platform yet.
 #[allow(unused_variables)]
 pub fn set_background_color(webview: &wry::WebView, r: u8, g: u8, b: u8, a: u8) -> ErrorCode {
