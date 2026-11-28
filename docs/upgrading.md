@@ -145,8 +145,6 @@ this page: it imports each new form and checks that it is what the row says.
   of 0.x's `popupMenuAtCursor`. Menu item icons are drawn at 16 px. Tray
   click handlers run one loop turn after the click. A tray icon that is not a
   valid `.ico` throws `sweetview: the tray icon could not be decoded: …`.
-  `pickFolder` returns `null` for a virtual folder such as "This PC" and when
-  the dialog fails, where before it disabled OK or threw.
 - **Additions.** `Menu.popup(owner, menu, at, { above: true })` opens a menu upward, as the tray's does; `Window#isMinimized()`, `Window#onMaximizeChange(fn)` and `Window#showSystemMenu()` answer what needed `IsIconic`, a timer polling `isMaximized()` and the internal `windowMenu`; `WindowOptions` `contentSize` (the page's size in CSS pixels, centred) and `backgroundColor` size a window from its page at any screen scale and colour it before the page paints; `windowChromeEvents` sends maximise changes to a page-drawn chrome.
 - **Notifications on Windows.** A `Notifier` shows a WinRT toast and needs
   no `Tray`. 0.x showed the balloon of the application's tray icon (and threw
