@@ -2,7 +2,52 @@ import { ASSET_ORIGIN, FRAMES_ORIGIN, createApp, type NativeResponse } from "@n1
 
 const mode = process.env.SWEETVIEW_REQUEST_TEST;
 const isWorkerCase = mode === "worker";
-const script = isWorkerCase ? `
+// "pace": whether a chunk the worker writes reaches the page before the response ends, and
+// whether a worker that outruns a slow page is held back.
+const paceScript = `
+  (async () => {
+    const report = {};
+    try {
+      const decoder = new TextDecoder();
+      const live = await fetch("/live");
+      const liveReader = live.body.getReader();
+      let text = "";
+      for (;;) {
+        const { done, value } = await liveReader.read();
+        if (done) break;
+        text += decoder.decode(value, { stream: true });
+        await window.__sweetview_rpc("ack", text.split(";").length - 1);
+      }
+      report.live = text;
+      const bulk = await fetch("/bulk");
+      const reader = bulk.body.getReader();
+      let total = 0, bad = null, nextPause = 262144, nextReport = 1048576;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        for (let k = 0; k < value.length && bad === null; k++) {
+          const i = total + k;
+          if (value[k] !== (((i % 251) ^ (Math.floor(i / 65536) % 256)) & 255)) bad = i;
+        }
+        total += value.length;
+        if (total >= nextReport) {
+          nextReport += 1048576;
+          await window.__sweetview_rpc("consumed", total);
+        }
+        if (total >= nextPause) {
+          nextPause += 262144;
+          await new Promise((resolve) => setTimeout(resolve, 15));
+        }
+      }
+      report.bulk = { total, bad };
+      report.pacing = await window.__sweetview_rpc("pacing", null);
+    } catch (err) {
+      report.error = String(err.stack || err);
+    }
+    await window.__sweetview_rpc("report", report);
+  })();
+`;
+const script = mode === "pace" ? paceScript : isWorkerCase ? `
   (async () => {
     const report = {};
     const frameResult = new Promise((resolve) => {
@@ -83,7 +128,8 @@ const app = await createApp<{
   worker: mode === "sync" ? undefined : "./request-handler.worker.ts",
   onRequest: mode === "sync" ? () => Promise.reject(new Error("Async handler")) as unknown as NativeResponse : "worker",
   allowExternalDrop: false,
-  ringBytes: 4096,
+  // A small ring, so oversized chunks are split; "pace" keeps the default, as an application does.
+  ringBytes: mode === "pace" ? undefined : 4096,
   readyTimeoutMs: 12_000,
   onReadyTimeout: () => {
     timedOut = true;

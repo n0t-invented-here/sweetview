@@ -208,6 +208,30 @@ export function writeWebviewResponseChunk(handle: WebviewHandle, id: bigint, chu
 }
 
 /**
+ * Internal (`@n1h/sweetview-native/internal`): whether a response started
+ * with {@link beginWebviewResponse} has 1 MiB or more the page has not read
+ * yet, until the page reads it down to half of that. A writer on the UI
+ * thread, which {@link writeWebviewResponseChunk} never holds back, paces
+ * itself with this; a writer on any other thread is held back by
+ * `writeWebviewResponseChunk` itself. False for a response that is not open,
+ * a destroyed webview, and on macOS.
+ */
+export function isWebviewResponseBacklogged(handle: WebviewHandle, id: bigint): boolean {
+  if (onDarwin) return false;
+  return binding().responseBacklogged(handle, id) === 1;
+}
+
+/**
+ * Internal (`@n1h/sweetview-native/internal`): the bytes of a response started
+ * with {@link beginWebviewResponse} written and not yet read by the page; 0
+ * for a response that is not open, a destroyed webview, and on macOS.
+ */
+export function webviewResponseBacklog(handle: WebviewHandle, id: bigint): number {
+  if (onDarwin) return 0;
+  return binding().responseBacklog(handle, id);
+}
+
+/**
  * Ends a response started with {@link beginWebviewResponse}; the page sees
  * the end once it has read every chunk written before. Safe to call from any
  * thread. Ending twice, or a response never begun, does nothing.

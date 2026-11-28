@@ -16,6 +16,29 @@ test("a synchronous handler that returns a rejected Promise gets an immediate 50
   expect(new TextDecoder().decode(answer.body)).toContain('onRequest: "worker"');
 });
 
+test("a streamed response waits before each read while the UI thread has it paused", async () => {
+  const ring = new Ring(Ring.create(1024));
+  let reads = 0;
+  let release!: () => void;
+  let hold: Promise<void> | undefined = new Promise<void>((resolve) => (release = resolve));
+  const reader = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      reads += 1;
+      if (reads > 2) controller.close();
+      else controller.enqueue(Uint8Array.of(reads));
+    },
+  }, { highWaterMark: 0 }).getReader();
+  const writing = writeStreamingResponse(ring, { id: "5", status: 200, headers: [] }, reader, () => {}, () => hold);
+  await Bun.sleep(20);
+  expect(reads).toBe(0);
+  hold = undefined;
+  release();
+  await writing;
+  expect(reads).toBe(3);
+  const frames = [...ring.drain()].map((bytes) => bytes[0]);
+  expect(frames.length).toBe(4);
+});
+
 test("binary response frames preserve uint64 IDs, repeated headers and arbitrary bytes", () => {
   const ring = new Ring(Ring.create(128));
   const assembler = new RequestResponseAssembler();
@@ -222,3 +245,21 @@ test.if(live)("returns clean errors for synchronous Promises and absent worker h
   expect((await runLive("no-handler")).report).toEqual({ status: 404, body: "Not Found" });
   expect((await runLive("request-only")).report).toEqual({ status: 200, body: "<!doctype html><p id=dynamic>worker HTML</p>" });
 }, 70_000);
+
+// D44. A worker's streamed body on a live WebView2: each chunk reaches the page while the
+// response is open (the worker writes the next only once the page has acknowledged the last),
+// and a worker that produces far faster than the page reads is held back per response, so what
+// it has produced beyond what the page has read stays bounded, with every byte arriving in order.
+test.if(live && process.platform === "win32")("a worker's streamed body reaches the page as it is written, and a fast worker is held to a slow page", async () => {
+  const { report } = await runLive("pace");
+  expect(report.live).toBe("live one;live two;live three;");
+  // Per part: the page had it within 3 s, before the worker wrote the next part or ended.
+  expect(report.pacing.liveAcks).toEqual([true, true, true]);
+  const bulkBytes = 24 * 1024 * 1024 + 4321;
+  expect(report.bulk).toEqual({ total: bulkBytes, bad: null });
+  expect(report.pacing.produced).toBe(bulkBytes);
+  // What can be ahead of the page's last report: the native backlog (1 MiB, plus what the ring
+  // held when the pause was sent: 1 MiB), one 256 KiB part, the 1 MiB between the page's
+  // reports, and what WebView2 itself has read and the page has not.
+  expect(report.pacing.maxAhead).toBeLessThan(8 * 1024 * 1024);
+}, 30_000);

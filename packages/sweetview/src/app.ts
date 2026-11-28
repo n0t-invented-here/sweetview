@@ -9,7 +9,7 @@ import { pathToFileURL } from "node:url";
 import { assetMime, indexHtml } from "./html";
 import { createFrameAssembler, type AnyEvent, type EventMap, type MethodMap, type WireFrame } from "@n1h/sweetview-ipc";
 import { RequestResponseAssembler, requestError, runNativeRequest, type NativeRequestResponse, type StreamingResponseFrame } from "./request-response";
-import type { HttpRequestMessage, InitMessage, NativeRequest, NativeResponse, WorkerCrashFrame } from "./messages";
+import type { HttpRequestMessage, InitMessage, NativeRequest, NativeResponse, StreamPaceMessage, WorkerCrashFrame } from "./messages";
 import { RawWebview, SizeHint, Window, quitEventLoop, runEventLoop, signalReady, type Rect, type TabHandle, type WindowOptions } from "@n1h/sweetview-native";
 import { createChildWebview, discardQuit, emitWindowFileDrop, engineOf, getWindowMeta, holdWindowNativeDispose, isWindowDisposed, onWindowDispose, onWindowFileDropListenersChange, preserveWindowGeometry, releaseAtEnd, scheduleNativeTimeout, windowFileDropCount } from "@n1h/sweetview-native/internal";
 import { Ring } from "./ring";
@@ -212,6 +212,8 @@ const assetBytes = async (source: Asset): Promise<Uint8Array> =>
       : new Uint8Array(await source.arrayBuffer());
 
 // JSON is JS source except U+2028/2029 inside strings.
+/** How often a paused streamed response looks again at whether the page has caught up. */
+const PACE_LOOK_MS = 10;
 const LS = String.fromCharCode(0x2028);
 const PS = String.fromCharCode(0x2029);
 const asJsLiteral = (json: string) => json.replaceAll(LS, "\\u2028").replaceAll(PS, "\\u2029");
@@ -407,6 +409,27 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
       const streamCalls = onRequest === "worker" ? engineHost.streaming : undefined;
       const requestResponses = new RequestResponseAssembler(!streamCalls);
       const activeStreams = new Set<string>();
+      // Streamed responses the worker was told to pause because the page is behind on them,
+      // each with the native timeout that looks again. The UI thread's writes are never held
+      // back natively, so without this a worker that outruns the page would pile its body up
+      // here. Paused, the worker reads no more of that body; its other responses and IPC go on.
+      const pacedStreams = new Map<string, () => void>();
+      const pace = (id: string, requestId: bigint) => {
+        const backlogged = streamCalls?.backlogged;
+        if (!backlogged || pacedStreams.has(id) || !backlogged(requestId)) return;
+        worker?.postMessage({ kind: "stream-pace", id, paused: true } satisfies StreamPaceMessage);
+        const look = () => {
+          if (!isLive() || !activeStreams.has(id)) {
+            pacedStreams.delete(id);
+          } else if (backlogged(requestId)) {
+            pacedStreams.set(id, scheduleNativeTimeout(PACE_LOOK_MS, look));
+          } else {
+            pacedStreams.delete(id);
+            worker?.postMessage({ kind: "stream-pace", id, paused: false } satisfies StreamPaceMessage);
+          }
+        };
+        pacedStreams.set(id, scheduleNativeTimeout(PACE_LOOK_MS, look));
+      };
       // Work handed to the worker and not answered yet: page RPC seqs and native request ids.
       // If the worker dies, each is failed so neither a page RPC nor a fetch() hangs forever.
       const pendingWorkerCalls = new Set<string>();
@@ -439,7 +462,10 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
         if (!activeStreams.has(id)) return;
         if (frame.kind === "chunk") {
           const error = streamCalls.write(requestId, frame.body);
-          if (error === 0) return;
+          if (error === 0) {
+            pace(id, requestId);
+            return;
+          }
           console.error(`sweetview: webview_write_response_chunk failed (${error})`);
         }
         // The native API can end an already-started response, including after a reader error.
@@ -600,6 +626,8 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
         requestResponses.clear();
         // Destroying the webview aborts native streams, including any waiting for their next chunk.
         activeStreams.clear();
+        for (const stopLooking of pacedStreams.values()) stopLooking();
+        pacedStreams.clear();
         detachFileDrop();
         if (requestHandlerSet && raw.unsafeHandle !== null) engineHost.setRequestHandler(null);
         requestHandlerSet = false;

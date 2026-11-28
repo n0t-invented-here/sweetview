@@ -218,6 +218,18 @@ pub fn write_response_chunk(handle: u32, id: BigInt, chunk: Uint8Array) -> i32 {
   imp::write_response_chunk(handle, id, chunk)
 }
 
+/// 1 while a streamed answer has the backlog limit or more unread (until the page reads it down to half), 0 when not, -3 without the webview. Callable from any thread.
+#[napi(catch_unwind)]
+pub fn response_backlogged(handle: u32, id: BigInt) -> i32 {
+  imp::response_backlogged(handle, id)
+}
+
+/// The bytes of a streamed answer written and not yet read by the page; 0 without the stream or the webview. Callable from any thread.
+#[napi(catch_unwind)]
+pub fn response_backlog(handle: u32, id: BigInt) -> f64 {
+  imp::response_backlog(handle, id)
+}
+
 /// Ends a streamed answer. Callable from any thread.
 #[napi(catch_unwind)]
 pub fn end_response(handle: u32, id: BigInt) -> i32 {
