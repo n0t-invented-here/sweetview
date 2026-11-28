@@ -191,7 +191,9 @@ thread_local! {
 /// Shows the system menu of the window `handle` names when it is one of
 /// Sweetview's own (see `Core::show_system_menu`); `None` for any other window.
 pub(crate) fn show_own_system_menu(handle: isize, at: Point) -> Option<Result<()>> {
-  core_of(handle).map(|core| core.show_system_menu(at))
+  // Only a window Sweetview made: a wrapper of any other window (of this thread or not) is in the
+  // registry too, and its menu is the OS's, read from its own state and styles on its own thread.
+  core_of(handle).filter(|core| core.owned).map(|core| core.show_system_menu(at))
 }
 
 fn core_of(handle: isize) -> Option<Rc<Core>> {
