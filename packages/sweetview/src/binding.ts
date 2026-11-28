@@ -3,7 +3,7 @@
 // loaded in the process, this one; an application that imports only the native package loads that
 // package's own, which has no webview.
 
-import { binding as loadedBinding, provideBinding, type NativeBinding } from "@n1h/sweetview-native/internal";
+import { connectWebview, type NativeBinding } from "@n1h/sweetview-native/internal";
 import type * as Binding from "../prebuilt/binding";
 
 export type WebviewBinding = typeof Binding;
@@ -24,8 +24,14 @@ function load(): WebviewBinding {
   }
 }
 
-// Windows only: on macOS, until its goal, the webview is the library of @n1h/sweetview-webview-bun.
-if (process.platform === "win32") provideBinding(load as unknown as () => NativeBinding);
+let loaded: WebviewBinding | undefined;
 
-/** The loaded binding, with the webview's calls. */
-export const binding = (): WebviewBinding => loadedBinding() as unknown as WebviewBinding;
+/** The binding, loaded on first use by this package or the native package, once. */
+export const binding = (): WebviewBinding => (loaded ??= load());
+
+// Windows only hands the binding over: on macOS, until its goal, the webview is the library of
+// @n1h/sweetview-webview-bun.
+const connection = connectWebview(process.platform === "win32" ? (binding as unknown as () => NativeBinding) : undefined);
+
+/** Reports an exception of the webview's callbacks as the native package reports its own. */
+export const reportCallbackError = connection.reportCallbackError;

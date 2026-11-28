@@ -9,8 +9,8 @@
 // the macOS goal of the rewrite replaces it; the native package's `darwin/webview` is that seam.
 
 import { unload, type WindowHandle } from "@n1h/sweetview-native";
-import { loadDarwinWebview, onUnload, releaseAtEnd, reportCallbackError } from "@n1h/sweetview-native/internal";
-import { binding } from "./binding";
+import { loadDarwinWebview, onUnload, releaseAtEnd } from "@n1h/sweetview-native/internal";
+import { binding, reportCallbackError } from "./binding";
 import type { Engine } from "../prebuilt/binding";
 
 export { unload };
