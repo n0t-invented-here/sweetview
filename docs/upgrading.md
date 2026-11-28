@@ -704,7 +704,7 @@ These types keep their names; one member each changed.
 
 #### `src/webview-lib.ts`
 
-The `dlopen` helpers opened the webview library. On Windows there is no library to open: use the `RawWebview` methods (`app.webview.raw`, or `new RawWebview(...)`). On macOS they move to `darwin-webview-lib.ts` until the macOS goal.
+The `dlopen` helpers opened the webview library. On Windows there is no library to open: use the `RawWebview` methods (`app.webview.raw`, or `new RawWebview(...)`). On macOS, until the macOS goal, Sweetview opens the library itself; those helpers are its own, with no public call in 1.0.
 
 | Old | Write now | Change |
 |---|---|---|
@@ -763,10 +763,9 @@ Windows after a compile, refreshes Explorer's icon cache).
 One table per entry point of the six workspace packages at tag
 `pre-rust-rewrite`, the package's internal entries included, each under its
 own heading. An internal export with a public equivalent names the public
-call. On Windows, one with none says `no public call in 1.0`, and its Change
-column says which capability that is and what the public API covers of it;
-nothing tells an application to keep importing it. The macOS (`darwin`)
-entries stay as they are until the macOS goal.
+call. One with none says `no public call in 1.0`, and its Change column
+says which capability that is and what the public API covers of it; on
+Windows and macOS alike, nothing tells an application to keep importing it.
 
 ### `@n1h/sweetview`
 
@@ -1440,112 +1439,112 @@ path follows these rows too.
 
 | Old | Write now | Change |
 |---|---|---|
-| `ID` | `import { ID } from "@n1h/sweetview-native/darwin/objc"` | unchanged; macOS only, until the macOS goal |
-| `Id` | `import type { Id } from "@n1h/sweetview-native/darwin/objc"` | unchanged; macOS only, until the macOS goal |
-| `NIL` | `import { NIL } from "@n1h/sweetview-native/darwin/objc"` | unchanged; macOS only, until the macOS goal |
-| `TargetMethod` | `import type { TargetMethod } from "@n1h/sweetview-native/darwin/objc"` | unchanged; macOS only, until the macOS goal |
-| `alloc` | `import { alloc } from "@n1h/sweetview-native/darwin/objc"` | unchanged; macOS only, until the macOS goal |
-| `allocRaw` | `import { allocRaw } from "@n1h/sweetview-native/darwin/objc"` | unchanged; macOS only, until the macOS goal |
-| `asId` | `import { asId } from "@n1h/sweetview-native/darwin/objc"` | unchanged; macOS only, until the macOS goal |
-| `class_addMethod` | `import { class_addMethod } from "@n1h/sweetview-native/darwin/objc"` | unchanged; macOS only, until the macOS goal |
-| `cls` | `import { cls } from "@n1h/sweetview-native/darwin/objc"` | unchanged; macOS only, until the macOS goal |
-| `cstr` | `import { cstr } from "@n1h/sweetview-native/darwin/objc"` | unchanged; macOS only, until the macOS goal |
-| `dataSymbolAddress` | `import { dataSymbolAddress } from "@n1h/sweetview-native/darwin/objc"` | unchanged; macOS only, until the macOS goal |
-| `defineYesClass` | `import { defineYesClass } from "@n1h/sweetview-native/darwin/objc"` | unchanged; macOS only, until the macOS goal |
-| `invokeBlock` | `import { invokeBlock } from "@n1h/sweetview-native/darwin/objc"` | unchanged; macOS only, until the macOS goal |
-| `jsString` | `import { jsString } from "@n1h/sweetview-native/darwin/objc"` | unchanged; macOS only, until the macOS goal |
-| `makeBlock` | `import { makeBlock } from "@n1h/sweetview-native/darwin/objc"` | unchanged; macOS only, until the macOS goal |
-| `makeTarget` | `import { makeTarget } from "@n1h/sweetview-native/darwin/objc"` | unchanged; macOS only, until the macOS goal |
-| `nsString` | `import { nsString } from "@n1h/sweetview-native/darwin/objc"` | unchanged; macOS only, until the macOS goal |
-| `objc_allocateClassPair` | `import { objc_allocateClassPair } from "@n1h/sweetview-native/darwin/objc"` | unchanged; macOS only, until the macOS goal |
-| `objc_getClass` | `import { objc_getClass } from "@n1h/sweetview-native/darwin/objc"` | unchanged; macOS only, until the macOS goal |
-| `objc_registerClassPair` | `import { objc_registerClassPair } from "@n1h/sweetview-native/darwin/objc"` | unchanged; macOS only, until the macOS goal |
-| `release` | `import { release } from "@n1h/sweetview-native/darwin/objc"` | unchanged; macOS only, until the macOS goal |
-| `retain` | `import { retain } from "@n1h/sweetview-native/darwin/objc"` | unchanged; macOS only, until the macOS goal |
-| `retainCallback` | `import { retainCallback } from "@n1h/sweetview-native/darwin/objc"` | unchanged; macOS only, until the macOS goal |
-| `sel` | `import { sel } from "@n1h/sweetview-native/darwin/objc"` | unchanged; macOS only, until the macOS goal |
-| `send` | `import { send } from "@n1h/sweetview-native/darwin/objc"` | unchanged; macOS only, until the macOS goal |
-| `sendBool` | `import { sendBool } from "@n1h/sweetview-native/darwin/objc"` | unchanged; macOS only, until the macOS goal |
-| `sendBytesLen` | `import { sendBytesLen } from "@n1h/sweetview-native/darwin/objc"` | unchanged; macOS only, until the macOS goal |
-| `sendCStr` | `import { sendCStr } from "@n1h/sweetview-native/darwin/objc"` | unchanged; macOS only, until the macOS goal |
-| `sendF64` | `import { sendF64 } from "@n1h/sweetview-native/darwin/objc"` | unchanged; macOS only, until the macOS goal |
-| `sendF64PtrSelPtrBool` | `import { sendF64PtrSelPtrBool } from "@n1h/sweetview-native/darwin/objc"` | unchanged; macOS only, until the macOS goal |
-| `sendF64Void` | `import { sendF64Void } from "@n1h/sweetview-native/darwin/objc"` | unchanged; macOS only, until the macOS goal |
-| `sendInt` | `import { sendInt } from "@n1h/sweetview-native/darwin/objc"` | unchanged; macOS only, until the macOS goal |
-| `sendIntArg` | `import { sendIntArg } from "@n1h/sweetview-native/darwin/objc"` | unchanged; macOS only, until the macOS goal |
-| `sendIntRetBool` | `import { sendIntRetBool } from "@n1h/sweetview-native/darwin/objc"` | unchanged; macOS only, until the macOS goal |
-| `sendPoint` | `import { sendPoint } from "@n1h/sweetview-native/darwin/objc"` | unchanged; macOS only, until the macOS goal |
-| `sendPtr` | `import { sendPtr } from "@n1h/sweetview-native/darwin/objc"` | unchanged; macOS only, until the macOS goal |
-| `sendPtrArg` | `import { sendPtrArg } from "@n1h/sweetview-native/darwin/objc"` | unchanged; macOS only, until the macOS goal |
-| `sendPtrIntVoid` | `import { sendPtrIntVoid } from "@n1h/sweetview-native/darwin/objc"` | unchanged; macOS only, until the macOS goal |
-| `sendPtrPointPtrRetBool` | `import { sendPtrPointPtrRetBool } from "@n1h/sweetview-native/darwin/objc"` | unchanged; macOS only, until the macOS goal |
-| `sendPtrPtr` | `import { sendPtrPtr } from "@n1h/sweetview-native/darwin/objc"` | unchanged; macOS only, until the macOS goal |
-| `sendPtrPtrPtr` | `import { sendPtrPtrPtr } from "@n1h/sweetview-native/darwin/objc"` | unchanged; macOS only, until the macOS goal |
-| `sendPtrPtrPtrVoid` | `import { sendPtrPtrPtrVoid } from "@n1h/sweetview-native/darwin/objc"` | unchanged; macOS only, until the macOS goal |
-| `sendPtrPtrRetBool` | `import { sendPtrPtrRetBool } from "@n1h/sweetview-native/darwin/objc"` | unchanged; macOS only, until the macOS goal |
-| `sendPtrSelPtr` | `import { sendPtrSelPtr } from "@n1h/sweetview-native/darwin/objc"` | unchanged; macOS only, until the macOS goal |
-| `sendPtrSelPtrPtrVoid` | `import { sendPtrSelPtrPtrVoid } from "@n1h/sweetview-native/darwin/objc"` | unchanged; macOS only, until the macOS goal |
-| `sendPtrSelPtrVoid` | `import { sendPtrSelPtrVoid } from "@n1h/sweetview-native/darwin/objc"` | unchanged; macOS only, until the macOS goal |
-| `sendPtrSelU32U32Void` | `import { sendPtrSelU32U32Void } from "@n1h/sweetview-native/darwin/objc"` | unchanged; macOS only, until the macOS goal |
-| `sendRectBool` | `import { sendRectBool } from "@n1h/sweetview-native/darwin/objc"` | unchanged; macOS only, until the macOS goal |
-| `sendRectUIntUIntBool` | `import { sendRectUIntUIntBool } from "@n1h/sweetview-native/darwin/objc"` | unchanged; macOS only, until the macOS goal |
-| `sendRetBool` | `import { sendRetBool } from "@n1h/sweetview-native/darwin/objc"` | unchanged; macOS only, until the macOS goal |
-| `sendRetF64` | `import { sendRetF64 } from "@n1h/sweetview-native/darwin/objc"` | unchanged; macOS only, until the macOS goal |
-| `sendSelPtrF64` | `import { sendSelPtrF64 } from "@n1h/sweetview-native/darwin/objc"` | unchanged; macOS only, until the macOS goal |
-| `sendSize` | `import { sendSize } from "@n1h/sweetview-native/darwin/objc"` | unchanged; macOS only, until the macOS goal |
-| `sendSuperPtr` | `import { sendSuperPtr } from "@n1h/sweetview-native/darwin/objc"` | unchanged; macOS only, until the macOS goal |
-| `sendU32RetPtr` | `import { sendU32RetPtr } from "@n1h/sweetview-native/darwin/objc"` | unchanged; macOS only, until the macOS goal |
-| `sendUInt` | `import { sendUInt } from "@n1h/sweetview-native/darwin/objc"` | unchanged; macOS only, until the macOS goal |
-| `sendUIntArg` | `import { sendUIntArg } from "@n1h/sweetview-native/darwin/objc"` | unchanged; macOS only, until the macOS goal |
-| `sendUIntPtrPtrBool` | `import { sendUIntPtrPtrBool } from "@n1h/sweetview-native/darwin/objc"` | unchanged; macOS only, until the macOS goal |
-| `sendUIntPtrVoid` | `import { sendUIntPtrVoid } from "@n1h/sweetview-native/darwin/objc"` | unchanged; macOS only, until the macOS goal |
-| `sendUIntRetPtr` | `import { sendUIntRetPtr } from "@n1h/sweetview-native/darwin/objc"` | unchanged; macOS only, until the macOS goal |
-| `sharedApp` | `import { sharedApp } from "@n1h/sweetview-native/darwin/objc"` | unchanged; macOS only, until the macOS goal |
+| `ID` | no public call in 1.0 | Sweetview's own call into the Objective-C runtime on macOS (`objc_msgSend` and its kin): no public call in 1.0; what Sweetview does with AppKit is the public `Window`, `Screen`, `Menu` and `Tray` |
+| `Id` | no public call in 1.0 | Sweetview's own call into the Objective-C runtime on macOS (`objc_msgSend` and its kin): no public call in 1.0; what Sweetview does with AppKit is the public `Window`, `Screen`, `Menu` and `Tray` |
+| `NIL` | no public call in 1.0 | Sweetview's own call into the Objective-C runtime on macOS (`objc_msgSend` and its kin): no public call in 1.0; what Sweetview does with AppKit is the public `Window`, `Screen`, `Menu` and `Tray` |
+| `TargetMethod` | no public call in 1.0 | Sweetview's own call into the Objective-C runtime on macOS (`objc_msgSend` and its kin): no public call in 1.0; what Sweetview does with AppKit is the public `Window`, `Screen`, `Menu` and `Tray` |
+| `alloc` | no public call in 1.0 | Sweetview's own call into the Objective-C runtime on macOS (`objc_msgSend` and its kin): no public call in 1.0; what Sweetview does with AppKit is the public `Window`, `Screen`, `Menu` and `Tray` |
+| `allocRaw` | no public call in 1.0 | Sweetview's own call into the Objective-C runtime on macOS (`objc_msgSend` and its kin): no public call in 1.0; what Sweetview does with AppKit is the public `Window`, `Screen`, `Menu` and `Tray` |
+| `asId` | no public call in 1.0 | Sweetview's own call into the Objective-C runtime on macOS (`objc_msgSend` and its kin): no public call in 1.0; what Sweetview does with AppKit is the public `Window`, `Screen`, `Menu` and `Tray` |
+| `class_addMethod` | no public call in 1.0 | Sweetview's own call into the Objective-C runtime on macOS (`objc_msgSend` and its kin): no public call in 1.0; what Sweetview does with AppKit is the public `Window`, `Screen`, `Menu` and `Tray` |
+| `cls` | no public call in 1.0 | Sweetview's own call into the Objective-C runtime on macOS (`objc_msgSend` and its kin): no public call in 1.0; what Sweetview does with AppKit is the public `Window`, `Screen`, `Menu` and `Tray` |
+| `cstr` | no public call in 1.0 | Sweetview's own call into the Objective-C runtime on macOS (`objc_msgSend` and its kin): no public call in 1.0; what Sweetview does with AppKit is the public `Window`, `Screen`, `Menu` and `Tray` |
+| `dataSymbolAddress` | no public call in 1.0 | Sweetview's own call into the Objective-C runtime on macOS (`objc_msgSend` and its kin): no public call in 1.0; what Sweetview does with AppKit is the public `Window`, `Screen`, `Menu` and `Tray` |
+| `defineYesClass` | no public call in 1.0 | Sweetview's own call into the Objective-C runtime on macOS (`objc_msgSend` and its kin): no public call in 1.0; what Sweetview does with AppKit is the public `Window`, `Screen`, `Menu` and `Tray` |
+| `invokeBlock` | no public call in 1.0 | Sweetview's own call into the Objective-C runtime on macOS (`objc_msgSend` and its kin): no public call in 1.0; what Sweetview does with AppKit is the public `Window`, `Screen`, `Menu` and `Tray` |
+| `jsString` | no public call in 1.0 | Sweetview's own call into the Objective-C runtime on macOS (`objc_msgSend` and its kin): no public call in 1.0; what Sweetview does with AppKit is the public `Window`, `Screen`, `Menu` and `Tray` |
+| `makeBlock` | no public call in 1.0 | Sweetview's own call into the Objective-C runtime on macOS (`objc_msgSend` and its kin): no public call in 1.0; what Sweetview does with AppKit is the public `Window`, `Screen`, `Menu` and `Tray` |
+| `makeTarget` | no public call in 1.0 | Sweetview's own call into the Objective-C runtime on macOS (`objc_msgSend` and its kin): no public call in 1.0; what Sweetview does with AppKit is the public `Window`, `Screen`, `Menu` and `Tray` |
+| `nsString` | no public call in 1.0 | Sweetview's own call into the Objective-C runtime on macOS (`objc_msgSend` and its kin): no public call in 1.0; what Sweetview does with AppKit is the public `Window`, `Screen`, `Menu` and `Tray` |
+| `objc_allocateClassPair` | no public call in 1.0 | Sweetview's own call into the Objective-C runtime on macOS (`objc_msgSend` and its kin): no public call in 1.0; what Sweetview does with AppKit is the public `Window`, `Screen`, `Menu` and `Tray` |
+| `objc_getClass` | no public call in 1.0 | Sweetview's own call into the Objective-C runtime on macOS (`objc_msgSend` and its kin): no public call in 1.0; what Sweetview does with AppKit is the public `Window`, `Screen`, `Menu` and `Tray` |
+| `objc_registerClassPair` | no public call in 1.0 | Sweetview's own call into the Objective-C runtime on macOS (`objc_msgSend` and its kin): no public call in 1.0; what Sweetview does with AppKit is the public `Window`, `Screen`, `Menu` and `Tray` |
+| `release` | no public call in 1.0 | Sweetview's own call into the Objective-C runtime on macOS (`objc_msgSend` and its kin): no public call in 1.0; what Sweetview does with AppKit is the public `Window`, `Screen`, `Menu` and `Tray` |
+| `retain` | no public call in 1.0 | Sweetview's own call into the Objective-C runtime on macOS (`objc_msgSend` and its kin): no public call in 1.0; what Sweetview does with AppKit is the public `Window`, `Screen`, `Menu` and `Tray` |
+| `retainCallback` | no public call in 1.0 | Sweetview's own call into the Objective-C runtime on macOS (`objc_msgSend` and its kin): no public call in 1.0; what Sweetview does with AppKit is the public `Window`, `Screen`, `Menu` and `Tray` |
+| `sel` | no public call in 1.0 | Sweetview's own call into the Objective-C runtime on macOS (`objc_msgSend` and its kin): no public call in 1.0; what Sweetview does with AppKit is the public `Window`, `Screen`, `Menu` and `Tray` |
+| `send` | no public call in 1.0 | Sweetview's own call into the Objective-C runtime on macOS (`objc_msgSend` and its kin): no public call in 1.0; what Sweetview does with AppKit is the public `Window`, `Screen`, `Menu` and `Tray` |
+| `sendBool` | no public call in 1.0 | Sweetview's own call into the Objective-C runtime on macOS (`objc_msgSend` and its kin): no public call in 1.0; what Sweetview does with AppKit is the public `Window`, `Screen`, `Menu` and `Tray` |
+| `sendBytesLen` | no public call in 1.0 | Sweetview's own call into the Objective-C runtime on macOS (`objc_msgSend` and its kin): no public call in 1.0; what Sweetview does with AppKit is the public `Window`, `Screen`, `Menu` and `Tray` |
+| `sendCStr` | no public call in 1.0 | Sweetview's own call into the Objective-C runtime on macOS (`objc_msgSend` and its kin): no public call in 1.0; what Sweetview does with AppKit is the public `Window`, `Screen`, `Menu` and `Tray` |
+| `sendF64` | no public call in 1.0 | Sweetview's own call into the Objective-C runtime on macOS (`objc_msgSend` and its kin): no public call in 1.0; what Sweetview does with AppKit is the public `Window`, `Screen`, `Menu` and `Tray` |
+| `sendF64PtrSelPtrBool` | no public call in 1.0 | Sweetview's own call into the Objective-C runtime on macOS (`objc_msgSend` and its kin): no public call in 1.0; what Sweetview does with AppKit is the public `Window`, `Screen`, `Menu` and `Tray` |
+| `sendF64Void` | no public call in 1.0 | Sweetview's own call into the Objective-C runtime on macOS (`objc_msgSend` and its kin): no public call in 1.0; what Sweetview does with AppKit is the public `Window`, `Screen`, `Menu` and `Tray` |
+| `sendInt` | no public call in 1.0 | Sweetview's own call into the Objective-C runtime on macOS (`objc_msgSend` and its kin): no public call in 1.0; what Sweetview does with AppKit is the public `Window`, `Screen`, `Menu` and `Tray` |
+| `sendIntArg` | no public call in 1.0 | Sweetview's own call into the Objective-C runtime on macOS (`objc_msgSend` and its kin): no public call in 1.0; what Sweetview does with AppKit is the public `Window`, `Screen`, `Menu` and `Tray` |
+| `sendIntRetBool` | no public call in 1.0 | Sweetview's own call into the Objective-C runtime on macOS (`objc_msgSend` and its kin): no public call in 1.0; what Sweetview does with AppKit is the public `Window`, `Screen`, `Menu` and `Tray` |
+| `sendPoint` | no public call in 1.0 | Sweetview's own call into the Objective-C runtime on macOS (`objc_msgSend` and its kin): no public call in 1.0; what Sweetview does with AppKit is the public `Window`, `Screen`, `Menu` and `Tray` |
+| `sendPtr` | no public call in 1.0 | Sweetview's own call into the Objective-C runtime on macOS (`objc_msgSend` and its kin): no public call in 1.0; what Sweetview does with AppKit is the public `Window`, `Screen`, `Menu` and `Tray` |
+| `sendPtrArg` | no public call in 1.0 | Sweetview's own call into the Objective-C runtime on macOS (`objc_msgSend` and its kin): no public call in 1.0; what Sweetview does with AppKit is the public `Window`, `Screen`, `Menu` and `Tray` |
+| `sendPtrIntVoid` | no public call in 1.0 | Sweetview's own call into the Objective-C runtime on macOS (`objc_msgSend` and its kin): no public call in 1.0; what Sweetview does with AppKit is the public `Window`, `Screen`, `Menu` and `Tray` |
+| `sendPtrPointPtrRetBool` | no public call in 1.0 | Sweetview's own call into the Objective-C runtime on macOS (`objc_msgSend` and its kin): no public call in 1.0; what Sweetview does with AppKit is the public `Window`, `Screen`, `Menu` and `Tray` |
+| `sendPtrPtr` | no public call in 1.0 | Sweetview's own call into the Objective-C runtime on macOS (`objc_msgSend` and its kin): no public call in 1.0; what Sweetview does with AppKit is the public `Window`, `Screen`, `Menu` and `Tray` |
+| `sendPtrPtrPtr` | no public call in 1.0 | Sweetview's own call into the Objective-C runtime on macOS (`objc_msgSend` and its kin): no public call in 1.0; what Sweetview does with AppKit is the public `Window`, `Screen`, `Menu` and `Tray` |
+| `sendPtrPtrPtrVoid` | no public call in 1.0 | Sweetview's own call into the Objective-C runtime on macOS (`objc_msgSend` and its kin): no public call in 1.0; what Sweetview does with AppKit is the public `Window`, `Screen`, `Menu` and `Tray` |
+| `sendPtrPtrRetBool` | no public call in 1.0 | Sweetview's own call into the Objective-C runtime on macOS (`objc_msgSend` and its kin): no public call in 1.0; what Sweetview does with AppKit is the public `Window`, `Screen`, `Menu` and `Tray` |
+| `sendPtrSelPtr` | no public call in 1.0 | Sweetview's own call into the Objective-C runtime on macOS (`objc_msgSend` and its kin): no public call in 1.0; what Sweetview does with AppKit is the public `Window`, `Screen`, `Menu` and `Tray` |
+| `sendPtrSelPtrPtrVoid` | no public call in 1.0 | Sweetview's own call into the Objective-C runtime on macOS (`objc_msgSend` and its kin): no public call in 1.0; what Sweetview does with AppKit is the public `Window`, `Screen`, `Menu` and `Tray` |
+| `sendPtrSelPtrVoid` | no public call in 1.0 | Sweetview's own call into the Objective-C runtime on macOS (`objc_msgSend` and its kin): no public call in 1.0; what Sweetview does with AppKit is the public `Window`, `Screen`, `Menu` and `Tray` |
+| `sendPtrSelU32U32Void` | no public call in 1.0 | Sweetview's own call into the Objective-C runtime on macOS (`objc_msgSend` and its kin): no public call in 1.0; what Sweetview does with AppKit is the public `Window`, `Screen`, `Menu` and `Tray` |
+| `sendRectBool` | no public call in 1.0 | Sweetview's own call into the Objective-C runtime on macOS (`objc_msgSend` and its kin): no public call in 1.0; what Sweetview does with AppKit is the public `Window`, `Screen`, `Menu` and `Tray` |
+| `sendRectUIntUIntBool` | no public call in 1.0 | Sweetview's own call into the Objective-C runtime on macOS (`objc_msgSend` and its kin): no public call in 1.0; what Sweetview does with AppKit is the public `Window`, `Screen`, `Menu` and `Tray` |
+| `sendRetBool` | no public call in 1.0 | Sweetview's own call into the Objective-C runtime on macOS (`objc_msgSend` and its kin): no public call in 1.0; what Sweetview does with AppKit is the public `Window`, `Screen`, `Menu` and `Tray` |
+| `sendRetF64` | no public call in 1.0 | Sweetview's own call into the Objective-C runtime on macOS (`objc_msgSend` and its kin): no public call in 1.0; what Sweetview does with AppKit is the public `Window`, `Screen`, `Menu` and `Tray` |
+| `sendSelPtrF64` | no public call in 1.0 | Sweetview's own call into the Objective-C runtime on macOS (`objc_msgSend` and its kin): no public call in 1.0; what Sweetview does with AppKit is the public `Window`, `Screen`, `Menu` and `Tray` |
+| `sendSize` | no public call in 1.0 | Sweetview's own call into the Objective-C runtime on macOS (`objc_msgSend` and its kin): no public call in 1.0; what Sweetview does with AppKit is the public `Window`, `Screen`, `Menu` and `Tray` |
+| `sendSuperPtr` | no public call in 1.0 | Sweetview's own call into the Objective-C runtime on macOS (`objc_msgSend` and its kin): no public call in 1.0; what Sweetview does with AppKit is the public `Window`, `Screen`, `Menu` and `Tray` |
+| `sendU32RetPtr` | no public call in 1.0 | Sweetview's own call into the Objective-C runtime on macOS (`objc_msgSend` and its kin): no public call in 1.0; what Sweetview does with AppKit is the public `Window`, `Screen`, `Menu` and `Tray` |
+| `sendUInt` | no public call in 1.0 | Sweetview's own call into the Objective-C runtime on macOS (`objc_msgSend` and its kin): no public call in 1.0; what Sweetview does with AppKit is the public `Window`, `Screen`, `Menu` and `Tray` |
+| `sendUIntArg` | no public call in 1.0 | Sweetview's own call into the Objective-C runtime on macOS (`objc_msgSend` and its kin): no public call in 1.0; what Sweetview does with AppKit is the public `Window`, `Screen`, `Menu` and `Tray` |
+| `sendUIntPtrPtrBool` | no public call in 1.0 | Sweetview's own call into the Objective-C runtime on macOS (`objc_msgSend` and its kin): no public call in 1.0; what Sweetview does with AppKit is the public `Window`, `Screen`, `Menu` and `Tray` |
+| `sendUIntPtrVoid` | no public call in 1.0 | Sweetview's own call into the Objective-C runtime on macOS (`objc_msgSend` and its kin): no public call in 1.0; what Sweetview does with AppKit is the public `Window`, `Screen`, `Menu` and `Tray` |
+| `sendUIntRetPtr` | no public call in 1.0 | Sweetview's own call into the Objective-C runtime on macOS (`objc_msgSend` and its kin): no public call in 1.0; what Sweetview does with AppKit is the public `Window`, `Screen`, `Menu` and `Tray` |
+| `sharedApp` | no public call in 1.0 | Sweetview's own call into the Objective-C runtime on macOS (`objc_msgSend` and its kin): no public call in 1.0; what Sweetview does with AppKit is the public `Window`, `Screen`, `Menu` and `Tray` |
 
 ### `@n1h/sweetview-native/darwin/screen`
 
 | Old | Write now | Change |
 |---|---|---|
-| `CocoaRect` | `import type { CocoaRect } from "@n1h/sweetview-native/darwin/screen"` | unchanged; macOS only, until the macOS goal |
-| `all` | `import { all } from "@n1h/sweetview-native/darwin/screen"` | unchanged; macOS only, until the macOS goal |
-| `at` | `import { at } from "@n1h/sweetview-native/darwin/screen"` | unchanged; macOS only, until the macOS goal |
-| `bounds` | `import { bounds } from "@n1h/sweetview-native/darwin/screen"` | unchanged; macOS only, until the macOS goal |
-| `cursor` | `import { cursor } from "@n1h/sweetview-native/darwin/screen"` | unchanged; macOS only, until the macOS goal |
-| `cursorPoint` | `import { cursorPoint } from "@n1h/sweetview-native/darwin/screen"` | unchanged; macOS only, until the macOS goal |
-| `fromCocoa` | `import { fromCocoa } from "@n1h/sweetview-native/darwin/screen"` | unchanged; macOS only, until the macOS goal |
-| `of` | `import { of } from "@n1h/sweetview-native/darwin/screen"` | unchanged; macOS only, until the macOS goal |
-| `primary` | `import { primary } from "@n1h/sweetview-native/darwin/screen"` | unchanged; macOS only, until the macOS goal |
-| `primaryHeight` | `import { primaryHeight } from "@n1h/sweetview-native/darwin/screen"` | unchanged; macOS only, until the macOS goal |
-| `primaryScreen` | `import { primaryScreen } from "@n1h/sweetview-native/darwin/screen"` | unchanged; macOS only, until the macOS goal |
-| `rectOf` | `import { rectOf } from "@n1h/sweetview-native/darwin/screen"` | unchanged; macOS only, until the macOS goal |
-| `toCocoa` | `import { toCocoa } from "@n1h/sweetview-native/darwin/screen"` | unchanged; macOS only, until the macOS goal |
+| `CocoaRect` | no public call in 1.0 | a rectangle in AppKit's coordinates on macOS: no public call in 1.0; `Screen.primary()`, `Screen.at(point)` and `Screen.cursor()` answer in Sweetview's own coordinates |
+| `all` | `import { Screen } from "@n1h/sweetview-native"`; `Screen.all()` | the public call, the same on macOS and Windows |
+| `at` | `import { Screen } from "@n1h/sweetview-native"`; `Screen.at(point)` | the public call, the same on macOS and Windows |
+| `bounds` | `import { Screen } from "@n1h/sweetview-native"`; `Screen.bounds()` | the public call, the same on macOS and Windows |
+| `cursor` | `import { Screen } from "@n1h/sweetview-native"`; `Screen.cursor()` | the public call, the same on macOS and Windows |
+| `cursorPoint` | no public call in 1.0 | the cursor in AppKit's coordinates on macOS: no public call in 1.0; `Screen.primary()`, `Screen.at(point)` and `Screen.cursor()` answer in Sweetview's own coordinates |
+| `fromCocoa` | no public call in 1.0 | converting an AppKit rectangle on macOS: no public call in 1.0; `Screen.primary()`, `Screen.at(point)` and `Screen.cursor()` answer in Sweetview's own coordinates |
+| `of` | `import { Screen } from "@n1h/sweetview-native"`; `Screen.of(window)` | the public call, the same on macOS and Windows |
+| `primary` | `import { Screen } from "@n1h/sweetview-native"`; `Screen.primary()` | the public call, the same on macOS and Windows |
+| `primaryHeight` | no public call in 1.0 | the primary screen's height, for that conversion on macOS: no public call in 1.0; `Screen.primary()`, `Screen.at(point)` and `Screen.cursor()` answer in Sweetview's own coordinates |
+| `primaryScreen` | no public call in 1.0 | the primary `NSScreen` on macOS: no public call in 1.0; `Screen.primary()`, `Screen.at(point)` and `Screen.cursor()` answer in Sweetview's own coordinates |
+| `rectOf` | no public call in 1.0 | a rectangle read from an AppKit object on macOS: no public call in 1.0; `Screen.primary()`, `Screen.at(point)` and `Screen.cursor()` answer in Sweetview's own coordinates |
+| `toCocoa` | no public call in 1.0 | converting to an AppKit rectangle on macOS: no public call in 1.0; `Screen.primary()`, `Screen.at(point)` and `Screen.cursor()` answer in Sweetview's own coordinates |
 
 ### `@n1h/sweetview-native/darwin/tabs`
 
 | Old | Write now | Change |
 |---|---|---|
-| `WindowTabs` | `import type { WindowTabs } from "@n1h/sweetview-native/darwin/tabs"` | unchanged; macOS only, until the macOS goal |
-| `WindowTabsOptions` | `import type { WindowTabsOptions } from "@n1h/sweetview-native/darwin/tabs"` | unchanged; macOS only, until the macOS goal |
-| `createWindowTabs` | `import { createWindowTabs } from "@n1h/sweetview-native/darwin/tabs"` | unchanged; macOS only, until the macOS goal |
-| `installTabMenus` | `import { installTabMenus } from "@n1h/sweetview-native/darwin/tabs"` | unchanged; macOS only, until the macOS goal |
-| `pooled` | `import { pooled } from "@n1h/sweetview-native/darwin/tabs"` | unchanged; macOS only, until the macOS goal |
+| `WindowTabs` | no public call in 1.0 | a window's tab group, as the tabs library drives AppKit's window tabbing on macOS: no public call in 1.0; `WebView.openTab(window, options)` opens a tab in a `tabs: true` window |
+| `WindowTabsOptions` | no public call in 1.0 | the options of a window's tab group, as the tabs library drives AppKit's window tabbing on macOS: no public call in 1.0; `WebView.openTab(window, options)` opens a tab in a `tabs: true` window |
+| `createWindowTabs` | no public call in 1.0 | making a window's tab group, as the tabs library drives AppKit's window tabbing on macOS: no public call in 1.0; `WebView.openTab(window, options)` opens a tab in a `tabs: true` window |
+| `installTabMenus` | no public call in 1.0 | the tab items of the application menu, as the tabs library drives AppKit's window tabbing on macOS: no public call in 1.0; `WebView.openTab(window, options)` opens a tab in a `tabs: true` window |
+| `pooled` | no public call in 1.0 | a pool of tab windows, as the tabs library drives AppKit's window tabbing on macOS: no public call in 1.0; `WebView.openTab(window, options)` opens a tab in a `tabs: true` window |
 
 ### `@n1h/sweetview-native/darwin/window`
 
 | Old | Write now | Change |
 |---|---|---|
-| `DarwinTabGroupController` | `import type { DarwinTabGroupController } from "@n1h/sweetview-native/darwin/window"` | unchanged; macOS only, until the macOS goal |
-| `asNSWindow` | `import { asNSWindow } from "@n1h/sweetview-native/darwin/window"` | unchanged; macOS only, until the macOS goal |
-| `bindDarwinTabGroup` | `import { bindDarwinTabGroup } from "@n1h/sweetview-native/darwin/window"` | unchanged; macOS only, until the macOS goal |
-| `createWindow` | `import { createWindow } from "@n1h/sweetview-native/darwin/window"` | unchanged; macOS only, until the macOS goal |
-| `darwinTabWindowClass` | `import { darwinTabWindowClass } from "@n1h/sweetview-native/darwin/window"` | unchanged; macOS only, until the macOS goal |
-| `fromHandle` | `import { fromHandle } from "@n1h/sweetview-native/darwin/window"` | unchanged; macOS only, until the macOS goal |
-| `getDarwinTabActiveHandle` | `import { getDarwinTabActiveHandle } from "@n1h/sweetview-native/darwin/window"` | unchanged; macOS only, until the macOS goal |
-| `setDarwinTabCloseRequest` | `import { setDarwinTabCloseRequest } from "@n1h/sweetview-native/darwin/window"` | unchanged; macOS only, until the macOS goal |
-| `startDarwinWindowDrag` | `import { startDarwinWindowDrag } from "@n1h/sweetview-native/darwin/window"` | unchanged; macOS only, until the macOS goal |
-| `startDarwinWindowResize` | `import { startDarwinWindowResize } from "@n1h/sweetview-native/darwin/window"` | unchanged; macOS only, until the macOS goal |
-| `stopDarwinWindowResize` | `import { stopDarwinWindowResize } from "@n1h/sweetview-native/darwin/window"` | unchanged; macOS only, until the macOS goal |
-| `subscribeDarwinFileDrop` | `import { subscribeDarwinFileDrop } from "@n1h/sweetview-native/darwin/window"` | unchanged; macOS only, until the macOS goal |
+| `DarwinTabGroupController` | no public call in 1.0 | the hold the tabs library keeps on a window's tab group, as the tabs library drives AppKit's window tabbing on macOS: no public call in 1.0; `WebView.openTab(window, options)` opens a tab in a `tabs: true` window |
+| `asNSWindow` | `import { Window } from "@n1h/sweetview-native"`; `Window#handle` | the `NSWindow` pointer of a `Window` on macOS (the `HWND` on Windows) |
+| `bindDarwinTabGroup` | no public call in 1.0 | binding a window to its tab group, as the tabs library drives AppKit's window tabbing on macOS: no public call in 1.0; `WebView.openTab(window, options)` opens a tab in a `tabs: true` window |
+| `createWindow` | `import { Window } from "@n1h/sweetview-native"`; `new Window(options)` | the public window, the same on macOS and Windows |
+| `darwinTabWindowClass` | no public call in 1.0 | the window class of a tab, as the tabs library drives AppKit's window tabbing on macOS: no public call in 1.0; `WebView.openTab(window, options)` opens a tab in a `tabs: true` window |
+| `fromHandle` | `import { Window } from "@n1h/sweetview-native"`; `Window.fromHandle(handle)` | the public wrapper of a window by its handle, the same on macOS and Windows |
+| `getDarwinTabActiveHandle` | no public call in 1.0 | the handle of a group's selected tab, as the tabs library drives AppKit's window tabbing on macOS: no public call in 1.0; `WebView.openTab(window, options)` opens a tab in a `tabs: true` window |
+| `setDarwinTabCloseRequest` | no public call in 1.0 | a tab's close request, as the tabs library drives AppKit's window tabbing on macOS: no public call in 1.0; `WebView.openTab(window, options)` opens a tab in a `tabs: true` window |
+| `startDarwinWindowDrag` | `import { Window } from "@n1h/sweetview-native"`; `Window#startDrag()` | a page-drawn title bar's drag, the same on macOS and Windows |
+| `startDarwinWindowResize` | `import { Window } from "@n1h/sweetview-native"`; `Window#startResize(edge)` | a page-drawn edge's resize, the same on macOS and Windows |
+| `stopDarwinWindowResize` | no public call in 1.0 | ending a resize gesture on macOS: no public call in 1.0; the gesture `Window#startResize(edge)` starts ends with the mouse button |
+| `subscribeDarwinFileDrop` | `import { Window } from "@n1h/sweetview-native"`; `Window#onFileDrop(handler)` | files dropped on a window, the same on macOS and Windows |
 
 ### `@n1h/sweetview-settings`
 
@@ -1586,7 +1585,7 @@ Entry points with no exports, unchanged: `@n1h/sweetview/file-imports`, `@n1h/sw
 
 #### `packages/sweetview/src/webview-lib.ts`
 
-The `dlopen` helpers opened the webview library. On Windows there is no library to open: use the `RawWebview` methods (`app.webview.raw`, or `new RawWebview(...)`). On macOS they move to `darwin-webview-lib.ts` until the macOS goal.
+The `dlopen` helpers opened the webview library. On Windows there is no library to open: use the `RawWebview` methods (`app.webview.raw`, or `new RawWebview(...)`). On macOS, until the macOS goal, Sweetview opens the library itself; those helpers are its own, with no public call in 1.0.
 
 | Old | Write now | Change |
 |---|---|---|

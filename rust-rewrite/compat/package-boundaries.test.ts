@@ -11,10 +11,8 @@
 // entry that is gone.
 //
 // `./darwin/*` and the macOS files stay as they are until the macOS goal (D42): they are listed
-// with the entries and their importers. The page checks leave the macOS entries out on purpose:
-// macOS runs the path of tag `pre-rust-rewrite` until its goal, which rewrites the guide's Darwin
-// rows. Those rows are pinned by name and by a digest of each (darwin-rows.ts), so a new or changed
-// Darwin row is seen.
+// with the entries and their importers. The pages, the guide's rows included, name no internal
+// entry on either platform: a macOS row names the public call or says `no public call in 1.0`.
 //
 // `scan(root)` reads a tree; the tests run it on this repository, and on small trees of their own
 // that each hold one way an internal could leak, to prove the scan sees it.
@@ -23,8 +21,6 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
-import { createHash } from "node:crypto";
-import { DARWIN_ROWS } from "./darwin-rows";
 import { PUBLIC } from "./public-entries";
 
 const root = join(import.meta.dir, "..", "..");
@@ -82,7 +78,7 @@ const SWEETVIEW = new Set(Object.keys(PUBLIC));
  * that is not one of its public entry points (so a newly named internal entry is caught without
  * naming it here), a shorthand subpath with no package name (`./internal`, `/win32/window`,
  * `./win32/*`), or a package's source file that is not a public entry's file. The macOS
- * (`/darwin/`) entries are left to the macOS goal (D42).
+ * entries count as any other.
  */
 type MentionContext = { base: string; publicFiles: Set<string>; dirOf: Map<string, string> };
 /** Whether `file` (repository-relative) is a source file an application has no entry to: present, under a package's `src/`, not a test, and not the file of a public entry. */
@@ -96,7 +92,6 @@ const internalSource = (file: string, ctx: MentionContext) => /\/src\//.test(fil
  * - a shorthand subpath with no package name (`./internal`, `/win32/window`, `./win32/*`);
  * - a package's source file given to import or to run (`from "…/packages/<pkg>/src/…"`,
  *   `bun packages/<pkg>/src/…`) that is no public entry's file.
- * The macOS (`/darwin/`) entries are left to the macOS goal (D42).
  */
 function internalMentions(text: string, ctx: MentionContext): string[] {
   const found: string[] = [];
@@ -104,13 +99,12 @@ function internalMentions(text: string, ctx: MentionContext): string[] {
     const pkg = `@n1h/${m[1]}`;
     if (!SWEETVIEW.has(pkg)) continue; // not a package of this repository
     const sub = (m[2] ?? "").replace(/\.+$/, "");
-    if (sub.startsWith("/darwin/")) continue;
     if (/\.\w+$/.test(sub)) {
       const dir = ctx.dirOf.get(pkg);
       if (dir !== undefined && internalSource(`${dir}${sub}`, ctx)) found.push(`${pkg}${sub}`);
     } else if (!PUBLIC[pkg]!.includes(`.${sub}`)) found.push(`${pkg}${sub}`);
   }
-  for (const m of text.matchAll(/(?:^|[\s`"'(\[])(\.?\/(?:internal|shell-icons|win32\/[\w*.-]+))(?![\w/-])/g)) found.push(m[1]!);
+  for (const m of text.matchAll(/(?:^|[\s`"'(\[])(\.?\/(?:internal|shell-icons|win32\/[\w*.-]+|darwin\/[\w*.-]+))(?![\w/-])/g)) found.push(m[1]!);
   for (const m of text.matchAll(/(?:(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*)["'][^"']*?|\bbun\s+(?:run\s+)?)(packages\/[\w-]+\/src\/[\w/.-]*\w)/g)) {
     if (internalSource(m[1]!, ctx)) found.push(m[1]!);
   }
@@ -163,7 +157,6 @@ type Scan = {
   pendingImports: Record<string, string[]>;
   reexports: string[];
   demoReach: Record<string, string[]>;
-  darwinRows: Record<string, string>;
   guideRows: string[];
   guideProse: string[];
   pageLines: string[];
@@ -179,7 +172,7 @@ function scan(base: string): Scan {
       return { name: pkg.name, dir, exports: new Map(Object.entries(pkg.exports).map(([k, t]) => [k, typeof target(t) === "string" ? resolve(dir, target(t) as string) : undefined])) };
     });
   const byName = new Map(packages.map((p) => [p.name, p]));
-  const out: Scan = { unlistedEntries: [], staleEntries: [], unexported: [], reached: [], pendingImports: {}, reexports: [], demoReach: {}, darwinRows: {}, guideRows: [], guideProse: [], pageLines: [] };
+  const out: Scan = { unlistedEntries: [], staleEntries: [], unexported: [], reached: [], pendingImports: {}, reexports: [], demoReach: {}, guideRows: [], guideProse: [], pageLines: [] };
 
   // Entries: the documented ones and the pending internal ones, nothing else.
   for (const p of packages) {
@@ -265,11 +258,6 @@ function scan(base: string): Scan {
         const cells = cellsOf(line.trim());
         if (cells.every((c) => /^:?-+:?$/.test(c)) || cells[0] === "Old") continue;
         const rest = cells.slice(1).join(" | ");
-        // A macOS row (D42): pinned, not checked.
-        if (section.includes("/darwin/") || rest.includes("/darwin/")) {
-          out.darwinRows[`${section} | ${cells[0]}`] = createHash("sha256").update(line).digest("hex").slice(0, 12);
-          continue;
-        }
         const named = internalMentions(rest, ctx);
         if (named.length > 0 || (/^`@n1h\/sweetview-native\/(internal|win32\/)/.test(section) && /\bof this subpath\b/.test(rest))) out.guideRows.push(`${section} | ${cells[0]}`);
         continue;
@@ -414,27 +402,23 @@ describe("internals are not public API (D45)", () => {
     );
   });
 
-  test("the guide's macOS rows, left out of these checks until the macOS goal (D42), are exactly the pinned ones, unchanged", () => {
-    expect(here.darwinRows).toEqual(DARWIN_ROWS);
-  });
-
-  test("counter-example: a new macOS row and a changed one are seen", () => {
-    const first = Object.keys(DARWIN_ROWS)[0]!;
-    const [section, old] = first.split(" | ") as [string, string];
-    const added = `${section} | \`addedRow\``;
+  test("counter-example: a macOS row that names a darwin entry, and a shorthand darwin spelling, are found as any other", () => {
     withTree(
       {
         "docs/upgrading.md": [
-          `### ${section}`,
+          "### `@n1h/sweetview-native/darwin/objc`",
           "| Old | Write now | Change |",
           "|---|---|---|",
-          `| ${old} | \`import { x } from "@n1h/sweetview-native/darwin/objc"\` | changed |`,
-          '| `addedRow` | `import { addedRow } from "@n1h/sweetview-native/darwin/objc"` | new |',
+          '| `sel` | `import { sel } from "@n1h/sweetview-native/darwin/objc"` | unchanged; macOS only |',
+          "Keep importing `./darwin/window` on macOS.",
         ].join("\n"),
       },
       (dir) => {
-        const found = scan(dir).darwinRows;
-        expect({ added: added in found && !(added in DARWIN_ROWS), changed: found[first] !== undefined && found[first] !== DARWIN_ROWS[first] }).toEqual({ added: true, changed: true });
+        const found = scan(dir);
+        expect({ rows: found.guideRows, prose: found.guideProse }).toEqual({
+          rows: ["`@n1h/sweetview-native/darwin/objc` | `sel`"],
+          prose: ["Keep importing `./darwin/window` on macOS.: ./darwin/window"],
+        });
       },
     );
   });
