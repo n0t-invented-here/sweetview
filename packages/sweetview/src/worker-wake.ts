@@ -5,6 +5,8 @@
 // in `./darwin-worker-wake`, until the macOS goal of the rewrite.
 
 import { wakeNative } from "@n1h/sweetview-native/internal";
+// A worker loads the binding its UI thread has, this package's (D48), before its first native call.
+import "./binding";
 import type { WorkerWake } from "./webview-host";
 
 export function workerWake(wake: WorkerWake): () => void {
