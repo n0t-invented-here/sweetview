@@ -245,6 +245,13 @@ pub fn destroy_handed_out(handle: isize) -> bool {
   built.is_some()
 }
 
+/// Frees every menu [`build_handed_out`] made that the application did not free.
+pub(crate) fn release_all() {
+  // Dropped after the borrow ends.
+  let built: Vec<BuiltMenu> = HANDED_OUT.try_with(|menus| menus.borrow_mut().drain().map(|(_, menu)| menu).collect()).unwrap_or_default();
+  drop(built);
+}
+
 /// `windowMenu`: shows the system menu (Restore, Move, Size, Minimize,
 /// Maximize, Close) of the window `owner` names at the cursor, with its items
 /// enabled for the window's maximised state, and carries out the chosen

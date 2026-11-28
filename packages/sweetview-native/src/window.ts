@@ -9,6 +9,7 @@
 import type { HitPolygon } from "./hit-regions";
 import type { AppIdentity, AppIdentityIcon } from "@n1h/sweetview-settings";
 import { icoFromRgba, type Icon } from "./icon";
+import { releaseAtEnd } from "./lifetime";
 import { backend } from "./platform";
 import type { Point, Rect, WindowHandle } from "./types";
 
@@ -351,6 +352,7 @@ export class Window {
   readonly #meta: WindowMeta;
   readonly #fileDropListeners = new Set<FileDropListener>();
   #unsubscribeNativeDrop?: () => void;
+  readonly #unregister: () => void;
   readonly #tabListeners: TabListeners = {
     newTab: new Set(),
     tabSelect: new Set(),
@@ -404,6 +406,8 @@ export class Window {
     windowMetaMap.set(this, this.#meta);
     windowBackendMap.set(this, this.#inner);
     windowTabListeners.set(this, this.#tabListeners);
+    // Disposed when the application ends, after its webviews and trays.
+    this.#unregister = releaseAtEnd("window", () => this.dispose());
   }
 
   /** Non-mutating wrapper around an existing HWND or NSWindow*. */
@@ -535,10 +539,15 @@ export class Window {
     return () => this.#tabListeners.tabClose.delete(handler);
   }
 
-  /** Releases timers, subclasses, notification observers, icons, and per-window entries. Safe to call twice. */
+  /**
+   * Releases timers, subclasses, notification observers, icons, and per-window entries, and
+   * destroys a window this process made. Every window is disposed when the application ends
+   * (see `run()`); call it to close one before that. Safe to call twice.
+   */
   dispose(): void {
     if (windowDisposed.has(this)) return;
     windowDisposed.add(this);
+    this.#unregister();
     ownedWindows.delete(this);
     const hooks = windowDisposeHooks.get(this);
     if (hooks) {

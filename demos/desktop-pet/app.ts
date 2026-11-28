@@ -202,9 +202,3 @@ const tray = createTray({
 notifier = createNotifier({ identity: IDENTITY }); // the toasts carry the demo's name, not Sweetview's
 
 petView.run();
-notifier.dispose();
-tray.dispose();
-settingsView.dispose();
-settingsWindow.dispose();
-overlay.dispose();
-process.exit(0);

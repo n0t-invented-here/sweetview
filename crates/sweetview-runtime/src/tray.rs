@@ -238,17 +238,16 @@ impl Tray {
 
   /// Removes the icon. Safe to call twice.
   pub fn dispose(&self) {
-    if let Some(timer) = self.state.click_timer.take() {
-      if let Some(runtime) = Runtime::existing() {
-        runtime.clear_timeout(timer);
-      }
-    }
     let _ = TRAYS.try_with(|trays| trays.borrow_mut().remove(&self.id));
-    // Taken out before it is dropped: dropping destroys the icon's window, which may run code that reads the slot.
-    let icon = self.state.icon.borrow_mut().take();
-    drop(icon);
-    let owner = self.state.menu_owner.borrow_mut().take();
-    drop(owner);
+    self.state.release();
+  }
+}
+
+/// Removes every tray icon of this thread that is still there, as [`Tray::dispose`] does.
+pub(crate) fn release_all() {
+  let states: Vec<Rc<TrayState>> = TRAYS.try_with(|trays| trays.borrow_mut().drain().filter_map(|(_, state)| state.upgrade()).collect()).unwrap_or_default();
+  for state in states {
+    state.release();
   }
 }
 
@@ -291,6 +290,20 @@ fn window_handle_of(_tray: &TrayIcon) -> isize {
 impl TrayState {
   fn is_live(&self) -> bool {
     self.icon.borrow().is_some()
+  }
+
+  /// Removes the icon and the menu's owner window. Safe to call twice.
+  fn release(&self) {
+    if let Some(timer) = self.click_timer.take() {
+      if let Some(runtime) = Runtime::existing() {
+        runtime.clear_timeout(timer);
+      }
+    }
+    // Taken out before it is dropped: dropping destroys the icon's window, which may run code that reads the slot.
+    let icon = self.icon.try_borrow_mut().ok().and_then(|mut icon| icon.take());
+    drop(icon);
+    let owner = self.menu_owner.try_borrow_mut().ok().and_then(|mut owner| owner.take());
+    drop(owner);
   }
 
   fn handle(self: &Rc<Self>, input: TrayInput) {

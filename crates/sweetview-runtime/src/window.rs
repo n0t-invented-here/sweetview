@@ -164,6 +164,9 @@ struct Core {
 thread_local! {
   /// Every window Sweetview knows on this thread, by handle value.
   static WINDOWS: RefCell<HashMap<isize, Rc<Core>>> = RefCell::new(HashMap::new());
+  /// Windows disposed while a call into `tao` further up the stack still held them, waiting
+  /// for a later turn to be destroyed.
+  static UNDESTROYED: RefCell<Vec<Rc<tao::window::Window>>> = const { RefCell::new(Vec::new()) };
   static NEXT_WRAPPER: Cell<u64> = const { Cell::new(1) };
 }
 
@@ -396,12 +399,13 @@ impl Core {
         // A call into `tao` further up the stack still holds the window (a
         // listener disposed of it from inside that call): it is destroyed on
         // the next turn, once that call has returned.
+        // Kept in `UNDESTROYED` rather than in the job, so the end of the application
+        // destroys it too when the job never runs (the process ends first).
         Err(shared) => match Runtime::existing() {
-          Some(runtime) => runtime.defer(move || {
-            if let Ok(tao) = Rc::try_unwrap(shared) {
-              platform::destroy_now(tao);
-            }
-          }),
+          Some(runtime) => {
+            let _ = UNDESTROYED.try_with(|pending| pending.borrow_mut().push(shared));
+            runtime.defer(destroy_undestroyed);
+          }
           None => drop(shared),
         },
       }
@@ -1037,12 +1041,26 @@ pub fn with_mount_target<R>(handle: isize, f: impl FnOnce(&BorrowedWindow<'_>) -
   BorrowedWindow::with_handle_value(handle, |window| platform::is_on_this_thread(window).then(|| f(window))).flatten()
 }
 
-/// Destroys every window this thread made. Tests only: the runtime is dropped next.
-pub(crate) fn destroy_all_for_tests() {
+/// Destroys the windows whose destroy waited for a later turn. One still held up the stack is
+/// let go of, and `tao` destroys it when its loop next runs, as a dropped window always was.
+fn destroy_undestroyed() {
+  let pending: Vec<Rc<tao::window::Window>> = UNDESTROYED.try_with(|pending| std::mem::take(&mut *pending.borrow_mut())).unwrap_or_default();
+  for shared in pending {
+    if let Ok(tao) = Rc::try_unwrap(shared) {
+      platform::destroy_now(tao);
+    }
+  }
+}
+
+/// Destroys every window Sweetview knows on this thread, as each one's `dispose` does: the
+/// windows it made are destroyed, and an application's own window it wraps is let go of.
+/// Those disposed earlier whose destroy was still waiting for a later turn are destroyed too.
+pub(crate) fn destroy_all() {
   let cores: Vec<Rc<Core>> = WINDOWS.try_with(|w| w.borrow().values().cloned().collect()).unwrap_or_default();
   for core in cores {
     core.destroy();
   }
+  destroy_undestroyed();
 }
 
 #[cfg(all(test, windows))]

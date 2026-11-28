@@ -3,6 +3,7 @@
 // queued until signalReady() is called, then drained in FIFO order.
 
 import { validateUrlScheme, type AppIdentity } from "@n1h/sweetview-settings";
+import { releaseAtEnd } from "./lifetime";
 import { backend } from "./platform";
 
 export type RegisterUrlSchemeOptions = {
@@ -222,5 +223,14 @@ export async function singleInstance(options: SingleInstanceOptions): Promise<Si
   if (lock.isPrimary && url) {
     dispatchUrl(url);
   }
-  return lock;
+  // A primary's lock is released when the application ends (see `run()`), so the next launch is the primary.
+  const unregister = releaseAtEnd("lock", () => lock.dispose());
+  return {
+    isPrimary: lock.isPrimary,
+    handedOff: lock.handedOff,
+    dispose() {
+      unregister();
+      lock.dispose();
+    },
+  };
 }

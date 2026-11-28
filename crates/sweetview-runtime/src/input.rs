@@ -59,6 +59,20 @@ pub fn install_keyboard_hook(handler: impl Fn(&KeyEvent) -> bool + 'static) -> R
   })
 }
 
+/// Removes both hooks, whichever are installed: a system-wide hook must not
+/// outlive the loop that answers it. Errors are not reported; the OS removes
+/// a hook whose thread is gone in any case.
+pub(crate) fn release_all() {
+  let mouse = MOUSE.try_with(|slot| slot.try_borrow_mut().ok().and_then(|mut hook| hook.take())).ok().flatten();
+  if let Some(hook) = mouse {
+    let _ = hook.remove();
+  }
+  let keyboard = KEYBOARD.try_with(|slot| slot.try_borrow_mut().ok().and_then(|mut hook| hook.take())).ok().flatten();
+  if let Some(hook) = keyboard {
+    let _ = hook.remove();
+  }
+}
+
 /// Removes the keyboard hook. Safe to call from inside its own handler.
 pub fn remove_keyboard_hook() -> Result<i32> {
   threads::require_ui_thread()?;

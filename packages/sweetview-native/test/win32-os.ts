@@ -12,8 +12,10 @@
 // button over this process's own popup menu (`injectRightButton`), only when
 // that menu is under the cursor; and the shell reader (`trayFromShell`), which
 // opens the notification area's overflow flyout with a click when the icon
-// sits there, under the same guards. Listed in rust-rewrite/ffi-allowlist.txt
-// as a probe.
+// sits there, under the same guards. It also asks the shell whether it still
+// holds a notification icon (a modify that changes nothing), for the tests of
+// what an application leaves behind when it ends. Listed in
+// rust-rewrite/ffi-allowlist.txt as a probe.
 
 import { FFIType, JSCallback, dlopen, ptr, toArrayBuffer } from "bun:ffi";
 import { fileURLToPath } from "node:url";
@@ -90,6 +92,11 @@ export const kernel32 = dlopen("kernel32.dll", {
   GetCurrentThreadId: { args: [], returns: u32 },
 }).symbols;
 
+export const shell32 = dlopen("shell32.dll", {
+  // (DWORD message, NOTIFYICONDATAW*) -> BOOL
+  Shell_NotifyIconW: { args: [u32, FFIType.ptr], returns: i32 },
+}).symbols;
+
 export const dwmapi = dlopen("dwmapi.dll", {
   // (HWND, DWORD attribute, PVOID value, DWORD size) -> HRESULT; 20 is DWMWA_USE_IMMERSIVE_DARK_MODE
   DwmGetWindowAttribute: { args: [u64, u32, FFIType.ptr, u32], returns: i32 },
@@ -128,15 +135,27 @@ export function guiObjects(): { gdi: number; user: number } {
   return { gdi: user32.GetGuiResources(process, 0), user: user32.GetGuiResources(process, 1) };
 }
 
+/** `HWND_MESSAGE`, the parent FindWindowExW searches message-only windows under. */
+const HWND_MESSAGE = BigInt.asUintN(64, -3n);
+
 /** The windows of class `className` (and title `title`, when given) that belong to this process. */
 export function ownWindows(className: string, title?: string): bigint[] {
+  return windowsOf(0n, className, title);
+}
+
+/** The message-only windows of class `className` that belong to this process. */
+export function ownMessageWindows(className: string): bigint[] {
+  return windowsOf(HWND_MESSAGE, className);
+}
+
+function windowsOf(parent: bigint, className: string, title?: string): bigint[] {
   const cls = wide(className);
   const name = title === undefined ? null : wide(title);
   const pid = new Uint32Array(1);
   const found: bigint[] = [];
   let after = 0n;
   for (let i = 0; i < 10_000; i++) {
-    after = user32.FindWindowExW(0n, after, cls, name);
+    after = user32.FindWindowExW(parent, after, cls, name);
     if (after === 0n) break;
     user32.GetWindowThreadProcessId(after, pid);
     if (pid[0] === process.pid) found.push(after);
@@ -540,6 +559,38 @@ export async function trayFromShell(tooltip: string): Promise<ShellIcon> {
     return { skip: `the shell reader printed no answer (exit ${child.exitCode}): ${out.slice(0, 200)} ${err}` };
   }
 }
+
+// ---- notification icons, by the shell's own record ---------------------------------------
+
+/** `sizeof(NOTIFYICONDATAW)` on 64-bit Windows. */
+const NOTIFYICONDATAW_SIZE = 976;
+const NIM_MODIFY = 1;
+const NIM_DELETE = 2;
+const NIF_STATE = 0x08;
+
+function notifyIconData(hwnd: bigint, uid: number, flags: number): Uint8Array {
+  const data = new Uint8Array(NOTIFYICONDATAW_SIZE);
+  const view = new DataView(data.buffer);
+  view.setUint32(0, NOTIFYICONDATAW_SIZE, true); // cbSize
+  view.setBigUint64(8, hwnd, true); // hWnd
+  view.setUint32(16, uid, true); // uID
+  view.setUint32(20, flags, true); // uFlags
+  return data; // dwState and dwStateMask (296, 300) stay 0: a modify of nothing
+}
+
+/**
+ * Whether the shell still holds a notification icon added under the window `hwnd` with id `uid`:
+ * a modify that changes nothing (state, with an empty mask), which the shell accepts only for an
+ * icon it holds. The window need not exist any more: an icon whose process ended without deleting
+ * it stays in the shell's record (and on the screen) until the shell next posts to its window.
+ * It reads nothing a user sees and presses nothing.
+ */
+export const shellHoldsIcon = (hwnd: bigint, uid: number): boolean =>
+  shell32.Shell_NotifyIconW(NIM_MODIFY, ptr(notifyIconData(hwnd, uid, NIF_STATE))) !== 0;
+
+/** Deletes the shell's notification icon `(hwnd, uid)`, for a test that found one left behind. */
+export const deleteShellIcon = (hwnd: bigint, uid: number): boolean =>
+  shell32.Shell_NotifyIconW(NIM_DELETE, ptr(notifyIconData(hwnd, uid, 0))) !== 0;
 
 // ---- dialogs ------------------------------------------------------------------------------
 

@@ -5,6 +5,7 @@
 // (it is blocked while webview.run() is on the stack).
 
 import type { Icon } from "./icon";
+import { releaseAtEnd } from "./lifetime";
 import type { MenuSource } from "./menu";
 import { backend } from "./platform";
 
@@ -42,11 +43,14 @@ const impl = backend<Backend>(
   () => require("./darwin/tray"),
 );
 
+/** A tray icon. Removed when the application ends (see `run()`), or before that by `dispose()`. */
 export class Tray {
   readonly #inner: TrayBackend;
+  readonly #unregister: () => void;
 
   constructor(options: TrayOptions) {
     this.#inner = impl().createTray(options);
+    this.#unregister = releaseAtEnd("tray", () => this.dispose());
   }
 
   setTooltip(text: string): void {
@@ -61,8 +65,9 @@ export class Tray {
     this.#inner.setMenu(menu);
   }
 
-  /** Safe to call twice. */
+  /** Removes the icon now, before the application ends. Safe to call twice, and after the end. */
   dispose(): void {
+    this.#unregister();
     this.#inner.dispose();
   }
 }

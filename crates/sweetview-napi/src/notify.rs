@@ -56,6 +56,14 @@ impl Notifier {
     self.inner.take();
   }
 
+  /// Lets go of the notifier as `dispose` does but leaves the toasts it showed for the user:
+  /// what the end of the application does. Safe to call twice, and after `dispose`.
+  pub fn release(&mut self) {
+    if let Some(notifier) = self.inner.take() {
+      notifier.release();
+    }
+  }
+
   // ---- test hooks ---------------------------------------------------------------
 
   /// Test hook: `"auto"`, `"balloonOnly"` (as if WinRT were unavailable),
