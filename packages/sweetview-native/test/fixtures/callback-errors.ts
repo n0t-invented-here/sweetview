@@ -24,7 +24,7 @@ import { deferNative, openNativeDrain, runNativeLoop, quitNativeLoop, wakeNative
 import { emitWindowNewTab, emitWindowTabClose, emitWindowTabSelect, onWindowDispose, Window } from "../../src/window";
 import { createNotifier, debugNativeNotifier } from "../../src/win32/notifier";
 import { currentTray } from "../../src/win32/tray";
-import { TRAY, VK, WM_CLOSE, doubleClickTime, handOffToInstance, isWindow, openPopupMenu, postTrayMouse, pressKeys, sendDrop, user32 } from "../win32-os";
+import { TRAY, VK, WM_CLOSE, doubleClickTime, endMenu, handOffToInstance, isWindow, openPopupMenu, postTrayMouse, pressKeys, sendDrop, user32 } from "../win32-os";
 import { native, report, finish, watchdog } from "./kit";
 import { windowChromeEvents } from "../../../sweetview/src/window-chrome";
 
@@ -252,17 +252,27 @@ let itemChosen = false;
 const menuTray = new Tray({ tooltip: `callback-errors menu ${process.pid}`, menu: () => [{ label: "Boom", click: () => ((itemChosen = true), boom("menu item")()) }] });
 const menuTrayWindow = currentTray()!.windowHandle();
 for (let attempt = 1; attempt <= 3 && !itemChosen; attempt++) {
+  // A menu the keys did not close is ended by a native timeout, which its own modal loop
+  // dispatches: neither this process's watchdog nor its pump can run while the menu is open, and a
+  // popup left on the shared desktop would meet the next test's menu (review 3, item 6).
+  let closer: number | undefined;
   const watcher = native.scheduleInterval(10, () => {
     const menu = openPopupMenu();
     if (menu === 0n) return;
     native.cancelTimeout(watcher);
+    closer = native.scheduleTimeout(1500, () => {
+      closer = undefined;
+      if (openPopupMenu() !== 0n) endMenu();
+    });
     pressKeys(menu, VK.DOWN, VK.RETURN);
   });
   postTrayMouse(menuTrayWindow, TRAY.RBUTTONDOWN, TRAY.RBUTTONUP);
   await pumpUntil(() => itemChosen, 3000);
   native.cancelTimeout(watcher);
+  if (closer !== undefined) native.cancelTimeout(closer);
   await pumpUntil(() => openPopupMenu() === 0n, 1000);
 }
+steps.noMenuLeftOpen = openPopupMenu() === 0n;
 menuTray.dispose();
 
 // A notification click, through the notifier's own test hooks, under a throwaway app id.

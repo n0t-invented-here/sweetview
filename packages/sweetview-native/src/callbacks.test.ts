@@ -1243,7 +1243,9 @@ describe.if(onWindows)("W1.3 the binding's backstop, straight through the bindin
 // whose stderr carries the binding's own lines. No input is injected.
 describe.if(onWindows)("onCallbackError", () => {
   test("with a listener, every kind arrives once with its kind and error, nothing is printed, and each fallback applies", async () => {
-    const { r, stderr, exitCode } = await runFixture("callback-errors.ts", ["listener"]);
+    // A deadline of the parent's own, which ends this child only: a fixture stuck where its own
+    // watchdog cannot run (inside a modal menu loop) is not left on the shared desktop (review 3, item 6).
+    const { r, stderr, exitCode } = await runFixture("callback-errors.ts", ["listener"], {}, 100_000);
     expect({ exitCode, timedOut: r.timedOut }).toEqual({ exitCode: 0, timedOut: undefined });
     const arrived = (r.arrivals as { kind: string; name?: string; message: string; isError: boolean }[]).map((a) => `${a.kind}${a.name ? ` (${a.name})` : ""}: ${a.message}${a.isError ? "" : " (not an Error)"}`);
     expect([...arrived].sort()).toEqual(
@@ -1277,6 +1279,7 @@ describe.if(onWindows)("onCallbackError", () => {
       intervalKeptItsSchedule: true,
       closeRequestStillTaken: true,
       throwingMenuOpensNoMenu: true,
+      noMenuLeftOpen: true,
       handedOff: 1,
     });
     expect(r.throwingListener).toEqual({
