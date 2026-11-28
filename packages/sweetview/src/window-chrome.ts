@@ -65,15 +65,20 @@ export function windowChromeMethods(
 ): WindowChromeMethodTable {
   const chrome = options.chrome ?? "page";
   const onClose = options.onClose ?? (() => window.hide());
-  return {
+  const table = {
     "window.info": () => ({ chrome, maximized: window.isMaximized() }),
     "window.drag": () => window.startDrag(),
-    "window.resize": (edge) => window.startResize(edge),
+    "window.resize": (edge: ResizeEdge) => window.startResize(edge),
     "window.minimize": () => window.minimize(),
     "window.maximize": () => window.toggleMaximize(),
-    "window.systemMenu": () => window.showSystemMenu?.(),
     "window.close": onClose,
   };
+  // macOS keeps the tag's table until its goal (rust-rewrite/HANDOFF-macos.md, section 8): no
+  // window.systemMenu there, which would replace an application's own method of that name with one
+  // that does nothing. This module loads in pages too, so it asks the platform itself rather than
+  // the native package's macosKeepsTagPath().
+  if (typeof process !== "undefined" && process.platform === "darwin") return table as WindowChromeMethodTable;
+  return { ...table, "window.systemMenu": () => window.showSystemMenu?.() };
 }
 
 /**

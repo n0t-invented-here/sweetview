@@ -26,6 +26,9 @@ describe("on macOS, until the macOS goal", () => {
     expect(r.demoWindowSize).toEqual({ bounds: { x: 410, y: 140, width: 1100, height: 800 } });
     // Review round 2, finding 6: no check of the Windows goal's options runs on macOS.
     expect(r.windowValidation).toEqual([]);
+    // Round 3, measure C: the window chrome's table is the tag's (no window.systemMenu, which would
+    // replace an application's own method of that name with one that does nothing).
+    expect(r.chromeMethods).toEqual(["window.close", "window.drag", "window.info", "window.maximize", "window.minimize", "window.resize"]);
   });
 
   test("nothing is registered for release at exit, and no exit listener is added", async () => {

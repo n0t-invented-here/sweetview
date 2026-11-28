@@ -112,6 +112,10 @@ if (native && internal) {
     errorOf(() => new native.Window({ backgroundColor: "red" })),
   ];
   result.windowValidation = windowErrors.filter((e) => e !== null && /contentSize|background color/.test(e));
+  // The window chrome's method table, as an application spreads it into uiMethods: the tag's on macOS.
+  const { windowChromeMethods } = await import("../../../sweetview/src/window-chrome");
+  const stub = { hide() {}, isMaximized: () => false, startDrag() {}, startResize() {}, minimize() {}, toggleMaximize() {} };
+  result.chromeMethods = Object.keys(windowChromeMethods(stub)).sort();
   // The demos' windows: the outer frame each passed at the tag.
   const { demoWindowSize } = await import("../../../../demos/window-size");
   result.demoWindowSize = demoWindowSize({ width: 1100, height: 800 }, () => ({ x: 410, y: 140, width: 1100, height: 800 }));

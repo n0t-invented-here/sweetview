@@ -641,6 +641,16 @@ describe.if(onWindows)("Window#showSystemMenu", () => {
         win.dispose();
       }
     }
+    // Round 3, measure B: liveness is checked after every step that can run application code. Maximize
+    // on a minimised frameless window un-minimises it first, which runs its resize listeners; one
+    // that disposes the window there leaves nothing for the toggle to do.
+    const undone = new Window({ title: unique("menu disposed on restore"), frame: false, noActivate: true, bounds: at });
+    undone.show();
+    undone.minimize();
+    undone.onResize(() => undone.dispose());
+    expect(() => chooseAfter(undone, () => {}, 4)).not.toThrow();
+    await pumpFor(200);
+    expect(undone.isMaximized()).toBe(false);
     // M3: disposed while the menu is open, then a command: nothing more happens, nothing throws.
     const gone = new Window({ title: unique("menu disposed"), frame: false, noActivate: true, bounds: at });
     gone.show();

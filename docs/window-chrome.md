@@ -139,7 +139,7 @@ import type { WindowChromeEvents, WindowChromeInfo, WindowChromeKind, WindowChro
 | `window.resize` | `ResizeEdge` | `void` | Calls `window.startResize(edge)`. Both Windows and macOS drag the requested edge or corner with the cursor while the left mouse button is held. |
 | `window.minimize` | `void` | `void` | Calls `window.minimize()`. |
 | `window.maximize` | `void` | `void` | Calls `window.toggleMaximize()`: maximised, or back to the previous bounds when already maximised. |
-| `window.systemMenu` | `void` | `void` | Calls `window.showSystemMenu()`: on Windows the window's system menu (Restore, Move, Size, Minimize, Maximize, Close) at the cursor, its choice carried out; on macOS nothing. A window object without `showSystemMenu` (a test double) does nothing. |
+| `window.systemMenu` | `void` | `void` | Calls `window.showSystemMenu()`: on Windows the window's system menu (Restore, Move, Size, Minimize, Maximize, Close) at the cursor, its choice carried out. A window object without `showSystemMenu` (a test double) does nothing. On macOS, until the macOS goal of the Rust rewrite, the table has no `window.systemMenu`: it is the table it was before 1.0, so an application's own method of that name stays its own. |
 | `window.close` | `void` | `void` | Calls the `onClose` option. Without one, it calls `window.hide()`: the window disappears and the app keeps running. |
 
 `WindowChromeInfo` is `{ chrome: WindowChromeKind; maximized: boolean }`:
