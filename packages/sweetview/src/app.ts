@@ -88,6 +88,8 @@ export type TabOptions<M extends MethodMap = MethodMap> = WebViewOptions<M> & {
 export type TabAttachHooks = {
   /** The tab's current logical host: file-drop demand comes from it and drops over the webview are delivered to it. */
   fileDropHost(): Window;
+  /** What `webview.window` names, read each time: the window the tab is in now. Without it, the window the webview was attached to. */
+  window?(): Window;
   /** Replaces `window.show()` on the borrowed child window for `showOnReady` and the ready watchdog. */
   revealWindow?(): void;
   /**
@@ -238,7 +240,7 @@ export function unrefWorker(worker: Worker | undefined): void {
 
 export class WebView<M extends MethodMap = MethodMap, E extends EventMap = EventMap> {
   readonly raw: RawWebview;
-  readonly window: Window;
+  readonly #window: () => Window;
   readonly #emit: (name: string, payload: unknown) => void;
   readonly #notify: (method: string, params: unknown) => void;
   readonly #onEvent: (fn: (event: AnyEvent<E>) => void) => () => void;
@@ -248,7 +250,7 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
 
   private constructor(parts: {
     raw: RawWebview;
-    window: Window;
+    window: () => Window;
     emit: (name: string, payload: unknown) => void;
     notify: (method: string, params: unknown) => void;
     onEvent: (fn: (event: AnyEvent<E>) => void) => () => void;
@@ -257,13 +259,18 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
     dispose: () => void;
   }) {
     this.raw = parts.raw;
-    this.window = parts.window;
+    this.#window = parts.window;
     this.#emit = parts.emit;
     this.#notify = parts.notify;
     this.#onEvent = parts.onEvent;
     this.#run = parts.run;
     this.#quit = parts.quit;
     this.#dispose = parts.dispose;
+  }
+
+  /** The window the webview is in; for a tab on Windows, the tabbed window the tab is in now (`tab.window`). */
+  get window(): Window {
+    return this.#window();
   }
 
   /** Mounts a webview inside an existing Layer 1 Window. */
@@ -836,7 +843,7 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
 
       const webview = new WebView<M, E>({
         raw,
-        window,
+        window: tabHooks?.window ?? (() => window),
         emit,
         notify(method, params) {
           if (worker && workerFailure !== undefined) console.error(`sweetview: ${method}: ${workerFailure}`);

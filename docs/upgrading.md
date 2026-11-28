@@ -1315,7 +1315,7 @@ engine of the webview moves, shows, hides and re-parents it.
 
 | Old | Write now | Change |
 |---|---|---|
-| `webview.window` | `import type { Tab } from "@n1h/sweetview"`; `Tab#window` | `tab.webview.window` was a wrapper of the tab's own pane window; no pane exists now, so it is a wrapper of the frame the tab opened in, and `tab.window` is the logical window the tab belongs to |
+| `webview.window` | `import type { Tab } from "@n1h/sweetview"`; `Tab#window` | `tab.webview.window` was a wrapper of the tab's own pane window; no pane exists now, so it is `tab.window`, the logical window the tab is in, which changes on tear-off and merge |
 
 ### `@n1h/sweetview-native/win32/window`
 

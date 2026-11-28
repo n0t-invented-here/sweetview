@@ -641,7 +641,7 @@ describe.if(onWindows)("WebView & createApp (win32)", () => {
     ]);
   }, 60_000);
 
-  test("a tab moved into a window with no backgroundColor keeps the background its application set, merged or torn off", async () => {
+  test("a tab moved into a window with no backgroundColor keeps the background its application set, merged or torn off, and its webview's window is the window it is in", async () => {
     // Review round 2, finding 7. Class: every move of a tab (a merge into another window, a tear-off
     // into a new one) into a window with no backgroundColor, from a window with none, of a tab whose
     // application set its webview's background: the move carries the live webview with it.
@@ -686,9 +686,10 @@ describe.if(onWindows)("WebView & createApp (win32)", () => {
       expect(painted(other, own)).toEqual(own);
       app.mergeAllWindows();
       tab.select();
-      expect(tab.window).toBe(app.window);
+      for (const named of [tab.window, tab.webview.window]) expect(named).toBe(app.window);
       expect(painted(app.window, own)).toEqual(own);
       tornOff = await tab.moveToNewWindow();
+      for (const named of [tab.window, tab.webview.window]) expect(named).toBe(tornOff);
       tornOff.setTopmost(true);
       expect(painted(tornOff, own)).toEqual(own);
     } finally {
