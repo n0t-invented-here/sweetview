@@ -42,11 +42,11 @@ this page: it imports each new form and checks that it is what the row says.
 
 ## What changed for every application
 
-- **The end of the application.** The teardown lines an older application
-  has after its loop (`notifier.dispose()`, `tray.dispose()`,
-  `app.dispose()`, `win.dispose()`, `lock.dispose()`, `process.exit(0)`)
-  are no longer needed, and are harmless
-  if left: `dispose()` is idempotent and nothing is released twice. When the
+- **The end of the application.** Delete the teardown lines an older
+  application has after its loop (`notifier.dispose()`, `tray.dispose()`,
+  `app.dispose()`, `win.dispose()`, `lock.dispose()`, `process.exit(0)`):
+  the application's last line is `app.run()` (or the end of its script
+  under `runEventLoop`). When the
   process ends (the script ends, `process.exit`, an uncaught exception),
   Sweetview releases what it made that is still alive, and a webview's worker
   no longer keeps the process alive, so it ends by itself with the exit code
@@ -76,19 +76,21 @@ this page: it imports each new form and checks that it is what the row says.
   `Window` with no `onClose` listener disposes the window. When that window is
   a single-window `createApp` app's, disposing it ends `run()`, even while
   another window of the application is visible; a tabbed app's loop
-  (`runEventLoop`) ends only when no other window is visible. In 0.x the window of
-  `createOverlayWindow` hid itself instead. A listener keeps the window open
-  and decides; to hide it as before, pass
-  `createApp({ …, onClose: () => app.window.hide() })` or
-  `new Window({ …, onClose: () => win.hide() })`, and quit from your own menu
-  (`app.quit()`, `quitEventLoop()`).
+  (`runEventLoop`) ends only when no other window is visible. A tray
+  application, which keeps running with its window closed, declares it:
+  `closeToTrayOnLastWindow(win, onHide)` hides the last visible window on a
+  close request and disposes the others, and the application quits from its
+  tray menu (`app.quit()`, `quitEventLoop()`). Any other `onClose` listener
+  keeps the window open and decides what a close request means.
 - **Showing and sizing a window.** `createApp` and `new Window` make the
-  window hidden: call `app.window.show()` once it is wired, or pass
-  `showOnReady: true`. (0.x's `createWebviewApp` without `window` showed the
-  library's window at once.) `bounds` is the outer frame in physical pixels,
-  320 x 240 centred on the primary work area by default; 0.x's `width` and
-  `height` were the page's client size in DIPs, 1100 x 800 by default. See
-  the [`width` row](#webviewappoptions-members-that-changed).
+  window hidden, and the page says when it is ready: pass
+  `showOnReady: true`, and call `signalReady()` from `@n1h/sweetview/page`
+  once the page has rendered; the window appears then (or when the ready
+  watchdog fires), with no blank frame first. A window with no page is shown
+  with `show()`. `contentSize: { width, height }` is the page's size in
+  DIPs, as 0.x's `width` and `height` were, the window centred on the primary
+  work area; `bounds` is the outer frame in physical pixels. See the
+  [`width` row](#webviewappoptions-members-that-changed).
 - **Environment variables.** `WEBVIEW_PATH`, which named a custom build of
   the C++ webview library, has no effect on Windows. `SWEETVIEW_NATIVE_PATH`
   names a custom build of the Rust binding (a `.node` file); it is read once,
@@ -175,27 +177,24 @@ this page: it imports each new form and checks that it is what the row says.
    (`frame`, `transparent`, `topmost`, `icon`, …) go in the same object. What
    it returns is an `App`: `call` is `notify`, `windowHandle` is
    `app.window.handle`, `webview.raw` is the webview class.
-3. Sizes: `width` and `height` were the page's client size in DIPs; `bounds`
-   is the window's outer frame in physical pixels. Drop them when the window
-   already has its bounds (an overlay made with `createOverlayWindow`'s
-   `bounds`). To keep a page of `width` x `height` DIPs in a framed window,
-   set it after `createApp`:
-   `app.webview.raw.size = { width, height, hint: SizeHint.NONE }`
-   (`SizeHint.FIXED` for a window that is not resizable).
-4. Showing: the window is created hidden. Call `app.window.show()` once it
-   is wired, or pass `showOnReady: true`.
+3. Sizes: `width` and `height` were the page's client size in DIPs; that is
+   `contentSize: { width, height }` now, the window centred on the primary
+   work area. `bounds` is the window's outer frame in physical pixels, for a
+   window placed at a rectangle (an overlay made with
+   `createOverlayWindow`'s `bounds`).
+4. Showing: the window is created hidden. Pass `showOnReady: true` and call
+   `signalReady()` from `@n1h/sweetview/page` once the page has rendered.
 5. Closing: a close request on a window with no `onClose` listener disposes
-   it and ends `run()`. A window that hid on a close request, as
-   `createOverlayWindow`'s did, passes
-   `onClose: () => app.window.hide()` (or `onClose: () => win.hide()` on
-   `new Window`).
+   it and ends `run()`. A tray application declares close-to-tray with
+   `closeToTrayOnLastWindow(app.window, onHide)`.
 6. Replace `nativeWindow(handle)` with `Window.fromHandle(handle)`, or use
    `app.window`; `onCloseRequest` is `onClose`.
 7. An overlay: replace `makeOverlay` and `createOverlayWindow` with window
    options on `createApp` (or on `new Window(...)` and then
-   `WebView.attach(win, options)`). `topmost`, `hideFromTaskbar` and
-   `noActivate` default to `false` now, so an overlay names them:
-   `createApp({ frame: false, transparent: true, topmost: true, hideFromTaskbar: true, noActivate: true, onClose: () => app.window.hide(), … })`.
+   `WebView.attach(win, options)`). An overlay in 1.0 is a window that says
+   what it is: frameless, transparent, above other windows, off the taskbar,
+   and not taking focus when shown:
+   `createApp({ frame: false, transparent: true, topmost: true, hideFromTaskbar: true, noActivate: true, … })`.
    The screen questions the overlay answered (`cursor()`, `screen()`,
    `workArea()`, …) are on `Screen`.
 8. Notifications: pass the application's identity, or its toasts show as
@@ -261,7 +260,8 @@ this page: it imports each new form and checks that it is what the row says.
 4. The input-hook and permission enums are values now; code that inlined
    their numbers keeps working.
 5. If you set `WEBVIEW_PATH`, set `SWEETVIEW_NATIVE_PATH` instead.
-6. `unload()` destroys every live webview; there is no library to close.
+6. Delete the `unload()` call: the end of the application destroys every
+   live webview itself, and there is no library to close.
 
 ## Part A: published 0.x packages
 
@@ -294,7 +294,7 @@ cover old types and classes whose members have new names.
 | `windowChromeMethods` | `import { windowChromeMethods } from "@n1h/sweetview"`; `windowChromeMethods(window, options)` | takes the `Window`; the `close` option is `onClose` |
 | `ActivationPolicy` (0.2.x only) | `import type { ActivationPolicy } from "@n1h/sweetview"` | unchanged |
 | `EventLoopOptions` (0.2.x only) | `import type { EventLoopOptions } from "@n1h/sweetview"` | unchanged |
-| `pumpEvents` (0.2.x only) | `import { pumpEvents } from "@n1h/sweetview"`; `pumpEvents()` | unchanged |
+| `pumpEvents` (0.2.x only) | `import { pumpEvents } from "@n1h/sweetview"`; `pumpEvents()` | unchanged for a loop of the application's own; called from inside a running loop (a handler under `app.run()` or `runEventLoop`) it does nothing, so a long handler no longer keeps its windows painting by pumping: run the work off the UI thread |
 | `quitEventLoop` (0.2.x only) | `import { quitEventLoop } from "@n1h/sweetview"`; `quitEventLoop()` | unchanged |
 | `runEventLoop` (0.2.x only) | `import { runEventLoop } from "@n1h/sweetview"`; `runEventLoop(options)` | unchanged |
 | `setActivationPolicy` (0.2.x only) | `import { setActivationPolicy } from "@n1h/sweetview"`; `setActivationPolicy(policy)` | unchanged |
@@ -417,7 +417,7 @@ cover old types and classes whose members have new names.
 | `NotificationOptions` | `import type { NotificationOptions } from "@n1h/sweetview/native"` | the same fields; the default `id` is `sweetview-<n>` (it was `sweetnative-<n>`) |
 | `Notifier` | `import { Notifier } from "@n1h/sweetview/native"`; `new Notifier(…)` | a class now: `new Notifier(…)`; `createNotifier(options)` still returns one; Windows: a toast under the notifier's `identity` or `appId`, Sweetview's own without them (see `createNotifier`) |
 | `NotifierOptions` | `import type { NotifierOptions } from "@n1h/sweetview/native"` | new `identity` and `appId`, the Windows toast identity: pass `identity` for toasts under the application's own name; 0.1.x: `onClick` is called with `{ id, data }` of the clicked notification |
-| `Overlay` | `import { Window } from "@n1h/sweetview/native"`; `new Window(options)` | a `Window`; members in the table below; a close request disposes it unless an `onClose` listener keeps it (`onClose: () => win.hide()` is what the overlay window did) |
+| `Overlay` | `import { Window } from "@n1h/sweetview/native"`; `new Window(options)` | a `Window`; members in the table below; a close request disposes it unless an `onClose` listener keeps it; a tray application declares close-to-tray with `closeToTrayOnLastWindow(win, onHide)` |
 | `OverlayOptions` | `import type { WindowOptions } from "@n1h/sweetview/native"`; `WindowOptions#topmost`; `WindowOptions#hideFromTaskbar`; `WindowOptions#noActivate` | the same option names; `topmost`, `hideFromTaskbar` and `noActivate` default to `false` now, so name them |
 | `OverlayWindowOptions` | `import type { WindowOptions } from "@n1h/sweetview/native"`; `WindowOptions#frame`; `WindowOptions#appearance` | the same option names but `dark` (use `appearance`); members in the table below; a `frame: true` window's close button disposes it now, where it hid it: pass `onClose: () => win.hide()` |
 | `Point` | `import type { Point } from "@n1h/sweetview/native"` | unchanged |
@@ -430,7 +430,7 @@ cover old types and classes whose members have new names.
 | `convexHull` | `import { convexHull } from "@n1h/sweetview/native"`; `convexHull(points)` | unchanged |
 | `createHitRelay` | `import { createHitRelay } from "@n1h/sweetview/native"`; `createHitRelay(window, probe)` | takes the `Window` (anything with `setHitRegions`) |
 | `createNotifier` | `import { createNotifier } from "@n1h/sweetview/native"`; `createNotifier(options)` | Windows: it needs no tray (it threw without one) and shows a WinRT toast, where it showed the balloon of the tray's icon, which Windows shows under the running executable's name; the toast is under `identity` (or `appId`), and with neither under Sweetview's own, shown as "Sweetview": pass `createNotifier({ identity: defineAppIdentity({ appId: "com.example.my-app", appName: "My App" }), onClick })`; each notifier gets the clicks of its own notifications |
-| `createOverlayWindow` | `import { Window } from "@n1h/sweetview/native"`; `new Window(options)` | pass `frame: false, topmost: true, hideFromTaskbar: true, noActivate: true` (their old defaults), and `onClose: () => win.hide()`: its window hid on a close request, and a `Window` with no `onClose` listener is disposed; host the page with `WebView.attach(win, options)` |
+| `createOverlayWindow` | `import { Window } from "@n1h/sweetview/native"`; `new Window(options)` | an overlay names what it is: `frame: false, topmost: true, hideFromTaskbar: true, noActivate: true`; a close request disposes it, and a tray application declares close-to-tray with `closeToTrayOnLastWindow(win, onHide)`; host the page with `WebView.attach(win, options)` |
 | `createTray` | `import { createTray } from "@n1h/sweetview/native"`; `createTray(options)` | unchanged |
 | `decodePng` | `import { decodePng } from "@n1h/sweetview/native"`; `decodePng(bytes)` | unchanged |
 | `dotIcns` | `import { dotIcns } from "@n1h/sweetview/native"`; `dotIcns(opts)` | unchanged |
@@ -446,20 +446,20 @@ cover old types and classes whose members have new names.
 | `icoFromPng` | `import { icoFromPng } from "@n1h/sweetview/native"`; `icoFromPng(png, sizes)` | unchanged |
 | `icoFromRgba` | `import { icoFromRgba } from "@n1h/sweetview/native"`; `icoFromRgba(size, rgba, sizes)` | unchanged |
 | `installAppMenu` | `import { setAppMenu } from "@n1h/sweetview/native"`; `setAppMenu(options)` | renamed |
-| `makeOverlay` | `import { createApp } from "@n1h/sweetview"`; `createApp(options)` | the overlay is made with its page: `createApp({ frame: false, transparent: true, topmost: true, hideFromTaskbar: true, noActivate: true, … })`; a close request (Alt+F4) disposes it and ends `run()`, as the webview's own window it restyled did; to hide it instead, as an overlay made with `createOverlayWindow` did, add `onClose: () => app.window.hide()` |
+| `makeOverlay` | `import { createApp } from "@n1h/sweetview"`; `createApp(options)` | the overlay is made with its page: `createApp({ frame: false, transparent: true, topmost: true, hideFromTaskbar: true, noActivate: true, … })`; a close request (Alt+F4) disposes it and ends `run()`, and a tray application declares close-to-tray with `closeToTrayOnLastWindow(app.window, onHide)` |
 | `nativeWindow` | `import { Window } from "@n1h/sweetview/native"`; `Window.fromHandle(handle)` | wraps a window by handle; for a window of `createApp` use `app.window` |
 | `packRegions` | `import { packRegions } from "@n1h/sweetview/native"`; `packRegions(polygons)` | unchanged |
 | `pickFolder` | `import { pickFolder } from "@n1h/sweetview/native"`; `pickFolder(owner, title)` | unchanged; `owner` may be a `Window` or a handle |
 | `renderDot` | `import { renderDot } from "@n1h/sweetview/native"`; `renderDot(size, opts)` | unchanged |
 | `resolveMenu` | `import { resolveMenu } from "@n1h/sweetview/native"`; `resolveMenu(…)` | unchanged |
-| `setAppIcon` | `import { setAppIcon } from "@n1h/sweetview/native"`; `setAppIcon(icon)` | unchanged |
+| `setAppIcon` | `import { setAppIcon } from "@n1h/sweetview/native"`; `setAppIcon(icon)` | does nothing on Windows, which has no run-time application icon: a window's icon is its `icon` option or `Window#setIcon(icon)`, and the executable's is set when it is built; on macOS it sets the Dock icon as before |
 | `trimTransparent` | `import { trimTransparent } from "@n1h/sweetview/native"`; `trimTransparent(image, margin, threshold)` | unchanged |
 | `unpackRegions` | `import { unpackRegions } from "@n1h/sweetview/native"`; `unpackRegions(flat)` | unchanged |
 | `ActivationPolicy` (0.2.x only) | `import type { ActivationPolicy } from "@n1h/sweetview/native"` | unchanged |
 | `Appearance` (0.2.x only) | `import type { Appearance } from "@n1h/sweetview/native"` | unchanged |
 | `EventLoopOptions` (0.2.x only) | `import type { EventLoopOptions } from "@n1h/sweetview/native"` | unchanged |
 | `NotificationClick` (0.2.x only) | `import type { NotificationClick } from "@n1h/sweetview/native"` | unchanged |
-| `pumpEvents` (0.2.x only) | `import { pumpEvents } from "@n1h/sweetview/native"`; `pumpEvents()` | unchanged |
+| `pumpEvents` (0.2.x only) | `import { pumpEvents } from "@n1h/sweetview/native"`; `pumpEvents()` | unchanged for a loop of the application's own; called from inside a running loop (a handler under `app.run()` or `runEventLoop`) it does nothing, so a long handler no longer keeps its windows painting by pumping: run the work off the UI thread |
 | `quitEventLoop` (0.2.x only) | `import { quitEventLoop } from "@n1h/sweetview/native"`; `quitEventLoop()` | unchanged |
 | `runEventLoop` (0.2.x only) | `import { runEventLoop } from "@n1h/sweetview/native"`; `runEventLoop(options)` | unchanged |
 | `setActivationPolicy` (0.2.x only) | `import { setActivationPolicy } from "@n1h/sweetview/native"`; `setActivationPolicy(policy)` | unchanged |
@@ -505,7 +505,7 @@ The same names come from `@n1h/sweetview/native` now. Part C has the details of 
 | `installMouseHook` | `import { installMouseHook } from "@n1h/sweetview/native"`; `installMouseHook(handler)` | unchanged |
 | `modifiersFrom` | `import { modifiersFrom } from "@n1h/sweetview/native"`; `modifiersFrom(bits)` | unchanged |
 | `permissions` | `import { permissions } from "@n1h/sweetview/native"` | unchanged |
-| `unload` | `import { unload } from "@n1h/sweetview/native"`; `unload()` | destroys every live webview; there is no library to unload |
+| `unload` | `import { unload } from "@n1h/sweetview/native"`; `unload()` | delete the call: the end of the application destroys every live webview itself, and there is no library to unload |
 
 ### Members
 
@@ -555,7 +555,8 @@ Every other option (`page`, `title`, `assets`, `index`, `worker`, `debug`, `uiMe
 A `Window` has the window members; the screen questions are `Screen`'s.
 The overlay window of `createOverlayWindow` hid itself on a close request
 (its frame's X, Alt+F4); a `Window` with no `onClose` listener is disposed
-instead, so pass `onClose: () => win.hide()` to keep the old behaviour.
+instead. An overlay that belongs to a tray application declares that with
+`closeToTrayOnLastWindow(win, onHide)`.
 
 | Old | Write now | Change |
 |---|---|---|
@@ -727,11 +728,11 @@ entries stay as they are until the macOS goal.
 | `indexHtml` | `import { indexHtml } from "@n1h/sweetview"`; `indexHtml({ title, js = "main.js", css = "main.css", head = "", body = '<div id="root"></div>' })` | unchanged |
 | `indexHtmlText` | `import { indexHtmlText } from "@n1h/sweetview"`; `indexHtmlText({ title, js = "main.js", css = "main.css", head = "", body = '<div id="root"></div>' })` | unchanged |
 | `onOpenUrl` | `import { onOpenUrl } from "@n1h/sweetview"`; `onOpenUrl(handler)` | unchanged |
-| `pumpEvents` | `import { pumpEvents } from "@n1h/sweetview"`; `pumpEvents()` | unchanged |
+| `pumpEvents` | `import { pumpEvents } from "@n1h/sweetview"`; `pumpEvents()` | unchanged for a loop of the application's own; called from inside a running loop (a handler under `app.run()` or `runEventLoop`) it does nothing, so a long handler no longer keeps its windows painting by pumping: run the work off the UI thread |
 | `quitEventLoop` | `import { quitEventLoop } from "@n1h/sweetview"`; `quitEventLoop()` | unchanged |
 | `registerUrlScheme` | `import { registerUrlScheme } from "@n1h/sweetview"`; `registerUrlScheme(scheme, options)` | unchanged |
 | `runEventLoop` | `import { runEventLoop } from "@n1h/sweetview"`; `runEventLoop(options)` | unchanged |
-| `setActivationPolicy` | `import { setActivationPolicy } from "@n1h/sweetview"`; `setActivationPolicy(policy)` | unchanged |
+| `setActivationPolicy` | `import { setActivationPolicy } from "@n1h/sweetview"`; `setActivationPolicy(policy)` | does nothing on Windows, which has no process-wide policy: taskbar and Alt+Tab presence is per window (`WindowOptions#hideFromTaskbar`); on macOS it sets the policy as before |
 | `signalReady` | `import { signalReady } from "@n1h/sweetview"`; `signalReady()` | unchanged |
 | `singleInstance` | `import { singleInstance } from "@n1h/sweetview"`; `singleInstance(options)` | unchanged |
 | `unregisterUrlScheme` | `import { unregisterUrlScheme } from "@n1h/sweetview"`; `unregisterUrlScheme(scheme)` | unchanged |
@@ -919,7 +920,7 @@ entries stay as they are until the macOS goal.
 | `openFileHandle` | `import { openFileHandle } from "@n1h/sweetview/native"`; `openFileHandle(path)` | unchanged |
 | `packRegions` | `import { packRegions } from "@n1h/sweetview/native"`; `packRegions(polygons)` | unchanged |
 | `pickFolder` | `import { pickFolder } from "@n1h/sweetview/native"`; `pickFolder(owner, title)` | unchanged |
-| `pumpEvents` | `import { pumpEvents } from "@n1h/sweetview/native"`; `pumpEvents()` | unchanged |
+| `pumpEvents` | `import { pumpEvents } from "@n1h/sweetview/native"`; `pumpEvents()` | unchanged for a loop of the application's own; called from inside a running loop (a handler under `app.run()` or `runEventLoop`) it does nothing, so a long handler no longer keeps its windows painting by pumping: run the work off the UI thread |
 | `quitEventLoop` | `import { quitEventLoop } from "@n1h/sweetview/native"`; `quitEventLoop()` | unchanged |
 | `readFileBytes` | `import { readFileBytes } from "@n1h/sweetview/native"`; `readFileBytes(path, options)` | unchanged |
 | `readFileChunk` | `import { readFileChunk } from "@n1h/sweetview/native"`; `readFileChunk(handleId, offset, length)` | unchanged |
@@ -928,9 +929,9 @@ entries stay as they are until the macOS goal.
 | `renderDot` | `import { renderDot } from "@n1h/sweetview/native"`; `renderDot(size, opts)` | unchanged |
 | `resolveMenu` | `import { resolveMenu } from "@n1h/sweetview/native"`; `resolveMenu(…)` | unchanged |
 | `runEventLoop` | `import { runEventLoop } from "@n1h/sweetview/native"`; `runEventLoop(options)` | unchanged |
-| `setActivationPolicy` | `import { setActivationPolicy } from "@n1h/sweetview/native"`; `setActivationPolicy(policy)` | unchanged |
-| `setAppIcon` | `import { setAppIcon } from "@n1h/sweetview/native"`; `setAppIcon(icon)` | unchanged |
-| `setAppMenu` | `import { setAppMenu } from "@n1h/sweetview/native"`; `setAppMenu(options)` | unchanged |
+| `setActivationPolicy` | `import { setActivationPolicy } from "@n1h/sweetview/native"`; `setActivationPolicy(policy)` | does nothing on Windows, which has no process-wide policy: taskbar and Alt+Tab presence is per window (`WindowOptions#hideFromTaskbar`); on macOS it sets the policy as before |
+| `setAppIcon` | `import { setAppIcon } from "@n1h/sweetview/native"`; `setAppIcon(icon)` | does nothing on Windows, which has no run-time application icon: a window's icon is its `icon` option or `Window#setIcon(icon)`, and the executable's is set when it is built; on macOS it sets the Dock icon as before |
+| `setAppMenu` | `import { setAppMenu } from "@n1h/sweetview/native"`; `setAppMenu(options)` | does nothing on Windows, which has no application menu bar: the tray menu (`TrayOptions#menu`) is the application's menu; on macOS it sets the application menu as before |
 | `signalReady` | `import { signalReady } from "@n1h/sweetview/native"`; `signalReady()` | unchanged |
 | `singleInstance` | `import { singleInstance } from "@n1h/sweetview/native"`; `singleInstance(options)` | unchanged |
 | `trimTransparent` | `import { trimTransparent } from "@n1h/sweetview/native"`; `trimTransparent(image, margin, threshold)` | unchanged |
@@ -1090,7 +1091,7 @@ entries stay as they are until the macOS goal.
 | `openFileHandle` | `import { openFileHandle } from "@n1h/sweetview-native"`; `openFileHandle(path)` | unchanged |
 | `packRegions` | `import { packRegions } from "@n1h/sweetview-native"`; `packRegions(polygons)` | unchanged |
 | `pickFolder` | `import { pickFolder } from "@n1h/sweetview-native"`; `pickFolder(owner, title)` | unchanged |
-| `pumpEvents` | `import { pumpEvents } from "@n1h/sweetview-native"`; `pumpEvents()` | unchanged |
+| `pumpEvents` | `import { pumpEvents } from "@n1h/sweetview-native"`; `pumpEvents()` | unchanged for a loop of the application's own; called from inside a running loop (a handler under `app.run()` or `runEventLoop`) it does nothing, so a long handler no longer keeps its windows painting by pumping: run the work off the UI thread |
 | `quitEventLoop` | `import { quitEventLoop } from "@n1h/sweetview-native"`; `quitEventLoop()` | unchanged |
 | `readFileBytes` | `import { readFileBytes } from "@n1h/sweetview-native"`; `readFileBytes(path, options)` | unchanged |
 | `readFileChunk` | `import { readFileChunk } from "@n1h/sweetview-native"`; `readFileChunk(handleId, offset, length)` | unchanged |
@@ -1099,9 +1100,9 @@ entries stay as they are until the macOS goal.
 | `renderDot` | `import { renderDot } from "@n1h/sweetview-native"`; `renderDot(size, opts)` | unchanged |
 | `resolveMenu` | `import { resolveMenu } from "@n1h/sweetview-native"`; `resolveMenu(…)` | unchanged |
 | `runEventLoop` | `import { runEventLoop } from "@n1h/sweetview-native"`; `runEventLoop(options)` | unchanged |
-| `setActivationPolicy` | `import { setActivationPolicy } from "@n1h/sweetview-native"`; `setActivationPolicy(policy)` | unchanged |
-| `setAppIcon` | `import { setAppIcon } from "@n1h/sweetview-native"`; `setAppIcon(icon)` | unchanged |
-| `setAppMenu` | `import { setAppMenu } from "@n1h/sweetview-native"`; `setAppMenu(options)` | unchanged |
+| `setActivationPolicy` | `import { setActivationPolicy } from "@n1h/sweetview-native"`; `setActivationPolicy(policy)` | does nothing on Windows, which has no process-wide policy: taskbar and Alt+Tab presence is per window (`WindowOptions#hideFromTaskbar`); on macOS it sets the policy as before |
+| `setAppIcon` | `import { setAppIcon } from "@n1h/sweetview-native"`; `setAppIcon(icon)` | does nothing on Windows, which has no run-time application icon: a window's icon is its `icon` option or `Window#setIcon(icon)`, and the executable's is set when it is built; on macOS it sets the Dock icon as before |
+| `setAppMenu` | `import { setAppMenu } from "@n1h/sweetview-native"`; `setAppMenu(options)` | does nothing on Windows, which has no application menu bar: the tray menu (`TrayOptions#menu`) is the application's menu; on macOS it sets the application menu as before |
 | `signalReady` | `import { signalReady } from "@n1h/sweetview-native"`; `signalReady()` | unchanged |
 | `singleInstance` | `import { singleInstance } from "@n1h/sweetview-native"`; `singleInstance(options)` | unchanged |
 | `trimTransparent` | `import { trimTransparent } from "@n1h/sweetview-native"`; `trimTransparent(image, margin, threshold)` | unchanged |
@@ -1175,7 +1176,7 @@ in it, so an import of either by file path follows these rows too.
 | `MONITORINFOF_PRIMARY` | `import { Screen } from "@n1h/sweetview-native"`; `Screen.all()` | each `ScreenInfo` has `primary` |
 | `MONITORINFO_SIZE` | `import { Screen } from "@n1h/sweetview-native"`; `Screen.all()` | every monitor as a `ScreenInfo` |
 | `MONITOR_DEFAULTTONEAREST` | `import { Screen } from "@n1h/sweetview-native"`; `Screen.at(point)` | the monitor at a point, or the nearest one |
-| `PM_REMOVE` | `import { pumpEvents } from "@n1h/sweetview-native"`; `pumpEvents()` | dispatches every waiting message |
+| `PM_REMOVE` | `import { runEventLoop } from "@n1h/sweetview-native"`; `runEventLoop(options)` | a loop of the application's own that peeked and dispatched messages is `app.run()`, or `runEventLoop()` to keep Bun's event loop on the UI thread |
 | `REG_SZ` | `import { registerUrlScheme } from "@n1h/sweetview-native"`; `registerUrlScheme(scheme, options)` | the registry writes are internal |
 | `RPC_E_CHANGED_MODE` | `import { Window } from "@n1h/sweetview-native"`; `new Window(options)` | the binding initialises COM on the UI thread when it loads |
 | `SMTO_ABORTIFHUNG` | `import { singleInstance } from "@n1h/sweetview-native"`; `singleInstance(options)` | the hand-off to the first instance is internal |
@@ -1640,7 +1641,7 @@ for an application that depends on `@n1h/sweetview`.
 | `installMouseHook` | `import { installMouseHook } from "@n1h/sweetview-native"`; `installMouseHook(handler)` | unchanged; installed and disposed of on the UI thread |
 | `modifiersFrom` | `import { modifiersFrom } from "@n1h/sweetview-native"`; `modifiersFrom(bits)` | unchanged |
 | `permissions` | `import { permissions } from "@n1h/sweetview-native"` | unchanged |
-| `unload` | `import { unload } from "@n1h/sweetview-native"`; `unload()` | destroys every live webview; there is no library to unload |
+| `unload` | `import { unload } from "@n1h/sweetview-native"`; `unload()` | delete the call: the end of the application destroys every live webview itself, and there is no library to unload |
 | `writeWebviewResponseChunk` | `import { writeWebviewResponseChunk } from "@n1h/sweetview-native"`; `writeWebviewResponseChunk(handle, id, chunk)` | `handle` is the opaque number of `Webview.unsafeHandle`, not a pointer; still callable from any thread |
 
 ### `Webview` members that changed
