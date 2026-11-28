@@ -241,10 +241,8 @@ impl Runtime {
     });
     drop(guard);
     let Ok(code) = ran else { return true };
-    // A pumped loop always has its own repaint request queued, which the OS
-    // serves before any timer; the timers are taken explicitly.
-    self.signals.dispatch_due_timers();
-    // The run also ends when the OS hands `tao` a `WM_QUIT`, with code 0.
+    // Timer ticks are posted messages (D38): `messages_waiting` sees them and `tao`'s loop
+    // dispatches them, so nothing is left to take here. The run also ends when the OS hands `tao` a `WM_QUIT`, with code 0.
     let quit_message = code != PUMP_DONE;
     let quit_pending = self.quit_pending.replace(false);
     !(quit_message || quit_pending)
@@ -866,6 +864,123 @@ mod tests {
       assert_eq!(log[1], "timeout");
       assert!(log.contains(&"drain") && log.contains(&"quit"), "{log:?}");
       assert!(ticks.get() >= 2, "the interval repeated: {}", ticks.get());
+    });
+  }
+
+  /// The worst and the count of the waits `measure_paint_behind_a_busy_interval` saw.
+  struct PaintWaits {
+    worst: Duration,
+    seen: usize,
+    asked: usize,
+    ticks: u32,
+  }
+
+  /// Runs a 10 ms interval whose job takes 15 ms for `run`, and every 40 ms asks `tao` for a paint
+  /// of its own (a user event, after which `tao` renews the paint request of its visible, layered
+  /// thread target, and sends `MainEventsCleared` once the OS serves it). Returns how long each ask
+  /// waited for that `MainEventsCleared`. `pumped` pumps every 2 ms; otherwise the blocking run.
+  fn measure_paint_behind_a_busy_interval(runtime: &Rc<Runtime>, pumped: bool, run: Duration) -> (PaintWaits, Duration) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+    let ticks = Rc::new(Cell::new(0u32));
+    let counted = ticks.clone();
+    // Ended after 120 ticks whatever happens, so a starved loop still ends and the test fails on its numbers.
+    let interval_id: Rc<Cell<Option<TimeoutId>>> = Rc::default();
+    let (own, inner) = (interval_id.clone(), runtime.clone());
+    let interval = runtime
+      .set_interval(10, move || {
+        counted.set(counted.get() + 1);
+        std::thread::sleep(Duration::from_millis(15));
+        if counted.get() >= 120 {
+          if let Some(id) = own.get() {
+            inner.clear_timeout(id);
+          }
+        }
+      })
+      .expect("interval");
+    interval_id.set(Some(interval));
+    let asked_at: Rc<Cell<Option<Instant>>> = Rc::default();
+    let waits: Rc<RefCell<Vec<Duration>>> = Rc::default();
+    let asks = Rc::new(Cell::new(0usize));
+    let (pending, seen) = (asked_at.clone(), waits.clone());
+    let listener = runtime.add_event_listener(Rc::new(move |event, _| {
+      if matches!(event, Event::MainEventsCleared) {
+        if let Some(at) = pending.take() {
+          seen.borrow_mut().push(at.elapsed());
+        }
+      }
+    }));
+    let (pending, proxy, count) = (asked_at.clone(), runtime.proxy.clone(), asks.clone());
+    runtime.set_drain(
+      61,
+      Some(Rc::new(move || {
+        if pending.get().is_none() {
+          pending.set(Some(Instant::now()));
+          count.set(count.get() + 1);
+          let _ = proxy.send_event(());
+        }
+      })),
+    );
+    let stop = Arc::new(AtomicBool::new(false));
+    let asker = {
+      let stop = stop.clone();
+      std::thread::spawn(move || {
+        while !stop.load(Ordering::SeqCst) {
+          std::thread::sleep(Duration::from_millis(40));
+          wake(61);
+        }
+      })
+    };
+    let started = Instant::now();
+    let mut worst_pump = Duration::ZERO;
+    if pumped {
+      while started.elapsed() < run {
+        let pump = Instant::now();
+        runtime.pump();
+        worst_pump = worst_pump.max(pump.elapsed());
+        std::thread::sleep(Duration::from_millis(2));
+      }
+    } else {
+      let quitter = runtime.clone();
+      runtime.set_timeout(run.as_millis() as u32, move || quitter.request_exit()).expect("timeout");
+      runtime.run_blocking().expect("blocking run");
+    }
+    stop.store(true, Ordering::SeqCst);
+    asker.join().expect("asker");
+    runtime.clear_timeout(interval);
+    runtime.set_drain(61, None);
+    runtime.remove_event_listener(listener);
+    let waits = waits.borrow();
+    let unanswered = asked_at.get().map(|at| at.elapsed());
+    let worst = waits.iter().copied().chain(unanswered).max().unwrap_or(Duration::ZERO);
+    (PaintWaits { worst, seen: waits.len(), asked: asks.get(), ticks: ticks.get() }, worst_pump)
+  }
+
+  /// D38 (the third review's H1): a 10 ms interval whose job takes 15 ms does not hold back
+  /// paint. With each tick posted again the moment it was taken, the next tick was always queued
+  /// when the job returned, posted messages come ahead of paint, and `tao`'s paint (and with it
+  /// `MainEventsCleared`, which ends a pump) never came out. Now a timer's next period starts
+  /// when its job returns, so paint has its turn in between, in both loop modes.
+  #[test]
+  fn a_busy_interval_leaves_paint_its_turn_in_both_loop_modes() {
+    const LIMIT: Duration = Duration::from_millis(100);
+    on_ui_thread(|runtime| {
+      let mut report = Vec::new();
+      for pumped in [true, false] {
+        let (paint, worst_pump) = measure_paint_behind_a_busy_interval(&runtime, pumped, Duration::from_millis(800));
+        let mode = if pumped { "pumped" } else { "blocking" };
+        eprintln!(
+          "{mode}: {} ticks; {} of {} paint asks answered, the longest wait {:?}; the longest pump {worst_pump:?}",
+          paint.ticks, paint.seen, paint.asked, paint.worst
+        );
+        report.push((mode, paint, worst_pump));
+      }
+      for (mode, paint, worst_pump) in &report {
+        assert!(paint.ticks >= 10, "{mode}: the interval ran ({} ticks)", paint.ticks);
+        assert!(paint.asked >= 5 && paint.seen + 1 >= paint.asked, "{mode}: {} of {} paint asks answered", paint.seen, paint.asked);
+        assert!(paint.worst <= LIMIT, "{mode}: a paint waited {:?} behind the interval", paint.worst);
+        assert!(*worst_pump <= LIMIT, "{mode}: a pump took {worst_pump:?}");
+      }
     });
   }
 
