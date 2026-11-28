@@ -32,9 +32,10 @@ application's own `bun:ffi` calls on the UI thread, its own modal dialogs and
 popup menus included, keep working inside Sweetview's event loop.
 
 A tray-only or menu-bar-only app uses the native module without a webview, a
-worker or a page. On macOS the module never loads the webview library
-(`@n1h/sweetview-webview-bun`) for these; the `RawWebview` class and the
-input hooks it exports for macOS do.
+worker or a page. On macOS the module does not need the webview library
+(`@n1h/sweetview-webview-bun`) for these: it loads the library when imported
+if it is installed, and only the `RawWebview` class, the input hooks and
+`permissions` throw without it, when used.
 
 ## Windows start-up initialization
 

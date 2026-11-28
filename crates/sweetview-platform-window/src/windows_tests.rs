@@ -310,6 +310,63 @@ fn a_parked_window_that_does_not_answer_keeps_its_icons_and_holds_up_nothing() {
   assert!(!parked(), "the icons went with their window");
 }
 
+/// Many parked windows that do not answer hold up a `WindowIcons::set` by no more than one sweep's
+/// budget in all, not by each window's limit in turn; the ones not asked in time keep their icons
+/// parked (the third review's H8).
+#[test]
+fn a_sweep_of_many_parked_windows_that_do_not_answer_stays_within_its_budget() {
+  use std::sync::mpsc;
+  use std::time::{Duration, Instant};
+  use windows::Win32::UI::WindowsAndMessaging::{DispatchMessageW, PeekMessageW, MSG, PM_REMOVE};
+  const WINDOWS: usize = 6;
+  let _serial = serial();
+  let ico = test_ico();
+  let (orders, order) = mpsc::channel::<&'static str>();
+  let (made, window_values) = mpsc::channel::<Vec<isize>>();
+  let other = std::thread::spawn(move || {
+    let windows: Vec<TestWindow> = (0..WINDOWS).map(|_| TestWindow::new()).collect();
+    made.send(windows.iter().map(|window| window.0 .0 as isize).collect()).expect("the test waits for the windows");
+    let pump = || {
+      let mut message = MSG::default();
+      // SAFETY: `message` is a MSG owned by this frame for the call to fill; this thread's queue.
+      while unsafe { PeekMessageW(&mut message, None, 0, 0, PM_REMOVE) }.as_bool() {
+        // SAFETY: a message the OS just took off this thread's queue.
+        unsafe { DispatchMessageW(&message) };
+      }
+    };
+    loop {
+      pump();
+      match order.try_recv() {
+        Ok("hang") => std::thread::sleep(Duration::from_millis(2500)),
+        Ok(_) => break,
+        Err(_) => std::thread::sleep(Duration::from_millis(1)),
+      }
+    }
+    drop(windows);
+  });
+  let values = window_values.recv().expect("the other thread's windows");
+  for value in &values {
+    let theirs = BorrowedWindow { hwnd: HWND(*value as *mut c_void), _window: PhantomData, _not_send: PhantomData };
+    drop(WindowIcons::set(&theirs, Some(&ico)).expect("icons"));
+  }
+  let parked = || PARKED.with(|list| list.borrow().iter().filter(|icons| values.contains(&icons.window)).count());
+  assert_eq!(parked(), WINDOWS, "every one of the other thread's windows shows its icons");
+
+  orders.send("hang").expect("the other thread is pumping");
+  std::thread::sleep(Duration::from_millis(50));
+  let mine = TestWindow::new();
+  let started = Instant::now();
+  drop(WindowIcons::set(&mine.foreign(), Some(&ico)).expect("icons of this thread's window"));
+  let took = started.elapsed();
+  assert!(took < Duration::from_millis(400), "setIcon waited {took:?} for {WINDOWS} windows that did not answer");
+  assert_eq!(parked(), WINDOWS, "windows that did not answer, or were not asked, keep their icons parked");
+
+  orders.send("end").expect("the other thread");
+  other.join().expect("the other thread");
+  drop(WindowIcons::set(&mine.foreign(), None).expect("stock icons"));
+  assert_eq!(parked(), 0, "the icons went with their windows");
+}
+
 #[test]
 fn a_bad_ico_is_an_error() {
   let _serial = serial();

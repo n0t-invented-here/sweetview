@@ -63,6 +63,9 @@ export type DefaultReport = string | ((error: unknown) => void) | null;
 
 const listeners = new Set<CallbackErrorHandler>();
 
+/** Whether an `onCallbackError` listener is set: macOS's input hooks report only then (D42). */
+export const hasCallbackErrorListener = (): boolean => listeners.size > 0;
+
 const asError = (error: unknown): Error => (error instanceof Error ? error : new Error(String(error), { cause: error }));
 
 function printDefault(kind: CallbackKind, error: unknown, fallback: DefaultReport): void {
