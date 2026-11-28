@@ -49,7 +49,7 @@ impl ComApartment {
     // the `CoUninitialize` in this value's `Drop`, on the same thread (the type is not `Send`).
     let result = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
     if result == RPC_E_CHANGED_MODE {
-      return Err(ComError("sweetview: this thread already initialised COM as multi-threaded; WebView2 needs an STA".into()));
+      return Err(ComError("sweetview: this thread already initialised COM as multi-threaded; the UI thread needs a single-threaded apartment".into()));
     }
     if result.is_err() {
       return Err(ComError(format!("sweetview: CoInitializeEx failed: HRESULT {:#010x}", result.0)));

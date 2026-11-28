@@ -38,6 +38,16 @@ function webview2NamesIn(file: string): string[] {
   return ["CoreWebView2", "WebView2Loader", "wry", "WebView2 client dll", "WebView2 environment"].filter((name) => bytes.includes(name));
 }
 
+/** Every occurrence of `WebView2`, in any case, as one-byte or two-byte (UTF-16) text, with what surrounds it. */
+function anyWebView2In(file: string): string[] {
+  const bytes = readFileSync(file);
+  const found: string[] = [];
+  for (const [text, step] of [[bytes.toString("latin1"), 1], [bytes.toString("utf16le"), 2]] as const) {
+    for (const m of text.matchAll(/.{0,24}webview2.{0,24}/gis)) found.push(`${step === 1 ? "bytes" : "utf-16"}: ${m[0].replace(/[^\x20-\x7e]/g, ".")}`);
+  }
+  return found;
+}
+
 /** The Sweetview bindings a process has loaded, by file name. */
 function loadedBindings(pid: number): string[] {
   const listed = Bun.spawnSync(["powershell", "-NoProfile", "-Command", `(Get-Process -Id ${pid}).Modules | ForEach-Object { $_.FileName }`], { stdout: "pipe" });
@@ -78,6 +88,8 @@ describe("the webview is not in the native package (D50)", () => {
 
   test.skipIf(!onWindows)("the binding the native package ships holds no CoreWebView2, WebView2Loader, wry or WebView2 loader line; the facade's holds the loader's lines", () => {
     expect({ native: webview2NamesIn(NATIVE_BINDING), webview: webview2NamesIn(WEBVIEW_BINDING) }).toEqual({ native: [], webview: ["WebView2 client dll", "WebView2 environment"] });
+    // Not only the chosen names: no `WebView2` at all, in any case (review round 1, Z3).
+    expect({ native: anyWebView2In(NATIVE_BINDING), webviewHasSome: anyWebView2In(WEBVIEW_BINDING).length > 0 }).toEqual({ native: [], webviewHasSome: true });
   });
 
   test.skipIf(!onWindows)("demos/menubar-only running loads the native binding only", async () => {

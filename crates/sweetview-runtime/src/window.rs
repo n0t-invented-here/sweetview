@@ -235,13 +235,20 @@ thread_local! {
 }
 
 /// `WEBVIEW2_DEFAULT_BACKGROUND_COLOR` as WebView2 reads it (`AARRGGBB` hex), when it names a
-/// colour that is not transparent: red, green, blue.
+/// colour that is not transparent: red, green, blue. Read only with the webview, whose variable it
+/// is: the native package's binding has no webview and never reads it (D50).
+#[cfg(feature = "webview")]
 fn webview2_default_background() -> Option<(u8, u8, u8)> {
   let text = std::env::var("WEBVIEW2_DEFAULT_BACKGROUND_COLOR").ok()?;
   let text = text.trim();
   let value = u32::from_str_radix(text.strip_prefix("0x").or_else(|| text.strip_prefix("0X")).unwrap_or(text), 16).ok()?;
   let [alpha, red, green, blue] = value.to_be_bytes();
   (alpha != 0).then_some((red, green, blue))
+}
+
+#[cfg(not(feature = "webview"))]
+fn webview2_default_background() -> Option<(u8, u8, u8)> {
+  None
 }
 
 /// The `backgroundColor` of the Sweetview window `handle` names (a wrapper of
