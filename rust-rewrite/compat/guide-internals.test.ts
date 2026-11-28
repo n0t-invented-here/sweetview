@@ -42,6 +42,22 @@ describe("an internal the guide now says the true thing about", () => {
   });
 });
 
+describe("the ready watchdog is opt-in, and every passage says so", () => {
+  test("a paragraph that reveals a window by showOnReady and the watchdog, or a snippet with showOnReady: true, names readyTimeoutMs", () => {
+    const lacking: string[] = [];
+    for (const path of ["README.md", "docs/app.md", "docs/upgrading.md", "docs/page.md"]) {
+      const text = read(path);
+      // Paragraphs, and each bullet, numbered step and table row of a list on its own; a code block whole.
+      for (const block of text.split(/\r?\n\s*\r?\n/).flatMap((b) => (b.includes("```") ? [b] : b.split(/\r?\n(?=\s*(?:- |\d+\. |\| ))/)))) {
+        const code = block.includes("```") || /^\s*(const|await|import) /m.test(block);
+        const needs = (/showOnReady/.test(block) && /watchdog/.test(block)) || (code && /showOnReady: true/.test(block));
+        if (needs && !/readyTimeoutMs/.test(block)) lacking.push(`${path}: ${block.trim().slice(0, 90)}`);
+      }
+    }
+    expect(lacking).toEqual([]);
+  });
+});
+
 describe("one recipe for each thing", () => {
   test("a tray application is told closeToTrayOnLastWindow, and a plain onClose hide only for a window that must never close", () => {
     const overlay = row("`@n1h/sweetview/native`", "`OverlayWindowOptions`");

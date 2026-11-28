@@ -107,8 +107,10 @@ after them give every export its row.
 - **Showing and sizing a window.** `createApp` and `new Window` make the
   window hidden, and the page says when it is ready: pass
   `showOnReady: true`, and call `signalReady()` from `@n1h/sweetview/page`
-  once the page has rendered; the window appears then (or when the ready
-  watchdog fires), with no blank frame first. A window with no page is shown
+  once the page has rendered; the window appears then, with no blank frame
+  first. Pass `readyTimeoutMs` (15 s, say) too: the ready watchdog is off
+  without it, and with it a page that fails before it signals still gets its
+  window, with a start-up error page. A window with no page is shown
   with `show()`. `contentSize: { width, height }` is the page's size in
   DIPs, as 0.x's `width` and `height` were, the window centred on the primary
   work area; `bounds` is the outer frame in physical pixels. See the

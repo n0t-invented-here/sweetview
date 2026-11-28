@@ -233,7 +233,7 @@ view.run();
 
 `WebView.attach(window, options: WebViewOptions<M>): Promise<WebView<M, E>>`
 
-Mounts a webview inside an existing `Window` created by `new Window(...)` or `Window.fromHandle(...)`. Geometry (the window's own: its client area, in physical pixels on Windows and points on macOS), DPI scale, `resizable`, `transparent`, `backgroundColor`, and default `title` are read directly from `window`, so callers never duplicate window options. The window stays hidden until the page calls `signalReady()` with `showOnReady` set (or the ready watchdog fires); without `showOnReady`, call `win.show()` when it is to appear.
+Mounts a webview inside an existing `Window` created by `new Window(...)` or `Window.fromHandle(...)`. Geometry (the window's own: its client area, in physical pixels on Windows and points on macOS), DPI scale, `resizable`, `transparent`, `backgroundColor`, and default `title` are read directly from `window`, so callers never duplicate window options. The window stays hidden until the page calls `signalReady()` with `showOnReady` set, or, when `readyTimeoutMs` is given, until the ready watchdog fires (without `readyTimeoutMs` there is no watchdog); without `showOnReady`, call `win.show()` when it is to appear.
 
 What `WebView.attach` does, in order:
 
@@ -344,7 +344,7 @@ trusted ([the RPC trust boundary](#the-rpc-trust-boundary)).
 | `debug` | `boolean` | `false` | Enables devtools and the context menu. |
 | `uiMethods` | `UiMethods<M>` | `{}` | Synchronous handlers answered on the UI thread before consulting the worker. |
 | `deferredUiMethods` | `UiMethods<M>` | `{}` | Synchronous handlers invoked on a later native UI tick. |
-| `showOnReady` | `boolean` | `false` | Reveals the window when the page signals readiness or the watchdog fires. |
+| `showOnReady` | `boolean` | `false` | Reveals the window when the page signals readiness, or when the watchdog fires, which it does only with `readyTimeoutMs`. |
 | `readyTimeoutMs` | `number` | disabled | A positive value up to 2147483647 arms a native startup watchdog; zero, a negative value or `NaN` leaves it off. |
 | `onReady`, `onReadyTimeout` | `() => void` | none | UI-thread hooks for the first ready handshake and for watchdog expiry. |
 | `readyFallbackHtml` | `string` | built-in error page | HTML shown on watchdog expiry. |
@@ -376,7 +376,7 @@ Explorer or Finder. See [file drops](native/windows.md#file-drops).
 | `moveToNewWindow()` | Detaches the tab into its own tabbed window (keeping its webview state intact) and resolves with the new `Window`. |
 | `dispose()` | Tears down the tab and its webview. |
 
-Tabs are host-aware: `showOnReady` and the ready watchdog reveal the tab's
+Tabs are host-aware: `showOnReady` and the ready watchdog (armed only by `readyTimeoutMs`) reveal the tab's
 current logical host (its tabbed window) if that host is hidden, not the
 borrowed window the webview was attached to. They do not force the tab to be selected; call
 `tab.select()` when a specific tab should be in front. File drops over a tab's webview go to the `onFileDrop` listeners of the tab's
@@ -619,7 +619,9 @@ app.run();
 
 For a page-controlled reveal, set `showOnReady: true` and call
 `await signalReady()` from [`@n1h/sweetview/page`](page.md#the-ready-handshake)
-after you install listeners and render the initial UI. The first signal from
+after you install listeners and render the initial UI; set `readyTimeoutMs`
+too, or a page that fails before it signals leaves its window hidden, since
+the watchdog is off without it. The first signal from
 a webview cancels that webview's watchdog, calls the native `signalReady()`,
 calls its `onReady`, then shows its window. Later signals resolve without
 doing anything again.
@@ -628,7 +630,7 @@ Two scopes are involved. The native `signalReady()` is process-wide: the
 first webview to become ready drains the buffered URL activations for the
 whole app ([activation](native/activation-and-single-instance.md#onopenurl-and-startup-buffering)),
 and later webviews find it already done. `onReady`, `onReadyTimeout`,
-`showOnReady` and the watchdog are per webview.
+`showOnReady` and the watchdog (`readyTimeoutMs`) are per webview.
 
 With a positive `readyTimeoutMs`, the watchdog uses a Win32 timer or a macOS
 `NSTimer`, so it also runs inside the blocking `app.run()`. If it fires
