@@ -323,12 +323,14 @@ function moveTabBetweenHosts(record: WinTabRecord, target: WinTabHost, index: nu
 
 /**
  * The browser's background of a tab that moved into `host`: the host window's
- * `backgroundColor`, or WebView2's own white when it has none, as a tab
- * opened there would have.
+ * `backgroundColor`. A window with none leaves the webview's own background as
+ * it is (what its application set, or the one it started with): the move
+ * carries the live webview with its settings.
  */
 function followBackground(record: WinTabRecord, host: WinTabHost): void {
   const colour = getWindowMeta(host.window).backgroundColor;
-  const rgb = colour === undefined ? 0xffffff : Number.parseInt(colour.slice(1), 16);
+  if (colour === undefined) return;
+  const rgb = Number.parseInt(colour.slice(1), 16);
   try {
     record.webview.raw.setBackgroundColor((rgb >> 16) & 0xff, (rgb >> 8) & 0xff, rgb & 0xff, 0xff);
   } catch (err) {
