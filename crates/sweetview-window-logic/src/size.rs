@@ -43,14 +43,25 @@ pub fn client_size(content: Dips, scale: f64) -> (i32, i32) {
 /// the client area plus `edges`, the frame's outer size less its client size
 /// in physical pixels (the caption and the borders; zero for a frameless
 /// window).
+/// A side too large for any screen saturates at `i32::MAX`.
 pub fn outer_size_for_content(content: Dips, scale: f64, edges: (i32, i32)) -> (i32, i32) {
   let (width, height) = client_size(content, scale);
-  (width + edges.0.max(0), height + edges.1.max(0))
+  (width.saturating_add(edges.0.max(0)), height.saturating_add(edges.1.max(0)))
 }
 
 /// A `width` x `height` rectangle centred in `area`. A side larger than the
 /// area's is cut to it, so the whole window, its title bar included, is on
 /// the screen.
+/// A `width` x `height` rectangle centred in `area`, keeping its size: one
+/// wider than the area overhangs both sides equally, one taller keeps its top
+/// at the area's top. The tab frame's default placement (no bounds, no
+/// `contentSize`), as it was before `contentSize` existed.
+pub fn centred_keeping_size(width: i32, height: i32, area: Rect) -> Rect {
+  let x = area.x + (area.width - width) / 2;
+  let y = area.y + ((area.height - height) / 2).max(0);
+  Rect::new(x, y, width, height)
+}
+
 pub fn centred(width: i32, height: i32, area: Rect) -> Rect {
   let width = width.min(area.width).max(1);
   let height = height.min(area.height).max(1);
@@ -107,6 +118,28 @@ mod tests {
     assert_eq!(client_size(Dips::new(100.0, 100.0), 0.0), (100, 100));
     assert_eq!(client_size(Dips::new(100.0, 100.0), f64::INFINITY), (100, 100));
     assert_eq!(outer_size_for_content(Dips::new(10.0, 10.0), 1.0, (-3, -3)), (10, 10));
+  }
+
+  #[test]
+  fn a_page_too_large_for_any_screen_saturates_instead_of_overflowing() {
+    // Review finding 4: 3e9 DIPs saturate the side to i32::MAX, and adding the frame overflowed.
+    let (width, height) = outer_size_for_content(Dips::new(3_000_000_000.0, 300.0), 1.0, EDGES);
+    assert_eq!((width, height), (i32::MAX, 339));
+    assert_eq!(centred(width, height, Rect::new(0, 0, 1920, 1040)), Rect::new(0, 350, 1920, 339));
+  }
+
+  #[test]
+  fn the_tab_frames_default_keeps_its_size_on_a_small_work_area_as_before_the_range() {
+    // Review finding 4: a 1040 x 720 page plus a 36 DIP strip at 150 % on a 1366 x 728 work
+    // area is 1560 + 24 by (756 x 1.5 = 1134) + 58 physical pixels; it kept that size, its left
+    // edge left of the area and its top at the area's top, as `tab_frame::finish` placed it at
+    // tag pre-rust-rewrite.
+    let area = Rect::new(0, 0, 1366, 728);
+    let (width, height) = outer_size_for_content(Dips::new(1040.0, 756.0), 1.5, (24, 58));
+    assert_eq!((width, height), (1584, 1192));
+    assert_eq!(centred_keeping_size(width, height, area), Rect::new(-109, 0, 1584, 1192));
+    // Room on both sides: the same as `centred`.
+    assert_eq!(centred_keeping_size(1116, 759, Rect::new(0, 0, 1920, 1040)), centred(1116, 759, Rect::new(0, 0, 1920, 1040)));
   }
 
   #[test]

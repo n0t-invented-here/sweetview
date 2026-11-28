@@ -644,7 +644,7 @@ impl Window {
     }
     if let Some(tab) = &core.tab {
       let page = if init.bounds.is_none() { Some(init.content_size.unwrap_or(tab_frame::DEFAULT_PAGE)) } else { None };
-      tab_frame::finish(core, tab, page, min);
+      tab_frame::finish(core, tab, page, init.content_size.is_some(), min);
     } else if min.0.is_some() || min.1.is_some() {
       core.with_tao(|tao| {
         // `tao` takes an inner minimum; the frame is what separates it from the outer one.
