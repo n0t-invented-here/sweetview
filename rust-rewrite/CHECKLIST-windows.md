@@ -101,7 +101,7 @@ Items name today's API members to say which behaviour is meant. The API may chan
 
 - [x] W0.6 A GitHub Actions workflow builds the binding and runs `cargo test`, `cargo clippy`, `bun run typecheck` and `bun test` on `windows-latest`.
 
-    `.github/workflows/windows.yml` (workflow `windows`, job `check`, on every push to `v1-rust-rewrite` and `main`) runs on `windows-latest`: it installs Bun, the stable Rust toolchain and `just`, builds the binding with `just native`, then runs `cargo test --workspace`, `cargo clippy`, `bun run typecheck` and `bun test`, each as its own step, and a later step still runs when an earlier one failed. Run 46088815542, on commit `c744c56`, the last commit that changed code or tests:
+    `.github/workflows/windows.yml` (workflow `windows`, job `check`; started by every push to `v1-rust-rewrite` and `main` at the time of the run below, and only by hand since decision D33, the owner having said hosted CI is not approved for use in this project) runs on `windows-latest`: it installs Bun, the stable Rust toolchain and `just`, builds the binding with `just native`, then runs `cargo test --workspace`, `cargo clippy`, `bun run typecheck` and `bun test`, each as its own step, and a later step still runs when an earlier one failed. Run 46088815542, on commit `c744c56`, the last commit that changed code or tests:
 
     ```
     job: check | completed success | runner: windows-latest | head: c744c56

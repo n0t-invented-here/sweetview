@@ -1,13 +1,12 @@
 name: windows
 
 # Builds the Rust binding and runs every check on Windows.
+# Hosted CI is not approved for use in this project: nothing starts this workflow by itself.
+# It runs only when the owner starts it by hand.
 on:
-  push:
-    branches: [v1-rust-rewrite, main]
-  pull_request:
   workflow_dispatch:
 
-# A newer push to the same branch replaces the run of an older one.
+# A newer run on the same branch replaces an older one.
 concurrency:
   group: windows-${{ github.ref }}
   cancel-in-progress: true

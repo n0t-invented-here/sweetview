@@ -287,3 +287,9 @@ Alternative left open: the owner's written acceptance of an atomic `static` as a
 No product surface was added for either.
 
 Alternative left open: a public way to shorten a toast's life, or to read a window's size limits, which would be new API for a test's sake.
+
+## D33. Hosted CI is not used; the workflow starts only by hand
+
+The owner's word, given after the Windows checklist was complete: hosted CI is not approved for use in this project. Until then every push to this branch had started `.github/workflows/windows.yml` on a hosted runner, and this work had read those runs, corrected tests from them (D20) and cited one under checklist item W0.6. From this decision on no run is started, re-run or read by this work, and the workflow's `push` and `pull_request` triggers are gone: it starts only when the owner starts it by hand (`workflow_dispatch`). The file stays, because W0.6 asks for a workflow that builds the binding and runs the four checks on `windows-latest`, and the run cited under that item is a record of what happened, not something later work leans on: what counts as proof from here on is what runs on a machine of the owner's (`bun rust-rewrite/verify.ts windows`).
+
+Alternative left open: deleting the workflow file, which would leave W0.6 describing a file that is gone; the owner's to decide.
