@@ -17,7 +17,6 @@ The Windows goal is **not complete**. This file says what is on the main branch,
 - **Hosted CI is not used.**
 - **The orchestrating session writes no code**; it delegates, integrates and documents.
 - **Tests of Rust behaviour are written in Rust.** A TypeScript test exists only for what is TypeScript (a wrapper reaching the binding, an exception at the boundary). More TypeScript test code than Rust product code is unacceptable. Measured against `v1-drafting` on 2026-11-28: 12,292 lines of Rust product code; 13,879 lines of TypeScript test code added (10,647 under `packages/`, 3,232 under `rust-rewrite/compat/`). Branch `rust-rewrite-tests-in-rust` moves the first slice (input hooks, notifier, modal loop); the rest (tabs, callbacks, tray and menus, windows, the webview) follows as each unmerged branch that touches those files lands.
-- **Comments are cut after delivery, by the owner.** About 8,000 of the lines added since `v1-drafting` are comments; the owner removes most of them with agents once Windows is delivered. Nobody spends time on that before then, and nobody adds comments beyond what `UNSAFE-POLICY.md` requires.
 - **`rust-rewrite/evidence/` is not in git.** Run output, dumps and reports stay on the machine in that folder, which git ignores. Nothing is committed there, by any branch.
 
 ## How code reaches this branch (changed on 2026-11-28)
