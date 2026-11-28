@@ -15,16 +15,6 @@ fn serial() -> std::sync::MutexGuard<'static, ()> {
 }
 
 #[test]
-fn the_system_commands_ids_are_the_oss() {
-  use sweetview_window_logic::system_menu::ids;
-  use windows::Win32::UI::WindowsAndMessaging::{SC_CLOSE, SC_MAXIMIZE, SC_MINIMIZE, SC_MOVE, SC_RESTORE, SC_SIZE};
-  assert_eq!(
-    [ids::SC_SIZE, ids::SC_MOVE, ids::SC_MINIMIZE, ids::SC_MAXIMIZE, ids::SC_CLOSE, ids::SC_RESTORE],
-    [SC_SIZE, SC_MOVE, SC_MINIMIZE, SC_MAXIMIZE, SC_CLOSE, SC_RESTORE]
-  );
-}
-
-#[test]
 fn a_hidden_window_is_never_the_foreground_window() {
   let _serial = serial();
   let window = TestWindow::new();

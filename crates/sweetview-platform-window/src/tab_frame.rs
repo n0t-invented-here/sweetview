@@ -21,7 +21,7 @@ use windows::Win32::Graphics::Gdi::{CreateSolidBrush, DeleteObject, FillRect, In
 use windows::Win32::UI::Shell::{RemoveWindowSubclass, SetWindowSubclass};
 use windows::Win32::UI::WindowsAndMessaging::{
   AppendMenuW, CreatePopupMenu, DestroyMenu, EnableMenuItem, GetForegroundWindow, GetSystemMenu, SendMessageW, SetMenuDefaultItem, TrackPopupMenu, HMENU, MENU_ITEM_FLAGS, MF_ENABLED,
-  MF_GRAYED, MF_SEPARATOR, MF_STRING, SC_CLOSE, SWP_NOACTIVATE, SWP_NOZORDER,
+  MF_GRAYED, MF_SEPARATOR, MF_STRING, SC_CLOSE, SC_MAXIMIZE, SC_MINIMIZE, SC_MOVE, SC_RESTORE, SC_SIZE, SWP_NOACTIVATE, SWP_NOZORDER,
   TPM_RETURNCMD, TPM_RIGHTBUTTON, WM_CLOSE, WM_DPICHANGED, WM_ERASEBKGND, WM_NCDESTROY, WM_SYSCOMMAND, WS_CLIPCHILDREN,
 };
 
@@ -92,39 +92,25 @@ fn track(menu: &impl TrackedMenu, window: &impl NativeWindow, at: Point) -> u32 
   u32::try_from(chosen.0).unwrap_or(0)
 }
 
-// What the system menu offers and the ids of its commands, decided without an OS call, in
-// `sweetview-window-logic`.
-pub use sweetview_window_logic::system_menu::{system_menu_items, SystemCommand, SystemMenuState};
-
 /// Shows the window's system menu (Restore, Move, Size, Minimize, Maximize,
-/// Close) at `at`, its items enabled for `state`, and returns the command
-/// chosen, for the caller to carry out. Blocks until the menu closes.
-pub fn track_system_menu(window: &impl NativeWindow, at: Point, state: SystemMenuState) -> Option<SystemCommand> {
-  let menu = SystemMenu::of(window)?;
-  for (command, enabled) in system_menu_items(state) {
+/// Close) at `at` and carries out the chosen command, as the tag's
+/// `windowMenu(hwnd)` did for every window: Restore enabled when `IsZoomed`,
+/// Move, Size and Maximize when not, Minimize always, Close left as it is and
+/// made the default item, the command posted as `WM_SYSCOMMAND`. Blocks until
+/// the menu closes.
+pub fn show_system_menu(window: &impl NativeWindow, at: Point) {
+  let Some(menu) = SystemMenu::of(window) else { return };
+  let zoomed = is_zoomed(window);
+  for (command, enabled) in [(SC_RESTORE, zoomed), (SC_MOVE, !zoomed), (SC_SIZE, !zoomed), (SC_MINIMIZE, true), (SC_MAXIMIZE, !zoomed)] {
     let flag = if enabled { MF_ENABLED } else { MF_GRAYED };
     // SAFETY: `menu` is the window's own system menu, alive while the window is.
-    let _previous = unsafe { EnableMenuItem(menu.menu, command.id(), flag) };
+    let _previous = unsafe { EnableMenuItem(menu.menu, command, flag) };
   }
   // SAFETY: the same menu; `SC_CLOSE` is one of its commands (by command, not position).
   let _set = unsafe { SetMenuDefaultItem(menu.menu, SC_CLOSE, 0) };
   let chosen = track(&menu, window, at);
-  (chosen != 0).then(|| SystemCommand::from_id(chosen))
-}
-
-/// Carries out `command` as the title bar's own menu does: posted to the window as `WM_SYSCOMMAND`.
-pub fn post_system_command(window: &impl NativeWindow, command: SystemCommand) {
-  post_message(window.hwnd(), WM_SYSCOMMAND, command.id() as usize);
-}
-
-/// Shows the system menu of a window Sweetview did not make and carries out
-/// the chosen command, as the tag's `windowMenu(hwnd)` did: Restore enabled
-/// when `IsZoomed`, Move, Size and Maximize when not, Minimize always, Close
-/// left as it is and made the default item, the command posted.
-pub fn show_system_menu(window: &impl NativeWindow, at: Point) {
-  let state = SystemMenuState { maximized: is_zoomed(window), minimized: false, can_size: true, can_maximize: true };
-  if let Some(command) = track_system_menu(window, at, state) {
-    post_system_command(window, command);
+  if chosen != 0 {
+    post_message(window.hwnd(), WM_SYSCOMMAND, chosen as usize);
   }
 }
 

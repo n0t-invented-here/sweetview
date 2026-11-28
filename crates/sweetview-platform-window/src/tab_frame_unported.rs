@@ -10,13 +10,6 @@ pub fn is_foreground(_window: &impl NativeWindow) -> bool {
 }
 pub fn show_system_menu(_window: &impl NativeWindow, _at: Point) {}
 
-pub use sweetview_window_logic::system_menu::{SystemCommand, SystemMenuState};
-
-pub fn track_system_menu(_window: &impl NativeWindow, _at: Point, _state: SystemMenuState) -> Option<SystemCommand> {
-  None
-}
-
-pub fn post_system_command(_window: &impl NativeWindow, _command: SystemCommand) {}
 pub fn request_close(_window: &impl NativeWindow) {}
 
 /// See the Windows implementation for the contract.

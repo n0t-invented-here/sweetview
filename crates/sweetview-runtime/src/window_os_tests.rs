@@ -403,8 +403,8 @@ fn the_systems_own_commands_report_maximise_changes_once_for_framed_frameless_an
     let wrapped = Window::adopt(framed.handle()).expect("adopt");
     let (framed_seen, wrapper_seen) = (Rc::new(RefCell::new(Vec::new())), Rc::new(RefCell::new(Vec::new())));
     let (a, b) = (framed_seen.clone(), wrapper_seen.clone());
-    framed.on_maximize_change(Some(Rc::new(move |m| a.borrow_mut().push(m)))).expect("listener");
-    wrapped.on_maximize_change(Some(Rc::new(move |m| b.borrow_mut().push(m)))).expect("listener");
+    framed.on_maximize_change(framed.id, Some(Rc::new(move |m| a.borrow_mut().push(m)))).expect("listener");
+    wrapped.on_maximize_change(wrapped.id, Some(Rc::new(move |m| b.borrow_mut().push(m)))).expect("listener");
     let command = |sc: usize| os::send(framed.handle(), WM_SYSCOMMAND, sc, 0);
     framed.show().expect("show");
     framed.toggle_maximize().expect("maximise");
@@ -418,7 +418,7 @@ fn the_systems_own_commands_report_maximise_changes_once_for_framed_frameless_an
     command(SC_RESTORE);
     assert_eq!(*framed_seen.borrow(), [true, false, true, false]);
     assert_eq!(*wrapper_seen.borrow(), [true, false, true, false]);
-    wrapped.on_maximize_change(None).expect("removed");
+    wrapped.on_maximize_change(wrapped.id, None).expect("removed");
     framed.toggle_maximize().expect("maximise");
     assert_eq!(wrapper_seen.borrow().len(), 4);
     assert_eq!(*framed_seen.borrow(), [true, false, true, false, true]);
@@ -430,12 +430,12 @@ fn the_systems_own_commands_report_maximise_changes_once_for_framed_frameless_an
     for (name, window) in [("frameless", &frameless), ("tabbed", &tabs)] {
       let seen = Rc::new(RefCell::new(Vec::new()));
       let sink = seen.clone();
-      window.on_maximize_change(Some(Rc::new(move |m| sink.borrow_mut().push(m)))).expect("listener");
+      window.on_maximize_change(window.id, Some(Rc::new(move |m| sink.borrow_mut().push(m)))).expect("listener");
       window.show().expect("show");
       window.toggle_maximize().expect("maximise");
       assert!(window.is_maximized(), "{name}");
       window.toggle_maximize().expect("restore");
-      window.on_maximize_change(None).expect("removed");
+      window.on_maximize_change(window.id, None).expect("removed");
       window.toggle_maximize().expect("maximise again");
       assert_eq!(*seen.borrow(), [true, false], "{name}");
     }
@@ -484,7 +484,7 @@ fn an_applications_own_popup_window_wrapped_after_maximise_and_minimise_reads_as
     assert!(!wrapped.is_maximized());
     let seen = Rc::new(RefCell::new(Vec::new()));
     let sink = seen.clone();
-    wrapped.on_maximize_change(Some(Rc::new(move |m| sink.borrow_mut().push(m)))).expect("listener");
+    wrapped.on_maximize_change(wrapped.id, Some(Rc::new(move |m| sink.borrow_mut().push(m)))).expect("listener");
     command(SC_RESTORE);
     assert_eq!((wrapped.is_maximized(), seen.borrow().clone()), (false, vec![]));
     wrapped.dispose();
@@ -504,8 +504,8 @@ fn an_applications_own_window_reports_resize_move_close_and_drops_and_outlives_i
     let seen: Rc<RefCell<Vec<String>>> = Rc::default();
     let drops: Rc<RefCell<Vec<Vec<String>>>> = Rc::default();
     let (a, b, c, d) = (seen.clone(), seen.clone(), seen.clone(), drops.clone());
-    wrapped.on_resize(Some(Rc::new(move |r| a.borrow_mut().push(format!("resize {}x{}", r.width, r.height))))).expect("resize");
-    wrapped.on_move(Some(Rc::new(move |r| b.borrow_mut().push(format!("move {},{}", r.x, r.y))))).expect("move");
+    wrapped.on_resize(wrapped.id, Some(Rc::new(move |r| a.borrow_mut().push(format!("resize {}x{}", r.width, r.height))))).expect("resize");
+    wrapped.on_move(wrapped.id, Some(Rc::new(move |r| b.borrow_mut().push(format!("move {},{}", r.x, r.y))))).expect("move");
     wrapped.on_close_request(Some(Rc::new(move || c.borrow_mut().push("close".into())))).expect("close");
     wrapped.on_file_drop(Some(Rc::new(move |paths| d.borrow_mut().push(paths)))).expect("drop");
     wrapped.set_bounds(Rect::new(70, 80, 320, 210));
@@ -815,7 +815,7 @@ fn a_maximised_frameless_window_dragged_by_start_drag_stays_maximised_and_its_ne
     let handle = window.handle();
     let seen = Rc::new(RefCell::new(Vec::new()));
     let sink = seen.clone();
-    window.on_maximize_change(Some(Rc::new(move |m| sink.borrow_mut().push(m)))).expect("listener");
+    window.on_maximize_change(window.id, Some(Rc::new(move |m| sink.borrow_mut().push(m)))).expect("listener");
     window.show().expect("show");
     window.toggle_maximize().expect("maximise");
     let maximised = window.bounds();

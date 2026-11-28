@@ -75,7 +75,8 @@ freezes, so a drag that starts on the shape and leaves it keeps going.
 
 The timers differ per platform:
 
-- Windows: one `SetTimer` per `HWND`. It is killed by `setHitRegions(null)`,
+- Windows: one 10 ms interval of the native loop per window, the kind
+  `scheduleInterval` makes. It is stopped by `setHitRegions(null)`,
   `setClickThrough`, `hide()` and `dispose()`, and restarts when a hidden
   window with regions is shown again.
 - macOS: one shared 10 ms `NSTimer` serves every window with regions. It is
