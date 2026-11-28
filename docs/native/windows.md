@@ -272,8 +272,9 @@ left mouse button is down (a `pointerdown` handler in the page).
   `WM_NCLBUTTONDOWN` with `HTCAPTION` on Windows,
   `performWindowDragWithEvent:` on macOS. Snap layouts and multi-monitor
   moves behave as with a real title bar.
-- `startResize(edge)` runs a 10 ms cursor-tracking loop (a `SetTimer` on
-  Windows, an `NSTimer` reading `NSEvent.pressedMouseButtons` on macOS) that
+- `startResize(edge)` runs a 10 ms cursor-tracking loop (an interval of the
+  native loop on Windows, the kind `scheduleInterval` makes; an `NSTimer`
+  reading `NSEvent.pressedMouseButtons` on macOS) that
   resizes from `edge` until the left button is released. It enforces
   `minWidth` / `minHeight`, or a 160 x 120 floor when neither is set.
 

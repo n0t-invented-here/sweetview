@@ -168,11 +168,11 @@ Sends `window.maximized` with `{ maximized }` to the page each time `window` bec
 
 `windowChromeMethods`, `windowChromeEvents`, `WindowChromeEvents`, `WindowChromeInfo`, `WindowChromeKind`, `WindowChromeMethods`, `WindowChromeMethodTable` and `WindowChromeOptions` are also exported from the root `@n1h/sweetview`. The page half (`windowChromeControls`, `resizeHandles`) is only in `@n1h/sweetview/window-chrome`.
 
-Throws: on Windows, the `window.resize` handler throws `sweetview: SetTimer failed (<code>)` when the resize timer cannot be created; `WebView` passes the message to the page as a failed call.
+Throws: on Windows, the `window.resize` handler throws `sweetview: a timer could not be set: <reason>` when the native loop cannot start the resize loop's interval, and `sweetview: the cursor position could not be read: <reason>` when the cursor cannot be read; `WebView` passes the message to the page as a failed call.
 
 Platforms:
 
-- `window.resize` runs `Window.startResize`, Sweetview's own resize loop, on both platforms: every 10 ms while the left button is held (a `SetTimer` on Windows, an `NSTimer` on macOS), it moves the edge or corner with the cursor. It stops at the window's `minWidth` / `minHeight`, or at 160 x 120 window units when neither is set. That 160 x 120 fallback belongs to this custom loop only: resizing a framed window by its native frame, and macOS zoom, use the OS's own limits and `minWidth` / `minHeight`.
+- `window.resize` runs `Window.startResize`, Sweetview's own resize loop, on both platforms: every 10 ms while the left button is held (an interval of the native loop on Windows, an `NSTimer` on macOS), it moves the edge or corner with the cursor. It stops at the window's `minWidth` / `minHeight`, or at 160 x 120 window units when neither is set. That 160 x 120 fallback belongs to this custom loop only: resizing a framed window by its native frame, and macOS zoom, use the OS's own limits and `minWidth` / `minHeight`.
 - `window.maximize` runs `Window.toggleMaximize`: on a frameless Windows window it toggles between the current monitor's work area (`Screen.of(window).workArea`) and the previous bounds; on a framed Windows window it uses the OS maximize; on macOS it zooms.
 - Linux: not available; `new Window()` throws. For a UI on Linux, serve the page to a browser over WebSocket instead: see [browser + WebSocket mode](ipc-ws.md).
 
