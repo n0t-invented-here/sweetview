@@ -33,10 +33,18 @@ try {
   }
   const files = readdirSync(tarballs).sort();
   console.log(`packed ${files.length} packages: ${files.join(", ")}`);
-  const native = files.find((f) => f.includes("sweetview-native"))!;
-  const listing = run(["tar", "-tzf", native], tarballs).out.split(/\r?\n/).filter((l) => l.includes("prebuilt/"));
-  console.log(`prebuilt files inside ${native}:`);
-  for (const line of listing) console.log(`  ${line}`);
+  // The two bindings (D50): the native package's, with no webview, and the facade's, with it.
+  const carried: string[][] = [];
+  for (const tarball of [files.find((f) => f.includes("sweetview-native"))!, files.find((f) => /^n1h-sweetview-\d/.test(f))!]) {
+    const listing = run(["tar", "-tzf", tarball], tarballs).out.split(/\r?\n/).filter((l) => l.includes("prebuilt/"));
+    console.log(`prebuilt files inside ${tarball}:`);
+    for (const line of listing) console.log(`  ${line}`);
+    carried.push(listing);
+  }
+  const [nativeFiles, facadeFiles] = carried;
+  if (!nativeFiles!.some((l) => l.endsWith("prebuilt/sweetview.win32-x64-msvc.node")) || !facadeFiles!.some((l) => l.endsWith("prebuilt/sweetview-webview.win32-x64-msvc.node"))) {
+    throw new Error("a tarball does not carry its binding: the native package's sweetview.win32-x64-msvc.node, @n1h/sweetview's sweetview-webview.win32-x64-msvc.node");
+  }
 
   // An empty project that depends on every tarball, so each package's dependencies on the
   // others resolve to the packed files and nothing comes from the registry or this checkout.
@@ -58,6 +66,7 @@ pumpEvents();
 const report = {
   platform: process.platform + "-" + process.arch,
   bindingInstalled: require("node:fs").existsSync("node_modules/@n1h/sweetview-native/prebuilt/sweetview.win32-x64-msvc.node"),
+  webviewBindingInstalled: require("node:fs").existsSync("node_modules/@n1h/sweetview/prebuilt/sweetview-webview.win32-x64-msvc.node"),
   primaryScreenHasSize: Screen.primary().bounds.width > 0,
   windowHandleIsBigint: typeof window.handle === "bigint" && window.handle !== 0n,
   windowBounds: window.bounds(),
@@ -80,5 +89,5 @@ console.log("PROBE " + JSON.stringify(report));
   console.log(`removing ${shown(work)}`);
   rmSync(work, { recursive: true, force: true });
 }
-console.log(failed ? "FAIL" : "OK: the packed native package carries the binding and the loader finds it after install");
+console.log(failed ? "FAIL" : "OK: the packed native package and @n1h/sweetview carry their bindings and the loader finds them after install");
 process.exit(failed ? 1 : 0);

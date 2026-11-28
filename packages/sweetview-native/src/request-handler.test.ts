@@ -16,8 +16,8 @@
 //   drops and keep every other assertion.
 
 import { describe, expect, test } from "bun:test";
-import { binding } from "./binding";
-import { beginWebviewResponse, completeWebviewRequest, endWebviewResponse, serializeBindingError, Webview, WebviewError, writeWebviewResponseChunk } from "./webview";
+import { binding } from "../../sweetview/src/binding";
+import { beginWebviewResponse, completeWebviewRequest, endWebviewResponse, serializeBindingError, Webview, WebviewError, writeWebviewResponseChunk } from "../../sweetview/src/raw-webview";
 import { runFixture } from "../test/run-fixture";
 
 const onWindows = process.platform === "win32";

@@ -1412,6 +1412,7 @@ pub fn tracked_count(handle: isize) -> usize {
 /// a webview that fills it: its page is given the keyboard focus, as the C++ library's own
 /// window gave it on `WM_ACTIVATE`. False for a window Sweetview does not know (one of the
 /// application's own, which nothing of Sweetview's watches).
+#[cfg(feature = "webview")]
 pub(crate) fn set_page_focus(handle: isize, hook: Option<Rc<dyn Fn()>>) -> bool {
   match core_of(handle) {
     Some(core) => {

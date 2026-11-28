@@ -5,8 +5,10 @@
 #![forbid(unsafe_code)]
 
 pub mod activation;
+#[cfg(feature = "webview")]
 pub mod bridge;
 pub mod clipboard;
+#[cfg(feature = "webview")]
 pub mod engine;
 mod error;
 pub mod input;

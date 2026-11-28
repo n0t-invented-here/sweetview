@@ -365,14 +365,17 @@ after them give every export its row.
 ### C. The bindings package, imported directly
 
 1. In `package.json`, replace `@n1h/sweetview-webview-bun` with
-   `@n1h/sweetview-native` (or with `@n1h/sweetview`, and import from
-   `@n1h/sweetview/native`). On macOS keep `@n1h/sweetview-webview-bun`
+   `@n1h/sweetview` if the application uses the webview, which only it
+   exports (D50), or with `@n1h/sweetview-native` if it uses only the input
+   hooks and `permissions`. On macOS keep `@n1h/sweetview-webview-bun`
    installed as well: `@n1h/sweetview-native` loads it there, and a Windows
    executable leaves it out ([What changed for every
    application](#what-changed-for-every-application)).
    Until 1.0.0 is on npm, install it from a Sweetview checkout: [Running an application against a local Sweetview checkout](local-checkout.md).
-2. Change the module name in each import; every name is the same:
-   `import { Webview, installMouseHook, permissions } from "@n1h/sweetview-native"`.
+2. Change the module name in each import; every name is the same, `Webview`
+   aside, which is `RawWebview`:
+   `import { RawWebview as Webview } from "@n1h/sweetview"` and
+   `import { installMouseHook, permissions } from "@n1h/sweetview/native"`.
 3. Treat `Webview.unsafeHandle` as an opaque number: pass it to
    `completeWebviewRequest` and the streaming functions, or to
    `new Webview(handle)`, and nowhere else. Calls you made on the library
@@ -431,7 +434,7 @@ cover old types and classes whose members have new names.
 | `SizeHint` | `import { SizeHint } from "@n1h/sweetview"`; `SizeHint.NONE === 0`; `SizeHint.MIN === 1`; `SizeHint.MAX === 2`; `SizeHint.FIXED === 3` | an ordinary `enum` now (it was a `const enum`): its members are values at run time |
 | `UiMethods` | `import type { UiMethods } from "@n1h/sweetview"` | unchanged |
 | `WEBVIEW_VERSION` | `import { WEBVIEW_VERSION } from "@n1h/sweetview"`; `WEBVIEW_VERSION === "0.12.0"` | unchanged |
-| `Webview` | `import { RawWebview } from "@n1h/sweetview"`; `new RawWebview(debug, size, window)` | the same class as `RawWebview` (and as `Webview` from `@n1h/sweetview/native`); `unsafeHandle` is an opaque number (Part C) |
+| `Webview` | `import { RawWebview } from "@n1h/sweetview"`; `new RawWebview(debug, size, window)` | the same class as `RawWebview`; `unsafeHandle` is an opaque number (Part C) |
 | `WebviewApp` | `import type { App } from "@n1h/sweetview"` | `createApp` returns an `App`; members in the table below |
 | `WebviewAppOptions` | `import type { AppOptions } from "@n1h/sweetview"` | window options and webview options in one object; members in the table below |
 | `WindowChromeInfo` | `import type { WindowChromeInfo } from "@n1h/sweetview"` | unchanged |
@@ -632,7 +635,7 @@ cover old types and classes whose members have new names.
 
 ### `@n1h/sweetview-webview-bun` 2.x, as a 0.x application imports it
 
-The same names come from `@n1h/sweetview/native` now. Part C has the details of each.
+The webview and its companions come from `@n1h/sweetview` now, the input hooks, `permissions` and `unload` from `@n1h/sweetview/native` (D50). Part C has the details of each.
 
 | Old | Write now | Change |
 |---|---|---|
@@ -649,10 +652,10 @@ The same names come from `@n1h/sweetview/native` now. Part C has the details of 
 | `MouseMessage` | `import type { MouseMessage } from "@n1h/sweetview/native"` | unchanged |
 | `Permission` | `import { Permission } from "@n1h/sweetview/native"`; `Permission.DeviceControl === 1`; `Permission.InputMonitoring === 2` | an ordinary `enum` now (it was a `const enum`): its members are values at run time |
 | `PermissionStatus` | `import type { PermissionStatus } from "@n1h/sweetview/native"` | unchanged |
-| `Size` | `import type { Size } from "@n1h/sweetview/native"` | unchanged |
-| `SizeHint` | `import { SizeHint } from "@n1h/sweetview/native"`; `SizeHint.NONE === 0`; `SizeHint.MIN === 1`; `SizeHint.MAX === 2`; `SizeHint.FIXED === 3` | an ordinary `enum` now (it was a `const enum`): its members are values at run time |
-| `WEBVIEW_VERSION` | `import { WEBVIEW_VERSION } from "@n1h/sweetview/native"`; `WEBVIEW_VERSION === "0.12.0"` | unchanged |
-| `Webview` | `import { Webview } from "@n1h/sweetview/native"`; `new Webview(debug, size, window)` | the same class; `unsafeHandle` is an opaque number (Part C, `Webview` members) |
+| `Size` | `import type { Size } from "@n1h/sweetview"` | unchanged |
+| `SizeHint` | `import { SizeHint } from "@n1h/sweetview"`; `SizeHint.NONE === 0`; `SizeHint.MIN === 1`; `SizeHint.MAX === 2`; `SizeHint.FIXED === 3` | an ordinary `enum` now (it was a `const enum`): its members are values at run time |
+| `WEBVIEW_VERSION` | `import { WEBVIEW_VERSION } from "@n1h/sweetview"`; `WEBVIEW_VERSION === "0.12.0"` | unchanged |
+| `Webview` | `import { RawWebview } from "@n1h/sweetview"`; `new RawWebview(debug, size, window)` | the same class, as `RawWebview` of `@n1h/sweetview`, which has the webview (the native package has none: D50); `unsafeHandle` is an opaque number (Part C, `Webview` members) |
 | `installKeyboardHook` | `import { installKeyboardHook } from "@n1h/sweetview/native"`; `installKeyboardHook(handler)` | unchanged |
 | `installMouseHook` | `import { installMouseHook } from "@n1h/sweetview/native"`; `installMouseHook(handler)` | unchanged |
 | `modifiersFrom` | `import { modifiersFrom } from "@n1h/sweetview/native"`; `modifiersFrom(bits)` | unchanged |
@@ -808,7 +811,7 @@ application. A row whose import is from `@n1h/sweetview` or its subpaths needs n
 
 | Old | Write now | Change |
 |---|---|---|
-| `discardQuit` | `import type { App } from "@n1h/sweetview"`; `App#dispose` | `App#dispose()`, and `WebView#dispose()`, take back the quit a destroyed webview asks the OS loop for, for a webview made through `createApp` or `WebView`; for a raw `Webview#destroy()` under `runEventLoop` there is no public call in 1.0 |
+| `discardQuit` | `import type { App } from "@n1h/sweetview"`; `App#dispose` | `App#dispose()`, and `WebView#dispose()`, take back the quit a destroyed webview asks the OS loop for, for a webview made through `createApp` or `WebView`; for a raw `RawWebview#destroy()` under `runEventLoop` there is no public call in 1.0 |
 | `colorRef` | `import { Window } from "@n1h/sweetview/native"`; `new Window(options)` | pass `colorKey: "#rrggbb"` |
 
 ### Scripts run by path
@@ -854,7 +857,7 @@ Windows and macOS alike, nothing tells an application to keep importing it.
 | `IndexHtmlOptions` | `import type { IndexHtmlOptions } from "@n1h/sweetview"` | unchanged |
 | `NativeRequest` | `import type { NativeRequest } from "@n1h/sweetview"` | unchanged |
 | `NativeResponse` | `import type { NativeResponse } from "@n1h/sweetview"` | unchanged |
-| `RawWebview` | `import { RawWebview } from "@n1h/sweetview"`; `new RawWebview(debug, size, window)` | the same class, from `@n1h/sweetview-native` now; `unsafeHandle` is an opaque number (Part C, `Webview` members) |
+| `RawWebview` | `import { RawWebview } from "@n1h/sweetview"`; `new RawWebview(debug, size, window)` | the same class; `unsafeHandle` is an opaque number (Part C, `Webview` members) |
 | `RegisterUrlSchemeOptions` | `import type { RegisterUrlSchemeOptions } from "@n1h/sweetview"` | unchanged |
 | `Ring` | `import { Ring } from "@n1h/sweetview"`; `new Ring(sab)` | unchanged |
 | `SecondInstanceEvent` | `import type { SecondInstanceEvent } from "@n1h/sweetview"` | unchanged |
@@ -1278,7 +1281,7 @@ Windows and macOS alike, nothing tells an application to keep importing it.
 
 | Old | Write now | Change |
 |---|---|---|
-| `discardQuit` | `import type { App } from "@n1h/sweetview"`; `App#dispose` | `App#dispose()`, and `WebView#dispose()`, take back the quit a destroyed webview asks the OS loop for, for a webview made through `createApp` or `WebView`; for a raw `Webview#destroy()` under `runEventLoop` there is no public call in 1.0 |
+| `discardQuit` | `import type { App } from "@n1h/sweetview"`; `App#dispose` | `App#dispose()`, and `WebView#dispose()`, take back the quit a destroyed webview asks the OS loop for, for a webview made through `createApp` or `WebView`; for a raw `RawWebview#destroy()` under `runEventLoop` there is no public call in 1.0 |
 | `emitActivationUrl` | no public call in 1.0 | delivering an activation URL from the application's own code: no public call in 1.0; `onOpenUrl(handler)` receives the URLs the OS delivers |
 | `emitWindowFileDrop` | no public call in 1.0 | raising a window's file-drop event from the application's own code: no public call in 1.0; `Window#onFileDrop(handler)` observes the drops the OS delivers |
 | `emitWindowNewTab` | no public call in 1.0 | raising a window's new-tab event from the application's own code: no public call in 1.0; `Window#onNewTab(handler)` observes the requests the tab strip makes |
@@ -1755,15 +1758,18 @@ it loads.
 ## Part C: the bindings package
 
 Every export of `@n1h/sweetview-webview-bun` (2.x, up to 2.8.0) and what an
-application imports instead. `@n1h/sweetview/native` exports the same names
-for an application that depends on `@n1h/sweetview`.
+application imports instead. The webview and its companions are exported by
+`@n1h/sweetview`, so that an application of `@n1h/sweetview-native` alone takes
+no webview (D50); the input hooks, `permissions` and `unload` by
+`@n1h/sweetview-native`, and by `@n1h/sweetview/native` for an application that
+depends on `@n1h/sweetview`.
 
 ### `@n1h/sweetview-webview-bun`
 
 | Old | Write now | Change |
 |---|---|---|
 | `Feature` | `import { Feature } from "@n1h/sweetview-native"`; `Feature.MouseHook === 0`; `Feature.KeyboardHook === 1` | an ordinary `enum` now (it was a `const enum`): its members are values at run time |
-| `FileDropHandler` | `import type { FileDropHandler } from "@n1h/sweetview-native"` | unchanged |
+| `FileDropHandler` | `import type { FileDropHandler } from "@n1h/sweetview"` | unchanged |
 | `KeyEvent` | `import { KeyEvent } from "@n1h/sweetview-native"`; `KeyEvent.Down === 0`; `KeyEvent.Up === 1`; `KeyEvent.Repeat === 2` | an ordinary `enum` now (it was a `const enum`): its members are values at run time |
 | `KeyHandler` | `import type { KeyHandler } from "@n1h/sweetview-native"` | unchanged |
 | `KeyMessage` | `import type { KeyMessage } from "@n1h/sweetview-native"` | unchanged |
@@ -1776,24 +1782,24 @@ for an application that depends on `@n1h/sweetview`.
 | `MouseMessage` | `import type { MouseMessage } from "@n1h/sweetview-native"` | unchanged |
 | `Permission` | `import { Permission } from "@n1h/sweetview-native"`; `Permission.DeviceControl === 1`; `Permission.InputMonitoring === 2` | an ordinary `enum` now (it was a `const enum`): its members are values at run time |
 | `PermissionStatus` | `import type { PermissionStatus } from "@n1h/sweetview-native"` | unchanged |
-| `RequestHandler` | `import type { RequestHandler } from "@n1h/sweetview-native"` | unchanged |
-| `Size` | `import type { Size } from "@n1h/sweetview-native"` | unchanged |
-| `SizeHint` | `import { SizeHint } from "@n1h/sweetview-native"`; `SizeHint.NONE === 0`; `SizeHint.MIN === 1`; `SizeHint.MAX === 2`; `SizeHint.FIXED === 3` | an ordinary `enum` now (it was a `const enum`): its members are values at run time |
-| `WEBVIEW_VERSION` | `import { WEBVIEW_VERSION } from "@n1h/sweetview-native"`; `WEBVIEW_VERSION === "0.12.0"` | unchanged: the C API version whose calls and error codes the class keeps |
-| `Webview` | `import { Webview } from "@n1h/sweetview-native"`; `new Webview(debug, size, window)` | the same class; the members that changed are in the next table |
-| `WebviewError` | `import { WebviewError } from "@n1h/sweetview-native"`; `new WebviewError(fn, code)` | unchanged |
-| `WebviewRequest` | `import type { WebviewRequest } from "@n1h/sweetview-native"` | unchanged |
-| `WebviewResponse` | `import type { WebviewResponse } from "@n1h/sweetview-native"` | unchanged |
-| `WebviewResponseHead` | `import type { WebviewResponseHead } from "@n1h/sweetview-native"` | unchanged |
-| `beginWebviewResponse` | `import { beginWebviewResponse } from "@n1h/sweetview-native"`; `beginWebviewResponse(handle, id, head)` | `handle` is the opaque number of `Webview.unsafeHandle`, not a pointer; still callable from any thread |
-| `completeWebviewRequest` | `import { completeWebviewRequest } from "@n1h/sweetview-native"`; `completeWebviewRequest(handle, id, response)` | `handle` is the opaque number of `Webview.unsafeHandle`, not a pointer; still callable from any thread |
-| `endWebviewResponse` | `import { endWebviewResponse } from "@n1h/sweetview-native"`; `endWebviewResponse(handle, id)` | `handle` is the opaque number of `Webview.unsafeHandle`, not a pointer; still callable from any thread |
+| `RequestHandler` | `import type { RequestHandler } from "@n1h/sweetview"` | unchanged |
+| `Size` | `import type { Size } from "@n1h/sweetview"` | unchanged |
+| `SizeHint` | `import { SizeHint } from "@n1h/sweetview"`; `SizeHint.NONE === 0`; `SizeHint.MIN === 1`; `SizeHint.MAX === 2`; `SizeHint.FIXED === 3` | an ordinary `enum` now (it was a `const enum`): its members are values at run time |
+| `WEBVIEW_VERSION` | `import { WEBVIEW_VERSION } from "@n1h/sweetview"`; `WEBVIEW_VERSION === "0.12.0"` | unchanged: the C API version whose calls and error codes the class keeps |
+| `Webview` | `import { RawWebview } from "@n1h/sweetview"`; `new RawWebview(debug, size, window)` | the same class, as `RawWebview` of `@n1h/sweetview`, which has the webview (the native package has none: D50); the members that changed are in the next table |
+| `WebviewError` | `import { WebviewError } from "@n1h/sweetview"`; `new WebviewError(fn, code)` | unchanged |
+| `WebviewRequest` | `import type { WebviewRequest } from "@n1h/sweetview"` | unchanged |
+| `WebviewResponse` | `import type { WebviewResponse } from "@n1h/sweetview"` | unchanged |
+| `WebviewResponseHead` | `import type { WebviewResponseHead } from "@n1h/sweetview"` | unchanged |
+| `beginWebviewResponse` | `import { beginWebviewResponse } from "@n1h/sweetview"`; `beginWebviewResponse(handle, id, head)` | `handle` is the opaque number of `Webview.unsafeHandle`, not a pointer; still callable from any thread |
+| `completeWebviewRequest` | `import { completeWebviewRequest } from "@n1h/sweetview"`; `completeWebviewRequest(handle, id, response)` | `handle` is the opaque number of `Webview.unsafeHandle`, not a pointer; still callable from any thread |
+| `endWebviewResponse` | `import { endWebviewResponse } from "@n1h/sweetview"`; `endWebviewResponse(handle, id)` | `handle` is the opaque number of `Webview.unsafeHandle`, not a pointer; still callable from any thread |
 | `installKeyboardHook` | `import { installKeyboardHook } from "@n1h/sweetview-native"`; `installKeyboardHook(handler)` | unchanged; installed and disposed of on the UI thread |
 | `installMouseHook` | `import { installMouseHook } from "@n1h/sweetview-native"`; `installMouseHook(handler)` | unchanged; installed and disposed of on the UI thread |
 | `modifiersFrom` | `import { modifiersFrom } from "@n1h/sweetview-native"`; `modifiersFrom(bits)` | unchanged |
 | `permissions` | `import { permissions } from "@n1h/sweetview-native"` | unchanged |
 | `unload` | `import { unload } from "@n1h/sweetview-native"`; `unload()` | On macOS, until the macOS goal, keep the call: it still closes the webview library there. On Windows delete it: the end of the application destroys every live webview itself, and `app.dispose()` (or `Webview#destroy()`) destroys one the application is done with earlier; there is no library to unload |
-| `writeWebviewResponseChunk` | `import { writeWebviewResponseChunk } from "@n1h/sweetview-native"`; `writeWebviewResponseChunk(handle, id, chunk)` | `handle` is the opaque number of `Webview.unsafeHandle`, not a pointer; still callable from any thread |
+| `writeWebviewResponseChunk` | `import { writeWebviewResponseChunk } from "@n1h/sweetview"`; `writeWebviewResponseChunk(handle, id, chunk)` | `handle` is the opaque number of `Webview.unsafeHandle`, not a pointer; still callable from any thread |
 
 ### `Webview` members that changed
 
@@ -1801,12 +1807,12 @@ Every other member keeps its name, signature and behaviour.
 
 | Old | Write now | Change |
 |---|---|---|
-| `unsafeHandle` | `import { Webview } from "@n1h/sweetview-native"`; `Webview#unsafeHandle` | an opaque number that names the webview to the worker functions; not a pointer, do not pass it to `bun:ffi` |
-| `unsafeWindowHandle` | `import { Webview } from "@n1h/sweetview-native"`; `Webview#unsafeWindowHandle` | still the real `HWND` (the `NSWindow` pointer on macOS), as a number; `null` once the webview is destroyed |
-| `constructor(handle)` | `import { Webview } from "@n1h/sweetview-native"`; `new Webview(handle)` | takes the number `unsafeHandle` gave and wraps that live webview; it no longer sets the default 1024x768 size on its window; a number that names no live webview throws `WebviewError` with `fn` `webview_create` and `code` -1 |
-| `destroy()` | `import { Webview } from "@n1h/sweetview-native"`; `Webview#destroy` | still the one teardown (the class has no `terminate`); it ends a `run()` only while this webview's own `run()` is in progress; afterwards `unsafeHandle` is `null`, and `completeRequest`, `setRequestHandler` and the worker functions given its old handle throw `WebviewError` code -3 (`WEBVIEW_ERROR_INVALID_STATE`); a second `destroy()` does nothing |
-| `constructor(debug, size, window)` | `import { Webview } from "@n1h/sweetview-native"`; `new Webview(debug, size, window)` | `window` is a `WindowHandle` (number, bigint or `bun:ffi` pointer) |
-| `bindRaw(name, callback, arg)` | `import { Webview } from "@n1h/sweetview-native"`; `Webview#bindRaw(name, callback, arg)` | `arg` is any value, handed back to the callback as it is; it was a pointer |
+| `unsafeHandle` | `import { RawWebview } from "@n1h/sweetview"`; `RawWebview#unsafeHandle` | an opaque number that names the webview to the worker functions; not a pointer, do not pass it to `bun:ffi` |
+| `unsafeWindowHandle` | `import { RawWebview } from "@n1h/sweetview"`; `RawWebview#unsafeWindowHandle` | still the real `HWND` (the `NSWindow` pointer on macOS), as a number; `null` once the webview is destroyed |
+| `constructor(handle)` | `import { RawWebview } from "@n1h/sweetview"`; `new RawWebview(handle)` | takes the number `unsafeHandle` gave and wraps that live webview; it no longer sets the default 1024x768 size on its window; a number that names no live webview throws `WebviewError` with `fn` `webview_create` and `code` -1 |
+| `destroy()` | `import { RawWebview } from "@n1h/sweetview"`; `RawWebview#destroy` | still the one teardown (the class has no `terminate`); it ends a `run()` only while this webview's own `run()` is in progress; afterwards `unsafeHandle` is `null`, and `completeRequest`, `setRequestHandler` and the worker functions given its old handle throw `WebviewError` code -3 (`WEBVIEW_ERROR_INVALID_STATE`); a second `destroy()` does nothing |
+| `constructor(debug, size, window)` | `import { RawWebview } from "@n1h/sweetview"`; `new RawWebview(debug, size, window)` | `window` is a `WindowHandle` (number, bigint or `bun:ffi` pointer) |
+| `bindRaw(name, callback, arg)` | `import { RawWebview } from "@n1h/sweetview"`; `RawWebview#bindRaw(name, callback, arg)` | `arg` is any value, handed back to the callback as it is; it was a pointer |
 
 ## Added since `v1-drafting`
 

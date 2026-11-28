@@ -50,4 +50,21 @@ export {
   type SingleInstanceOptions,
 } from "@n1h/sweetview-native";
 export { defineAppIdentity, type AppIdentity, type AppIdentityInput } from "@n1h/sweetview-settings";
-export { RawWebview, SizeHint, WEBVIEW_VERSION } from "@n1h/sweetview-native";
+// The webview and its companions: this package's, not the native package's (D50).
+export {
+  beginWebviewResponse,
+  completeWebviewRequest,
+  endWebviewResponse,
+  RawWebview,
+  SizeHint,
+  WEBVIEW_VERSION,
+  WebviewError,
+  writeWebviewResponseChunk,
+  type FileDropHandler,
+  type RequestHandler,
+  type Size,
+  type WebviewHandle,
+  type WebviewRequest,
+  type WebviewResponse,
+  type WebviewResponseHead,
+} from "./raw-webview";

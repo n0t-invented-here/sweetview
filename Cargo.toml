@@ -39,8 +39,9 @@ sweetview-http = { path = "crates/sweetview-http" }
 sweetview-keycodes = { path = "crates/sweetview-keycodes" }
 sweetview-window-logic = { path = "crates/sweetview-window-logic" }
 sweetview-shell-data = { path = "crates/sweetview-shell-data" }
-sweetview-runtime = { path = "crates/sweetview-runtime" }
-sweetview-napi = { path = "crates/sweetview-napi" }
+# Each with its webview off unless a dependent asks for it: the native binding builds without it (D50).
+sweetview-runtime = { path = "crates/sweetview-runtime", default-features = false }
+sweetview-napi = { path = "crates/sweetview-napi", default-features = false }
 sweetview-platform-loop = { path = "crates/sweetview-platform-loop" }
 sweetview-platform-webview = { path = "crates/sweetview-platform-webview" }
 sweetview-platform-input = { path = "crates/sweetview-platform-input" }

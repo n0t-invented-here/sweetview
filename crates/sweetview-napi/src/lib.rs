@@ -8,6 +8,7 @@
 
 mod callback;
 pub mod diagnostics;
+#[cfg(feature = "webview")]
 pub mod engine;
 mod errors;
 pub mod event_loop;

@@ -26,15 +26,18 @@
 
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
-use crate::{activation, engine, input, menu, notify, threads, tray, window, Runtime};
+#[cfg(feature = "webview")]
+use crate::engine;
+use crate::{activation, input, menu, notify, threads, tray, window, Runtime};
 
 /// One step of the release: its name for the log line, and what it does.
 type Step = (&'static str, fn());
 
 /// The steps, in the order above.
-const STEPS: [Step; 9] = [
+const STEPS: &[Step] = &[
   ("the input hooks", input::release_all),
   ("the windows' visibility", window::hide_all),
+  #[cfg(feature = "webview")]
   ("the webviews", engine::release_all),
   ("the tray icons", tray::release_all),
   ("the notifiers", notify::release_all),
@@ -57,7 +60,7 @@ pub fn release_all() {
   if !threads::is_ui_thread() {
     return;
   }
-  run_steps(&STEPS);
+  run_steps(STEPS);
 }
 
 /// Runs every step, each whatever the others do: a panic in one is caught and named once.

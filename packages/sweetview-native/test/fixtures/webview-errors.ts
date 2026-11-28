@@ -6,7 +6,7 @@
 
 import { join } from "node:path";
 import { onCallbackError } from "../../src/callback-errors";
-import { engineOf, SizeHint, Webview } from "../../src/webview";
+import { engineOf, SizeHint, Webview } from "../../../sweetview/src/raw-webview";
 import { finish, native, report, watchdog } from "./kit";
 
 watchdog(40_000);
