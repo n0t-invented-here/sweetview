@@ -61,16 +61,14 @@ fn the_subclass_reports_activation_and_keeps_forced_style_bits() {
 #[test]
 fn popup_menus_give_every_handle_back() {
   let _serial = serial();
-  let entries = [
-    PopupEntry::Item { label: "New tab\tCtrl+T".into(), enabled: true },
-    PopupEntry::Separator,
-    PopupEntry::Item { label: "Fish & chips".into(), enabled: false },
-  ];
+  // A tab menu's entries, built as every popup menu is (`muda`'s items, carrying the caller's
+  // command ids: D26), and dropped.
   let build = || {
-    let menu = OwnedMenu::new().expect("menu");
-    for (index, entry) in entries.iter().enumerate() {
-      menu.append(entry, index + 1).expect("append");
-    }
+    let menu = muda::Menu::new();
+    menu.append(&muda::MenuItem::new("New tab\tCtrl+T", true, None)).expect("item");
+    menu.append(&muda::PredefinedMenuItem::separator()).expect("separator");
+    menu.append(&muda::MenuItem::new("Fish && chips", false, None)).expect("item");
+    assert!(crate::set_command_id(&menu, &[0], 1) && crate::set_command_id(&menu, &[2], 3));
     menu
   };
   sweetview_platform_loop::testing::assert_gives_back_every_handle(100, || drop(build()));
