@@ -236,10 +236,35 @@ describe.if(onWindows)("WebView & createApp (win32)", () => {
       win.dispose();
     }
 
-    const app = await createApp({ url: "about:blank", noActivate: true, contentSize: { width: 300, height: 200 }, backgroundColor: "#102030" });
+    // createApp: the page area is contentSize at the screen's scale, and the browser shows backgroundColor behind the page.
+    let appLoaded = false;
+    const app = await createApp({
+      title: "app.test createApp background",
+      topmost: true,
+      noActivate: true,
+      contentSize: { width: 300, height: 200 },
+      backgroundColor: "#102030",
+      assets: { "index.html": htmlBytes(`<style>html,body{background:transparent;margin:0}#m{height:16px;background:${MARK}}</style><div id="m"></div><script>window.__sweetview_rpc("loaded", null)</script>`) },
+      uiMethods: { loaded: () => { appLoaded = true; } },
+    });
     try {
+      const appHwnd = BigInt(app.window.handle!);
       const scale = app.window.scale();
-      expect(clientSize(BigInt(app.window.handle!))).toEqual({ width: Math.round(300 * scale), height: Math.round(200 * scale) });
+      expect(clientSize(appHwnd)).toEqual({ width: Math.round(300 * scale), height: Math.round(200 * scale) });
+      app.window.show();
+      pumpUntil(() => appLoaded, 15_000);
+      let seen = { top: "", middle: "" };
+      const deadline = performance.now() + 5000;
+      do {
+        pumpEvents();
+        const size = clientSize(appHwnd);
+        const top = clientToScreen(appHwnd, size.width >> 1, 8);
+        const middle = clientToScreen(appHwnd, size.width >> 1, size.height >> 1);
+        seen = { top: screenPixel(top.x, top.y), middle: screenPixel(middle.x, middle.y) };
+        if (seen.top === MARK && seen.middle === "#102030") break;
+        Bun.sleepSync(20);
+      } while (performance.now() < deadline);
+      expect(seen).toEqual({ top: MARK, middle: "#102030" });
     } finally {
       app.dispose();
     }
@@ -351,6 +376,61 @@ describe.if(onWindows)("WebView & createApp (win32)", () => {
       app.dispose();
     }
   }, 120_000);
+
+  test("the documented window chrome on a real frameless window and page: window.maximize maximises, windowChromeEvents tells the page, and window.systemMenu opens the system menu while the page's calls keep arriving", async () => {
+    // Review N7 (the chrome only ever ran against stand-ins) and finding 1 (the system menu from
+    // uiMethods, inside WebView2's message callback: the page's calls still arrive and are answered).
+    const { openPopupMenu, pressKeys, VK } = await import("../../sweetview-native/test/win32-os");
+    const { scheduleNativeTimeout } = await import("@n1h/sweetview-native/internal");
+    const { windowChromeEvents, windowChromeMethods } = await import("./window-chrome");
+    const win = new Window({ title: "app.test chrome", frame: false, transparent: true, noActivate: true, contentSize: { width: 420, height: 300 } });
+    let pings = 0;
+    const told: unknown[] = [];
+    let menu: { atOpen: number; later: number } | undefined;
+    let view: WebView | undefined;
+    try {
+      view = await WebView.attach(win, {
+        // As docs/window-chrome.md attaches it: the chrome's methods in uiMethods.
+        uiMethods: { ...windowChromeMethods(win), ping: () => void pings++, told: (payload: unknown) => void told.push(payload) } as never,
+        assets: {
+          "index.html": htmlBytes(`<script>
+            window.__sweetview_emit = (name, payload) => { if (name === "window.maximized") window.__sweetview_rpc("told", payload); };
+            let n = 0;
+            setInterval(() => {
+              n++;
+              window.__sweetview_rpc("ping", n);
+              if (n === 3) window.__sweetview_rpc("window.maximize", null); // the maximise button
+              if (n === 8) window.__sweetview_rpc("window.systemMenu", null); // the title bar's right click
+            }, 25);
+          </script>`),
+        },
+      });
+      windowChromeEvents(win, view as unknown as { emit(name: "window.maximized", payload: { maximized: boolean }): void });
+      win.show();
+      pumpUntil(() => told.length > 0, 15_000);
+      expect({ maximized: win.isMaximized(), told }).toEqual({ maximized: true, told: [{ maximized: true }] });
+      // From inside the menu's modal loop: count the page's calls for 400 ms, then close it.
+      const watch = (end: number) => {
+        if (openPopupMenu() !== 0n && menu === undefined) {
+          const atOpen = pings;
+          scheduleNativeTimeout(400, () => {
+            menu = { atOpen, later: pings };
+            const open = openPopupMenu();
+            if (open !== 0n) pressKeys(open, VK.ESCAPE);
+          });
+          return;
+        }
+        if (menu === undefined && performance.now() < end) scheduleNativeTimeout(10, () => watch(end));
+      };
+      watch(performance.now() + 15_000);
+      pumpUntil(() => menu !== undefined && openPopupMenu() === 0n, 20_000);
+      expect(menu).toBeDefined();
+      expect(menu!.later - menu!.atOpen).toBeGreaterThan(3);
+    } finally {
+      view?.dispose();
+      win.dispose();
+    }
+  }, 60_000);
 
   test("close-to-tray can intercept the default close on a createApp window", async () => {
     const { WM_CLOSE, user32 } = await import("../../sweetview-native/test/win32-os");
