@@ -383,3 +383,40 @@ fn a_keyboard_hook_removed_from_inside_its_handler_through_the_runtime_is_called
     assert_eq!(remove_keyboard_hook(), Ok(0));
   });
 }
+
+/// `binding.test.ts` "a callback may remove itself, and may destroy its owner, from inside its own
+/// call": a drain removes itself, then puts a replacement under its own token and wakes it, from
+/// inside its own call; the replacement runs on the wake and removes itself; a wake with no drain
+/// registered is still delivered and runs nothing. (An interval cancelling itself is
+/// `runtime.rs`'s `a_job_may_clear_itself_and_a_cleared_timeout_never_runs`.)
+#[test]
+fn a_drain_removes_and_replaces_itself_from_inside_its_own_call() {
+  const TOKEN: u64 = 7001;
+  on_ui_thread(|runtime| {
+    let drained = Rc::new(Cell::new(0u32));
+    let (count, inner) = (drained.clone(), runtime.clone());
+    runtime.set_drain(
+      TOKEN,
+      Some(Rc::new(move || {
+        count.set(count.get() + 1);
+        inner.set_drain(TOKEN, None);
+        let (again, owner) = (count.clone(), inner.clone());
+        inner.set_drain(
+          TOKEN,
+          Some(Rc::new(move || {
+            again.set(again.get() + 10);
+            owner.set_drain(TOKEN, None);
+          })),
+        );
+        assert!(crate::wake(TOKEN));
+      })),
+    );
+    assert!(crate::wake(TOKEN));
+    pump_until(&runtime, 2000, || drained.get() == 11);
+    pump_until(&runtime, 60, || false);
+    assert_eq!(drained.get(), 11, "the first ran once, its replacement once");
+    assert!(crate::wake(TOKEN), "a wake with no drain is delivered");
+    pump_until(&runtime, 60, || false);
+    assert_eq!(drained.get(), 11, "and runs nothing");
+  });
+}
