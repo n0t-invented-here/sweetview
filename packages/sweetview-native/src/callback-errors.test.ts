@@ -19,6 +19,28 @@ afterEach(() => {
 });
 const listen = (handler: Parameters<typeof onCallbackError>[0]) => offs.push(onCallbackError(handler));
 
+// Delivery to a listener exists where macosKeepsTagPath() does not hold it back: on macOS, until
+// its goal, no listener is called (D42), so the tests of delivery run elsewhere (review 5, E2).
+const delivers = process.platform !== "darwin";
+
+describe("the macOS seam", () => {
+  test("on macOS, until its goal, a listener is not told: the catch prints its line, and the fault counts as not handled", () => {
+    const told: string[] = [];
+    listen((error) => void told.push(error.message));
+    const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+    const log = captureErrors();
+    let handled: boolean;
+    try {
+      Object.defineProperty(process, "platform", { ...platform, value: "darwin" });
+      handled = reportCallbackError("tray.onClick", new Error("on a Mac"), "sweetview: message window handler threw:");
+    } finally {
+      Object.defineProperty(process, "platform", platform);
+      log.restore();
+    }
+    expect({ handled, told, printed: log.calls.map((call) => String(call[0])) }).toEqual({ handled: false, told: [], printed: ["sweetview: message window handler threw:"] });
+  });
+});
+
 describe("reportCallbackError", () => {
   test("with no listener, a catch prints exactly what it printed before, with the original value", () => {
     const log = captureErrors();
@@ -33,7 +55,7 @@ describe("reportCallbackError", () => {
     expect(log.calls).toEqual([["sweetview: message window handler threw:", thrown], ["sweetview: the worker sent a message that could not be deserialized"]]);
   });
 
-  test("with a listener, it is told instead, with an Error and the source; a thrown non-error is wrapped with the value as its cause", () => {
+  test.if(delivers)("with a listener, it is told instead, with an Error and the source; a thrown non-error is wrapped with the value as its cause", () => {
     const told: { error: Error; source: CallbackErrorSource }[] = [];
     listen((error, source) => void told.push({ error, source }));
     const log = captureErrors();
@@ -53,7 +75,7 @@ describe("reportCallbackError", () => {
     expect(told[1]!.source).toEqual({ kind: "internal", name: "a deferred job" });
   });
 
-  test("a listener that throws is caught: Sweetview prints its own line and the listener's error, and the next listener still hears", () => {
+  test.if(delivers)("a listener that throws is caught: Sweetview prints its own line and the listener's error, and the next listener still hears", () => {
     const next: string[] = [];
     listen(() => {
       throw new Error("listener boom");
@@ -76,7 +98,7 @@ describe("reportCallbackError", () => {
     ]);
   });
 
-  test("removing the last listener puts the lines back", () => {
+  test.if(delivers)("removing the last listener puts the lines back", () => {
     let calls = 0;
     const handler = () => void calls++;
     const offA = onCallbackError(handler);
@@ -191,7 +213,7 @@ describe("reporting never throws (review F2, N1)", () => {
     }),
   ];
 
-  test("with a listener, a thrown value that cannot be converted or inspected is reported, and reporting returns", () => {
+  test.if(delivers)("with a listener, a thrown value that cannot be converted or inspected is reported, and reporting returns", () => {
     const told: { message: string; cause: unknown }[] = [];
     listen((error) => void told.push({ message: error.message, cause: error.cause }));
     const values = unreadable();
@@ -202,7 +224,7 @@ describe("reporting never throws (review F2, N1)", () => {
     for (const { message } of told) expect(typeof message).toBe("string");
   });
 
-  test("an onOpenUrl listener that throws such a value does not stop the next one", async () => {
+  test.if(delivers)("an onOpenUrl listener that throws such a value does not stop the next one", async () => {
     const { onOpenUrl, signalReady, emitActivationUrl, _resetActivationForTest } = await import("./activation");
     _resetActivationForTest();
     listen(() => {});
@@ -224,7 +246,7 @@ describe("reporting never throws (review F2, N1)", () => {
 });
 
 describe("listeners changed during a dispatch (review N8)", () => {
-  test("a listener that removes itself and another: every listener set when the fault came hears it; the next fault only the one left", () => {
+  test.if(delivers)("a listener that removes itself and another: every listener set when the fault came hears it; the next fault only the one left", () => {
     const heard: string[] = [];
     let offB: () => void = () => {};
     const offA = onCallbackError((error) => {
@@ -241,7 +263,7 @@ describe("listeners changed during a dispatch (review N8)", () => {
 });
 
 describe("an unsubscribe removes its own registration, once (review 2, item 7)", () => {
-  test("an old unsubscribe called again after the same function is registered anew leaves the new registration", () => {
+  test.if(delivers)("an old unsubscribe called again after the same function is registered anew leaves the new registration", () => {
     const heard: string[] = [];
     const fn = (error: Error) => void heard.push(error.message);
     const offOld = onCallbackError(fn);
@@ -253,7 +275,7 @@ describe("an unsubscribe removes its own registration, once (review 2, item 7)",
     expect(heard).toEqual(["still heard"]);
   });
 
-  test("the same function registered twice is two registrations: each unsubscribe removes one", () => {
+  test.if(delivers)("the same function registered twice is two registrations: each unsubscribe removes one", () => {
     const heard: string[] = [];
     const fn = (error: Error) => void heard.push(error.message);
     const offA = onCallbackError(fn);
@@ -267,7 +289,7 @@ describe("an unsubscribe removes its own registration, once (review 2, item 7)",
 });
 
 describe("application code run while a fault is reported (review 2, item 2)", () => {
-  test("a listener added while the thrown value is converted does not hear the fault it was added during", () => {
+  test.if(delivers)("a listener added while the thrown value is converted does not hear the fault it was added during", () => {
     const heard: string[] = [];
     listen(() => void heard.push("present"));
     const late = new Proxy({}, {
@@ -283,7 +305,7 @@ describe("application code run while a fault is reported (review 2, item 2)", ()
   // A listener that removes itself, then causes a callback that throws (review 5, E4): the report
   // is still in progress, so the nested fault is printed as one, not taken for a fault with no
   // listener (whose catch would hand it on, or with no fallback print nothing).
-  test("a fault raised by a listener that removed itself is printed as nested, and counts as handled", () => {
+  test.if(delivers)("a fault raised by a listener that removed itself is printed as nested, and counts as handled", () => {
     const nested: boolean[] = [];
     let off = () => {};
     off = onCallbackError(() => {
@@ -300,7 +322,7 @@ describe("application code run while a fault is reported (review 2, item 2)", ()
     expect(log.calls.map((call) => String(call[0]))).toEqual(["sweetview: webview.bind threw:"]);
   });
 
-  test("a conversion that reports the same value again ends, and the nested fault is printed, not lost", () => {
+  test.if(delivers)("a conversion that reports the same value again ends, and the nested fault is printed, not lost", () => {
     const heard: string[] = [];
     listen(() => void heard.push("delivered"));
     let conversions = 0;
