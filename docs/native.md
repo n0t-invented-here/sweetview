@@ -90,6 +90,9 @@ module runs, it throws `sweetview: this call must be made on the UI thread`.
   catches it, prints its own line for the original error and
   `sweetview: an onCallbackError handler threw:` for the listener's, and
   calls the next listener.
+- A fault raised while the listeners run (a listener that calls back into
+  Sweetview, whose callback then throws) is printed with its line and not
+  delivered again, so a report always ends and the fault is not lost.
 - A listener may end the application: `process.exit(code)` from inside it
   ends the process with that code, from inside either loop.
 

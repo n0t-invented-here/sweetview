@@ -129,8 +129,30 @@ export function reportCallbackError(kind: CallbackKind, error: unknown, fallback
     if (fallback !== null) printDefault(kind, error, fallback);
     return;
   }
+  // A fault raised while the listeners run (a listener that calls back into Sweetview, whose
+  // callback throws) is printed, not delivered again, as a nested pump does nothing (D40): the
+  // report ends, and the fault is not lost.
+  if (delivering) {
+    try {
+      printDefault(kind, error, fallback);
+    } catch {
+      // console.error itself replaced by something that throws: nothing more to do.
+    }
+    return;
+  }
   const source: CallbackErrorSource = name === undefined ? { kind } : { kind, name };
   const wrapped = asError(error);
+  delivering = true;
+  try {
+    deliver(wrapped, source, kind, error, fallback);
+  } finally {
+    delivering = false;
+  }
+}
+
+let delivering = false;
+
+function deliver(wrapped: Error, source: CallbackErrorSource, kind: CallbackKind, error: unknown, fallback: DefaultReport): void {
   for (const listener of [...listeners]) {
     try {
       listener(wrapped, source);

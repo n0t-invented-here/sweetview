@@ -1216,6 +1216,11 @@ describe.if(onWindows)("onCallbackError", () => {
     ]);
   }, 120_000);
 
+  test("a fault raised while a listener runs is printed, not delivered again: a listener that resizes a window whose onResize throws is called once (review N6)", async () => {
+    const { r, exitCode } = await runFixture("callback-errors.ts", ["reentry"]);
+    expect({ exitCode, calls: r.calls, printed: r.printed }).toEqual({ exitCode: 0, calls: 1, printed: ["sweetview: onResize handler threw: resize boom"] });
+  }, 60_000);
+
   test("windowChromeEvents: its kind belongs to its registration; the thrown value is never touched, with or without a listener (review F3)", async () => {
     const { r, exitCode } = await runFixture("callback-errors.ts", ["chrome"]);
     expect(exitCode).toBe(0);

@@ -78,6 +78,28 @@ if (mode === "exit-blocking" || mode === "exit-pumped") {
   process.exit(0);
 }
 
+if (mode === "reentry") {
+  // A listener that calls back into Sweetview (review N6): it resizes a window whose onResize throws.
+  const win = new Window({ title: "callback-errors reentry", bounds: { x: 150, y: 150, width: 320, height: 240 }, noActivate: true });
+  let size = 320;
+  win.onResize(boom("resize"));
+  let calls = 0;
+  const offReentry = onCallbackError(() => {
+    calls++;
+    if (calls > 50) return; // a bound for the test only: without the fix it recurses until the stack overflows
+    size += 10;
+    win.setBounds({ x: 150, y: 150, width: size, height: 240 });
+  });
+  win.setBounds({ x: 150, y: 150, width: 300, height: 240 });
+  await pumpFor(200);
+  offReentry();
+  win.dispose();
+  const result = { calls, printed: printed.splice(0) };
+  console.error = originalError;
+  console.log("RESULT " + JSON.stringify(result));
+  process.exit(0);
+}
+
 if (mode === "chrome") {
   // windowChromeEvents (review F3): the kind belongs to its registration; what the page view throws is never touched.
   const win = new Window({ title: "callback-errors chrome", bounds: { x: 140, y: 140, width: 320, height: 240 }, noActivate: true });
