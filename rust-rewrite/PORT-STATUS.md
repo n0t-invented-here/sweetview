@@ -62,7 +62,6 @@ The Rust exists. The proof is a simulated message, a test hook, a test that did 
 | A real change of display scale; a second monitor | The tab frame is sent the message with the scale unchanged. Nothing else. |
 | Tab keyboard shortcuts | Only Ctrl+T and Ctrl+W are typed for real; the other eleven go through a test hook. |
 | Snap and shadow of the tabbed frame | No test. |
-| Per-pixel transparency of a `transparent` window | No pixel is read. |
 | "No click-through flip while a mouse button is down" | Pure logic only; never with a held button. |
 | Requests from a shared worker; an external drop being refused | No test. |
 | UI-thread calls throwing from a `Worker` for windows, screens, tray and menus | Tested for the loop functions only. |
@@ -88,6 +87,7 @@ The Rust exists. The proof is a simulated message, a test hook, a test that did 
 | Native tabs | Frame styles and metrics; the strip; one webview per tab; open, select, rename, reorder, close; the last-tab rule; tear-off and merge keeping the page; popups as tabs; the failed-load page; the tab menu and system menu; strip drag and resize with real input; minimum size; dark mode |
 | Packaging | The binding loading; the missing-file and wrong-platform errors; `refreshWindowsIcons` reaching the shell |
 | A person closing a window | A real click on the title bar's close button and a real Alt+F4 (injected input) close a framed window with no `onClose` listener, and reach a listener once with the window kept: `person_tests::a_person_closes_a_framed_window_with_its_close_button_and_with_alt_f4` |
+| Per-pixel transparency of a `transparent` window | The screen read through a frameless `transparent` window whose webview has a transparent background, over a window of a known colour: the page's opaque square shows its own colour and the window behind shows through everywhere else: `person_tests::a_transparent_window_shows_its_pages_opaque_shape_and_the_window_behind_everywhere_else` |
 
 ## The Rust itself
 
