@@ -708,6 +708,15 @@ export const RUNNERS: Record<string, Runner> = {
         opens.push({ seen: opened, result: chose, kept: _debugTrackedCount(own) });
       }
       must(kept >= 1 && opens.every((o) => o.seen && o.result === undefined && o.kept === kept), "each time, the system menu of the application's own window opened through the one wrapper, and nothing more was kept", { kept, opens });
+      // A command chosen from it is carried out: a second process selects Minimize (the fourth item)
+      // and presses Enter on the menu window (posted messages, no input injected).
+      const probe = join(root, "packages", "sweetview", "test", "fixtures", "win-menu-probe.ts");
+      const picker = Bun.spawn([process.execPath, probe, String(process.pid), "pick:3"], { stdout: "pipe", stderr: "pipe" });
+      wrapped.showSystemMenu();
+      await picker.exited;
+      const picked = JSON.parse((await new Response(picker.stdout).text()).trim() || "{}") as { error?: string; items?: unknown[] };
+      await ctx.until(() => ctx.os.user32.IsIconic(own) !== 0, 3000);
+      must(picked.error === undefined && picked.items !== undefined && ctx.os.user32.IsIconic(own) !== 0, "Minimize chosen from the system menu minimised the application's own window", picked);
       wrapped.dispose();
       must(_debugTrackedCount(own) === 0 && ctx.os.isWindow(own), "disposing the wrapper keeps nothing for the window and leaves it", _debugTrackedCount(own));
     } finally {
@@ -857,7 +866,6 @@ export const RUNNERS: Record<string, Runner> = {
     must(fn({ windows: { ico: dotIco() } }) === undefined, "Windows: nothing to set at run time");
   }),
   setAppMenu: desktop((fn) => must(fn({ appName: "compat", aboutText: "compat" }) === undefined, "Windows: no app menu bar")),
-  unload: here((fn) => must(fn() === undefined, "with no live webview it does nothing")),
   completeWebviewRequest: desktop((fn, ctx) => RUNNERS.endWebviewResponse!.run(fn, { ...ctx, complete: fn } as never)),
   beginWebviewResponse: desktop((fn, ctx) => RUNNERS.endWebviewResponse!.run(fn, ctx as never)),
   writeWebviewResponseChunk: desktop((fn, ctx) => RUNNERS.endWebviewResponse!.run(fn, ctx as never)),

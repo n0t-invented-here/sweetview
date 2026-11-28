@@ -286,8 +286,10 @@ you made and call `process.exit()` after `run()`, as before 1.0.
   inside an executable from `bun build --compile`.
 - `title` defaults to the page's `<title>`; `assets` adds files the page
   fetches, such as models or images. Windows are created hidden; with
-  `showOnReady: true` the window appears when the page calls `signalReady()`
-  (or the ready watchdog fires), so it never shows a blank frame. All options:
+  `showOnReady: true` the window appears when the page calls `signalReady()`,
+  so it never shows a blank frame, and `readyTimeoutMs: 15_000` arms the
+  watchdog that shows it anyway, with a start-up error page, if the page fails
+  before it signals. All options:
   [`createApp`](docs/app.md#createapp).
 
 ```ts
@@ -298,7 +300,8 @@ import type { Events, Methods } from "./protocol";
 const app = await createApp<Methods, Events>({
   page: index,
   worker: "./worker.ts",
-  showOnReady: true,
+  showOnReady: true, // the window appears when the page calls signalReady()
+  readyTimeoutMs: 15_000, // or, if the page fails first, with Sweetview's start-up error page
 });
 
 app.run();

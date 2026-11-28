@@ -30,6 +30,8 @@ bridge.on("log", add);
 now.addEventListener("click", () => bridge.notify("notify.now"));
 later.addEventListener("click", () => bridge.notify("notify.later", { seconds: 5 }));
 
-const history = await bridge.rpc("log.history");
+const history = await bridge.rpc("page.ready");
 for (const entry of history) add(entry);
-void signalReady(); // the page is ready: Sweetview's own signal, for its ready watchdog and showOnReady
+// macOS (WKWebView) keeps the start it had at the tag pre-rust-rewrite until the macOS goal (D42).
+const macTagPath = /Macintosh|Mac OS X/.test(navigator.userAgent);
+if (!macTagPath) void signalReady(); // the page is ready: Sweetview's own signal, for its ready watchdog and showOnReady
