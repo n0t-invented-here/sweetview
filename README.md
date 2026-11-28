@@ -38,17 +38,24 @@ git clone https://github.com/n0t-invented-here/sweetview.git
 cd sweetview
 git checkout v1-drafting
 bun install
-just native              # Windows: builds the Rust binding (needs a Rust toolchain)
+just native build        # Windows: builds the Rust binding (needs the Rust toolchain)
 just demos web-app app   # optional: a demo opens in a window
 ```
 
 On Windows the native layer is a Rust binding,
 `packages/sweetview-native/prebuilt/sweetview.win32-x64-msvc.node`. A clone
-does not contain it: `just native` builds it from the crates under `crates/`
-into that folder and regenerates its TypeScript declarations
-([Rebuilding](docs/webview-library.md#rebuilding)). On macOS, until the macOS
-goal of the Rust rewrite, the webview comes from `@n1h/sweetview-webview-bun`
-instead and no Rust build is needed.
+does not contain it, because it is built from source: `just native build`
+compiles the crates under `crates/` into that folder and regenerates its
+TypeScript declarations ([Rebuilding](docs/webview-library.md#rebuilding)).
+That needs the Rust toolchain, installed with [rustup](https://rustup.rs)
+(on Windows it also asks for the Visual Studio C++ build tools); the recipe
+says so when `cargo` is missing. The recipes that run code build the binding
+first, so `just demos web-app app`, the other demos' `app`, `compile` and
+`drive` recipes that load it, and `just test` work on a fresh clone; when it is current the build
+is cargo's no-op. Running a script directly (`bun run app.ts`, `bun test`)
+does not build it, and fails with a message that says what to run. On macOS,
+until the macOS goal of the Rust rewrite, the webview comes from
+`@n1h/sweetview-webview-bun` instead and no Rust build is needed.
 
 Every folder under `demos/` is a workspace member, so an app of your own
 goes in a new folder there and links the packages from the checkout. Create
@@ -369,7 +376,7 @@ codesign --sign - --force --deep "App.app"
 | Path | Contents |
 |---|---|
 | `packages/` | the Sweetview facade, IPC, the WebSocket, Electron and Tauri transports, native helpers, settings and build packages |
-| `crates/` | the Rust native layer on Windows (`tao`, `wry`, `muda`, `tray-icon` and `rfd` behind this project's own crates), compiled by `just native` into the N-API binding `@n1h/sweetview-native` loads |
+| `crates/` | the Rust native layer on Windows (`tao`, `wry`, `muda`, `tray-icon` and `rfd` behind this project's own crates), compiled by `just native build` into the N-API binding `@n1h/sweetview-native` loads |
 | `docs/` | the reference pages, indexed by the [reference index](docs/README.md) |
 | [`demos/web-app/`](demos/web-app/README.md) | one backend and one React page run two ways: a desktop window with tray and notifications, or `Bun.serve` with WebSockets |
 | [`demos/web-app-electron/`](demos/web-app-electron/README.md) | the web-app page unchanged in an Electron shell, its service in the main process |
@@ -388,15 +395,16 @@ from the repository root:
 
 | Recipe | Does |
 |---|---|
-| `just native` | builds the Rust binding for this machine into `packages/sweetview-native/prebuilt/` and regenerates its `binding.d.ts` |
-| `just check` | `just native`, then `tsc --noEmit` over `packages/` and `demos/`, then `bun test` |
+| `just native build` | builds the Rust binding for this machine into `packages/sweetview-native/prebuilt/` and regenerates its `binding.d.ts`; needs the Rust toolchain (rustup). The recipes below that run code on Windows run it first |
+| `just test` | on Windows `just native build`, then `bun test` |
+| `just check` | `just native build`, then `tsc --noEmit` over `packages/` and `demos/`, then `bun test` |
 | `just demos web-app serve` | the web build on `http://127.0.0.1:4747` (`PORT`, `HOST`) |
-| `just demos web-app app`, `just demos desktop-pet app`, `just demos menubar-only app`, `just demos menubar-notify app`, `just demos native-tabs app` | the desktop application from source, with `bun run` (`WEBVIEW_DEBUG=1` opens devtools) |
-| `just demos web-app compile`, `just demos desktop-pet compile`, `just demos menubar-only compile`, `just demos menubar-notify compile` | Windows exe, macOS arm64 binary and `.app` into each demo's `dist/` |
+| `just demos web-app app`, `just demos desktop-pet app`, `just demos menubar-only app`, `just demos menubar-notify app`, `just demos native-tabs app` | the desktop application from source, with `bun run` (`WEBVIEW_DEBUG=1` opens devtools); on Windows the binding is built first |
+| `just demos web-app compile`, `just demos desktop-pet compile`, `just demos menubar-only compile`, `just demos menubar-notify compile` | Windows exe (with the binding, built first, embedded), macOS arm64 binary and `.app` into each demo's `dist/` |
 | `just demos web-app-electron app`, `just demos web-app-tauri app` | the web-app page in an Electron or a Tauri 2 shell; `probe` instead of `app` records what the page shows and quits |
 | `just compile`, `just clean` | every demo that has that recipe (`native-tabs`, `web-app-electron` and `web-app-tauri` have no `compile`) |
-| `just pack` | `just native`, then what `bun publish` would upload for each of the eight packages |
-| `just publish` | `just native`, then publishes all eight packages in dependency order, with a registry login |
+| `just pack` | `just native build`, then what `bun publish` would upload for each of the eight packages |
+| `just publish` | `just native build`, then publishes all eight packages in dependency order, with a registry login |
 
 ## License
 

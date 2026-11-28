@@ -8,7 +8,7 @@
 // runs `bun install` there, and then runs, twice, a primary from one tree and a secondary from the
 // other, each as `bun -e <script>` with its own tree as the working directory so that
 // `@n1h/sweetview-native` resolves to that tree's package. The temp folder is removed at the end.
-// This tree's binding must be built first (`just native`).
+// This tree's binding must be built first (`just native build`).
 
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
