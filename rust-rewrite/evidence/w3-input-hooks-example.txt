@@ -1,8 +1,0 @@
-The bindings' examples/input-hooks.ts is at packages/sweetview-native/examples/input-hooks.ts, unedited (its import, ../src/index, names this package's index).
-
-$ bun test packages/sweetview-native/src/input-hooks-example.test.ts   (CLAUDECODE, CLAUDE_CODE_ENTRYPOINT and AGENT unset; WEBVIEW2_USER_DATA_FOLDER a fresh folder under <TEMP>)
-packages\sweetview-native\src\input-hooks-example.test.ts:
-(pass) W3.5 examples/input-hooks.ts starts, shows its window, writes injected hook events to its page and exits when the window is closed [781.24ms]
- 1 pass
- 0 fail
- 11 expect() calls
