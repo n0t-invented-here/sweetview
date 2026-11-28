@@ -231,6 +231,25 @@ fn the_system_menu_of_every_window_is_enabled_from_is_zoomed_alone() {
   });
 }
 
+/// Round 4, P3: a frameless window's restore sets its bounds and only then forgets the bounds it
+/// kept, as tag `pre-rust-rewrite`'s `toggleMaximize` did: a resize listener that reads
+/// `is_maximized()` during the restore reads `true`, and during the maximise reads `true` too.
+#[test]
+fn a_frameless_restore_is_still_maximised_while_its_resize_is_delivered() {
+  on_ui_thread(|_runtime| {
+    let window = Rc::new(Window::create(WindowInit { frame: false, no_activate: true, bounds: Some(Rect::new(110, 120, 320, 240)), ..init("rt restore order") }).expect("window"));
+    window.show().expect("show");
+    let read: Rc<RefCell<Vec<bool>>> = Rc::default();
+    let (into, reader) = (read.clone(), Rc::downgrade(&window));
+    window.on_resize(Some(Rc::new(move |_| into.borrow_mut().extend(reader.upgrade().map(|w| w.is_maximized()))))).expect("resize");
+    window.toggle_maximize().expect("maximise");
+    window.toggle_maximize().expect("restore");
+    assert_eq!(*read.borrow(), [true, true], "maximised while the maximise and the restore are delivered");
+    assert!(!window.is_maximized());
+    window.dispose();
+  });
+}
+
 #[test]
 fn is_minimized_follows_the_os_for_an_owned_and_an_adopted_window() {
   on_ui_thread(|runtime| {

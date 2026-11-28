@@ -311,8 +311,15 @@ impl Core {
   fn toggle_frameless_maximize(&self) -> Result<()> {
     let work_area = screen::of_window(self.handle)?.work_area;
     let (next, restore) = logic::toggle_frameless_maximize(self.restore.get(), self.bounds(), work_area);
-    self.restore.set(restore);
-    self.set_bounds(next);
+    // As the tag's toggleMaximize: the bounds to go back to are kept before the maximise and
+    // forgotten after the restore, so a resize listener reads `is_maximized()` true during both.
+    if restore.is_some() {
+      self.restore.set(restore);
+      self.set_bounds(next);
+    } else {
+      self.set_bounds(next);
+      self.restore.set(None);
+    }
     // The bounds may not have changed size (no resize to notice it by).
     self.note_maximized();
     Ok(())
