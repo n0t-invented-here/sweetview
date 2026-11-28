@@ -280,6 +280,26 @@ describe("application code run while a fault is reported (review 2, item 2)", ()
     expect(heard).toEqual(["present"]);
   });
 
+  // A listener that removes itself, then causes a callback that throws (review 5, E4): the report
+  // is still in progress, so the nested fault is printed as one, not taken for a fault with no
+  // listener (whose catch would hand it on, or with no fallback print nothing).
+  test("a fault raised by a listener that removed itself is printed as nested, and counts as handled", () => {
+    const nested: boolean[] = [];
+    let off = () => {};
+    off = onCallbackError(() => {
+      off();
+      nested.push(reportCallbackError("webview.bind", new Error("nested after removal"), null, "save"));
+    });
+    const log = captureErrors();
+    try {
+      expect(reportCallbackError("tray.onClick", new Error("outer"), "sweetview: message window handler threw:")).toBe(true);
+    } finally {
+      log.restore();
+    }
+    expect(nested).toEqual([true]);
+    expect(log.calls.map((call) => String(call[0]))).toEqual(["sweetview: webview.bind threw:"]);
+  });
+
   test("a conversion that reports the same value again ends, and the nested fault is printed, not lost", () => {
     const heard: string[] = [];
     listen(() => void heard.push("delivered"));

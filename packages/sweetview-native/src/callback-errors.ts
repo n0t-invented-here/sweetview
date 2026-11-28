@@ -93,17 +93,22 @@ function printDefault(kind: CallbackKind, error: unknown, fallback: DefaultRepor
  */
 export function reportCallbackError(kind: CallbackKind, error: unknown, fallback: DefaultReport, name?: string): boolean {
   // macOS keeps the main branch's path until its goal (D42): no listener is called there.
-  if (listeners.size === 0 || macosKeepsTagPath()) {
+  if (macosKeepsTagPath()) {
     if (fallback !== null) printDefault(kind, error, fallback);
     return false;
   }
   // A fault raised while a report is in progress (application code it runs: the thrown value's
   // conversion, or a listener that calls back into Sweetview, whose callback throws) is printed,
   // not delivered again, as a nested pump does nothing (D40): the report ends, and the fault is not
-  // lost.
+  // lost. Looked at before the listeners: one that removed itself leaves none set, and the report
+  // it is part of is still in progress.
   if (delivering) {
     printNested(kind, error, fallback);
     return true;
+  }
+  if (listeners.size === 0) {
+    if (fallback !== null) printDefault(kind, error, fallback);
+    return false;
   }
   // The listeners present when the fault came, taken before anything of the value is read: its
   // conversion can run application code, which may add or remove a listener.
