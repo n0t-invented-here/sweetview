@@ -165,6 +165,7 @@ this page: it imports each new form and checks that it is what the row says.
    `node_modules` holds only the packages it names, so a package that
    `@n1h/sweetview` depends on is not reachable from the application.
    Everything under `@n1h/sweetview` itself needs nothing more.
+   Until 1.0.0 is on npm, install it from a Sweetview checkout: [Running an application against a local Sweetview checkout](local-checkout.md).
 2. Replace `createWebviewApp(options)` with `createApp(options)` from
    `@n1h/sweetview`. It makes the window as well, and window options
    (`frame`, `transparent`, `topmost`, `icon`, …) go in the same object. What
@@ -220,6 +221,7 @@ this page: it imports each new form and checks that it is what the row says.
    `@n1h/sweetview-build` now depends on `@n1h/sweetview-native`, which the
    package manager installs with it; an application that imports
    `@n1h/sweetview-native` itself names it in its own dependencies.
+   Until 1.0.0 is on npm, install it from a Sweetview checkout: [Running an application against a local Sweetview checkout](local-checkout.md).
 2. The public entry points are unchanged: every export of every entry point
    still exists under the same name. Check the rows marked other than
    `unchanged` in [Part B](#part-b-the-v1-drafting-api).
@@ -245,6 +247,7 @@ this page: it imports each new form and checks that it is what the row says.
    installed as well: `@n1h/sweetview-native` loads it there, and a Windows
    executable leaves it out ([What changed for every
    application](#what-changed-for-every-application)).
+   Until 1.0.0 is on npm, install it from a Sweetview checkout: [Running an application against a local Sweetview checkout](local-checkout.md).
 2. Change the module name in each import; every name is the same:
    `import { Webview, installMouseHook, permissions } from "@n1h/sweetview-native"`.
 3. Treat `Webview.unsafeHandle` as an opaque number: pass it to

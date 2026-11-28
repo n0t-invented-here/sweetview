@@ -76,6 +76,11 @@ On macOS, also add `"@n1h/sweetview-webview-bun": "^2.7.0"` to its
 `dependencies`. Run `bun install` again at the repository root, then follow
 the [Quickstart](#quickstart) inside `demos/hello/`.
 
+An application in its own repository that depends on `@n1h/sweetview`
+`^1.0.0` runs against the checkout instead: `just link` here, then
+`just link-sweetview` there, with no path typed on either side
+([Running an application against a local Sweetview checkout](docs/local-checkout.md)).
+
 ### From npm, once 1.0.0 is published
 
 Name the major version, so the command cannot fall back to 0.2.1. On
@@ -410,6 +415,7 @@ from the repository root:
 | `just demos web-app compile`, `just demos desktop-pet compile`, `just demos menubar-only compile`, `just demos menubar-notify compile` | Windows exe (with the binding, built first, embedded), macOS arm64 binary and `.app` into each demo's `dist/` |
 | `just demos web-app-electron app`, `just demos web-app-tauri app` | the web-app page in an Electron or a Tauri 2 shell; `probe` instead of `app` records what the page shows and quits |
 | `just compile`, `just clean` | every demo that has that recipe (`native-tabs`, `web-app-electron` and `web-app-tauri` have no `compile`) |
+| `just link`, `just unlink` | `just native build`, then registers the eight packages with `bun link` for an application elsewhere to run against ([local checkout](docs/local-checkout.md)); `unlink` removes the registrations |
 | `just pack` | `just native build`, then what `bun publish` would upload for each of the eight packages |
 | `just publish` | `just native build`, then publishes all eight packages in dependency order, with a registry login |
 
