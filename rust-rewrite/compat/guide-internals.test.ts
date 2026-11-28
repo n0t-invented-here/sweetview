@@ -120,7 +120,7 @@ describe("rows and paragraphs say what the code does, no more", () => {
     const attachPara = attach.slice(attach.indexOf("Mounts a webview inside an existing `Window`"), attach.indexOf("Mounts a webview inside an existing `Window`") + 900);
     expect({
       metaTabsField: /`tabs` field/.test(meta) || /of those, a `Window` gives its bounds/.test(meta) || !/reads a window's current frame, not the options it was made with/.test(meta),
-      holdSaysWhenItWaits: /a `WebView#run\(\)` of the window is in progress/.test(hold) && /`WebView\.attach`, while WebView2 creates it/.test(hold) && !/releases it at once \|/.test(hold),
+      holdSaysWhenItWaits: /a `WebView#run\(\)` of the window is in progress/.test(hold) && /`WebView\.attach`, while WebView2 creates it/.test(hold) && /made by `Window\.fromHandle` never destroys the application's own window/.test(hold) &&!/releases it at once \|/.test(hold),
       trayClickAtConstruction: /click handler, given when it is made/.test(tray),
       pumpsSayWindows: pumps.length === 5 && pumps.every((l) => /On Windows/.test(l) && /on macOS/.test(l)),
       attachKeepsShown: /already shown stays shown/.test(attachPara),
@@ -205,8 +205,9 @@ describe("the system menu of a window by its handle (the tag's windowMenu(hwnd))
         wrapsOnce: /const (\w+) = Window\.fromHandle\(hwnd\)/.test(text) && /`?\b(\w+)\.showSystemMenu\(\)/.test(text.replace(/Window#showSystemMenu/g, "")),
         saysWhatItKeeps: /kept.*until `?\w+\.dispose\(\)`? or the end of the application/.test(text),
         saysNullAndNotAWindowThrow: /throws for a null handle and for a value that names no window/.test(text),
-        saysForeignWindowIsWatched: /did not make.*watched.*until the wrapper is disposed/s.test(text),
-      }).toEqual({ where, wrapsPerCall: false, wrapsOnce: true, saysWhatItKeeps: true, saysNullAndNotAWindowThrow: true, saysForeignWindowIsWatched: true });
+        // Round 4, P6: a window the application made gets a subclass only while a listener is attached.
+        saysSubclassOnlyWithAListener: /did not make gets a subclass only while a listener is attached/s.test(text),
+      }).toEqual({ where, wrapsPerCall: false, wrapsOnce: true, saysWhatItKeeps: true, saysNullAndNotAWindowThrow: true, saysSubclassOnlyWithAListener: true });
     });
   }
 });

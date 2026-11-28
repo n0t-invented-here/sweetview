@@ -81,7 +81,7 @@ fn a_close_drop_or_resize_listener_disposes_its_window_from_inside_its_own_call(
           os::send_file_drop(handle, &[r"C:\example\one.txt"]);
         }
         _ => {
-          window.on_resize(Some(Rc::new(move |_| dispose()))).expect("resize");
+          window.on_resize(window.id, Some(Rc::new(move |_| dispose()))).expect("resize");
           window.set_bounds(Rect::new(-3000, -3000, 333, 200));
         }
       }
