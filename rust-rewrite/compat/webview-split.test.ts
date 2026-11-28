@@ -50,7 +50,7 @@ function loadedBindings(pid: number): string[] {
 
 /** Starts `args`, waits until it has loaded a Sweetview binding (or 15 s), and returns what it loaded. */
 async function bindingsLoadedBy(args: string[], cwd: string): Promise<string[]> {
-  const child = Bun.spawn(args, { cwd, stdout: "ignore", stderr: "pipe", env: { ...process.env, SWEETVIEW_NATIVE_PATH: "", SWEETVIEW_PROCESS_BINDING: "" } });
+  const child = Bun.spawn(args, { cwd, stdout: "ignore", stderr: "pipe", env: { ...process.env, SWEETVIEW_NATIVE_PATH: "" } });
   try {
     const until = Date.now() + 15_000;
     let seen: string[] = [];
@@ -108,7 +108,7 @@ describe("the webview is not in the native package (D48)", () => {
 
 /** Starts `args`, waits up to 40 s for its main window, and returns the window's title and the `.node` files it loaded. */
 async function windowAndModules(args: string[], cwd: string): Promise<{ window: string; nodeModules: string[] }> {
-  const child = Bun.spawn(args, { cwd, stdout: "ignore", stderr: "ignore", env: { ...process.env, SWEETVIEW_NATIVE_PATH: "", SWEETVIEW_PROCESS_BINDING: "" } });
+  const child = Bun.spawn(args, { cwd, stdout: "ignore", stderr: "ignore", env: { ...process.env, SWEETVIEW_NATIVE_PATH: "" } });
   const ask = (script: string) => Bun.spawnSync(["powershell", "-NoProfile", "-Command", script], { stdout: "pipe" }).stdout.toString().trim();
   try {
     const until = Date.now() + 40_000;
