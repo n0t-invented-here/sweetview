@@ -125,6 +125,7 @@ const INPUT_CHECKS = [
   "strip.detach: a tab dropped on another window's strip joins it at the drop index",
   "strip.scrolled: a tab dropped on a strip whose tabs are scrolled joins it at the index the scrolled offset gives",
   "real keys: Ctrl+T opens a tab and Ctrl+W closes it while the page has the keyboard focus",
+  "real keys: Ctrl+1, Ctrl+2, Ctrl+9, Ctrl+Tab, Ctrl+Shift+Tab, Ctrl+PageDown and Ctrl+PageUp select tabs, a key that is no shortcut reaches the page, and Alt+F4 closes the window",
 ];
 
 type Run = { report: Record<string, Check>; output: string };

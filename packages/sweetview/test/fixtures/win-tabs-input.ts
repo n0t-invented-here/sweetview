@@ -733,6 +733,86 @@ try {
       kw.hide();
     });
   }
+
+  // ---- real keys: the other shortcuts, typed into a focused tab page --------------------------------
+  {
+    const name = "real keys: Ctrl+1, Ctrl+2, Ctrl+9, Ctrl+Tab, Ctrl+Shift+Tab, Ctrl+PageDown and Ctrl+PageUp select tabs, a key that is no shortcut reaches the page, and Alt+F4 closes the window";
+    await section(name, async () => {
+      const sw = make({ tabs: true, noActivate: false, bounds: { x: area.x + 80, y: area.y + 60, width: Math.min(px(800), area.width - 160), height: Math.min(px(500), area.height - 120) } });
+      const sh = handle(sw);
+      let selected: unknown;
+      sw.onTabSelect((t) => (selected = t));
+      const s1 = await WebView.openTab(sw, page("s1"));
+      const s2 = await WebView.openTab(sw, page("s2"));
+      const s3 = await WebView.openTab(sw, page("s3"));
+      s1.select();
+      sw.show();
+      await waitStrip(sw, "s1|s2|s3");
+      await Bun.sleep(300);
+      // The foreground from a click of the user's (injected) on the fixture's own page, as above.
+      const client = windowRect(sh);
+      const at = { x: client.x + Math.round(client.width / 2), y: client.y + Math.round(client.height / 2) };
+      if (!fits(name, [at])) return;
+      let why = "";
+      for (let attempt = 0; attempt < 4 && user32.GetForegroundWindow() !== sh; attempt++) {
+        moveCursorAsInput(at);
+        await Bun.sleep(60);
+        if (buttonsDown() || windowAt(at) !== sh) {
+          why = "another window was under the cursor on the shared desktop";
+          await Bun.sleep(700);
+          continue;
+        }
+        leftButton(true);
+        await Bun.sleep(40);
+        leftButton(false);
+        await until(() => user32.GetForegroundWindow() === sh, 1500);
+        why = "the window did not become the foreground window";
+      }
+      if (user32.GetForegroundWindow() !== sh) return skip(name, why);
+      const tabs = [s1, s2, s3];
+      const shown = () => tabs.find((t) => t === selected) ?? s1;
+      // A chord of real keys, the shown page holding the keyboard focus first.
+      const chord = async (keys: number[]) => {
+        for (let i = 0; i < 20 && (await ask(shown().webview, "document.hasFocus()").catch(() => "")) !== "true"; i++) await Bun.sleep(100);
+        if (user32.GetForegroundWindow() !== sh) return false;
+        try {
+          for (const k of keys) key(k, true);
+          for (const k of [...keys].reverse()) key(k, false);
+        } finally {
+          letGo();
+        }
+        return true;
+      };
+      const CTRL = 0x11, SHIFT = 0x10, ALT = 0x12;
+      const steps: [string, number[], Tab<any, any>][] = [
+        ["Ctrl+3", [CTRL, 0x33], s3],
+        ["Ctrl+1", [CTRL, 0x31], s1],
+        ["Ctrl+2", [CTRL, 0x32], s2],
+        ["Ctrl+9", [CTRL, 0x39], s3],
+        ["Ctrl+Tab wraps", [CTRL, 0x09], s1],
+        ["Ctrl+PageDown", [CTRL, 0x22], s2],
+        ["Ctrl+Shift+Tab", [CTRL, SHIFT, 0x09], s1],
+        ["Ctrl+PageUp wraps", [CTRL, 0x21], s3],
+      ];
+      const seen: Record<string, boolean> = {};
+      for (const [label, keys, want] of steps) {
+        const typed = await chord(keys);
+        seen[label] = typed && (await until(() => selected === want, 1500));
+        await Bun.sleep(150);
+      }
+      // A key that is no shortcut reaches the page.
+      await ask(shown().webview, "(document.addEventListener('keydown', (e) => { if (e.ctrlKey && e.key.toLowerCase() === 'x') window.__gotCtrlX = true; }), 1)");
+      let gotCtrlX = false;
+      if (await chord([CTRL, 0x58])) {
+        for (let i = 0; i < 15 && !gotCtrlX; i++, await Bun.sleep(100)) gotCtrlX = (await ask(shown().webview, "window.__gotCtrlX === true").catch(() => "")) === "true";
+      }
+      seen["a key that is no shortcut reaches the page"] = gotCtrlX;
+      // Alt+F4 closes every tab, then the window.
+      seen["Alt+F4 closes the window"] = (await chord([ALT, 0x73])) && (await until(() => user32.IsWindow(sh) === 0, 3000));
+      if (user32.IsWindow(sh) !== 0 && user32.GetForegroundWindow() !== sh && Object.values(seen).some((v) => !v)) skip(name, "the window lost the foreground on the shared desktop");
+      else check(name, Object.values(seen).every(Boolean), seen);
+    });
+  }
 } catch (err) {
   check("fixture ran to the end", false, err instanceof Error ? err.stack : String(err));
 } finally {
