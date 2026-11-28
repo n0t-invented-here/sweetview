@@ -1,27 +1,51 @@
 //! The end of the application: what Sweetview made for it is released by Sweetview.
 //!
-//! The binding calls [`release_all`] when the application ends: when its blocking
-//! loop has returned, and when the process exits for any reason JavaScript sees
-//! (decision D36). Each owner here already frees its OS resource when it is dropped
-//! or disposed; this makes sure that happens before the process goes, in an order
-//! that is safe:
+//! The binding calls [`release_all`] when the application's process ends: on Bun's
+//! `exit` event, which fires when the script ends, on `process.exit` and after an
+//! uncaught exception (decision D36). Nothing is released while the process runs.
+//! Each owner here already frees its OS resource when it is dropped or disposed;
+//! this makes sure that happens before the process goes, in an order that is safe:
 //!
 //! 1. the system-wide input hooks, which stall the desktop's input while no loop answers them;
 //! 2. the webviews, each before the window it lives in;
 //! 3. the tray icons, before the loop's windows;
-//! 4. the notifiers: their pending toasts hidden, their hidden notification icons removed;
+//! 4. the notifiers: their handlers end and their window and hidden notification icons go,
+//!    but the toasts they showed stay for the user to read;
 //! 5. the single-instance locks;
 //! 6. the menus handed to the application;
-//! 7. the windows;
+//! 7. the windows, those whose destroy was waiting for a later turn too;
 //! 8. the runtime's deferred jobs, timers, drains and listeners.
 //!
-//! Called from inside the loop (the process exits from inside a callback), what is
-//! in use further up the stack is left to the OS, as each owner's own dispose
-//! leaves it. Everything else is released at once. The runtime itself, its loop and
-//! its COM apartment stay: the application may make new objects afterwards, and
-//! they are released the same way at its next end.
+//! Each step runs whatever the one before it did: a step that panics is caught, named
+//! on stderr once, and the next step runs. Called from inside the loop (the process
+//! exits from inside a callback), what is in use further up the stack is left to the
+//! OS, as each owner's own dispose leaves it. The runtime itself, its loop and its COM
+//! apartment stay, so objects made afterwards (in another `exit` listener) still work.
+
+use std::panic::{catch_unwind, AssertUnwindSafe};
 
 use crate::{activation, engine, input, menu, notify, threads, tray, window, Runtime};
+
+/// One step of the release: its name for the log line, and what it does.
+type Step = (&'static str, fn());
+
+/// The steps, in the order above.
+const STEPS: [Step; 8] = [
+  ("the input hooks", input::release_all),
+  ("the webviews", engine::release_all),
+  ("the tray icons", tray::release_all),
+  ("the notifiers", notify::release_all),
+  ("the single-instance locks", activation::release_all),
+  ("the menus handed out", menu::release_all),
+  ("the windows", window::destroy_all),
+  ("the runtime's callbacks", release_runtime_callbacks),
+];
+
+fn release_runtime_callbacks() {
+  if let Some(runtime) = Runtime::existing() {
+    runtime.release_callbacks();
+  }
+}
 
 /// Releases everything Sweetview made on this thread that is still alive, in the
 /// order above. Does nothing on a thread other than the UI thread. Safe to call
@@ -30,21 +54,27 @@ pub fn release_all() {
   if !threads::is_ui_thread() {
     return;
   }
-  input::release_all();
-  engine::release_all();
-  tray::release_all();
-  notify::release_all();
-  activation::release_all();
-  menu::release_all();
-  window::destroy_all();
-  if let Some(runtime) = Runtime::existing() {
-    runtime.release_callbacks();
+  run_steps(&STEPS);
+}
+
+/// Runs every step, each whatever the others do: a panic in one is caught and named once.
+/// Returns how many steps panicked.
+fn run_steps(steps: &[Step]) -> usize {
+  let mut panicked = 0;
+  for (name, step) in steps {
+    // Each step leaves its own state consistent before anything it calls can panic (every
+    // registry is drained before its entries are released), so going on after one is sound.
+    if catch_unwind(AssertUnwindSafe(step)).is_err() {
+      panicked += 1;
+      eprintln!("sweetview: releasing {name} at the end of the application panicked; the rest were released");
+    }
   }
+  panicked
 }
 
 #[cfg(all(test, windows))]
 mod tests {
-  use std::cell::Cell;
+  use std::cell::{Cell, RefCell};
   use std::rc::Rc;
   use std::time::{Duration, Instant};
 
@@ -114,6 +144,26 @@ mod tests {
       }
       assert!(later.get());
     });
+  }
+
+  #[test]
+  fn a_step_that_panics_does_not_stop_the_others() {
+    thread_local! {
+      static RAN: RefCell<Vec<&'static str>> = const { RefCell::new(Vec::new()) };
+    }
+    fn first() {
+      RAN.with(|ran| ran.borrow_mut().push("first"));
+    }
+    fn panics() {
+      RAN.with(|ran| ran.borrow_mut().push("panics"));
+      panic!("a release step panicked on purpose");
+    }
+    fn last() {
+      RAN.with(|ran| ran.borrow_mut().push("last"));
+    }
+    let steps: [Step; 3] = [("the first", first), ("the one that panics", panics), ("the last", last)];
+    assert_eq!(run_steps(&steps), 1);
+    assert_eq!(RAN.with(|ran| ran.borrow().clone()), ["first", "panics", "last"]);
   }
 
   #[test]

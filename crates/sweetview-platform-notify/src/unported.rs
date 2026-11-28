@@ -61,4 +61,6 @@ impl Notifier {
   pub fn pending_balloons(&self) -> usize {
     0
   }
+
+  pub fn release(&self) {}
 }

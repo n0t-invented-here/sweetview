@@ -109,19 +109,33 @@ impl Notifier {
   pub fn balloons_shown(&self) -> u32 {
     self.with(|n| n.balloons_shown()).unwrap_or(0)
   }
+
+  /// Lets go of the notifier without withdrawing what it showed: see [`release_all`].
+  /// It shows nothing afterwards. Safe to call twice.
+  pub fn release(&self) {
+    release_slot(&self.slot);
+  }
 }
 
-/// Releases every notifier of this thread that is still alive: as dropping each
-/// does, its pending toasts are hidden and its hidden notification icons removed.
-/// A notifier in use further up the stack (its click handler is running) is left as it is.
+fn release_slot(slot: &Slot) {
+  // Taken out first and released after the borrow: releasing it destroys its window.
+  let taken = slot.try_borrow_mut().ok().and_then(|mut inner| inner.take());
+  if let Some(notifier) = taken {
+    notifier.release();
+  }
+}
+
+/// Releases every notifier of this thread that is still alive, at the end of the application:
+/// its toasts' handlers end and its window and hidden notification icons go (a balloon with its
+/// icon), but the toasts it showed stay on the screen and in the notification centre for the user
+/// to read. Only `dispose` withdraws them. A notifier in use further up the stack (its click
+/// handler is running) is left as it is.
 pub(crate) fn release_all() {
   let slots: Vec<Rc<Slot>> = NOTIFIERS
     .try_with(|all| all.borrow_mut().drain(..).filter_map(|weak| weak.upgrade()).collect())
     .unwrap_or_default();
   for slot in slots {
-    // Taken out first and dropped after the borrow: dropping it destroys its window.
-    let taken = slot.try_borrow_mut().ok().and_then(|mut inner| inner.take());
-    drop(taken);
+    release_slot(&slot);
   }
 }
 
