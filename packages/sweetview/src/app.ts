@@ -142,6 +142,14 @@ export const tabAttachHooks: unique symbol = Symbol("sweetview.tabAttachHooks");
  * webview with no RPC binding, and when the webview goes first. A callback, not a promise: a
  * blocking `run()` turns no promise continuation until it returns. Inside the package only.
  */
+// The page's answer once a frame of it has been presented: its first paint's entry, which the
+// engine records when the frame is presented; for a page that has painted before, two
+// animation frames.
+const DRAWN_SCRIPT = `(() => {
+  const drawn = () => window.__sweetview_rpc("__sweetview.drawn", null);
+  if (performance.getEntriesByType("paint").length > 0) return requestAnimationFrame(() => requestAnimationFrame(drawn));
+  new PerformanceObserver((_, observer) => { observer.disconnect(); drawn(); }).observe({ type: "paint" });
+})()`;
 const drawnRequests = new WeakMap<RawWebview, (done: () => void) => void>();
 export function afterNextDraw(raw: RawWebview, done: () => void): void {
   const request = drawnRequests.get(raw);
@@ -622,7 +630,7 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
       const requestDrawn = (done: () => void) => {
         if (!isLive()) return done();
         drawnWaiters.push(done);
-        if (drawnWaiters.length === 1) raw.eval(`requestAnimationFrame(() => requestAnimationFrame(() => window.__sweetview_rpc("__sweetview.drawn", null)))`);
+        if (drawnWaiters.length === 1) raw.eval(DRAWN_SCRIPT);
       };
       const clearDispatches = () => {
         queue.length = 0;
