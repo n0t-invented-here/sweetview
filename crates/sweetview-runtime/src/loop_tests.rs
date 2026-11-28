@@ -47,24 +47,38 @@ fn run_loop(runtime: &Rc<Runtime>, mode: Mode, done: &Cell<bool>, pump_every: Du
 /// Set, with the mode's name, in the environment of a child process of this test executable.
 const MODE_CHILD: &str = "SWEETVIEW_RUNTIME_TEST_LOOP_MODE";
 
+/// Printed by a child that could not judge, with the reason; the parent runs it again.
+const NOT_RUN: &str = "NOT RUN: ";
+
 /// Runs `body` once per loop mode, each in a fresh child process of this test executable, as the
 /// TypeScript fixtures ran each mode in a process of its own: no state of one mode's run (the
 /// runtime, its tick thread, WebView2's environment, a tray icon) is there for the other's. In the
 /// child, `body` runs the mode its environment names; a failing assertion fails the child, and the
-/// parent fails with its output.
+/// parent fails with its output. A child that prints [`NOT_RUN`] (the shared desktop kept it from
+/// judging) is run again, up to three times; then the test says `not run` and why.
 fn in_a_fresh_process_per_mode(test: &str, body: impl Fn(Mode)) {
   if let Ok(name) = std::env::var(MODE_CHILD) {
     return body(if name == "blocking" { Mode::Blocking } else { Mode::Pumped });
   }
   for name in ["blocking", "pumped"] {
-    let output = std::process::Command::new(std::env::current_exe().expect("the test executable"))
-      .args([test, "--exact", "--nocapture", "--test-threads=1"])
-      .env(MODE_CHILD, name)
-      .output()
-      .expect("the child process");
-    let (stdout, stderr) = (String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
-    eprintln!("{name}: {stdout}");
-    assert!(output.status.success() && stdout.contains("1 passed"), "the {name} loop, in a process of its own:\n{stdout}\n{stderr}");
+    let mut reason = None;
+    for _ in 0..3 {
+      let output = std::process::Command::new(std::env::current_exe().expect("the test executable"))
+        .args([test, "--exact", "--nocapture", "--test-threads=1"])
+        .env(MODE_CHILD, name)
+        .output()
+        .expect("the child process");
+      let (stdout, stderr) = (String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+      eprintln!("{name}: {stdout}");
+      assert!(output.status.success() && stdout.contains("1 passed"), "the {name} loop, in a process of its own:\n{stdout}\n{stderr}");
+      reason = stdout.split(NOT_RUN).nth(1).and_then(|rest| rest.lines().next()).map(str::to_owned);
+      if reason.is_none() {
+        break;
+      }
+    }
+    if let Some(reason) = reason {
+      panic!("not run: the {name} loop, in three processes of its own: {reason}");
+    }
   }
 }
 
@@ -413,6 +427,10 @@ struct ModalState {
   inside_menu: Cell<Inside>,
   box_returned: Cell<bool>,
   menu_returned: Cell<Option<i32>>,
+  /// The test's own closer ended the popup menu (and not something else on the shared desktop).
+  menu_ended_by_test: Cell<bool>,
+  /// How long the popup menu was open.
+  menu_open_for: Cell<Duration>,
   /// What the other thread wrote, in the order the drains read it.
   frames: RefCell<Vec<String>>,
   done: Cell<bool>,
@@ -576,17 +594,21 @@ fn page_calls_wakes_and_timeouts_are_served_inside_the_applications_own_modal_lo
           "openMenu",
           Rc::new(move |seq, _| {
             state.open.set(Some(Modal::Menu));
+            let ended = state.clone();
             inside_loop(
               Modal::Menu,
-              Rc::new(|| {
+              Rc::new(move || {
+                ended.menu_ended_by_test.set(true);
                 end_menu_for_tests();
               }),
             );
+            let opened = Instant::now();
             // In front first, as an application does before `TrackPopupMenu`: a menu whose owner is
             // not in front is closed by the next activation anywhere on the shared desktop.
             let owner = Engine::from_id(id).map_or(0, |engine| engine.window_handle());
             os::take_foreground(owner);
             let chosen = os::own_popup_menu(owner);
+            state.menu_open_for.set(opened.elapsed());
             state.open.set(None);
             state.menu_returned.set(Some(chosen));
             reply(seq, "\"closed\"");
@@ -632,6 +654,13 @@ fn page_calls_wakes_and_timeouts_are_served_inside_the_applications_own_modal_lo
       assert!(state.box_returned.get(), "{mode:?}: the message box closed and returned");
       assert!(in_box.complete(), "{mode:?}: inside the message box, page calls were answered and seen by the page, a wake drained and a timeout fired: {in_box:?}");
       assert_eq!(state.menu_returned.get(), Some(0), "{mode:?}: the popup menu was ended with nothing chosen");
+      if !state.menu_ended_by_test.get() && !in_menu.complete() {
+        // The menu closed before the test's closer ran: an activation elsewhere on the shared
+        // desktop closes a menu (the foreground was not this process's to keep). What happens inside
+        // a menu that is not open cannot be judged.
+        println!("{NOT_RUN}{mode:?}: the popup menu was closed by something other than the test after {:?}: {in_menu:?}", state.menu_open_for.get());
+        return;
+      }
       assert!(in_menu.complete(), "{mode:?}: inside the popup menu, the same: {in_menu:?}");
       assert_eq!(*state.frames.borrow(), ["written while the box was open", "written while the menu was open"], "{mode:?}");
     }
