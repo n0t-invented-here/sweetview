@@ -19,9 +19,10 @@ import { PET_MODEL_FILES, PET_TEXTURE_FILE } from "./pet-models";
 import { PET_TEXTURE_PATH, PETS, petLabel, petModelPath, randomPet, type Pet } from "./pets";
 import type { Events, Methods, UiMethods } from "./service";
 import { petIcon } from "./icon";
+import { IDENTITY } from "./identity";
 import { DEFAULT_SETTINGS, sanitize, type Settings } from "./settings";
 
-const APP_NAME = "Pet";
+const APP_NAME = IDENTITY.appName;
 const DEBUG = process.env.WEBVIEW_DEBUG === "1";
 const STILL = process.env.PET_STILL === "1";
 // The settings window's chrome: the page draws it (frameless, transparent, our look) unless PET_OS_FRAME=1 asks for the OS's frame.
@@ -58,6 +59,7 @@ const primary = Screen.primary();
 const area = primary.bounds;
 const size = Math.round(WINDOW_SIZE * settings.scale);
 const overlay = new Window({
+  identity: IDENTITY,
   title: APP_NAME,
   frame: false,
   transparent: true,
@@ -92,6 +94,7 @@ const settingsBounds = {
 const settingsWindow =
   SETTINGS_CHROME === "os"
     ? new Window({
+        identity: IDENTITY,
         frame: true,
         appearance: "dark",
         title: `${APP_NAME} Settings`,
@@ -100,6 +103,7 @@ const settingsWindow =
         onClose: () => settingsWindow.hide(),
       })
     : new Window({
+        identity: IDENTITY,
         frame: false,
         transparent: true,
         title: `${APP_NAME} Settings`,
@@ -195,7 +199,7 @@ const tray = createTray({
     { label: `Quit ${APP_NAME}`, click: () => petView.quit() },
   ],
 });
-notifier = createNotifier();
+notifier = createNotifier({ identity: IDENTITY }); // the toasts carry the demo's name, not Sweetview's
 
 petView.run();
 notifier.dispose();
