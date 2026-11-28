@@ -301,6 +301,8 @@ function moveTabBetweenHosts(record: WinTabRecord, target: WinTabHost, index: nu
   record.window = target;
   // Drops over the tab's webview now go to the target window only.
   record.hooks.rebindFileDrop?.();
+  // What shows behind its page is now the target window's colour (review finding 5).
+  followBackground(record, target);
   target.tabs.splice(Math.max(0, Math.min(target.tabs.length, index)), 0, record);
   target.selected = record;
   present(target);
@@ -316,6 +318,23 @@ function moveTabBetweenHosts(record: WinTabRecord, target: WinTabHost, index: nu
     if (source.selected) emitWindowTabSelect(source.window, source.selected.api);
   } else {
     disposeHost(source);
+  }
+}
+
+/**
+ * The browser's background of a tab that moved into `host`: the host window's
+ * `backgroundColor`. A window with none leaves the webview's own background as
+ * it is (what its application set, or the one it started with): the move
+ * carries the live webview with its settings.
+ */
+function followBackground(record: WinTabRecord, host: WinTabHost): void {
+  const colour = getWindowMeta(host.window).backgroundColor;
+  if (colour === undefined) return;
+  const rgb = Number.parseInt(colour.slice(1), 16);
+  try {
+    record.webview.raw.setBackgroundColor((rgb >> 16) & 0xff, (rgb >> 8) & 0xff, rgb & 0xff, 0xff);
+  } catch (err) {
+    console.error("sweetview: a moved tab's background could not be set:", err);
   }
 }
 
@@ -335,6 +354,7 @@ async function createTearOffHost(from: WinTabHost, bounds?: { x: number; y: numb
     noActivate: meta.noActivate,
     minWidth: meta.minWidth,
     minHeight: meta.minHeight,
+    backgroundColor: meta.backgroundColor,
     bounds: bounds ?? {
       x: srcBounds.x + step,
       y: srcBounds.y + step,
@@ -722,9 +742,8 @@ export const winTabsDriver: TabsDriver = {
     const hooks: TabAttachHooks = {
       fileDropHost: () => logicalHost().window,
       // Hidden until present() shows it as the selected tab.
-      mountChild: () => ({ window: host.frame.hwnd, bounds: host.frame.pageRect(), visible: false }),
-      // A tab's page area shows the tabbed window's backgroundColor until its page paints, as the frame's page area does.
-      backgroundColor: () => getWindowMeta(logicalHost().window).backgroundColor,
+      // A tab is a page of the frame: it starts with the tabbed window's backgroundColor, as the frame's page area shows.
+      mountChild: () => ({ window: host.frame.hwnd, bounds: host.frame.pageRect(), visible: false, pageBackground: true }),
       revealWindow: () => {
         const h = logicalHost();
         if (!h.closed && !isWindowDisposed(h.window) && !h.window.isVisible()) h.window.show();

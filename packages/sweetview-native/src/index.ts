@@ -42,6 +42,7 @@ export {
   type Icon,
 } from "./icon";
 export { pumpEvents, quitEventLoop, runEventLoop, setActivationPolicy, type ActivationPolicy, type EventLoopOptions } from "./event-loop";
+export { onCallbackError, type CallbackErrorHandler, type CallbackErrorSource, type CallbackKind } from "./callback-errors";
 export {
   extractUrlFromArgs,
   onOpenUrl,

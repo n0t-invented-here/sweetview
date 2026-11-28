@@ -1,6 +1,6 @@
 // What docs/upgrading.md and the pages say where an application used an internal call: the public
 // call that replaces it, with what it keeps and how it differs, or that 1.0 has no public call for it
-// (D44). The behaviour each row names is run by upgrade-guide.test.ts through fixtures/row-runners.ts.
+// (D45). The behaviour each row names is run by upgrade-guide.test.ts through fixtures/row-runners.ts.
 
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";

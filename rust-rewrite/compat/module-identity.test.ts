@@ -1,5 +1,5 @@
 // The repository's tests reach Sweetview's internals by relative source path instead of the
-// package's internal entries (D44). That keeps one module, and one state, only if both spellings
+// package's internal entries (D45). That keeps one module, and one state, only if both spellings
 // load the same module: an internal entry and the relative path to its file give the same module
 // object and the same functions.
 

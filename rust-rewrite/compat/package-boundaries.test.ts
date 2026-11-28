@@ -1,4 +1,4 @@
-// Internals are not public API (the owner's ruling, D44 in rust-rewrite/DECISIONS.md): no package
+// Internals are not public API (the owner's ruling, D45 in rust-rewrite/DECISIONS.md): no package
 // exports an entry point an application is not meant to import, no public entry point re-exports
 // an internal one, no package of this repository reaches into another package's unexported module,
 // and no page tells an application to import an internal one.
@@ -6,7 +6,7 @@
 // Some internal entries are still exported, because Sweetview's own packages import them across a
 // package boundary and no arrangement that exposes nothing exists for those uses yet, or because
 // they carry a capability an application has no public call for. Whether and how each is closed is
-// the owner's decision (D44). They are listed below by name, each with its reason, with the files
+// the owner's decision (D45). They are listed below by name, each with its reason, with the files
 // that import them. Each list must match the tree exactly, so it can neither grow unseen nor keep an
 // entry that is gone.
 //
@@ -33,7 +33,7 @@ const posix = (p: string) => p.split(sep).join("/");
 const FACADE = "imported across the boundary by @n1h/sweetview (createApp, WebView, the tabs, the worker wake), and no arrangement that exposes nothing exists for it yet";
 const MACOS = "macOS: Sweetview's own AppKit wrappers, until the macOS goal (D42)";
 
-/** Internal entries still exported, pending the owner's decision (D44). */
+/** Internal entries still exported, pending the owner's decision (D45). */
 const PENDING_ENTRIES: Record<string, Record<string, string>> = {
   "@n1h/sweetview-native": {
     "./internal": `${FACADE}; also the macOS facade files; scheduleNativeTimeout is item I3`,
@@ -67,10 +67,13 @@ const PENDING_IMPORTS: Record<string, string[]> = {
   "demos/native-tabs/scripts/mac-drive.ts": ["@n1h/sweetview-native/darwin/objc", "@n1h/sweetview-native/internal"],
 };
 
-/** The demos' scripts that reach into another package's or demo's files by relative path, by file: each named, so none is added unseen. */
-const SCRIPT_REACH: Record<string, string[]> = {
+/** The demos' files that reach outside their own demo by relative path (another demo's files, the demos' shared `window-size.ts`), by file: each named, so none is added unseen. */
+const DEMO_REACH: Record<string, string[]> = {
   "demos/web-app-electron/scripts/write-icon.ts": ["../../web-app/icon"],
   "demos/web-app-tauri/scripts/write-icon.ts": ["../../web-app/icon"],
+  "demos/desktop-pet/app.ts": ["../window-size"],
+  "demos/menubar-notify/app.ts": ["../window-size"],
+  "demos/web-app/app.ts": ["../window-size"],
 };
 
 const SWEETVIEW = new Set(Object.keys(PUBLIC));
@@ -159,7 +162,7 @@ type Scan = {
   reached: string[];
   pendingImports: Record<string, string[]>;
   reexports: string[];
-  scriptReach: Record<string, string[]>;
+  demoReach: Record<string, string[]>;
   darwinRows: Record<string, string>;
   guideRows: string[];
   guideProse: string[];
@@ -176,7 +179,7 @@ function scan(base: string): Scan {
       return { name: pkg.name, dir, exports: new Map(Object.entries(pkg.exports).map(([k, t]) => [k, typeof target(t) === "string" ? resolve(dir, target(t) as string) : undefined])) };
     });
   const byName = new Map(packages.map((p) => [p.name, p]));
-  const out: Scan = { unlistedEntries: [], staleEntries: [], unexported: [], reached: [], pendingImports: {}, reexports: [], scriptReach: {}, darwinRows: {}, guideRows: [], guideProse: [], pageLines: [] };
+  const out: Scan = { unlistedEntries: [], staleEntries: [], unexported: [], reached: [], pendingImports: {}, reexports: [], demoReach: {}, darwinRows: {}, guideRows: [], guideProse: [], pageLines: [] };
 
   // Entries: the documented ones and the pending internal ones, nothing else.
   for (const p of packages) {
@@ -199,7 +202,7 @@ function scan(base: string): Scan {
       const spec = m[1]!;
       if (spec.startsWith(".")) {
         if (resolve(dirname(file), spec).startsWith(ownPackage(file) + sep) || isTest(rel)) continue;
-        if (/^demos\/.+\/scripts\//.test(rel)) (out.scriptReach[rel] ??= []).includes(spec) || out.scriptReach[rel]!.push(spec);
+        if (/^demos\//.test(rel)) (out.demoReach[rel] ??= []).includes(spec) || out.demoReach[rel]!.push(spec);
         else out.reached.push(`${rel}: ${spec}`);
         continue;
       }
@@ -322,7 +325,7 @@ function withTree(files: Record<string, string | object>, run: (dir: string) => 
   }
 }
 
-describe("internals are not public API (D44)", () => {
+describe("internals are not public API (D45)", () => {
   const here = scan(root);
 
   test("every package exports only its documented entry points, and the pending internal entries listed by name", () => {
@@ -359,8 +362,8 @@ describe("internals are not public API (D44)", () => {
     );
   });
 
-  test("the demos' scripts that reach into another package's or demo's files are exactly the listed ones", () => {
-    expect(sorted(here.scriptReach)).toEqual(sorted(SCRIPT_REACH));
+  test("the demos' files that reach outside their own demo are exactly the listed ones", () => {
+    expect(sorted(here.demoReach)).toEqual(sorted(DEMO_REACH));
   });
 
   test("counter-examples: each way a page, a doc comment or a demo could name an internal entry is found", () => {
@@ -387,7 +390,7 @@ describe("internals are not public API (D44)", () => {
       },
       (dir) => {
         const found = scan(dir);
-        expect({ rows: found.guideRows, prose: found.guideProse, pages: [...found.pageLines].sort(), scripts: found.scriptReach }).toEqual({
+        expect({ rows: found.guideRows, prose: found.guideProse, pages: [...found.pageLines].sort(), scripts: found.demoReach }).toEqual({
           // A table row written without spaces around its bars.
           rows: ["`@n1h/sweetview-native/hit-regions` | `a`"],
           // A heading that is not a section's name, and a shorthand spelling with no package name.

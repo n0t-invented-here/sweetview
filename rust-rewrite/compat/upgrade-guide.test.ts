@@ -64,7 +64,7 @@ const typesFile = readFileSync(typesPath, "utf8");
 
 type Row = { section: string; line: number; old: string; write: string; change: string; spans: string[] };
 
-/** The Write now of a row whose capability 1.0 has no public call for: no code (D44). */
+/** The Write now of a row whose capability 1.0 has no public call for: no code (D45). */
 const NO_PUBLIC_CALL = "no public call in 1.0";
 
 function splitCells(line: string): string[] {
@@ -284,7 +284,7 @@ describe("docs/upgrading.md", () => {
     expect(bad).toEqual([]);
   });
 
-  // The capabilities an application reached only through an internal, which 1.0 has no public call for (D44).
+  // The capabilities an application reached only through an internal, which 1.0 has no public call for (D45).
   // Each is on the owner's list; a row added here is a decision, not a slip.
   const internalSource: Record<string, string> = {
     "`@n1h/sweetview-native/internal`": "internal",
@@ -295,6 +295,8 @@ describe("docs/upgrading.md", () => {
     "`@n1h/sweetview-native/win32/window`": "win32/window",
     "`@n1h/sweetview-native/win32/menu`": "win32/menu",
   };
+  /** The pane rows (rust-rewrite-api-review-fixes): a webview of the application's own at a rectangle, which 1.0 has no call for. */
+  const PANE_ROWS = ["`createPane(…)`", "`adoptPane(…)`", "`placePane(…)`", "`showPane(…)`", "`hidePane(…)`", "`destroyPane(…)`"];
   const NO_PUBLIC_ROWS = [
     ...["emitActivationUrl", "emitWindowFileDrop", "emitWindowNewTab", "emitWindowTabClose", "emitWindowTabSelect", "forwardWindowTabEvents", "getWindowBackend", "getWindowMeta", "holdWindowNativeDispose", "isWindowDisposed", "onWindowDispose", "onWindowFileDropListenersChange", "preserveWindowGeometry", "scheduleNativeTimeout", "windowFileDropCount"].map((n) => `\`@n1h/sweetview-native/internal\` | \`${n}\``),
     ...["Key", "LAST_TAB", "Shortcut", "shortcutFor"].map((n) => `\`@n1h/sweetview-native/win32/shortcuts\` | \`${n}\``),
@@ -303,6 +305,7 @@ describe("docs/upgrading.md", () => {
     ...["stripPane", "layout()", "stripRect()"].map((n) => `\`FrameWindow\` and \`FrameCallbacks\` members that changed | \`${n}\``),
     ...["_debugTrackedCount", "asHwnd", "systemIsDark"].map((n) => `\`@n1h/sweetview-native/win32/window\` | \`${n}\``),
     ...["buildMenu", "destroyMenu"].map((n) => `\`@n1h/sweetview-native/win32/menu\` | \`${n}\``),
+    ...PANE_ROWS.map((old) => `\`FrameWindow\` and \`FrameCallbacks\` members that changed | ${old}`),
   ];
   const noPublic = () => rows.filter((r) => r.write === NO_PUBLIC_CALL);
   /** The export a no-public-call row is about: the Old name, or for a member row the type it is a member of. */
@@ -310,7 +313,7 @@ describe("docs/upgrading.md", () => {
 
   test("the capabilities 1.0 has no public call for are these rows, each saying which capability", () => {
     expect(noPublic().map((r) => `${r.section} | ${r.old}`).sort()).toEqual([...NO_PUBLIC_ROWS].sort());
-    const unsaid = noPublic().filter((r) => !/no public call in 1\.0/.test(r.change) || r.change.length < 40);
+    const unsaid = noPublic().filter((r) => !PANE_ROWS.includes(r.old) && (!/no public call in 1\.0/.test(r.change) || r.change.length < 40));
     expect(unsaid.map((r) => r.old)).toEqual([]);
   });
 
@@ -361,11 +364,27 @@ describe("docs/upgrading.md", () => {
       for (const [, span] of r.change.matchAll(/`([^`]+)`/g)) {
         const call = /^([A-Za-z_$][\w$]*)(?:([.#]\w+))?\(.*\)$/.exec(span!) ?? /^([A-Z][\w$]*)([.#]\w+)$/.exec(span!);
         if (!call) continue;
+        // In a row with a public form, only a member of a named export (`Name.member`, `Name#member`) is checked.
+        if (r.write !== NO_PUBLIC_CALL && !call[2]) continue;
         const target = `${call[1]}${call[2] ?? ""}`;
         if (!targets.has(target) && !publicMember(call[1]!, call[2])) unknown.push(`${r.old}: ${span}`);
       }
     }
     expect(unknown).toEqual([]);
+  });
+
+  test("the pane rows, which 1.0 has no public call for, name nothing in their place", () => {
+    // Each is on the owner's list; a row added here is a decision, not a slip.
+    const none = rows.filter((r) => r.write === NO_PUBLIC_CALL && PANE_ROWS.includes(r.old));
+    expect(none.map((r) => r.old)).toEqual(["`createPane(…)`", "`adoptPane(…)`", "`placePane(…)`", "`showPane(…)`", "`hidePane(…)`", "`destroyPane(…)`"]);
+    // A capability without a public call is not offered a substitute in its Change column either.
+    const offered = none.filter((r) => /`[A-Za-z]+[.#(]/.test(guide.split(/\r?\n/)[r.line - 1]!.split("|")[3] ?? ""));
+    expect(offered.map((r) => r.old)).toEqual([]);
+    // The two uses of a message window of the application's own that 1.0 has no call for are said so, with no substitute.
+    for (const old of ["`HWND_MESSAGE`", "`createMessageWindow`", "`createMessageWindowRaw`"]) {
+      const line = guide.split(/\r?\n/)[rows.find((r) => r.old === old)!.line - 1]!;
+      expect({ old, says: line.includes("Two uses have no public call in 1.0"), offersHook: line.includes("installKeyboardHook") }).toEqual({ old, says: true, offersHook: false });
+    }
   });
 
   test("every row's new form imports and is what the row says", async () => {

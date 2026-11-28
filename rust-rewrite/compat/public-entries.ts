@@ -1,6 +1,6 @@
 // The entry points an application is meant to import, by package: each documented in docs/ (a
 // standalone package's subpath as the facade subpath it mirrors). Every other key of a package's
-// `exports` map is internal (D44). Shared by package-boundaries.test.ts and upgrade-guide.test.ts.
+// `exports` map is internal (D45). Shared by package-boundaries.test.ts and upgrade-guide.test.ts.
 
 export const PUBLIC: Record<string, string[]> = {
   "@n1h/sweetview": [".", "./worker", "./page", "./build", "./settings-store", "./window-chrome", "./ipc", "./ipc-ws", "./ipc-ws/server", "./ipc-ws/client", "./ipc-electron", "./ipc-electron/client", "./ipc-electron/preload", "./ipc-electron/server", "./ipc-tauri", "./ipc-tauri/client", "./native", "./native/hit-regions", "./file-imports"],

@@ -101,6 +101,25 @@ if (native && internal) {
   unregister();
   result.lifetime = { exitListenersAdded: process.listenerCount("exit") - exitListeners, released, macosKeepsTagPath: internal.macosKeepsTagPath() };
 
+  // What the Windows goal added to the macOS window code: held back (review finding 8 and N2).
+  const heldBack = await import("../../src/darwin/held-back");
+  result.windowCode = { contentSize: heldBack.macosContentSize({ contentSize: { width: 1100, height: 800 } }) ?? null, maximizeEvents: heldBack.macosMaximizeEvents() };
+  // The entry point, not a helper: `new Window` on macOS checks nothing the tag did not, so options
+  // the tag did not have (contentSize with bounds, a backgroundColor it would not parse) reach the
+  // darwin backend as they did there (which here, with no AppKit, fails loading it).
+  const windowErrors = [
+    errorOf(() => new native.Window({ bounds: { x: 0, y: 0, width: 100, height: 100 }, contentSize: { width: 100, height: 100 } })),
+    errorOf(() => new native.Window({ backgroundColor: "red" })),
+  ];
+  result.windowValidation = windowErrors.filter((e) => e !== null && /contentSize|background color/.test(e));
+  // The window chrome's method table, as an application spreads it into uiMethods: the tag's on macOS.
+  const { windowChromeMethods } = await import("../../../sweetview/src/window-chrome");
+  const stub = { hide() {}, isMaximized: () => false, startDrag() {}, startResize() {}, minimize() {}, toggleMaximize() {} };
+  result.chromeMethods = Object.keys(windowChromeMethods(stub)).sort();
+  // The demos' windows: the outer frame each passed at the tag.
+  const { demoWindowSize } = await import("../../../../demos/window-size");
+  result.demoWindowSize = demoWindowSize({ width: 1100, height: 800 }, () => ({ x: 410, y: 140, width: 1100, height: 800 }));
+
   if (scenario === "absent") {
     result.webviewError = errorOf(() => new RawWebview(false, size, 5n));
     result.mouseHookError = errorOf(() => installMouseHook(() => false));
@@ -119,6 +138,23 @@ if (native && internal) {
     result.permissions = { status: permissions.status(1), request: permissions.request(2), ready: permissions.ready(0), needed: permissions.needed(1), autoRequest: permissions.autoRequest };
     completeWebviewRequest(9, 3n, { status: 204 });
     result.calls = calls.filter(([name]) => name !== "Webview");
+
+    // onCallbackError: on macOS a listener that is set is not called, and a catch prints what it
+    // printed on the main branch. The reporter is no entry point, so it is imported by its path.
+    const { reportCallbackError } = await import("../../src/callback-errors");
+    const told: string[] = [];
+    const printed: unknown[][] = [];
+    const originalError = console.error;
+    console.error = (...args: unknown[]) => void printed.push(args.map((a) => (a instanceof Error ? a.message : a)));
+    const off = native.onCallbackError((error, source) => void told.push(`${source.kind}: ${error.message}`));
+    try {
+      reportCallbackError("tray.onClick", new Error("mac boom"), "sweetview: message window handler threw:");
+      reportCallbackError("window.onClose", new Error("mac close"), "sweetview: onClose handler threw:");
+    } finally {
+      off();
+      console.error = originalError;
+    }
+    result.callbackErrors = { told, printed };
   }
 }
 

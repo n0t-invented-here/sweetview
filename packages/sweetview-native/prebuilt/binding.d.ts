@@ -128,10 +128,16 @@ export interface WindowInit {
  * Numeric results are `webview_error_t` codes.
  */
 export declare class Engine {
-  /** Fills `window` with a webview; with `null`, in a window of the webview's own. */
+  /**
+   * Fills `window` with a webview; with `null`, in a window of the webview's own. In a
+   * Sweetview window with a `backgroundColor`, the browser has that colour from its start on a WebView2 Runtime with `ICoreWebView2ControllerOptions3` (and right after it is made on an older one; see `docs/native/windows.md`).
+   */
   static create(debug: boolean, window?: bigint | undefined | null): Engine
-  /** A child of `window`, at a rectangle of its client area in physical pixels. */
-  static createChild(debug: boolean, window: bigint, bounds: Rect): Engine
+  /**
+   * A child of `window`, at a rectangle of its client area in physical pixels. With
+   * `pageBackground`, a page of the window (a tab) has the window's `backgroundColor` from its start on a WebView2 Runtime with `ICoreWebView2ControllerOptions3` (and right after it is made on an older one; see `docs/native/windows.md`).
+   */
+  static createChild(debug: boolean, window: bigint, bounds: Rect, pageBackground?: boolean | undefined | null): Engine
   /** The live webview a handle names, or null. */
   static fromHandle(handle: number): Engine | null
   /** The number that names this webview to the functions a Worker calls. */
@@ -532,6 +538,15 @@ export declare function setActivationPolicy(policy: 'regular' | 'accessory' | 'p
 
 /** macOS: the running application's Dock icon. Windows: nothing. */
 export declare function setAppIcon(icon: IconBytes): void
+
+/**
+ * Makes `sink` where an exception a JavaScript callback threw goes on this thread, as
+ * `(kind, name, thrown)`: the binding's name for the callback, the name a raw binding was bound
+ * under (else null), and the value thrown, as it is (nothing of it is read on the way). It is
+ * called in place of the `sweetview: <kind> threw:` line on stderr; `null` puts the line back.
+ * `onCallbackError` sets it while it has a listener.
+ */
+export declare function setCallbackErrorSink(sink?: ((arg0: string, arg1: string | undefined | null, arg2: Error) => void) | undefined | null): void
 
 /** Sets the function that `wake(token)` runs on the UI thread. `null` removes it. */
 export declare function setDrain(token: number, drain?: (() => void) | undefined | null): void

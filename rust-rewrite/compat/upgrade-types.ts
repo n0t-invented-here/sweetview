@@ -288,16 +288,13 @@ export type Window__sweetview_native_toggleMaximize = Window__sweetview_native["
 export type WsHost__sweetview__ipc_ws_dispose = WsHost__sweetview__ipc_ws["dispose"];
 export type WsTransport__sweetview__ipc_ws_dispose = WsTransport__sweetview__ipc_ws["dispose"];
 export type Tab__sweetview_window = Tab__sweetview["window"];
-export type Tab__sweetview_close = Tab__sweetview["close"];
-export type Tab__sweetview_moveToNewWindow = Tab__sweetview["moveToNewWindow"];
-export type Tab__sweetview_select = Tab__sweetview["select"];
 export type Webview__sweetview_native_destroy = Webview__sweetview_native["destroy"];
 
 // Types an application declares in its own code (rows whose "Write now" is a declaration).
 export type MessageHandler = (message: number, wParam: bigint, lParam: bigint) => void;
 export type MessageWindow = { readonly hwnd: bigint; readonly destroy: () => void };
 
-// The types of the rows that say `no public call in 1.0` (D44): no public entry exports them.
+// The types of the rows that say `no public call in 1.0` (D45): no public entry exports them.
 // @ts-expect-error no public call in 1.0
 import type { Key as NoPublic_Key___n1h_sweetview } from "@n1h/sweetview";
 // @ts-expect-error no public call in 1.0

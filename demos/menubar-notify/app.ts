@@ -11,7 +11,8 @@
 import { appendFileSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { closeToTrayOnLastWindow, createNotifier, createTray, setActivationPolicy, type MenuTemplate } from "@n1h/sweetview/native";
+import { closeToTrayOnLastWindow, createNotifier, createTray, Screen, setActivationPolicy, type MenuTemplate } from "@n1h/sweetview/native";
+import { demoWindowSize } from "../window-size";
 import { createApp, indexHtml, type App } from "@n1h/sweetview";
 import pageCss from "./build/frontend/main.css" with { type: "file" };
 import pageJs from "./build/frontend/main.js" with { type: "file" };
@@ -58,8 +59,11 @@ setActivationPolicy("accessory"); // macOS: no Dock tile; the status item and th
 const app: App<Methods, Events> = await createApp<Methods, Events>({
   identity: IDENTITY,
   title: APP_NAME,
-  // The page's size in CSS pixels, centred on the primary screen at its scale.
-  contentSize: WINDOW_SIZE,
+  // The page's size in CSS pixels, centred on the primary screen at its scale (macOS, until its goal: the tag's outer frame).
+  ...demoWindowSize(WINDOW_SIZE, () => {
+    const screen = Screen.primary().bounds;
+    return { x: screen.x + Math.round((screen.width - WINDOW_SIZE.width) / 2), y: screen.y + Math.round((screen.height - WINDOW_SIZE.height) / 2), ...WINDOW_SIZE };
+  }),
   icon: TRAY_ICON,
   assets: {
     "index.html": indexHtml({

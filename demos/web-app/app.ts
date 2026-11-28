@@ -7,7 +7,8 @@
 
 import type { ColorScheme, Events, FsChange, Methods, NotifyStatus, WatchStatus } from "web-app-backend/protocol";
 import { basename } from "node:path";
-import { closeToTrayOnLastWindow, createNotifier, createTray, pickFolder, setAppIcon, setAppMenu, type Notifier } from "@n1h/sweetview/native";
+import { closeToTrayOnLastWindow, createNotifier, createTray, pickFolder, Screen, setAppIcon, setAppMenu, type Notifier } from "@n1h/sweetview/native";
+import { demoWindowSize } from "../window-size";
 import { createApp, indexHtml, WEBVIEW_VERSION, type App } from "@n1h/sweetview";
 import appCss from "./build/frontend/main.css" with { type: "file" };
 import appJs from "./build/frontend/main.js" with { type: "file" };
@@ -49,7 +50,13 @@ const app: App<Methods, Events> = await createApp<Methods, Events>({
   identity: IDENTITY,
   title: APP_NAME,
   // The page's size in CSS pixels: the frame is sized around it at the screen's scale, centred, and kept on the screen.
-  contentSize: { width: 1100, height: 800 },
+  // macOS, until its goal: the tag's outer frame, centred on the work area and kept on it.
+  ...demoWindowSize({ width: 1100, height: 800 }, () => {
+    const workArea = Screen.primary().workArea;
+    const width = Math.min(1100, workArea.width);
+    const height = Math.min(800, workArea.height);
+    return { x: workArea.x + Math.round((workArea.width - width) / 2), y: workArea.y + Math.round((workArea.height - height) / 2), width, height };
+  }),
   icon: APP_ICON,
   assets: { "index.html": indexHtml({ title: APP_NAME }), "main.js": appJs, "main.css": appCss },
   worker: new URL("./app-worker.ts", import.meta.url),

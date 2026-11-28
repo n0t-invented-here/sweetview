@@ -20,10 +20,15 @@
 
 import { afterEach, describe, expect, test } from "bun:test";
 import { dlopen, FFIType, ptr } from "bun:ffi";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { untilDesktopIsOurs } from "../test/desktop";
 import { runFixture } from "../test/run-fixture";
 import { _resetActivationForTest, onOpenUrl, signalReady, singleInstance, type SecondInstanceEvent } from "./activation";
 import { binding } from "./binding";
+import { onCallbackError } from "./callback-errors";
 import { installKeyboardHook, installMouseHook, type KeyboardHook, type MouseHook } from "./input-hooks";
 import { deferNative, openNativeDrain, quitNativeLoop, runNativeLoop, wakeNative } from "./ui-thread";
 import { isWindowDisposed, onWindowDispose, Window } from "./window";
@@ -369,6 +374,30 @@ describe.if(onWindows)("W1.3 / W1.4 the hooks' fallback: a handler that throws d
     expect(log.lines()).toEqual(["sweetview: keyboard hook handler threw: keyboard boom", "sweetview: keyboard hook handler threw: keyboard boom"]);
   });
 
+  test("onCallbackError: a keyboard hook handler's exception reaches the listener through the binding, once per call, with nothing printed, and the key still reaches the system (review N8)", async () => {
+    const told: string[] = [];
+    const off = onCallbackError((error, source) => void told.push(`${source.kind}: ${error.message}`));
+    let thrown = 0;
+    let downAfterThrow = false;
+    const log = captureErrors();
+    try {
+      keys = installKeyboardHook((m) => {
+        if (m.code !== "F24") return false;
+        thrown++;
+        throw new Error("keyboard boom");
+      });
+      sendKey(VK_F24, false);
+      await pumpUntil(() => thrown >= 1 && keyDown(VK_F24), 3000);
+      downAfterThrow = keyDown(VK_F24);
+      sendKey(VK_F24, true);
+      await pumpUntil(() => thrown >= 2 && !keyDown(VK_F24), 3000);
+    } finally {
+      off();
+      log.restore();
+    }
+    expect({ thrown, downAfterThrow, told, printed: log.lines() }).toEqual({ thrown: 2, downAfterThrow: true, told: ["keyboardHook: keyboard boom", "keyboardHook: keyboard boom"], printed: [] });
+  });
+
   test("W1.4 a keyboard hook disposes itself from inside its handler and is not called again", async () => {
     let calls = 0;
     keys = installKeyboardHook((m) => {
@@ -384,6 +413,37 @@ describe.if(onWindows)("W1.3 / W1.4 the hooks' fallback: a handler that throws d
     expect(calls).toBe(1);
     // The hook is gone: another installs.
     keys = installKeyboardHook(() => false);
+  });
+
+  test("onCallbackError: a mouse hook handler's exception reaches the listener through the binding, once per call, with nothing printed, and the pointer still moves (review N8)", async () => {
+    const original = cursorNow();
+    const told: string[] = [];
+    const off = onCallbackError((error, source) => void told.push(`${source.kind}: ${error.message}`));
+    const log = captureErrors();
+    let thrown = 0;
+    let moved = false;
+    try {
+      await untilDesktopIsOurs("a mouse button is held", () => !buttonsDown());
+      mouse = installMouseHook(() => {
+        thrown++;
+        throw new Error("mouse boom");
+      });
+      const start = cursorNow();
+      sendMouseMove(start.x > 100 ? -8 : 8, 0);
+      await pumpUntil(() => thrown > 0 && cursorNow().x !== start.x, 3000);
+      moved = cursorNow().x !== start.x;
+      mouse.dispose();
+      mouse = undefined;
+    } finally {
+      off();
+      log.restore();
+      user32!.SetCursorPos(original.x, original.y);
+    }
+    expect(moved).toBe(true);
+    expect(thrown).toBeGreaterThan(0);
+    // Every call that threw, and only those: another session's pointer may add calls of its own.
+    expect(told).toEqual(Array.from({ length: thrown }, () => "mouseHook: mouse boom"));
+    expect(log.lines()).toEqual([]);
   });
 
   test("W1.3 a mouse hook handler that throws lets the pointer move; a swallowing one holds it", async () => {
@@ -745,6 +805,34 @@ describe.if(onWindows)("W1.3 / W1.4 the hit-region refiner", () => {
       expect(asked.slice(0, 2)).toEqual(["40,40", "60,70"]);
       expect(passing(hwnd)).toBe(false); // no answer: the polygon's own answer, solid, stands
       expect(log.lines().slice(0, 2)).toEqual(["sweetview: hit region poll threw: refine boom", "sweetview: hit region poll threw: refine boom"]);
+    });
+  });
+
+  test("onCallbackError: a refiner's exception reaches the listener through the binding, once per ask, with nothing printed, and the window stays solid (review N8)", async () => {
+    await withRefinerWindow("refiner reports", async (win, hwnd, at) => {
+      const asked: string[] = [];
+      const told: string[] = [];
+      const off = onCallbackError((error, source) => void told.push(`${source.kind}: ${error.message}`));
+      const log = captureErrors();
+      try {
+        at(250, 50); // outside the polygon first, so the next point inside asks
+        await pumpFor(60);
+        win.setHitRegions(leftHalf, (local) => {
+          asked.push(`${local.x},${local.y}`);
+          throw new Error("refine boom");
+        });
+        at(40, 40);
+        await pumpUntil(() => asked.length >= 1, 2000);
+        at(60, 70);
+        await pumpUntil(() => asked.length >= 2, 2000);
+      } finally {
+        off();
+        log.restore();
+      }
+      expect(asked.slice(0, 2)).toEqual(["40,40", "60,70"]);
+      expect(told).toEqual(asked.map(() => "hitRegions.refine: refine boom"));
+      expect(passing(hwnd)).toBe(false);
+      expect(log.lines()).toEqual([]);
     });
   });
 
@@ -1146,4 +1234,241 @@ describe.if(onWindows)("W1.3 the binding's backstop, straight through the bindin
     const lines = stderr.split(/\r?\n/).filter((line) => line.startsWith("sweetview:"));
     for (const line of lines) expect(expected).toContain(line);
   }, 60_000);
+});
+
+// onCallbackError (src/callback-errors.ts): the same kinds, with a listener set. Each exception
+// arrives once with its kind and the handler's error, Sweetview prints nothing, the fallback still
+// applies; a listener that throws, a thrown non-error, the binding's sink, and today's lines back
+// once the listener is removed. Run in a process of its own (test/fixtures/callback-errors.ts),
+// whose stderr carries the binding's own lines. No input is injected.
+describe.if(onWindows)("onCallbackError", () => {
+  test("with a listener, every kind arrives once with its kind and error, nothing is printed, and each fallback applies", async () => {
+    // A deadline of the parent's own, which ends this child only: a fixture stuck where its own
+    // watchdog cannot run (inside a modal menu loop) is not left on the shared desktop (review 3, item 6).
+    const { r, stderr, exitCode } = await runFixture("callback-errors.ts", ["listener"], {}, 100_000);
+    expect({ exitCode, timedOut: r.timedOut }).toEqual({ exitCode: 0, timedOut: undefined });
+    const arrived = (r.arrivals as { kind: string; name?: string; message: string; isError: boolean }[]).map((a) => `${a.kind}${a.name ? ` (${a.name})` : ""}: ${a.message}${a.isError ? "" : " (not an Error)"}`);
+    expect([...arrived].sort()).toEqual(
+      [
+        "internal: deferred boom",
+        "internal: timeout boom",
+        // The binding caught this one itself: its reason, the exception as a string, is the message.
+        "internal (a native interval): interval boom",
+        "worker: drain boom",
+        "window.onMove: onMove boom",
+        "window.onResize: onResize boom",
+        "window.onClose: onClose boom",
+        "window.onMaximizeChange: onMaximizeChange boom",
+        "window.onMaximizeChange: window chrome emit boom",
+        "window.onFileDrop: onFileDrop boom",
+        "window.onNewTab: onNewTab boom",
+        "window.onTabSelect: onTabSelect boom",
+        "window.onTabClose: onTabClose boom",
+        "internal: dispose hook boom",
+        "tray.onClick: tray click boom",
+        "tray.onDoubleClick: tray double click boom",
+        "tray.menu: tray menu boom",
+        "menu.click: menu item boom",
+        "notifier.onClick: notification click boom",
+        "onOpenUrl: open url boom",
+        "singleInstance.onSecondInstance: second instance boom",
+      ].sort(),
+    );
+    expect(r.printedWithListener).toEqual([]);
+    expect(r.steps).toEqual({
+      intervalKeptItsSchedule: true,
+      closeRequestStillTaken: true,
+      throwingMenuOpensNoMenu: true,
+      noMenuLeftOpen: true,
+      handedOff: 1,
+    });
+    expect(r.throwingListener).toEqual({
+      printed: ["sweetview: UI dispatch failed: deferred again boom", "sweetview: an onCallbackError handler threw: listener boom"],
+      nextListener: ["internal: deferred again boom"],
+      recorded: ["internal: deferred again boom"],
+    });
+    expect(r.nonError).toEqual([{ kind: "internal", message: "a string", isError: true, cause: "a string" }]);
+    expect(r.printedWithoutListener).toEqual(["sweetview: UI dispatch failed: deferred without listener boom"]);
+    expect(r.arrivalsWithoutListener).toBe(0);
+    // The binding's own lines: none while Sweetview's sink was set; both when a raw sink threw; today's line once nothing is set.
+    expect(stderr.split(/\r?\n/).filter((line) => line.startsWith("sweetview:"))).toEqual([
+      "sweetview: a native interval threw: Error: raw interval boom",
+      "sweetview: the callback error sink threw: Error: raw sink boom",
+      "sweetview: a native interval threw: Error: interval without listener",
+    ]);
+  }, 120_000);
+
+  test("registering a window listener reads nothing from the application's function, and no function can name its own kind (review 2, item 3)", async () => {
+    const { r, exitCode } = await runFixture("callback-errors.ts", ["registration"]);
+    expect({ exitCode, readsWhileRegistering: r.readsWhileRegistering, told: r.told }).toEqual({ exitCode: 0, readsWhileRegistering: 0, told: ["window.onResize: claims another kind"] });
+  }, 60_000);
+
+  test("a fault raised while a listener runs is printed, not delivered again: a listener that resizes a window whose onResize throws is called once (review N6)", async () => {
+    const { r, exitCode } = await runFixture("callback-errors.ts", ["reentry"]);
+    expect({ exitCode, calls: r.calls, printed: r.printed }).toEqual({ exitCode: 0, calls: 1, printed: ["sweetview: onResize handler threw: resize boom"] });
+  }, 60_000);
+
+  test("windowChromeEvents: its listener is a Window#onMaximizeChange listener; the thrown value is never touched, with or without a listener (review F3)", async () => {
+    const { r, exitCode } = await runFixture("callback-errors.ts", ["chrome"]);
+    expect(exitCode).toBe(0);
+    expect(r.printedWithoutListener).toEqual(["sweetview: onMaximizeChange handler threw: frozen without listener"]);
+    expect(r.told).toEqual([
+      "window.onMaximizeChange: chrome primitive (not the thrown value)",
+      "window.onMaximizeChange: frozen with listener",
+      "window.onMaximizeChange: thrown twice",
+      "internal: thrown twice",
+    ]);
+    expect(r.printedWithListener).toEqual([]);
+  }, 60_000);
+
+  for (const mode of ["exit-blocking", "exit-pumped", "exit-run-event-loop"]) {
+    test(`a listener that calls process.exit(3) from inside a native callback ends the process with 3 (${mode === "exit-blocking" ? "the blocking loop" : mode === "exit-pumped" ? "the loop pumped by hand" : "runEventLoop"}), and the end of the application releases cleanly`, async () => {
+      // Spawned here, not through runFixture: a process the listener ends prints no RESULT line.
+      const profile = mkdtempSync(join(tmpdir(), "sweetview-callback-exit-"));
+      const child = Bun.spawn([process.execPath, fileURLToPath(new URL("../test/fixtures/callback-errors.ts", import.meta.url)), mode], {
+        env: { ...process.env, WEBVIEW2_USER_DATA_FOLDER: profile },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+      rmSync(profile, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
+      expect({ exitCode, result: stdout.includes("RESULT"), sweetviewLines: stderr.split(/\r?\n/).filter((line) => /sweetview|panic|error/i.test(line)) }).toEqual({ exitCode: 3, result: false, sweetviewLines: [] });
+    }, 60_000);
+  }
+});
+
+// The sink onCallbackError registers with the binding (review F1, F8, N4, F9), from
+// test/fixtures/callback-sink.ts in a process of its own each.
+describe.if(onWindows)("onCallbackError's sink in the binding", () => {
+  const UI_THREAD = "sweetview: this call must be made on the UI thread";
+  const spawnSink = async (mode: string) => {
+    const child = Bun.spawn([process.execPath, fileURLToPath(new URL("../test/fixtures/callback-sink.ts", import.meta.url)), mode], { stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+    const line = stdout.split(/\r?\n/).find((l) => l.startsWith("RESULT "));
+    return { r: line ? JSON.parse(line.slice("RESULT ".length)) : undefined, stderr, exitCode };
+  };
+
+  // What the binding's own catch does with each kind of thrown value (review 3, item 2 and Q1): it
+  // reads nothing of the value, leaves nothing pending, and follows no cause.
+  const VALUES = ["string", "number", "null", "undefined", "symbol", "no prototype", "toString throws", "plain object", "error", "error whose cause is itself"];
+  test("every kind of value thrown past the TypeScript catches reaches a listener as it is, and the next call into the binding works", async () => {
+    const { r, exitCode, stderr } = await spawnSink("values-listen");
+    expect(exitCode).toBe(0);
+    expect(r.after).toEqual(VALUES.map((v) => `${v}: ran, returned`));
+    const wrapped = (message: string) => ({ name: "a native timeout", kind: "internal", message, isThrown: false, causeIsThrown: true });
+    expect(r.told).toEqual([
+      wrapped("disconnected"),
+      wrapped("42"),
+      wrapped("null"),
+      wrapped("undefined"),
+      wrapped("Symbol(thrown)"),
+      wrapped("[object Object]"),
+      wrapped("[object Object]"),
+      wrapped("[object Object]"),
+      { name: "a native timeout", kind: "internal", message: "boom", isThrown: true, causeIsThrown: false },
+      { name: "a native timeout", kind: "internal", message: "loop", isThrown: true, causeIsThrown: true },
+    ]);
+    expect(stderr).toBe("");
+  });
+
+  test("with no listener, each kind of value thrown past the TypeScript catches prints the main branch's line, leaves nothing pending, and a cause that is itself is not followed", async () => {
+    const { r, exitCode, stderr } = await spawnSink("values");
+    expect(exitCode).toBe(0);
+    expect(r.after).toEqual(VALUES.map((v) => `${v}: ran, returned`));
+    // The main branch's lines: napi keeps no reference to a primitive below Node-API 10, which is
+    // the text for the first four; a value whose String() throws gives none. The main branch left
+    // the symbol's exception pending (the pump then threw it) and overflowed the stack on the error
+    // whose cause is itself; here each prints its line and the pump returns.
+    const line = (reason: string) => `sweetview: a native timeout threw: ${reason}`;
+    expect(stderr.split(/\r?\n/).filter(Boolean)).toEqual([
+      line("Create Error reference failed"),
+      line("Create Error reference failed"),
+      line("Create Error reference failed"),
+      line("Create Error reference failed"),
+      line(""),
+      line(""),
+      line(""),
+      line("[object Object]"),
+      line("Error: boom"),
+      line("Error: loop"),
+    ]);
+  });
+
+  test("a Worker that calls onCallbackError first is refused, loads nothing, and the main thread stays the UI thread", async () => {
+    const { r, exitCode } = await spawnSink("worker-first");
+    expect({ exitCode, worker: r.worker, windowOnThisThread: r.windowOnThisThread }).toEqual({ exitCode: 0, worker: UI_THREAD, windowOnThisThread: null });
+  });
+
+  test("the binding refuses a sink from a thread that is not the UI thread", async () => {
+    const { r, exitCode } = await spawnSink("worker-raw");
+    expect({ exitCode, worker: r.worker }).toEqual({ exitCode: 0, worker: UI_THREAD });
+  });
+
+  test("a binding without setCallbackErrorSink makes onCallbackError throw, as any missing export does", async () => {
+    const { r, exitCode } = await spawnSink("missing-export");
+    expect(exitCode).toBe(0);
+    expect(r.registration).toContain("setCallbackErrorSink");
+  });
+
+  test("after releaseAll() a listener still hears of the binding's own catches", async () => {
+    const { r, exitCode } = await spawnSink("after-release");
+    expect({ exitCode, told: r.told }).toEqual({ exitCode: 0, told: ["internal (a native interval): interval after release"] });
+  });
+
+  test("a sink a Worker set straight through the binding, having loaded it first, is released when the worker's environment ends: the environment's cleanup hook (review 2, item 6)", async () => {
+    const { r, exitCode, stderr } = await spawnSink("worker-raw-first");
+    expect({ exitCode, worker: r.worker, stderr: stderr.trim() }).toEqual({ exitCode: 0, worker: "set", stderr: "" });
+  });
+
+  test("a sink set by an application that makes nothing else is released when its environment ends, and nothing is printed", async () => {
+    const { exitCode, stderr } = await spawnSink("at-end");
+    expect({ exitCode, stderr: stderr.trim() }).toEqual({ exitCode: 0, stderr: "" });
+  });
+});
+
+// The raw webview class's callback boundaries with a listener set (review F6, N3), from
+// test/fixtures/webview-errors.ts. The drop is the DevTools protocol's; no input is injected.
+describe.if(onWindows)("onCallbackError and the raw webview class", () => {
+  test("a bound function, a raw binding, a request handler and a file drop handler: each fault arrives once with its kind, and the page still gets its failure", async () => {
+    const { r, exitCode } = await runFixture("webview-errors.ts");
+    expect({ exitCode, timedOut: r.timedOut }).toEqual({ exitCode: 0, timedOut: undefined });
+    expect(r.page).toEqual({
+      bindThrows: "rejected",
+      bindRejects: "rejected",
+      bindProxy: "rejected",
+      bindBadMessage: "rejected",
+      bindAddsListener: "rejected: adds a listener",
+      bindThenGetter: "rejected",
+      bindThenThrows: "rejected",
+      throws: 500,
+      rejects: 500,
+      proxy: 500,
+      promiseThenGetter: 500,
+      promiseThenThrows: 500,
+      thenable: 200,
+    });
+    expect(r.told).toEqual(
+      [
+        "webview.bind (bindThrows): bind throws",
+        "webview.bind (bindRejects): bind rejects",
+        "webview.bind (bindProxy): [object Object]",
+        "webview.bind (bindBadMessage): (its message throws)",
+        "webview.bind (bindAddsListener): adds a listener",
+        "webview.bind (bindThenGetter): then getter",
+        "webview.bind (bindThenThrows): then throws",
+        "webview.setRequestHandler: returned getPrototypeOf trap",
+        "webview.setRequestHandler: request then getter",
+        "webview.setRequestHandler: request then throws",
+        "webview.bindRaw (rawThrows): raw throws",
+        "webview.bindRaw (save): shared [the thrown object]",
+        "webview.bindRaw (load): shared [the thrown object]",
+        "webview.setRequestHandler: request throws",
+        "webview.setRequestHandler: request rejects",
+        "webview.setFileDropHandler: drop throws",
+      ].sort(),
+    );
+    // A listener added while the page's reply read the thrown value does not hear that fault
+    // (review 3, item 3): the listeners were taken before the reply.
+    expect(r.lateTold).toEqual([]);
+  }, 90_000);
 });
