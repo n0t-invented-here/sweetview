@@ -6,6 +6,7 @@ mod environment;
 mod handlers;
 mod host;
 mod istream;
+mod attempts;
 mod pump;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;

@@ -14,10 +14,11 @@
 //!   uses `DefWindowProcW` for everything else;
 //! * the controller: `CreateCoreWebView2Controller` on the widget (241),
 //!   pumping this thread's messages until it completes (`embed`, 1895 to
-//!   1906); a `WM_QUIT` meanwhile cancels (1904); a failure other than
-//!   `ERROR_INVALID_STATE` or `E_ABORT` (which give up at once, 255 to 262)
-//!   is tried again, up to 60 attempts, 200 ms apart when the call itself
-//!   fails (`try_create_environment`, 404 to 425);
+//!   1906); a `WM_QUIT` meanwhile cancels (1904); each attempt makes its
+//!   environment and starts the controller on that one, under one budget of
+//!   60 attempts (`try_create_environment`, 234 to 266 and 404 to 425, the
+//!   rules in `attempts.rs`); `ERROR_INVALID_STATE` or `E_ABORT` in the
+//!   controller's completion gives up (255 to 262);
 //! * the settings: `AreDevToolsEnabled` from `debug` and `IsStatusBarEnabled`
 //!   false (1909 to 1923), and no other;
 //! * shown: the controller's bounds set to the widget's client area,
@@ -35,7 +36,6 @@ use std::collections::HashMap;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::rc::Rc;
 use std::sync::OnceLock;
-use std::time::Duration;
 
 use sweetview_http::ErrorCode;
 use sweetview_platform_window::BorrowedWindow;
@@ -46,7 +46,7 @@ use webview2_com::Microsoft::Web::WebView2::Win32::{
 };
 use windows::core::{w, Interface, HSTRING, PCWSTR};
 use windows::Win32::Foundation::{
-    ERROR_INVALID_STATE, E_ABORT, E_POINTER, E_UNEXPECTED, HINSTANCE, HWND, LPARAM, LRESULT, RECT,
+    ERROR_INVALID_STATE, E_POINTER, E_UNEXPECTED, HINSTANCE, HWND, LPARAM, LRESULT, RECT,
     WPARAM,
 };
 use windows::Win32::Graphics::Gdi::UpdateWindow;
@@ -59,11 +59,9 @@ use windows::Win32::UI::WindowsAndMessaging::{
     ShowWindow, SW_HIDE, SW_SHOW, WM_NCDESTROY, WM_SIZE, WNDCLASSEXW, WS_CHILD, WS_EX_CONTROLPARENT,
 };
 
+use super::attempts::Failed;
 use super::pump::{pump_while, PumpEnd};
 
-/// The fork's attempts and the wait between them (`m_max_attempts`, `m_sleep_ms`).
-const MAX_ATTEMPTS: u32 = 60;
-const RETRY_WAIT: Duration = Duration::from_millis(200);
 
 /// The fork's widget class name.
 const WIDGET_CLASS: PCWSTR = w!("webview_widget");
@@ -373,10 +371,6 @@ fn guarded_completion(on_done: impl FnOnce(windows::core::Result<ICoreWebView2Co
     })
 }
 
-/// A failure the fork does not try again.
-fn gives_up(code: windows::core::HRESULT) -> bool {
-    code == windows::core::HRESULT::from_win32(ERROR_INVALID_STATE.0) || code == E_ABORT
-}
 
 /// One webview: its widget and its WebView2 controller. Not `Send`, not `Sync`.
 /// Dropping it closes the controller and destroys the widget.
@@ -400,10 +394,12 @@ impl Webview {
     /// WebView2's default background from before the webview is first shown,
     /// so it never shows WebView2's own white while the page starts.
     pub fn create(parent: &BorrowedWindow<'_>, layout: Layout, devtools: bool, background: Option<(u8, u8, u8)>) -> Result<Self, ErrorCode> {
-        Self::create_on(&super::environment::shared()?, parent, layout, devtools, background)
+        super::environment::prepare()?;
+        Self::create_with(super::environment::for_attempt, parent, layout, devtools, background)
     }
 
-    /// [`create`](Self::create) on `environment`.
+    /// [`create`](Self::create) on `environment` at every attempt.
+    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn create_on(
         environment: &ICoreWebView2Environment,
         parent: &BorrowedWindow<'_>,
@@ -411,9 +407,24 @@ impl Webview {
         devtools: bool,
         background: Option<(u8, u8, u8)>,
     ) -> Result<Self, ErrorCode> {
+        Self::create_with(|_| Ok(environment.clone()), parent, layout, devtools, background)
+    }
+
+    /// The fork's attempts (`attempts.rs`): each makes its environment with
+    /// `environment` and the controller on it, in the widget.
+    fn create_with(
+        environment: impl FnMut(u32) -> Result<ICoreWebView2Environment, Failed>,
+        parent: &BorrowedWindow<'_>,
+        layout: Layout,
+        devtools: bool,
+        background: Option<(u8, u8, u8)>,
+    ) -> Result<Self, ErrorCode> {
         let parent = HWND(sweetview_platform_window::handle_value(parent) as *mut _);
         let widget = Widget::create(parent)?;
-        let controller = create_controller(environment, widget.hwnd)?;
+        let hwnd = widget.hwnd;
+        let (environment, controller) =
+            super::attempts::attempt(environment, |environment| create_controller_once(environment, hwnd), || std::thread::sleep(super::attempts::RETRY_WAIT))?;
+        let environment = &environment;
         // SAFETY: `controller` is the COM reference WebView2 just handed over; no arguments.
         let webview = unsafe { controller.CoreWebView2() }.map_err(|_| ErrorCode::InvalidState)?;
         // SAFETY: `webview` is the COM reference just returned; no arguments.
@@ -571,43 +582,33 @@ impl Drop for Webview {
     }
 }
 
-/// `CreateCoreWebView2Controller` on `widget`, with the fork's retry, pumping
-/// this thread's messages until each attempt completes.
-fn create_controller(environment: &ICoreWebView2Environment, widget: HWND) -> Result<ICoreWebView2Controller, ErrorCode> {
-    for _ in 0..MAX_ATTEMPTS {
-        let slot: Rc<RefCell<Option<windows::core::Result<ICoreWebView2Controller>>>> = Rc::default();
-        let handler = {
-            let slot = slot.clone();
-            CreateCoreWebView2ControllerCompletedHandler::create(guarded_completion(move |outcome| {
-                *slot.borrow_mut() = Some(outcome);
-            }))
-        };
-        // SAFETY: `environment` is a live COM reference the caller holds, `widget` a window of
-        // this thread that outlives the attempt, and `handler` a live COM object WebView2 keeps
-        // its own reference to until it completes.
-        let started = unsafe { environment.CreateCoreWebView2Controller(widget, &handler) };
-        drop(handler);
-        if let Err(error) = started {
-            if gives_up(error.code()) {
-                return Err(ErrorCode::InvalidState);
-            }
-            std::thread::sleep(RETRY_WAIT);
-            continue;
-        }
-        match pump_while(|| slot.borrow().is_none()) {
-            PumpEnd::Done => {}
-            PumpEnd::Quit => return Err(ErrorCode::Canceled),
-            PumpEnd::Failed => return Err(ErrorCode::InvalidState),
-        }
-        let outcome = slot.borrow_mut().take();
-        match outcome {
-            Some(Ok(controller)) => return Ok(controller),
-            Some(Err(error)) if gives_up(error.code()) => return Err(ErrorCode::InvalidState),
-            // The fork tries again at once, through the same attempt counter.
-            _ => {}
-        }
+/// One `CreateCoreWebView2Controller` on `widget`, pumping this thread's
+/// messages until it completes (the fork's `embed` wait loop).
+fn create_controller_once(environment: &ICoreWebView2Environment, widget: HWND) -> Result<ICoreWebView2Controller, Failed> {
+    let slot: Rc<RefCell<Option<windows::core::Result<ICoreWebView2Controller>>>> = Rc::default();
+    let handler = {
+        let slot = slot.clone();
+        CreateCoreWebView2ControllerCompletedHandler::create(guarded_completion(move |outcome| {
+            *slot.borrow_mut() = Some(outcome);
+        }))
+    };
+    // SAFETY: `environment` is a live COM reference the caller holds, `widget` a window of
+    // this thread that outlives the attempt, and `handler` a live COM object WebView2 keeps
+    // its own reference to until it completes.
+    let started = unsafe { environment.CreateCoreWebView2Controller(widget, &handler) };
+    drop(handler);
+    started.map_err(|error| Failed::AtOnce(error.code()))?;
+    match pump_while(|| slot.borrow().is_none()) {
+        PumpEnd::Done => {}
+        PumpEnd::Quit => return Err(Failed::Quit),
+        PumpEnd::Failed => return Err(Failed::Completed(windows::core::HRESULT::from_win32(ERROR_INVALID_STATE.0))),
     }
-    Err(ErrorCode::InvalidState)
+    let outcome = slot.borrow_mut().take();
+    match outcome {
+        Some(Ok(controller)) => Ok(controller),
+        Some(Err(error)) => Err(Failed::Completed(error.code())),
+        None => Err(Failed::Completed(windows::core::HRESULT::from_win32(ERROR_INVALID_STATE.0))),
+    }
 }
 
 #[cfg(test)]
@@ -653,10 +654,4 @@ mod tests {
         drop(orphan);
     }
 
-    #[test]
-    fn the_two_failures_the_fork_gives_up_on() {
-        assert!(gives_up(windows::core::HRESULT::from_win32(ERROR_INVALID_STATE.0)));
-        assert!(gives_up(E_ABORT));
-        assert!(!gives_up(E_FAIL));
-    }
 }

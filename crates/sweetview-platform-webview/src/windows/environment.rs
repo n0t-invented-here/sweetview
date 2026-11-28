@@ -11,7 +11,6 @@ use std::cell::RefCell;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::time::Duration;
 
 use sweetview_http::ErrorCode;
 use sweetview_platform_loop::ComApartment;
@@ -22,11 +21,8 @@ use webview2_com::Microsoft::Web::WebView2::Win32::{
 use windows::core::{HRESULT, HSTRING, PCWSTR};
 use windows::Win32::Foundation::{ERROR_INVALID_STATE, E_POINTER, E_UNEXPECTED};
 
+use super::attempts::{Failed, RETRY_WAIT};
 use super::pump::{pump_while, PumpEnd};
-
-/// The C++ fork's attempts and the wait between them (`m_max_attempts`, `m_sleep_ms`).
-const MAX_ATTEMPTS: u32 = 60;
-const RETRY_WAIT: Duration = Duration::from_millis(200);
 
 thread_local! {
     /// This thread's WebView2 environment, made once on the first webview and
@@ -96,16 +92,66 @@ fn is_webview2_available() -> bool {
     found.is_ok() && !version.is_empty()
 }
 
-/// This thread's shared environment, created as [`create_environment`]
-/// creates it on [`default_user_data_folder`] (`WEBVIEW2_USER_DATA_FOLDER`
-/// overrides the folder) the first time it is asked for.
-pub(super) fn shared() -> Result<ICoreWebView2Environment, ErrorCode> {
-    if let Some(environment) = SHARED.with(|cell| cell.borrow().clone()) {
-        return Ok(environment);
+/// Ready to make an environment on this thread: its COM apartment entered,
+/// and a WebView2 Runtime installed ([`ErrorCode::MissingDependency`] when
+/// none is).
+pub(super) fn prepare() -> Result<(), ErrorCode> {
+    // Entered once per thread (or counted once more when the thread already is
+    // an STA) and kept until the thread's storage is torn down. On the UI thread
+    // the runtime's own apartment, entered before any window and left last, is
+    // what outlives every COM object of the thread; this one keeps a thread
+    // without a runtime from entering on every call.
+    enter_apartment_once();
+    if is_webview2_available() { Ok(()) } else { Err(ErrorCode::MissingDependency) }
+}
+
+/// The environment of attempt `number` at making a webview: on the first,
+/// this thread's shared one when there is one (D15); otherwise a new one on
+/// [`default_user_data_folder`] (`WEBVIEW2_USER_DATA_FOLDER` overrides the
+/// folder), which becomes the thread's shared environment, as the fork makes a
+/// new environment for each attempt.
+pub(super) fn for_attempt(number: u32) -> Result<ICoreWebView2Environment, Failed> {
+    if number == 0 {
+        if let Some(environment) = SHARED.with(|cell| cell.borrow().clone()) {
+            return Ok(environment);
+        }
     }
-    let environment = create_environment(default_user_data_folder().as_deref())?;
+    let folder = default_user_data_folder().map(|folder| HSTRING::from(folder.as_path()));
+    let environment = create_once(folder.as_ref())?;
     SHARED.with(|cell| *cell.borrow_mut() = Some(environment.clone()));
     Ok(environment)
+}
+
+/// One `CreateCoreWebView2EnvironmentWithOptions`, as the fork's attempt
+/// handler makes it, pumping this thread's messages until it completes.
+fn create_once(folder: Option<&HSTRING>) -> Result<ICoreWebView2Environment, Failed> {
+    let slot: Rc<RefCell<Option<windows::core::Result<ICoreWebView2Environment>>>> = Rc::default();
+    let handler = {
+        let slot = slot.clone();
+        CreateCoreWebView2EnvironmentCompletedHandler::create(guarded_completion(move |outcome| {
+            *slot.borrow_mut() = Some(outcome);
+        }))
+    };
+    let options: Option<&ICoreWebView2EnvironmentOptions> = None;
+    // The folder, or null for WebView2's own default.
+    let folder_ptr = folder.map_or(PCWSTR::null(), |folder| PCWSTR(folder.as_ptr()));
+    // SAFETY: a null browser folder; `folder_ptr` is null or points into the HSTRING the
+    // caller holds for the whole call; null options; and a live handler WebView2 keeps its
+    // own reference to until it completes.
+    let started = unsafe { CreateCoreWebView2EnvironmentWithOptions(PCWSTR::null(), folder_ptr, options, &handler) };
+    drop(handler);
+    started.map_err(|error| Failed::AtOnce(error.code()))?;
+    match pump_while(|| slot.borrow().is_none()) {
+        PumpEnd::Done => {}
+        PumpEnd::Quit => return Err(Failed::Quit),
+        PumpEnd::Failed => return Err(Failed::Completed(invalid_state())),
+    }
+    let outcome = slot.borrow_mut().take();
+    match outcome {
+        Some(Ok(environment)) => Ok(environment),
+        Some(Err(error)) => Err(Failed::Completed(error.code())),
+        None => Err(Failed::Completed(invalid_state())),
+    }
 }
 
 /// Lets go of this thread's shared environment once its webviews are gone,
@@ -132,53 +178,9 @@ pub fn release_shared() {
 /// waiting (it is consumed, as in the C++), [`ErrorCode::InvalidState`] when
 /// creation fails for good.
 pub fn create_environment(user_data_folder: Option<&Path>) -> Result<ICoreWebView2Environment, ErrorCode> {
-    // Entered once per thread (or counted once more when the thread already is
-    // an STA) and kept until the thread's storage is torn down. On the UI thread
-    // the runtime's own apartment, entered before any window and left last, is
-    // what outlives every COM object of the thread; this one keeps a thread
-    // without a runtime from entering on every call.
-    enter_apartment_once();
-    if !is_webview2_available() {
-        return Err(ErrorCode::MissingDependency);
-    }
+    prepare()?;
     let folder = user_data_folder.map(HSTRING::from);
-    for _ in 0..MAX_ATTEMPTS {
-        let slot: Rc<RefCell<Option<windows::core::Result<ICoreWebView2Environment>>>> = Rc::default();
-        let handler = {
-            let slot = slot.clone();
-            CreateCoreWebView2EnvironmentCompletedHandler::create(guarded_completion(move |outcome| {
-                *slot.borrow_mut() = Some(outcome);
-            }))
-        };
-        let options: Option<&ICoreWebView2EnvironmentOptions> = None;
-        // The folder, or null for WebView2's own default.
-        let folder_ptr = folder.as_ref().map_or(PCWSTR::null(), |folder| PCWSTR(folder.as_ptr()));
-        // SAFETY: a null browser folder; `folder_ptr` is null or points into the HSTRING
-        // above, which outlives the call; null options; and a live handler WebView2
-        // keeps its own reference to until it completes.
-        let started = unsafe { CreateCoreWebView2EnvironmentWithOptions(PCWSTR::null(), folder_ptr, options, &handler) };
-        drop(handler);
-        match started {
-            Err(e) if e.code() == invalid_state() => return Err(ErrorCode::InvalidState),
-            Err(_) => {
-                std::thread::sleep(RETRY_WAIT);
-                continue;
-            }
-            Ok(()) => {}
-        }
-        match pump_while(|| slot.borrow().is_none()) {
-            PumpEnd::Done => {}
-            PumpEnd::Quit => return Err(ErrorCode::Canceled),
-            PumpEnd::Failed => return Err(ErrorCode::InvalidState),
-        }
-        let outcome = slot.borrow_mut().take();
-        if let Some(Ok(environment)) = outcome {
-            return Ok(environment);
-        }
-        // The C++ retries a failed completion at once, through the same attempt
-        // counter.
-    }
-    Err(ErrorCode::InvalidState)
+    super::attempts::attempt(|_| create_once(folder.as_ref()), |_| Ok(()), || std::thread::sleep(RETRY_WAIT)).map(|(environment, ())| environment)
 }
 
 #[cfg(test)]
