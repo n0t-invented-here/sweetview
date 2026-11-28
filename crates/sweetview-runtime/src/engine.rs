@@ -213,7 +213,12 @@ pub struct Engine {
 impl Engine {
   /// Makes a webview. `debug` enables the developer tools; the context menu is
   /// on either way, as the C++ library left it.
-  pub fn create(debug: bool, host: Host) -> Result<Engine> {
+  ///
+  /// `background` is what the browser paints before a page does (red, green,
+  /// blue): given to `wry`'s builder, it is WebView2's default background from
+  /// the moment the controller exists, so the webview never shows WebView2's
+  /// own white while it starts. `None` leaves WebView2's.
+  pub fn create(debug: bool, host: Host, background: Option<(u8, u8, u8)>) -> Result<Engine> {
     let runtime = Runtime::get()?;
     let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
     let slot: Rc<RefCell<Weak<Inner>>> = Rc::new(RefCell::new(Weak::new()));
@@ -244,6 +249,10 @@ impl Engine {
           _ => NewWindowResponse::Allow,
         }
       });
+    let builder = match background {
+      Some((red, green, blue)) => builder.with_background_color((red, green, blue, 0xff)),
+      None => builder,
+    };
     let builder = configure_for_platform(builder)?;
 
     let mount = |error: wry::Error| Error::os("the webview could not be created (is the WebView2 runtime installed?)", error);

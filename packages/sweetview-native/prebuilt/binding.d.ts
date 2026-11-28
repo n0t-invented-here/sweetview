@@ -128,10 +128,16 @@ export interface WindowInit {
  * Numeric results are `webview_error_t` codes.
  */
 export declare class Engine {
-  /** Fills `window` with a webview; with `null`, in a window of the webview's own. */
-  static create(debug: boolean, window?: bigint | undefined | null): Engine
-  /** A child of `window`, at a rectangle of its client area in physical pixels. */
-  static createChild(debug: boolean, window: bigint, bounds: Rect): Engine
+  /**
+   * Fills `window` with a webview; with `null`, in a window of the webview's own.
+   * `background` (`0xrrggbb`) is what the browser paints before a page does, from its start.
+   */
+  static create(debug: boolean, window?: bigint | undefined | null, background?: number | undefined | null): Engine
+  /**
+   * A child of `window`, at a rectangle of its client area in physical pixels.
+   * `background` (`0xrrggbb`) is what the browser paints before a page does, from its start.
+   */
+  static createChild(debug: boolean, window: bigint, bounds: Rect, background?: number | undefined | null): Engine
   /** The live webview a handle names, or null. */
   static fromHandle(handle: number): Engine | null
   /** The number that names this webview to the functions a Worker calls. */

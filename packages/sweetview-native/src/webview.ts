@@ -262,6 +262,22 @@ export function createChildWebview(debug: boolean, window: bigint, bounds: { x: 
   }
 }
 
+/** What the next webview made inside `create` paints before a page does (`0xrrggbb`), from its start. */
+let startBackground: number | undefined;
+
+/**
+ * Internal: runs `create` (a `new Webview(...)` or `createChildWebview(...)`) with the browser's
+ * background given to WebView2 when it is made, so it never shows WebView2's white while it starts.
+ */
+export function withStartBackground<T>(rgb: number | undefined, create: () => T): T {
+  startBackground = rgb;
+  try {
+    return create();
+  } finally {
+    startBackground = undefined;
+  }
+}
+
 /**
  * Destroys every webview this process created through {@link Webview} that
  * is still alive. Installed mouse or keyboard hooks are not removed; dispose
@@ -340,8 +356,8 @@ export class Webview {
       try {
         this.#engine =
           childBounds !== undefined && host !== null
-            ? native.Engine.createChild(Boolean(debugOrHandle), host, childBounds)
-            : native.Engine.create(Boolean(debugOrHandle), host);
+            ? native.Engine.createChild(Boolean(debugOrHandle), host, childBounds, startBackground)
+            : native.Engine.create(Boolean(debugOrHandle), host, startBackground);
       } catch (err) {
         throw Object.assign(new WebviewError("webview_create", -1), { cause: err });
       }

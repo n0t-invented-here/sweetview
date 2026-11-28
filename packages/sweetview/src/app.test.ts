@@ -432,6 +432,90 @@ describe.if(onWindows)("WebView & createApp (win32)", () => {
     }
   }, 60_000);
 
+  test("a webview attached to a visible window with a backgroundColor never shows WebView2's white while it starts", async () => {
+    // Review N9: the colour was set once the webview existed, so WebView2's default white showed first.
+    const { clientSize, clientToScreen, screenPixel } = await import("../../sweetview-native/test/win32-os");
+    const { scheduleNativeTimeout } = await import("@n1h/sweetview-native/internal");
+    const colour = "#304050";
+    const seen = new Map<string, number>();
+    for (let round = 0; round < 3; round++) {
+      // Each round in a place of its own: a window closed at the same place fades out over the next one.
+      const win = new Window({ title: `app.test start colour ${round}`, backgroundColor: colour, topmost: true, noActivate: true, bounds: { x: 120 + round * 400, y: 160, width: 360, height: 260 } });
+      const hwnd = BigInt(win.handle!);
+      let sampling = true;
+      // From native timers, which fire inside the loop WebView2's creation pumps: the screen as it starts.
+      const sample = () => {
+        if (!sampling) return;
+        const size = clientSize(hwnd);
+        const at = clientToScreen(hwnd, size.width >> 1, size.height >> 1);
+        const pixel = screenPixel(at.x, at.y);
+        seen.set(pixel, (seen.get(pixel) ?? 0) + 1);
+        scheduleNativeTimeout(2, sample);
+      };
+      let view: WebView | undefined;
+      try {
+        win.show();
+        pumpUntil(() => screenPixel(...Object.values(clientToScreen(hwnd, clientSize(hwnd).width >> 1, clientSize(hwnd).height >> 1)) as [number, number]) === colour, 5000);
+        sample();
+        let loaded = false;
+        view = await WebView.attach(win, {
+          assets: { "index.html": htmlBytes(`<style>html,body{background:transparent}</style><script>window.__sweetview_rpc("loaded", null)</script>`) },
+          uiMethods: { loaded: () => { loaded = true; } },
+        });
+        pumpUntil(() => loaded, 15_000);
+        const settled = performance.now() + 300;
+        pumpUntil(() => performance.now() > settled, 1000);
+      } finally {
+        sampling = false;
+        view?.dispose();
+        win.dispose();
+      }
+    }
+    expect([...seen.keys()]).toEqual([colour]);
+
+    // A tab opened in a visible tabbed window: its page area, below the strip, as the tab starts.
+    const { STRIP_HEIGHT } = await import("@n1h/sweetview-native/win32/strip-shared");
+    const tabbed = new Window({ tabs: true, title: "app.test start colour tab", backgroundColor: colour, topmost: true, noActivate: true, bounds: { x: 140, y: 480, width: 560, height: 380 } });
+    const frame = BigInt(tabbed.handle!);
+    const tabSeen = new Map<string, number>();
+    let sampling = true;
+    const pageMiddle = () => {
+      const size = clientSize(frame);
+      const strip = Math.round(STRIP_HEIGHT * tabbed.scale());
+      return clientToScreen(frame, size.width >> 1, strip + ((size.height - strip) >> 1));
+    };
+    const sample = () => {
+      if (!sampling) return;
+      const at = pageMiddle();
+      const pixel = screenPixel(at.x, at.y);
+      tabSeen.set(pixel, (tabSeen.get(pixel) ?? 0) + 1);
+      scheduleNativeTimeout(2, sample);
+    };
+    try {
+      // The first tab makes the strip; the second is the one sampled as it starts.
+      await WebView.openTab(tabbed, { title: "first", url: "about:blank" });
+      tabbed.show();
+      let loaded = false;
+      const opening = WebView.openTab(tabbed, {
+        title: "second",
+        assets: { "index.html": htmlBytes(`<style>html,body{background:transparent}</style><script>window.__sweetview_rpc("loaded", null)</script>`) },
+        uiMethods: { loaded: () => { loaded = true; } },
+      });
+      const settledFirst = performance.now() + 500;
+      pumpUntil(() => performance.now() > settledFirst, 1000);
+      tabSeen.clear();
+      sample();
+      await opening;
+      pumpUntil(() => loaded, 15_000);
+      const settled = performance.now() + 300;
+      pumpUntil(() => performance.now() > settled, 1000);
+    } finally {
+      sampling = false;
+      tabbed.dispose();
+    }
+    expect(tabSeen.has("#ffffff")).toBe(false);
+  }, 90_000);
+
   test("close-to-tray can intercept the default close on a createApp window", async () => {
     const { WM_CLOSE, user32 } = await import("../../sweetview-native/test/win32-os");
     const app = await createApp({ url: "about:blank", noActivate: true });

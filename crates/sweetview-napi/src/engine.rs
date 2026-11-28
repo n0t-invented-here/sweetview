@@ -59,6 +59,11 @@ fn handle_value(window: &BigInt) -> isize {
   value as isize
 }
 
+/// `0xrrggbb` as red, green and blue.
+fn rgb(value: u32) -> (u8, u8, u8) {
+  (((value >> 16) & 0xff) as u8, ((value >> 8) & 0xff) as u8, (value & 0xff) as u8)
+}
+
 /// One webview. See `packages/sweetview-native/src/webview.ts` for the API applications use.
 pub struct Engine {
   inner: runtime::Engine,
@@ -66,15 +71,17 @@ pub struct Engine {
 
 impl Engine {
   /// Fills `window` with a webview; with `null`, in a window of the webview's own.
-  pub fn create(debug: bool, window: Option<BigInt>) -> napi::Result<Engine> {
+  /// `background` (`0xrrggbb`) is the browser's background from its start.
+  pub fn create(debug: bool, window: Option<BigInt>, background: Option<u32>) -> napi::Result<Engine> {
     let host = window.as_ref().map_or(Host::Own, |window| Host::Fill(handle_value(window)));
-    Ok(Engine { inner: runtime::Engine::create(debug, host).or_throw()? })
+    Ok(Engine { inner: runtime::Engine::create(debug, host, background.map(rgb)).or_throw()? })
   }
 
   /// A child of `window`, at a rectangle of its client area.
-  pub fn create_child(debug: bool, window: BigInt, bounds: Rect) -> napi::Result<Engine> {
+  /// `background` (`0xrrggbb`) is the browser's background from its start.
+  pub fn create_child(debug: bool, window: BigInt, bounds: Rect, background: Option<u32>) -> napi::Result<Engine> {
     let host = Host::Child(handle_value(&window), bounds_of(bounds));
-    Ok(Engine { inner: runtime::Engine::create(debug, host).or_throw()? })
+    Ok(Engine { inner: runtime::Engine::create(debug, host, background.map(rgb)).or_throw()? })
   }
 
   /// The live webview a handle names, or null.

@@ -11,7 +11,7 @@ import { createFrameAssembler, type AnyEvent, type EventMap, type MethodMap, typ
 import { RequestResponseAssembler, requestError, runNativeRequest, type NativeRequestResponse, type StreamingResponseFrame } from "./request-response";
 import type { HttpRequestMessage, InitMessage, NativeRequest, NativeResponse, WorkerCrashFrame } from "./messages";
 import { RawWebview, SizeHint, Window, quitEventLoop, runEventLoop, signalReady, type Rect, type TabHandle, type WindowOptions } from "@n1h/sweetview-native";
-import { createChildWebview, discardQuit, emitWindowFileDrop, engineOf, getWindowMeta, holdWindowNativeDispose, isWindowDisposed, macosKeepsTagPath, onWindowDispose, onWindowFileDropListenersChange, preserveWindowGeometry, releaseAtEnd, scheduleNativeTimeout, windowFileDropCount } from "@n1h/sweetview-native/internal";
+import { createChildWebview, withStartBackground, discardQuit, emitWindowFileDrop, engineOf, getWindowMeta, holdWindowNativeDispose, isWindowDisposed, macosKeepsTagPath, onWindowDispose, onWindowFileDropListenersChange, preserveWindowGeometry, releaseAtEnd, scheduleNativeTimeout, windowFileDropCount } from "@n1h/sweetview-native/internal";
 import { Ring } from "./ring";
 import { webviewEngine, type WebviewHost, type WorkerWake } from "./webview-host";
 import { ASSET_ORIGIN } from "./webview-lib";
@@ -358,9 +358,14 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
       // either kept or destroyed, so it is never created on, or left bound to, a dead HWND.
       const releaseCreateHold = meta.owned ? holdWindowNativeDispose(window) : undefined;
       try {
-        const created = child
-          ? createChildWebview(options.debug ?? false, child.window, child.bounds)
-          : new RawWebview(options.debug ?? false, { width: widthDips, height: heightDips, hint }, host);
+        // The window's backgroundColor (a tab's: its tabbed window's) is WebView2's background from
+        // the moment it is made, so it never shows WebView2's white while it starts (macOS: until its goal, nothing).
+        const colour = meta.transparent || macosKeepsTagPath() ? undefined : (tabHooks?.backgroundColor?.() ?? meta.backgroundColor);
+        const created = withStartBackground(colour === undefined ? undefined : Number.parseInt(colour.slice(1), 16), () =>
+          child
+            ? createChildWebview(options.debug ?? false, child.window, child.bounds)
+            : new RawWebview(options.debug ?? false, { width: widthDips, height: heightDips, hint }, host),
+        );
         // A tab is shown by its driver once it is selected, never over the tab on show while it loads.
         if (child && !child.visible) engineOf(created)?.setVisible(false);
         if (created.unsafeHandle === null || Number(created.unsafeHandle) === 0) {
@@ -401,11 +406,6 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
         } else if (err !== 0) {
           throw new Error(`sweetview: webview_set_background_color failed (${err})`);
         }
-      } else if ((tabHooks?.backgroundColor?.() ?? meta.backgroundColor) !== undefined && process.platform === "win32") {
-        // The window's backgroundColor is also what the browser paints before the page does (macOS: until its goal, nothing).
-        const rgb = Number.parseInt((tabHooks?.backgroundColor?.() ?? meta.backgroundColor)!.slice(1), 16);
-        const err = engineHost.setBackgroundColor((rgb >> 16) & 0xff, (rgb >> 8) & 0xff, rgb & 0xff, 255);
-        if (err !== undefined && err !== 0) throw new Error(`sweetview: webview_set_background_color failed (${err})`);
       }
       if (options.allowExternalDrop !== undefined) {
         const error = engineHost.setAllowExternalDrop(options.allowExternalDrop);

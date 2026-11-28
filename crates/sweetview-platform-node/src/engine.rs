@@ -16,15 +16,17 @@ pub struct Engine(imp::Engine);
 #[napi]
 impl Engine {
   /// Fills `window` with a webview; with `null`, in a window of the webview's own.
+  /// `background` (`0xrrggbb`) is what the browser paints before a page does, from its start.
   #[napi(factory, catch_unwind)]
-  pub fn create(debug: bool, window: Option<BigInt>) -> napi::Result<Engine> {
-    imp::Engine::create(debug, window).map(Engine)
+  pub fn create(debug: bool, window: Option<BigInt>, background: Option<u32>) -> napi::Result<Engine> {
+    imp::Engine::create(debug, window, background).map(Engine)
   }
 
   /// A child of `window`, at a rectangle of its client area in physical pixels.
+  /// `background` (`0xrrggbb`) is what the browser paints before a page does, from its start.
   #[napi(factory, catch_unwind)]
-  pub fn create_child(debug: bool, window: BigInt, bounds: Rect) -> napi::Result<Engine> {
-    imp::Engine::create_child(debug, window, bounds.into()).map(Engine)
+  pub fn create_child(debug: bool, window: BigInt, bounds: Rect, background: Option<u32>) -> napi::Result<Engine> {
+    imp::Engine::create_child(debug, window, bounds.into(), background).map(Engine)
   }
 
   /// The live webview a handle names, or null.
