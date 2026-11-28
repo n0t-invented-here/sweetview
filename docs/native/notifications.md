@@ -52,8 +52,9 @@ toast already in the notification centre stays there. On macOS it stops
 routing clicks to this notifier and leaves its delivered notifications in
 Notification Center. When the application ends without `dispose()`, Sweetview
 releases every notifier still alive but leaves what it showed for the user to
-read, on both platforms; only a Windows balloon goes, with its notifier's
-hidden icon ([the end of the application](../app.md#the-end-of-the-application)).
+read; only a balloon goes, with its notifier's hidden icon. That is Windows: on
+macOS, until the macOS goal of the Rust rewrite, nothing is released at exit
+([the end of the application](../app.md#the-end-of-the-application)).
 Clicks route to the notifier that sent the notification, so several
 notifiers in one process stay independent. The one exception is a click on a
 notification a previous process sent, covered under [macOS](#macos).

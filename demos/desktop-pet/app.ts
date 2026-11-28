@@ -202,3 +202,13 @@ const tray = createTray({
 notifier = createNotifier({ identity: IDENTITY }); // the toasts carry the demo's name, not Sweetview's
 
 petView.run();
+// Until the macOS goal of the Rust rewrite, macOS runs the code it ran at the tag pre-rust-rewrite,
+// which releases nothing at exit: there the demo tears down and exits as it did then.
+if (process.platform === "darwin") {
+  notifier.dispose();
+  tray.dispose();
+  settingsView.dispose();
+  settingsWindow.dispose();
+  overlay.dispose();
+  process.exit(0);
+}

@@ -274,7 +274,9 @@ closes or `quit()` is called. It is the last line: nothing after `run()` is
 needed. The process then ends by itself, and as it ends Sweetview releases
 the window, the webview and its worker, and anything else it made (trays,
 notifiers, hooks), leaving the notifications it showed for the user to read
-([the end of the application](docs/app.md#the-end-of-the-application)).
+([the end of the application](docs/app.md#the-end-of-the-application)). That
+is Windows; on macOS, until the macOS goal of the Rust rewrite, dispose what
+you made and call `process.exit()` after `run()`, as before 1.0.
 
 - `page`: the HTML import. Bun bundles the page's scripts and styles, and
   the host serves every output at the page's own origin.

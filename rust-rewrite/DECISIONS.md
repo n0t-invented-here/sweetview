@@ -463,3 +463,26 @@ Not changed: a window whose own procedure answers `WM_GETICON` with an icon othe
 The bound, added after the third review (H8): one sweep of the parked icons spends at most 200 ms asking in all, and a window it did not ask in time keeps its icons parked until a later sweep; dropping a `WindowIcons` asks its one window for at most 100 ms. So a `setIcon` waits at most about 200 ms for parked windows whatever their number. Test: `a_sweep_of_many_parked_windows_that_do_not_answer_stays_within_its_budget` (six windows of a stopped thread: 653 ms without the budget, within 400 ms with it).
 
 Alternative left open: ask only windows of this thread and keep the icons of other threads' windows until those windows are gone.
+
+## D42. Until its goal, macOS runs the tag's path wherever the Windows goal changed shared code that would run there
+
+The goal audit's finding 11 (`rust-rewrite/evidence/goal-audit-windows.md`): shared TypeScript changed on a machine that cannot run macOS, in ways that run on macOS. R8 says macOS keeps running on the existing code. Every change since the tag `pre-rust-rewrite` outside `crates/`, `win32/` folders and Windows-only tests was read and classed: Windows-only at run time; on macOS a documented rename or reshape over the same macOS code, or platform-neutral TypeScript with no native call; or new behaviour on macOS. The `darwin/` folders: no file that existed at the tag was changed; three were added as the seam to the bindings package (`darwin/library.ts`, `darwin/webview.ts`, `darwin/input.ts`).
+
+Found executing on macOS as new behaviour:
+
+- the release at process exit (D36): trays, notifiers, windows, locks, hooks and `WebView`s disposed from Bun's `exit` event, which on macOS is AppKit and WebKit teardown that has never run there;
+- a webview's worker `unref`'d, so a macOS application with a worker could end, or not, differently after Quit;
+- the demos without their disposes and `process.exit`, which on macOS relied on the two above;
+- importing `@n1h/sweetview-native` threw on macOS without the optional peer `@n1h/sweetview-webview-bun`, which at the tag only the root module of `@n1h/sweetview` needed;
+- the window handle reached the bindings package's `webview_create` as a bigint, where the tag passed `Number(handle)`;
+- a request the library hands over that cannot be read was answered with an empty 500 instead of the tag's.
+
+Decision: one predicate, `macosKeepsTagPath()` in `packages/sweetview-native/src/platform.ts`, read when called, marks every place new behaviour is held back. `releaseAtEnd` returns a no-op there and adds no `exit` listener, so nothing is released at exit on macOS, as at the tag. `unrefWorker` in `packages/sweetview/src/app.ts` leaves the worker's reference there. Each demo has one `process.platform === "darwin"` block at its end with the tag's disposes and `process.exit()`, so the Windows path stays the short form. The three defects are restored, not held back: `darwin/library.ts` keeps a failed load and throws it at first use; `darwin/webview.ts` passes the handle as a number; the request answer is the tag's. The docs say in one sentence each what macOS does until its goal. `rust-rewrite/HANDOFF-macos.md` section 8 lists each seam and what to run on a Mac to turn it on. Windows runs the same code as before.
+
+Left on, from reading the macOS code each reaches: the webview host moved into `darwin-webview-host.ts`, `darwin-webview-lib.ts` and `darwin-worker-wake.ts` makes the tag's FFI calls in the tag's order, except that the library's request and drop symbols are probed with `dlopen` when a host is made, not when first needed (a lookup in an image already loaded, no call into it), and the request trampoline is closed after `webview_destroy` instead of before it, once the handler was already unset, so it lives longer, never shorter. The `singleInstance` and input-hook wrappers call the same `dispose`; `setActivationPolicy` reaches the same darwin function; the demos' `identity` sets on macOS nothing the demos did not already set (`title` is given, `windowIcon` is Windows-only, the darwin notifier ignores it); the type `Pointer` in `types.ts` is a type.
+
+Not held back, and different from the tag: with `@n1h/sweetview-webview-bun` installed, importing `@n1h/sweetview-native` alone on macOS now evaluates it, which `dlopen`s its library without making a webview. The package's top-level await allows no lazy synchronous load, and the native package's webview, hooks and permissions are synchronous.
+
+Tests: `packages/sweetview-native/src/macos-seam.test.ts` (a process that sets `process.platform` to `darwin` before the package loads, with a stand-in for the bindings package: the import without it, the release list, the handle, the forwarding) and `packages/sweetview/src/macos-seam.test.ts` (`unrefWorker`). Against the code before this decision the fixture reports the import error, one `exit` listener and one release, and a bigint handle. None of it runs AppKit; nothing of it has been run on a Mac.
+
+Alternative left open: turn D36 on for macOS now and test it there first; that is the macOS goal's work, on a Mac.
