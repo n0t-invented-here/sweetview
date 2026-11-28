@@ -563,10 +563,9 @@ export class Webview {
           }
         } catch (err) {
           // The main branch let this escape to the binding's own catch, which printed
-          // `sweetview: a request handler threw:` and answered 500: with no listener it still does.
-          let asBefore = false;
-          reportCallbackError("webview.setRequestHandler", err, () => void (asBefore = true));
-          if (asBefore) throw err;
+          // `sweetview: a request handler threw:` and answered 500: with no listener told it still
+          // does. Told, it is not handed on: one report, of this kind.
+          if (!reportCallbackError("webview.setRequestHandler", err, null)) throw err;
           this.#completeQuietly(request.id, { status: 500 });
         }
       }),
@@ -790,10 +789,9 @@ export class Webview {
       // value that threw leaves it for the binding's own catch, after the page's call was
       // rejected: the main branch printed `sweetview: a binding threw:` for it there.
       const failed = (err: unknown, synchronous = false) => {
-        let asBefore = false;
-        reportCallbackError("webview.bind", err, () => void (asBefore = true), name);
+        const told = reportCallbackError("webview.bind", err, null, name);
         reject(err);
-        if (asBefore && synchronous && readFailure) throw readFailure.error;
+        if (!told && synchronous && readFailure) throw readFailure.error;
       };
       let args: unknown[];
       try {

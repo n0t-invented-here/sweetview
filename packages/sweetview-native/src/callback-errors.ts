@@ -84,12 +84,18 @@ function printDefault(kind: CallbackKind, error: unknown, fallback: DefaultRepor
  * Hands an exception a catch at a callback boundary caught to the application's listeners, or does
  * what that catch did before when there are none (and on macOS, until its goal). With a listener
  * set it never throws, whatever was thrown, so the catch's fallback always follows.
+ *
+ * Returns whether the fault was handled here: true when listeners were told or the fault was
+ * nested in a report in progress (and printed), false when no listener was set (or on macOS). A
+ * catch that hands an untold fault on to the binding's own catch, as the main branch did, asks
+ * this, not its fallback: the fallback also prints the fault when a listener throws or the fault
+ * is nested, and then the fault was told or printed already.
  */
-export function reportCallbackError(kind: CallbackKind, error: unknown, fallback: DefaultReport, name?: string): void {
+export function reportCallbackError(kind: CallbackKind, error: unknown, fallback: DefaultReport, name?: string): boolean {
   // macOS keeps the main branch's path until its goal (D42): no listener is called there.
   if (listeners.size === 0 || macosKeepsTagPath()) {
     if (fallback !== null) printDefault(kind, error, fallback);
-    return;
+    return false;
   }
   // A fault raised while a report is in progress (application code it runs: the thrown value's
   // conversion, or a listener that calls back into Sweetview, whose callback throws) is printed,
@@ -97,7 +103,7 @@ export function reportCallbackError(kind: CallbackKind, error: unknown, fallback
   // lost.
   if (delivering) {
     printNested(kind, error, fallback);
-    return;
+    return true;
   }
   // The listeners present when the fault came, taken before anything of the value is read: its
   // conversion can run application code, which may add or remove a listener.
@@ -109,6 +115,7 @@ export function reportCallbackError(kind: CallbackKind, error: unknown, fallback
   } finally {
     delivering = false;
   }
+  return true;
 }
 
 let delivering = false;
