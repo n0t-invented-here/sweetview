@@ -1378,11 +1378,13 @@ describe.if(onWindows)("onCallbackError and the raw webview class", () => {
   test("a bound function, a raw binding, a request handler and a file drop handler: each fault arrives once with its kind, and the page still gets its failure", async () => {
     const { r, exitCode } = await runFixture("webview-errors.ts");
     expect({ exitCode, timedOut: r.timedOut }).toEqual({ exitCode: 0, timedOut: undefined });
-    expect(r.page).toEqual({ bindThrows: "rejected", bindRejects: "rejected", throws: 500, rejects: 500 });
+    expect(r.page).toEqual({ bindThrows: "rejected", bindRejects: "rejected", bindProxy: "rejected", bindBadMessage: "rejected", throws: 500, rejects: 500, proxy: 200 });
     expect(r.told).toEqual(
       [
         "webview.bind (bindThrows): bind throws",
         "webview.bind (bindRejects): bind rejects",
+        "webview.bind (bindProxy): [object Object]",
+        "webview.bind (bindBadMessage): (its message throws)",
         "webview.bindRaw (a binding): Error: raw throws",
         "webview.setRequestHandler: request throws",
         "webview.setRequestHandler: request rejects",

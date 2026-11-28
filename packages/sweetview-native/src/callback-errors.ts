@@ -13,6 +13,7 @@
 import { isMainThread } from "node:worker_threads";
 import { binding } from "./binding";
 import { macosKeepsTagPath } from "./platform";
+import { asError } from "./thrown";
 
 /**
  * Where an exception came from: the public API the application wrote the handler for. `internal` is
@@ -65,31 +66,6 @@ export type DefaultReport = string | ((error: unknown) => void) | null;
 
 /** One entry per registration, so each unsubscribe removes its own, once, even for the same function. */
 const listeners = new Set<{ readonly handler: CallbackErrorHandler }>();
-
-/** Text for a thrown value that is not an `Error`. Any value: one whose conversion throws (an object
- * with no prototype, a `Proxy` whose traps throw) is described by its type instead. */
-function describeThrown(value: unknown): string {
-  try {
-    return String(value);
-  } catch {
-    try {
-      return Object.prototype.toString.call(value);
-    } catch {
-      return `a thrown ${typeof value}`;
-    }
-  }
-}
-
-/** The thrown value as an `Error`: itself when it is one, else wrapped with the value as its `cause`. Never throws. */
-function asError(error: unknown): Error {
-  let isError = false;
-  try {
-    isError = error instanceof Error;
-  } catch {
-    // A Proxy whose getPrototypeOf trap throws: not an Error to rely on.
-  }
-  return isError ? (error as Error) : new Error(describeThrown(error), { cause: error });
-}
 
 function printDefault(kind: CallbackKind, error: unknown, fallback: DefaultReport): void {
   if (typeof fallback === "function") fallback(error);

@@ -11,7 +11,15 @@ import { finish, native, report, watchdog } from "./kit";
 
 watchdog(40_000);
 const told: string[] = [];
-onCallbackError((error, source) => void told.push(`${source.kind}${source.name ? ` (${source.name})` : ""}: ${error.message}`));
+// The message is read with care: one of the values below is an Error whose message getter throws.
+const messageOf = (error: Error) => {
+  try {
+    return String(error.message);
+  } catch {
+    return "(its message throws)";
+  }
+};
+onCallbackError((error, source) => void told.push(`${source.kind}${source.name ? ` (${source.name})` : ""}: ${messageOf(error)}`));
 
 const webview = new Webview(false, { width: 360, height: 240, hint: SizeHint.NONE });
 webview.title = `sweetview webview-errors ${process.pid}`;
@@ -22,12 +30,36 @@ webview.bind("bindThrows", () => {
   throw new Error("bind throws");
 });
 webview.bind("bindRejects", () => Promise.reject(new Error("bind rejects")));
+// Values whose inspection throws (review 2, item 1): the page's call must still be rejected.
+webview.bind("bindProxy", () => {
+  throw new Proxy({}, {
+    getPrototypeOf() {
+      throw new Error("getPrototypeOf trap");
+    },
+  });
+});
+const badMessage = new Error("unreadable");
+Object.defineProperty(badMessage, "message", {
+  get() {
+    throw new Error("message getter");
+  },
+});
+webview.bind("bindBadMessage", () => Promise.reject(badMessage));
 webview.bindRaw("rawThrows", () => {
   throw new Error("raw throws");
 });
 webview.setRequestHandler((request) => {
   if (request.url.endsWith("/throws")) throw new Error("request throws");
   if (request.url.endsWith("/rejects")) return Promise.reject(new Error("request rejects"));
+  // A returned value whose prototype cannot be read (review 2, P1): it is an empty response, and
+  // inspecting it stays in TypeScript: answered 200, nothing reaches the binding's own catch.
+  if (request.url.endsWith("/proxy")) {
+    return new Proxy({}, {
+      getPrototypeOf() {
+        throw new Error("returned getPrototypeOf trap");
+      },
+    }) as never;
+  }
   return { status: 404 };
 });
 let dropped = false;
@@ -47,9 +79,12 @@ webview.setAsset(
       const seen = {};
       try { await bindThrows(); seen.bindThrows = "resolved"; } catch (e) { seen.bindThrows = "rejected"; }
       try { await bindRejects(); seen.bindRejects = "resolved"; } catch (e) { seen.bindRejects = "rejected"; }
+      try { await bindProxy(); seen.bindProxy = "resolved"; } catch (e) { seen.bindProxy = "rejected"; }
+      try { await bindBadMessage(); seen.bindBadMessage = "resolved"; } catch (e) { seen.bindBadMessage = "rejected"; }
       rawThrows();
       seen.throws = (await fetch("/throws")).status;
       seen.rejects = (await fetch("/rejects")).status;
+      seen.proxy = (await fetch("/proxy")).status;
       await done(seen);
     })();
   </script></body>`,

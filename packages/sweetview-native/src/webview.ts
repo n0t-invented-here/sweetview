@@ -9,6 +9,7 @@
 
 import { binding } from "./binding";
 import { reportCallbackError } from "./callback-errors";
+import { describeThrown, isErrorValue, isThenable, messageOf } from "./thrown";
 import type { Engine } from "../prebuilt/binding";
 import { releaseAtEnd } from "./lifetime";
 import type { WindowHandle } from "./types";
@@ -223,18 +224,14 @@ export function endWebviewResponse(handle: WebviewHandle, id: bigint) {
 /** How a binding's thrown or rejected value reaches the page (see {@link Webview.bind}). */
 export function serializeBindingError(err: unknown): string {
   if (err === undefined) return "";
-  if (err instanceof Error) return JSON.stringify(err.message);
+  if (isErrorValue(err)) return JSON.stringify(messageOf(err));
   try {
     const json = JSON.stringify(err);
     if (json !== undefined) return json;
   } catch {
-    // Falls through to String().
+    // Falls through to its description.
   }
-  try {
-    return JSON.stringify(String(err));
-  } catch {
-    return JSON.stringify("binding failed");
-  }
+  return JSON.stringify(describeThrown(err));
 }
 
 const instances = new Set<Webview>();
@@ -508,8 +505,8 @@ export class Webview {
           reportCallbackError("webview.setRequestHandler", err, null);
           return;
         }
-        if (result instanceof Promise) {
-          result.then(
+        if (isThenable(result)) {
+          Promise.resolve(result).then(
             (response) => {
               if (response) this.#completeQuietly(request.id, response);
             },
@@ -753,8 +750,8 @@ export class Webview {
         return;
       }
       try {
-        if (result !== null && (typeof result === "object" || typeof result === "function") && typeof (result as PromiseLike<unknown>).then === "function") {
-          Promise.resolve(result as PromiseLike<unknown>).then(fulfill, failed);
+        if (isThenable(result)) {
+          Promise.resolve(result).then(fulfill, failed);
         } else {
           fulfill(result);
         }
