@@ -74,6 +74,9 @@ thread_local! {
     /// handle value the system may have given to another window since.
     static WIDGETS: RefCell<HashMap<isize, (u64, Option<ICoreWebView2Controller>)>> = RefCell::new(HashMap::new());
     static NEXT_WIDGET: Cell<u64> = const { Cell::new(1) };
+    /// How many webviews of this thread are alive: with the last, the thread's
+    /// environment is let go of (`environment.rs`).
+    static LIVE_WEBVIEWS: Cell<usize> = const { Cell::new(0) };
     /// The watch on this thread's windows' moves, from the thread's first widget
     /// on: unhooking it when the last widget went and hooking again with the
     /// next cost a kernel handle each time (measured: 9 over 8 lives, against
@@ -429,7 +432,12 @@ impl Webview {
     /// so it never shows WebView2's own white while the page starts.
     pub fn create(parent: &BorrowedWindow<'_>, layout: Layout, devtools: bool, background: Option<(u8, u8, u8)>) -> Result<Self, ErrorCode> {
         super::environment::prepare()?;
-        Self::create_with(super::environment::for_attempt, parent, layout, devtools, background)
+        let made = Self::create_with(super::environment::for_attempt, parent, layout, devtools, background);
+        if made.is_err() && LIVE_WEBVIEWS.with(Cell::get) == 0 {
+            // No webview of the thread holds the environment the attempts made.
+            super::environment::release_shared();
+        }
+        made
     }
 
     /// [`create`](Self::create) on `environment` at every attempt.
@@ -478,6 +486,7 @@ impl Webview {
         // SAFETY: as above.
         unsafe { settings.SetIsStatusBarEnabled(false) }.map_err(|_| ErrorCode::Unspecified)?;
         let made = Self { controller, webview, environment: environment.clone(), widget };
+        LIVE_WEBVIEWS.with(|live| live.set(live.get() + 1));
         made.widget.set_controller(&made.controller.0);
         // Before the widget is first shown (it is made without `WS_VISIBLE`), so nothing is
         // painted in WebView2's own white first.
@@ -497,6 +506,11 @@ impl Webview {
             let _ = unsafe { UpdateWindow(made.widget.hwnd) };
         }
         Ok(made)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn live_count() -> usize {
+        LIVE_WEBVIEWS.with(Cell::get)
     }
 
     pub(crate) fn controller(&self) -> &ICoreWebView2Controller {
@@ -618,6 +632,21 @@ impl Webview {
 }
 
 
+impl Drop for Webview {
+    /// With the thread's last webview, the thread's cache lets go of the
+    /// environment; this webview's own reference, a field, goes right after,
+    /// so the environment is released here, while the thread runs.
+    fn drop(&mut self) {
+        let left = LIVE_WEBVIEWS.with(|live| {
+            live.set(live.get().saturating_sub(1));
+            live.get()
+        });
+        if left == 0 {
+            super::environment::release_shared();
+        }
+    }
+}
+
 /// One `CreateCoreWebView2Controller` on `widget`, pumping this thread's
 /// messages until it completes (the fork's `embed` wait loop).
 ///
@@ -702,25 +731,84 @@ mod tests {
         drop(orphan);
     }
 
-    // W3: a thread that made a webview and ends, with nothing let go of early, gives back its
-    // WebView2 environment in its thread's teardown without faulting (the process survives
-    // the join), three times over.
+    // Y3: a thread that makes and drops webviews keeps no environment once the last is gone
+    // (released while the thread runs), and ends without faulting.
     #[test]
-    fn a_thread_that_made_a_webview_ends_cleanly() {
-        for round in 0..3 {
-            let ended = std::thread::spawn(move || {
-                use tao::event_loop::EventLoopBuilder;
-                use tao::platform::windows::EventLoopBuilderExtWindows;
-                let event_loop = EventLoopBuilder::new().with_any_thread(true).build();
-                let parent = tao::window::WindowBuilder::new().with_visible(false).build(&event_loop).expect("parent");
-                let webview = Webview::create(&BorrowedWindow::of(&parent), Layout::Fill, false, None).expect("webview");
-                drop(webview);
-                drop(parent);
-                drop(event_loop);
-                round
-            })
-            .join();
-            assert_eq!(ended.ok(), Some(round), "round {round}: the thread ended");
+    fn a_thread_that_made_webviews_keeps_no_environment_and_ends_cleanly() {
+        let ended = std::thread::spawn(move || {
+            use tao::event_loop::EventLoopBuilder;
+            use tao::platform::windows::EventLoopBuilderExtWindows;
+            let event_loop = EventLoopBuilder::new().with_any_thread(true).build();
+            let parent = tao::window::WindowBuilder::new().with_visible(false).build(&event_loop).expect("parent");
+            let mut kept = Vec::new();
+            for round in 0..3 {
+                let first = Webview::create(&BorrowedWindow::of(&parent), Layout::Fill, false, None).expect("webview");
+                let second = Webview::create(&BorrowedWindow::of(&parent), Layout::Fill, false, None).expect("webview");
+                assert!(super::super::environment::cached(), "round {round}: shared while webviews live");
+                drop(first);
+                assert!(super::super::environment::cached(), "round {round}: kept while one lives");
+                drop(second);
+                kept.push(super::super::environment::cached());
+            }
+            drop(parent);
+            drop(event_loop);
+            kept
+        })
+        .join();
+        assert_eq!(ended.ok(), Some(vec![false, false, false]), "the thread ended, holding no environment after each round");
+    }
+
+    // Y3: a thread that ends with a webview still alive (its environment held at the
+    // thread's storage teardown) ends without faulting: that environment is not released
+    // there.
+    #[test]
+    fn a_thread_that_ends_with_a_live_webview_does_not_fault() {
+        let ended = std::thread::spawn(move || {
+            use tao::event_loop::EventLoopBuilder;
+            use tao::platform::windows::EventLoopBuilderExtWindows;
+            let event_loop = EventLoopBuilder::new().with_any_thread(true).build();
+            let parent = tao::window::WindowBuilder::new().with_visible(false).build(&event_loop).expect("parent");
+            let webview = Webview::create(&BorrowedWindow::of(&parent), Layout::Fill, false, None).expect("webview");
+            let held = super::super::environment::cached();
+            std::mem::forget(webview);
+            drop(parent);
+            drop(event_loop);
+            held
+        })
+        .join();
+        assert_eq!(ended.ok(), Some(true), "the thread ended holding its environment, without faulting");
+    }
+
+    /// Run by `a_process_that_exits_with_a_live_webview_does_not_fault` in a process of its own:
+    /// makes a webview and exits the process with it alive.
+    #[test]
+    #[ignore = "a step of a_process_that_exits_with_a_live_webview_does_not_fault"]
+    fn exit_with_a_live_webview_step() {
+        if std::env::var_os("SWEETVIEW_EXIT_STEP").is_none() {
+            return;
+        }
+        use tao::event_loop::EventLoopBuilder;
+        use tao::platform::windows::EventLoopBuilderExtWindows;
+        let event_loop = EventLoopBuilder::new().with_any_thread(true).build();
+        let parent = tao::window::WindowBuilder::new().with_visible(false).build(&event_loop).expect("parent");
+        let webview = Webview::create(&BorrowedWindow::of(&parent), Layout::Fill, false, None).expect("webview");
+        println!("EXIT STEP made {}", Webview::live_count());
+        std::mem::forget((webview, parent, event_loop));
+        std::process::exit(0);
+    }
+
+    #[test]
+    fn a_process_that_exits_with_a_live_webview_does_not_fault() {
+        let exe = std::env::current_exe().expect("test binary");
+        for round in 0..2 {
+            let out = std::process::Command::new(&exe)
+                .args(["--ignored", "--exact", "platform::host::tests::exit_with_a_live_webview_step", "--nocapture"])
+                .env("SWEETVIEW_EXIT_STEP", "1")
+                .output()
+                .expect("the step ran");
+            let said = String::from_utf8_lossy(&out.stdout);
+            assert!(said.contains("EXIT STEP made 1"), "round {round}: the step made its webview: {said}");
+            assert_eq!(out.status.code(), Some(0), "round {round}: exited without a fault: {:?}", out.status);
         }
     }
 

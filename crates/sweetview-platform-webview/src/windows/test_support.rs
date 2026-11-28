@@ -551,3 +551,8 @@ thread_local! {
 pub fn fail_next_attach() {
     FAIL_NEXT_ATTACH.with(|fail| fail.set(true));
 }
+
+/// Whether this thread holds a WebView2 environment now.
+pub fn environment_cached() -> bool {
+    super::environment::cached()
+}
