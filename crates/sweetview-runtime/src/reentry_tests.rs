@@ -18,9 +18,6 @@ use crate::window::tab_frame::TabFrame;
 use crate::window::{Refiner, Window, WindowInit};
 use crate::Rect;
 
-const WM_CLOSE: u32 = 0x0010;
-const WM_ACTIVATE: u32 = 0x0006;
-const WM_USER_TRAYICON: u32 = 6002;
 const WM_LBUTTONDOWN: isize = 0x0201;
 const WM_LBUTTONUP: isize = 0x0202;
 const WM_RBUTTONDOWN: isize = 0x0204;
@@ -74,7 +71,7 @@ fn a_close_drop_or_resize_listener_disposes_its_window_from_inside_its_own_call(
       match via {
         "close" => {
           window.on_close_request(Some(Rc::new(dispose))).expect("close");
-          os::send(handle, WM_CLOSE, 0, 0);
+          os::send(handle, os::Message::Close);
         }
         "drop" => {
           window.on_file_drop(Some(Rc::new(move |_| dispose()))).expect("drop");
@@ -102,7 +99,7 @@ fn a_tab_frames_activation_listener_removes_replaces_or_disposes_from_inside_its
   on_ui_thread(|runtime| {
     let window = Window::create(WindowInit { tab_strip_height: Some(40), ..offscreen("rt reentry activate") }).expect("tabbed");
     let handle = window.handle();
-    let activate = |on: bool| os::send(handle, WM_ACTIVATE, usize::from(on), 0);
+    let activate = |on: bool| os::send(handle, os::Message::Activate(on));
     let calls: Rc<RefCell<Vec<String>>> = Rc::default();
     let tab = Rc::new(TabFrame::of(handle).expect("a tab frame"));
     // Removes itself on its first call.
@@ -151,11 +148,11 @@ fn a_tab_frames_activation_listener_removes_replaces_or_disposes_from_inside_its
         window.dispose();
       }
     })));
-    os::send(handle, WM_ACTIVATE, 1, 0);
+    os::send(handle, os::Message::Activate(true));
     pump_until(&runtime, 50, || false);
     assert_eq!(count.get(), 1);
     assert!(!alive(handle) && !tab.is_live() && TabFrame::of(handle).is_none(), "the window and its frame are gone");
-    os::send(handle, WM_ACTIVATE, 0, 0);
+    os::send(handle, os::Message::Activate(false));
     assert_eq!(count.get(), 1, "nothing is called again");
   });
 }
@@ -246,7 +243,7 @@ fn tray_init(tooltip: &str) -> TrayInit {
 
 fn post_tray(handle: isize, messages: &[isize]) {
   for &message in messages {
-    assert!(os::post(handle, WM_USER_TRAYICON, 0, message), "posted to the tray's window");
+    assert!(os::post(handle, os::Message::TrayIcon(message)), "posted to the tray's window");
   }
 }
 

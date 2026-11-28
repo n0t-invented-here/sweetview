@@ -22,8 +22,6 @@ const VK_RETURN: u16 = 0x0d;
 const VK_ESCAPE: u16 = 0x1b;
 const VK_RIGHT: u16 = 0x27;
 const VK_DOWN: u16 = 0x28;
-/// The message `tray-icon` gives the shell for its icon's mouse events (its own constant).
-const WM_USER_TRAYICON: u32 = 6002;
 const WM_LBUTTONDOWN: isize = 0x0201;
 const WM_LBUTTONUP: isize = 0x0202;
 const WM_LBUTTONDBLCLK: isize = 0x0203;
@@ -388,7 +386,7 @@ fn unique(what: &str) -> String {
 
 fn post_tray(tray: &Tray, messages: &[isize]) {
   for &message in messages {
-    assert!(os::post(tray.window_handle_value(), WM_USER_TRAYICON, 0, message), "posted to the tray's window");
+    assert!(os::post(tray.window_handle_value(), os::Message::TrayIcon(message)), "posted to the tray's window");
   }
 }
 
@@ -572,7 +570,7 @@ fn the_icon_lost_by_the_shell_is_added_again_when_the_taskbar_is_recreated() {
     assert!(os::delete_shell_icon(window, uid), "the icon is deleted from the shell");
     assert!(!os::shell_holds_icon(window, uid));
     assert_eq!(shell_icon(&runtime, &tooltip, false), Shell::Missing, "Explorer shows no icon");
-    assert!(os::post(window, os::registered_message("TaskbarCreated"), 0, 0));
+    assert!(os::post(window, os::Message::TaskbarCreated));
     pump_until(&runtime, 2000, || os::shell_holds_icon(window, uid));
     assert!(os::shell_holds_icon(window, uid), "the tray added its icon again");
     assert!(matches!(shell_icon(&runtime, &tooltip, true), Shell::Found { .. }), "Explorer shows the icon again");

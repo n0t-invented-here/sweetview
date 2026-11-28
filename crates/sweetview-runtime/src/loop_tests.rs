@@ -85,9 +85,6 @@ pub(crate) fn use_test_webview_profile() {
 
 // ---- a tray's menu, opened by a right click, with timers due (D38) -------------------------------
 
-/// The message `tray-icon` gives the shell for its icon's mouse events, with the mouse message
-/// in the low word of `lParam` (`tray-icon`'s own constant, not exported).
-const WM_USER_TRAYICON: u32 = 6002;
 const WM_RBUTTONDOWN: isize = 0x0204;
 const WM_RBUTTONUP: isize = 0x0205;
 
@@ -199,7 +196,7 @@ fn an_interval_set_just_before_a_right_click_ticks_inside_every_tray_menu_in_bot
             }
           })
           .expect("interval");
-        assert!(os::post(tray_window, WM_USER_TRAYICON, 0, WM_RBUTTONDOWN) && os::post(tray_window, WM_USER_TRAYICON, 0, WM_RBUTTONUP), "the right click was posted to the tray's window");
+        assert!(os::post(tray_window, os::Message::TrayIcon(WM_RBUTTONDOWN)) && os::post(tray_window, os::Message::TrayIcon(WM_RBUTTONUP)), "the right click was posted to the tray's window");
         let watch_id: Rc<Cell<Option<TimeoutId>>> = Rc::default();
         let (own_id, inner) = (watch_id.clone(), runtime.clone());
         let watch = runtime
@@ -562,7 +559,7 @@ fn page_calls_wakes_and_timeouts_are_served_inside_the_applications_own_modal_lo
               Rc::new(move || {
                 let found = os::window_titled(&title);
                 if found != 0 {
-                  os::post(found, 0x0010, 0, 0); // WM_CLOSE
+                  os::post(found, os::Message::Close);
                 }
               }),
             );

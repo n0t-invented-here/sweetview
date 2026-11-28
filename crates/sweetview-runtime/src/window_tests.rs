@@ -446,7 +446,7 @@ fn a_frameless_windows_system_menu_maximize_is_the_oss_and_is_not_reported() {
     window.on_maximize_change(1, Some(Rc::new(move |m| sink.borrow_mut().push(m)))).expect("listener");
     window.show().expect("show");
     runtime.pump();
-    let command = |sc: usize| platform::test_support::send(window.handle(), 0x0112, sc, 0); // WM_SYSCOMMAND
+    let command = |sc: usize| platform::test_support::send(window.handle(), platform::test_support::Message::SysCommand(sc));
     command(0xf030); // SC_MAXIMIZE
     runtime.pump();
     assert!(native(&window, |w| platform::is_zoomed(w)), "the OS maximised it");

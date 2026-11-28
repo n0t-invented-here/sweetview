@@ -23,8 +23,6 @@ use crate::{Rect, ResizeEdge};
 const WS_EX_TOPMOST: u32 = 0x0000_0008;
 const WS_THICKFRAME: u32 = 0x0004_0000;
 const WS_MAXIMIZEBOX: u32 = 0x0001_0000;
-const WM_CLOSE: u32 = 0x0010;
-const WM_SYSCOMMAND: u32 = 0x0112;
 const SC_MINIMIZE: usize = 0xf020;
 const SC_MAXIMIZE: usize = 0xf030;
 const SC_RESTORE: usize = 0xf120;
@@ -405,7 +403,7 @@ fn the_systems_own_commands_report_maximise_changes_once_for_framed_frameless_an
     let (a, b) = (framed_seen.clone(), wrapper_seen.clone());
     framed.on_maximize_change(framed.id, Some(Rc::new(move |m| a.borrow_mut().push(m)))).expect("listener");
     wrapped.on_maximize_change(wrapped.id, Some(Rc::new(move |m| b.borrow_mut().push(m)))).expect("listener");
-    let command = |sc: usize| os::send(framed.handle(), WM_SYSCOMMAND, sc, 0);
+    let command = |sc: usize| os::send(framed.handle(), os::Message::SysCommand(sc));
     framed.show().expect("show");
     framed.toggle_maximize().expect("maximise");
     framed.toggle_maximize().expect("restore");
@@ -477,7 +475,7 @@ fn a_frameless_window_maximised_stays_maximised_when_moved_or_sized_and_its_next
 fn an_applications_own_popup_window_wrapped_after_maximise_and_minimise_reads_as_not_maximised() {
   on_ui_thread(|_runtime| {
     let own = os::OwnWindow::new("rt os own popup", (80, 80, 300, 200), |_| {}).expect("the application's own popup");
-    let command = |sc: usize| os::send(own.handle_value(), WM_SYSCOMMAND, sc, 0);
+    let command = |sc: usize| os::send(own.handle_value(), os::Message::SysCommand(sc));
     command(SC_MAXIMIZE);
     command(SC_MINIMIZE);
     let wrapped = Window::adopt(own.handle_value()).expect("adopt");
@@ -498,7 +496,7 @@ fn an_applications_own_popup_window_wrapped_after_maximise_and_minimise_reads_as
 fn an_applications_own_framed_window_wrapped_while_minimised_from_maximised_reports_only_the_real_change() {
   on_ui_thread(|_runtime| {
     let own = os::OwnWindow::framed("rt os own framed wrapped minimised", (60, 60, 300, 200), |_| {}).expect("the application's own framed window");
-    let command = |sc: usize| os::send(own.handle_value(), WM_SYSCOMMAND, sc, 0);
+    let command = |sc: usize| os::send(own.handle_value(), os::Message::SysCommand(sc));
     command(SC_MAXIMIZE);
     command(SC_MINIMIZE);
     let wrapped = Window::adopt(own.handle_value()).expect("adopt");
@@ -524,7 +522,7 @@ fn an_applications_own_framed_window_reports_each_maximise_change_of_the_systems
     let seen = Rc::new(RefCell::new(Vec::new()));
     let sink = seen.clone();
     wrapped.on_maximize_change(wrapped.id, Some(Rc::new(move |m| sink.borrow_mut().push(m)))).expect("listener");
-    let command = |sc: usize| os::send(own.handle_value(), WM_SYSCOMMAND, sc, 0);
+    let command = |sc: usize| os::send(own.handle_value(), os::Message::SysCommand(sc));
     command(SC_MAXIMIZE);
     assert_eq!((wrapped.is_maximized(), seen.borrow().clone()), (true, vec![true]));
     command(SC_MINIMIZE);
@@ -559,7 +557,7 @@ fn an_applications_own_window_reports_resize_move_close_and_drops_and_outlives_i
     wrapped.set_bounds(Rect::new(70, 80, 320, 210));
     assert!(seen.borrow().contains(&"resize 320x210".to_owned()), "{:?}", seen.borrow());
     assert!(seen.borrow().contains(&"move 70,80".to_owned()), "{:?}", seen.borrow());
-    os::send(handle, WM_CLOSE, 0, 0);
+    os::send(handle, os::Message::Close);
     assert!(seen.borrow().contains(&"close".to_owned()));
     assert!(own.is_alive(), "the listener took the request");
     let paths = [r"C:\example\one.txt", r"C:\example\two.txt"];
@@ -568,7 +566,7 @@ fn an_applications_own_window_reports_resize_move_close_and_drops_and_outlives_i
     wrapped.dispose();
     assert!(own.is_alive(), "dispose leaves the application's window alive");
     // Unhooked: the window's own procedure gets the close request again, and destroys the window.
-    os::send(handle, WM_CLOSE, 0, 0);
+    os::send(handle, os::Message::Close);
     assert_eq!(seen.borrow().iter().filter(|s| *s == "close").count(), 1);
     assert!(!own.is_alive());
   });
@@ -614,7 +612,7 @@ fn a_window_closed_with_no_listener_goes_and_the_loop_goes_on() {
     let closing = Window::create(init("rt os close me")).expect("window");
     let staying = Window::create(init("rt os stay alive")).expect("window");
     let handle = closing.handle();
-    os::send(handle, WM_CLOSE, 0, 0);
+    os::send(handle, os::Message::Close);
     assert!(!alive(handle));
     assert_eq!(tracked_count(handle), 0);
     assert!(alive(staying.handle()));
@@ -666,7 +664,7 @@ fn both_loop_modes_deliver_a_close_request_and_run_the_hit_region_poll() {
               next
                 .set_timeout(250, move || {
                   r2.borrow_mut().push(("outside", passing()));
-                  os::post(handle, WM_CLOSE, 0, 0);
+                  os::post(handle, os::Message::Close);
                 })
                 .expect("outside");
             })
@@ -832,9 +830,8 @@ fn the_os_runs_a_move_loop_here(runtime: &Rc<Runtime>, input: &InputBack) -> boo
     return false;
   }
   let from = outer(handle);
-  let at = (grip.0 & 0xffff) | ((grip.1 & 0xffff) << 16);
   let during = drag_by_the_move_loop(runtime, handle, grip, input, || {
-    os::send(handle, 0x00a1, 2, at as isize); // WM_NCLBUTTONDOWN, HTCAPTION
+    os::send(handle, os::Message::NcLeftButtonDown { hit: 2, at: grip }); // HTCAPTION
   });
   during.is_some_and(|r| (r.x, r.y) == (from.x + 60, from.y + 45))
 }
@@ -1011,7 +1008,6 @@ fn a_tab_frame_keeps_its_title_system_styles_border_resize_edges_and_default_min
   const WS_SYSMENU: u32 = 0x0008_0000;
   const WS_MINIMIZEBOX: u32 = 0x0002_0000;
   const WS_CLIPCHILDREN: u32 = 0x0200_0000;
-  const WM_NCHITTEST: u32 = 0x0084;
   on_ui_thread(|_runtime| {
     let title = format!("rt os tab frame {}", std::process::id());
     let frame = Window::create(WindowInit { appearance: Appearance::Dark, ..tabbed(&title) }).expect("tabbed");
@@ -1028,7 +1024,7 @@ fn a_tab_frame_keeps_its_title_system_styles_border_resize_edges_and_default_min
     assert_eq!(outer.x + outer.width - (origin.0 + client_w), edge, "the right border");
     assert_eq!(outer.y + outer.height - (origin.1 + client_h), edge, "the bottom border");
 
-    let hit = |x: i32, y: i32| os::send(handle, WM_NCHITTEST, 0, (((y & 0xffff) << 16) | (x & 0xffff)) as isize);
+    let hit = |x: i32, y: i32| os::send(handle, os::Message::NcHitTest { at: (x, y) });
     let mid = (outer.x + outer.width / 2, outer.y + outer.height / 2);
     let right = outer.x + outer.width - 3;
     let bottom = outer.y + outer.height - 3;

@@ -185,9 +185,6 @@ mod tests {
     });
   }
 
-  /// The message `tray-icon` gives the shell for its icon's mouse events, with the mouse message
-  /// in the low word of `lParam` (`tray-icon`'s own constant, not exported).
-  const WM_USER_TRAYICON: u32 = 6002;
   const WM_LBUTTONDBLCLK: isize = 0x0203;
 
   /// The fallback beside a real `Tray`: the balloon is on the notifier's own hidden icon, not the
@@ -239,7 +236,7 @@ mod tests {
         assert!(tray_events.borrow().is_empty(), "{id}: and not the tray's: {:?}", tray_events.borrow());
       }
       let before = clicks.borrow().len();
-      let posted = sweetview_platform_window::test_support::post(tray.window_handle_value(), WM_USER_TRAYICON, 0, WM_LBUTTONDBLCLK);
+      let posted = sweetview_platform_window::test_support::post(tray.window_handle_value(), sweetview_platform_window::test_support::Message::TrayIcon(WM_LBUTTONDBLCLK));
       assert!(posted, "the double click was posted to the tray's window");
       pump_until(&|| !tray_events.borrow().is_empty());
       assert_eq!(*tray_events.borrow(), ["double"], "the tray's double click is the tray's");

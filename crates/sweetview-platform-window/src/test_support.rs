@@ -82,10 +82,56 @@ fn hwnd_of(value: isize) -> HWND {
 
 // ---- messages and windows by handle value ---------------------------------------------
 
+/// A message [`send`] and [`post`] deliver. Each one's parameters are integers, so the window
+/// that takes it reads no parameter as an address; a message whose parameters point at memory has
+/// a helper of its own ([`send_file_drop`], [`open_popup_menu`], [`press_keys`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Message {
+  /// `WM_CLOSE`.
+  Close,
+  /// `WM_ACTIVATE`: `WA_ACTIVE` when true, `WA_INACTIVE` when false, naming no other window.
+  Activate(bool),
+  /// `WM_SYSCOMMAND` with the `SC_*` command and no cursor position.
+  SysCommand(usize),
+  /// `WM_NCLBUTTONDOWN` on the hit-test area `hit` (`HTCAPTION` and the like) at the screen point `at`.
+  NcLeftButtonDown { hit: usize, at: (i32, i32) },
+  /// `WM_NCHITTEST` at the screen point `at`.
+  NcHitTest { at: (i32, i32) },
+  /// The message the shell sends a tray icon's window (6002, the tray-icon crate's
+  /// `WM_USER_TRAYICON`), for icon 0, with the mouse message it reports (`WM_LBUTTONUP` and the like).
+  TrayIcon(isize),
+  /// The registered `TaskbarCreated` message Explorer broadcasts once the taskbar is recreated.
+  TaskbarCreated,
+}
+
+impl Message {
+  /// The message number and its two integer parameters.
+  fn parts(self) -> (u32, usize, isize) {
+    let point = |(x, y): (i32, i32)| (((y & 0xffff) << 16) | (x & 0xffff)) as isize;
+    match self {
+      Self::Close => (0x0010, 0, 0),
+      Self::Activate(on) => (0x0006, usize::from(on), 0),
+      Self::SysCommand(command) => (0x0112, command, 0),
+      Self::NcLeftButtonDown { hit, at } => (0x00a1, hit, point(at)),
+      Self::NcHitTest { at } => (0x0084, 0, point(at)),
+      Self::TrayIcon(mouse) => (6002, 0, mouse),
+      Self::TaskbarCreated => (registered_message("TaskbarCreated"), 0, 0),
+    }
+  }
+}
+
 /// Posts `message` to the window with handle value `window`, as the shell or another process
 /// would. False when the OS refused it (no such window, or a full queue).
-pub fn post(window: isize, message: u32, wparam: usize, lparam: isize) -> bool {
-  // SAFETY: `PostMessageW` validates the handle value; the parameters are integers.
+pub fn post(window: isize, message: Message) -> bool {
+  let (message, wparam, lparam) = message.parts();
+  post_integers(window, message, wparam, lparam)
+}
+
+/// `PostMessageW`, for this module's helpers, each of which passes only integer parameters.
+fn post_integers(window: isize, message: u32, wparam: usize, lparam: isize) -> bool {
+  // SAFETY: `PostMessageW` validates the handle value; the parameters are integers, which every
+  // caller (`post`, with a `Message`, and this module's typed helpers) passes only for messages
+  // that take integers.
   unsafe { PostMessageW(Some(hwnd_of(window)), message, WPARAM(wparam), LPARAM(lparam)) }.is_ok()
 }
 
@@ -417,12 +463,19 @@ pub fn keep_com_loaded_for_the_test_process() {
 
 // ---- read back from the OS ---------------------------------------------------------------
 
-/// Sends `message` with integer parameters to the window with handle value `window` and returns
-/// its answer, as the OS or another application would send it. Only for messages whose
-/// parameters are integers.
-pub fn send(window: isize, message: u32, wparam: usize, lparam: isize) -> isize {
-  // SAFETY: `SendMessageW` validates the handle value; the parameters are integers, which callers
-  // pass only for messages that take integers.
+/// Sends `message` to the window with handle value `window` and returns its answer, as the OS or
+/// another application would send it.
+pub fn send(window: isize, message: Message) -> isize {
+  let (message, wparam, lparam) = message.parts();
+  send_integers(window, message, wparam, lparam)
+}
+
+/// `SendMessageW`, for this module's helpers, each of which passes only integer parameters or a
+/// handle the message's receiver owns from then on.
+fn send_integers(window: isize, message: u32, wparam: usize, lparam: isize) -> isize {
+  // SAFETY: `SendMessageW` validates the handle value; the parameters are integers, which every
+  // caller (`send`, with a `Message`, and this module's typed helpers) passes only for messages
+  // that take integers or a handle.
   unsafe { SendMessageW(hwnd_of(window), message, Some(WPARAM(wparam)), Some(LPARAM(lparam))) }.0
 }
 
@@ -564,7 +617,7 @@ pub fn shell_drop(paths: &[&str]) -> windows::Win32::Foundation::HGLOBAL {
 pub fn send_file_drop(window: isize, paths: &[&str]) -> bool {
   use windows::Win32::System::Memory::GlobalSize;
   let drop = shell_drop(paths);
-  send(window, WM_DROPFILES, drop.0 as usize, 0);
+  send_integers(window, WM_DROPFILES, drop.0 as usize, 0);
   // SAFETY: GlobalSize takes a handle value by value and only reports on it, 0 for a value that
   // names no block; nothing of ours is read or written.
   let size = unsafe { GlobalSize(drop) };
@@ -611,7 +664,7 @@ pub fn open_popup_menu() -> isize {
 
 /// The menu a popup menu window shows (`MN_GETHMENU`), as a handle value.
 pub fn menu_of_window(menu_window: isize) -> isize {
-  send(menu_window, 0x01e1, 0, 0)
+  send_integers(menu_window, 0x01e1, 0, 0)
 }
 
 fn hmenu_of(menu: isize) -> HMENU {
@@ -662,7 +715,7 @@ pub fn read_menu(menu: isize) -> Vec<MenuEntry> {
 /// Posts key presses to a popup menu window, which its menu loop takes as the keyboard.
 pub fn press_keys(menu_window: isize, keys: &[u16]) {
   for &key in keys {
-    post(menu_window, 0x0100, usize::from(key), 1); // WM_KEYDOWN
+    post_integers(menu_window, 0x0100, usize::from(key), 1); // WM_KEYDOWN
   }
 }
 
