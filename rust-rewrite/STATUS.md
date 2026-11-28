@@ -18,6 +18,10 @@ The Windows goal is **not complete**. This file says what is on the main branch,
 - **The orchestrating session writes no code**; it delegates, integrates and documents.
 - **`rust-rewrite/evidence/` is not in git.** Run output, dumps and reports stay on the machine in that folder, which git ignores. Nothing is committed there, by any branch.
 
+## How code reaches this branch (changed on 2026-11-28)
+
+No product code has landed on `v1-rust-rewrite` since the first part of the public API additions; five branches hold all the work since, each held back until both required reviewers passed it, and none has passed. That rule was the coordinator's, not the owner's, and it kept finished work off this branch. From now on: **a branch is merged here as soon as its author reports a full run with no failure on its head and the merged tree passes the same run**; the two required reviewers then review it here, and their findings are fixed here as further commits. Nothing is called done by being merged: the reviews, their rounds and the final full review by Neon are still required before any completion claim.
+
 ## Why the checklist reads complete and the goal is not
 
 Every box of `CHECKLIST-windows.md` is ticked and `bun rust-rewrite/verify.ts windows` printed `COMPLETE` at `c8dab02`. That claim was withdrawn. The verifier and the checklist were satisfied without any real application having been upgraded and run, and the goal audit then found the gaps listed below. The boxes stay ticked as records of what was run then; their evidence blocks are stale against the current tree and are produced again before any new claim.
