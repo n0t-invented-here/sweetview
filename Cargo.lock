@@ -1706,6 +1706,8 @@ version = "1.0.0"
 dependencies = [
  "raw-window-handle",
  "sweetview-platform-loop",
+ "sweetview-shell-data",
+ "sweetview-window-logic",
  "windows",
  "windows-registry",
 ]
@@ -1717,6 +1719,7 @@ dependencies = [
  "raw-window-handle",
  "serde_json",
  "sweetview-platform-loop",
+ "sweetview-shell-data",
  "windows",
  "windows-registry",
 ]
@@ -1769,6 +1772,13 @@ dependencies = [
  "tao",
  "tray-icon",
  "webview2-com",
+]
+
+[[package]]
+name = "sweetview-shell-data"
+version = "1.0.0"
+dependencies = [
+ "serde_json",
 ]
 
 [[package]]

@@ -310,7 +310,7 @@ the webview is made as the C++ library's `win32_edge.hh` made it, step by
 step (`crates/sweetview-platform-webview/src/windows/host.rs` names the
 lines), so the page behaves as it did. The project used `wry` for this at
 first, and `wry` sets and registers things the C++ library never did, with
-no way to leave them out; that is why it is not used (DECISIONS D47).
+no way to leave them out; that is why it is not used (DECISIONS D48).
 
 | | The C++ library, and Sweetview 1.0 on Windows |
 |---|---|

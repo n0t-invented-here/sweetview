@@ -17,7 +17,7 @@
 //!
 //! `wry` is not used on Windows: its creation path registers handlers and
 //! writes settings the fork never did, with no way to leave them out
-//! (DECISIONS D47).
+//! (DECISIONS D48).
 //!
 //! Dropping the [`WebviewExtras`] tears all of it down in the order of the C++
 //! fork's `deinit()`: answering calls are refused from then on, open streams are

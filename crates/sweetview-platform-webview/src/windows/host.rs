@@ -4,7 +4,7 @@
 //! is given, the WebView2 controller created on that child, the two settings
 //! the fork sets, and nothing else. `wry` is not involved: its creation path
 //! registers handlers and writes settings the fork never did, with no way to
-//! leave them out (DECISIONS D47).
+//! leave them out (DECISIONS D48).
 //!
 //! The steps, each with the fork's lines:
 //!

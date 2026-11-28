@@ -504,7 +504,7 @@ Found and not changed here, for the macOS goal or the owner: the root `justfile`
 
 Nothing here was run on a Mac. `bun test` and each demo on a Mac settle it (audit finding 11).
 
-## 9. The webview is no longer built by `wry` (D47)
+## 9. The webview is no longer built by `wry` (D48)
 
 On Windows `sweetview-platform-webview` now makes the webview itself, as the C++ library's `win32_edge.hh` makes it, and `wry` is a dependency of no crate. This supersedes what sections 2 and 3 say about the webview and `wry`: the `sweetview-platform-webview` row of the crate table, the paragraph on dependencies (`sweetview-runtime` no longer depends on `wry`; `sweetview-platform-webview` now depends on `sweetview-platform-window` on every platform), the rows on `WebviewExtras::attach(&wry::WebView, ...)` and the free `set_background_color`, the note on `move_focus` (it is back, as `Webview::move_focus`), and the engine row on `reparent(&WebView, ...)`. With `wry` gone, `mac-check` no longer compiles `objc2-exception-helper`.
 

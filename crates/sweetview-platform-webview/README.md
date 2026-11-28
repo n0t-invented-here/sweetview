@@ -1,6 +1,6 @@
 # sweetview-platform-webview
 
-Job: the webview on Windows, made and driven as the C++ fork's `win32_edge.hh` makes and drives it, and what Sweetview adds to it, through the typed WebView2 interfaces of `webview2-com`. `wry` is not used: its creation path sets and registers what the fork never did, with no way to leave it out (DECISIONS D47).
+Job: the webview on Windows, made and driven as the C++ fork's `win32_edge.hh` makes and drives it, and what Sweetview adds to it, through the typed WebView2 interfaces of `webview2-com`. `wry` is not used: its creation path sets and registers what the fork never did, with no way to leave it out (DECISIONS D48).
 
 | Item | What it gives |
 |---|---|
