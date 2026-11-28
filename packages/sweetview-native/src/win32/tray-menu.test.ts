@@ -514,6 +514,33 @@ describe.if(onWindows)("Menu.popup (binding: muda)", () => {
   }, 30_000);
 });
 
+describe.if(onWindows)("Window#showSystemMenu", () => {
+  test("shows the window's system menu, read from a second process, and choosing Minimize minimises it", async () => {
+    const area = Screen.primary().workArea;
+    const win = new Window({ title: unique("public system menu"), bounds: { x: area.x + 80, y: area.y + 80, width: 420, height: 300 }, noActivate: true });
+    try {
+      win.show();
+      expect(win.isMinimized()).toBe(false);
+      // As for windowMenu above: a second process reads the menu while this thread is inside its
+      // modal loop, then selects the fourth item (Minimize) and presses Enter on the menu window.
+      const probe = new URL("../../../sweetview/test/fixtures/win-menu-probe.ts", import.meta.url);
+      const child = Bun.spawn([process.execPath, require("node:url").fileURLToPath(probe), String(process.pid), "pick:3"], { stdout: "pipe", stderr: "pipe" });
+      win.showSystemMenu();
+      await child.exited;
+      const report = JSON.parse((await new Response(child.stdout).text()).trim()) as { items?: { label?: string; enabled?: boolean; separator?: boolean }[]; error?: string };
+      expect(report.error).toBeUndefined();
+      expect(report.items?.map((item) => (item.separator ? "-" : item.enabled))).toEqual([false, true, true, true, true, "-", true]);
+      await pumpUntil(() => win.isMinimized(), 3000);
+      expect(win.isMinimized()).toBe(true);
+      win.dispose();
+      win.showSystemMenu(); // a disposed window shows nothing
+      expect(openPopupMenu()).toBe(0n);
+    } finally {
+      win.dispose();
+    }
+  }, 30_000);
+});
+
 describe.if(onWindows)("Tray (binding: tray-icon)", () => {
   test("a tray is made with its own window and disposed, twice safely", () => {
     const tray = createTray({ tooltip: unique("tray"), icon: { windows: { ico: dotIco() } } });

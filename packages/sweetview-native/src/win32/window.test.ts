@@ -298,6 +298,135 @@ describe.if(onWindows)("win32 Window", () => {
     }
   });
 
+  test("contentSize is the page area in DIPs at the window's scale, centred on the primary work area and kept on it; a tabbed window's page is below its strip; bounds with it throws", async () => {
+    const { clientSize } = await import("../../test/win32-os");
+    const { STRIP_HEIGHT } = await import("./strip-shared");
+    const area = Screen.primary().workArea;
+    const centred = (b: { width: number; height: number }) => ({
+      x: area.x + Math.max(0, Math.trunc((area.width - b.width) / 2)),
+      y: area.y + Math.max(0, Math.trunc((area.height - b.height) / 2)),
+    });
+    const framed = new Window({ title: "contentSize framed", contentSize: { width: 500, height: 300 } });
+    const frameless = new Window({ frame: false, contentSize: { width: 410, height: 270 } });
+    const tabbed = new Window({ tabs: true, contentSize: { width: 700, height: 420 } });
+    const huge = new Window({ title: "contentSize huge", contentSize: { width: 100_000, height: 100_000 } });
+    try {
+      for (const [name, win, width, height, strip] of [["framed", framed, 500, 300, 0], ["frameless", frameless, 410, 270, 0], ["tabbed", tabbed, 700, 420, STRIP_HEIGHT]] as const) {
+        const scale = win.scale();
+        // The page, in CSS pixels, is what was asked for at the screen's scale, whatever the frame takes.
+        expect({ name, client: clientSize(BigInt(win.handle!)) }).toEqual({ name, client: { width: Math.round(width * scale), height: Math.round((height + strip) * scale) } });
+        const bounds = win.bounds();
+        expect({ name, x: bounds.x, y: bounds.y }).toEqual({ name, ...centred(bounds) });
+        expect(win.isVisible()).toBe(false);
+      }
+      // Frameless: the outer frame is the page.
+      expect(frameless.bounds().width).toBe(clientSize(BigInt(frameless.handle!)).width);
+      // Larger than the work area: the whole window is cut to it.
+      expect(huge.bounds()).toEqual(area);
+      expect(() => new Window({ bounds: { x: 0, y: 0, width: 100, height: 100 }, contentSize: { width: 100, height: 100 } })).toThrow("sweetview: bounds and contentSize cannot both be given");
+    } finally {
+      huge.dispose();
+      tabbed.dispose();
+      frameless.dispose();
+      framed.dispose();
+    }
+  });
+
+  test("backgroundColor is what a window shows where nothing has painted, a tabbed window's page area too; a transparent window does not take it; a malformed one throws", async () => {
+    const { clientSize, clientToScreen, screenPixel } = await import("../../test/win32-os");
+    const { pumpEvents } = await import("../event-loop");
+    const { STRIP_HEIGHT } = await import("./strip-shared");
+    const area = Screen.primary().workArea;
+    const plain = new Window({ title: "backgroundColor plain", backgroundColor: "#204060", topmost: true, noActivate: true, bounds: { x: area.x + 40, y: area.y + 40, width: 260, height: 200 } });
+    const tabbed = new Window({ tabs: true, backgroundColor: "#603020", topmost: true, noActivate: true, bounds: { x: area.x + 340, y: area.y + 40, width: 460, height: 340 } });
+    // The middle of the client area, below `top` physical pixels (a tab frame's strip).
+    const middle = (win: Window, top = 0) => {
+      const hwnd = BigInt(win.handle!);
+      const size = clientSize(hwnd);
+      return clientToScreen(hwnd, size.width >> 1, top + ((size.height - top) >> 1));
+    };
+    const settle = (win: Window, want: string, top = 0) => {
+      const deadline = Date.now() + 5000;
+      let seen = "";
+      do {
+        pumpEvents();
+        const at = middle(win, top);
+        seen = screenPixel(at.x, at.y);
+        if (seen === want) break;
+        Bun.sleepSync(20);
+      } while (Date.now() < deadline);
+      return seen;
+    };
+    try {
+      expect(getWindowMeta(plain).backgroundColor).toBe("#204060");
+      plain.show();
+      expect(settle(plain, "#204060")).toBe("#204060");
+      tabbed.show();
+      expect(settle(tabbed, "#603020", Math.round(STRIP_HEIGHT * tabbed.scale()))).toBe("#603020");
+
+      const clear = new Window({ transparent: true, frame: false, backgroundColor: "#FFFFFF" });
+      expect(getWindowMeta(clear).backgroundColor).toBeUndefined();
+      clear.dispose();
+      expect(() => new Window({ backgroundColor: "red" })).toThrow("sweetview: background color must be #rrggbb, got red");
+      expect(() => new Window({ backgroundColor: "#fff" })).toThrow("sweetview: background color must be #rrggbb, got #fff");
+    } finally {
+      tabbed.dispose();
+      plain.dispose();
+    }
+  });
+
+  test("onMaximizeChange reports each change, by toggleMaximize or the system's own commands, once; nothing for a minimise and restore; frameless and tabbed windows too", async () => {
+    const { user32 } = await import("../../test/win32-os");
+    const WM_SYSCOMMAND = 0x0112;
+    const [SC_MINIMIZE, SC_MAXIMIZE, SC_RESTORE] = [0xf020n, 0xf030n, 0xf120n];
+    const area = Screen.primary().workArea;
+    const at = { x: area.x + 120, y: area.y + 120, width: 420, height: 300 };
+    const framedSeen: boolean[] = [];
+    const framed = new Window({ title: "onMaximizeChange", noActivate: true, bounds: at, onMaximizeChange: (m) => framedSeen.push(m) });
+    const wrapped = Window.fromHandle(framed.handle);
+    const frameless = new Window({ frame: false, noActivate: true, bounds: at });
+    const tabbed = new Window({ tabs: true, noActivate: true, bounds: { ...at, width: 700, height: 500 } });
+    try {
+      const wrapperSeen: boolean[] = [];
+      const offWrapper = wrapped.onMaximizeChange((m) => wrapperSeen.push(m));
+      const hwnd = BigInt(framed.handle!);
+      const command = (sc: bigint) => user32.SendMessageW(hwnd, WM_SYSCOMMAND, sc, 0n);
+      framed.show();
+      framed.toggleMaximize();
+      framed.toggleMaximize();
+      // The frame's maximise button, a snap and a title bar double click all end as the system command.
+      command(SC_MAXIMIZE);
+      command(SC_MINIMIZE);
+      expect(framed.isMinimized()).toBe(true);
+      command(SC_RESTORE); // back to maximised: no change to report
+      expect(framed.isMaximized()).toBe(true);
+      command(SC_RESTORE);
+      expect(framedSeen).toEqual([true, false, true, false]);
+      expect(wrapperSeen).toEqual([true, false, true, false]);
+      offWrapper();
+      framed.toggleMaximize();
+      expect(wrapperSeen.length).toBe(4);
+      expect(framedSeen).toEqual([true, false, true, false, true]);
+
+      for (const [name, win] of [["frameless", frameless], ["tabbed", tabbed]] as const) {
+        const seen: boolean[] = [];
+        const off = win.onMaximizeChange((m) => seen.push(m));
+        win.show();
+        win.toggleMaximize();
+        expect({ name, maximized: win.isMaximized() }).toEqual({ name, maximized: true });
+        win.toggleMaximize();
+        off();
+        win.toggleMaximize();
+        expect({ name, seen }).toEqual({ name, seen: [true, false] });
+      }
+    } finally {
+      wrapped.dispose();
+      tabbed.dispose();
+      frameless.dispose();
+      framed.dispose();
+    }
+  });
+
   test("Window.fromHandle intercepts events non-mutatingly and dispose does not destroy the external HWND", async () => {
     const { ownWindow, user32, WM_CLOSE } = await import("../../test/win32-os");
     const msg = ownWindow();

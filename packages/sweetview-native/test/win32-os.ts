@@ -35,6 +35,9 @@ export const user32 = dlopen("user32.dll", {
   GetDlgCtrlID: { args: [u64], returns: i32 },
   GetWindowRect: { args: [u64, FFIType.ptr], returns: i32 },
   GetClientRect: { args: [u64, FFIType.ptr], returns: i32 },
+  ClientToScreen: { args: [u64, FFIType.ptr], returns: i32 },
+  GetDC: { args: [u64], returns: u64 },
+  ReleaseDC: { args: [u64, u64], returns: i32 },
   GetWindowLongPtrW: { args: [u64, i32], returns: i64 },
   GetCursorPos: { args: [FFIType.ptr], returns: i32 },
   GetAsyncKeyState: { args: [i32], returns: i16 },
@@ -95,6 +98,11 @@ export const kernel32 = dlopen("kernel32.dll", {
 export const shell32 = dlopen("shell32.dll", {
   // (DWORD message, NOTIFYICONDATAW*) -> BOOL
   Shell_NotifyIconW: { args: [u32, FFIType.ptr], returns: i32 },
+}).symbols;
+
+export const gdi32 = dlopen("gdi32.dll", {
+  // (HDC, x, y) -> COLORREF 0x00bbggrr; CLR_INVALID (0xffffffff) outside the clip
+  GetPixel: { args: [u64, i32, i32], returns: u32 },
 }).symbols;
 
 export const dwmapi = dlopen("dwmapi.dll", {
@@ -169,6 +177,36 @@ export function windowRect(hwnd: bigint): { left: number; top: number; right: nu
   const rect = new Int32Array(4);
   user32.GetWindowRect(hwnd, ptr(rect));
   return { left: rect[0]!, top: rect[1]!, right: rect[2]!, bottom: rect[3]! };
+}
+
+/** The size of a window's client area, physical pixels. */
+export function clientSize(hwnd: bigint): { width: number; height: number } {
+  const rect = new Int32Array(4);
+  user32.GetClientRect(hwnd, ptr(rect));
+  return { width: rect[2]! - rect[0]!, height: rect[3]! - rect[1]! };
+}
+
+/** A point of a window's client area in screen coordinates. */
+export function clientToScreen(hwnd: bigint, x: number, y: number): { x: number; y: number } {
+  const point = new Int32Array([x, y]);
+  user32.ClientToScreen(hwnd, ptr(point));
+  return { x: point[0]!, y: point[1]! };
+}
+
+/**
+ * The colour the screen shows at `(x, y)`, as `#rrggbb`: what the compositor
+ * put there, webviews included. Read it from a topmost window of this
+ * process, so no other window covers the point.
+ */
+export function screenPixel(x: number, y: number): string {
+  const dc = user32.GetDC(0n);
+  try {
+    const bgr = gdi32.GetPixel(dc, x, y);
+    const rgb = ((bgr & 0xff) << 16) | (bgr & 0xff00) | ((bgr >> 16) & 0xff);
+    return `#${rgb.toString(16).padStart(6, "0")}`;
+  } finally {
+    user32.ReleaseDC(0n, dc);
+  }
 }
 
 export function cursor(): { x: number; y: number } {

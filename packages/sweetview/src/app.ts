@@ -124,6 +124,8 @@ export type TabAttachHooks = {
    * tabbed window are such children of its frame.
    */
   mountChild?(): { window: bigint; bounds: Rect; visible: boolean };
+  /** The browser's background before the page paints, in place of the window's own `backgroundColor`: a tab's, from its tabbed window. */
+  backgroundColor?(): string | undefined;
 };
 
 /** Internal options key for `TabAttachHooks` (not exported from the package entry). */
@@ -388,6 +390,11 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
         } else if (err !== 0) {
           throw new Error(`sweetview: webview_set_background_color failed (${err})`);
         }
+      } else if ((tabHooks?.backgroundColor?.() ?? meta.backgroundColor) !== undefined && process.platform === "win32") {
+        // The window's backgroundColor is also what the browser paints before the page does (macOS: until its goal, nothing).
+        const rgb = Number.parseInt((tabHooks?.backgroundColor?.() ?? meta.backgroundColor)!.slice(1), 16);
+        const err = engineHost.setBackgroundColor((rgb >> 16) & 0xff, (rgb >> 8) & 0xff, rgb & 0xff, 255);
+        if (err !== undefined && err !== 0) throw new Error(`sweetview: webview_set_background_color failed (${err})`);
       }
       if (options.allowExternalDrop !== undefined) {
         const error = engineHost.setAllowExternalDrop(options.allowExternalDrop);
