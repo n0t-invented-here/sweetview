@@ -323,7 +323,27 @@ pub struct OwnWindow {
 impl OwnWindow {
   /// Shows the window at `(x, y)`, `width` by `height` screen pixels, topmost and not
   /// activated; `on_message` is told each message its procedure is dispatched.
-  pub fn new(title: &str, (x, y, width, height): (i32, i32, i32, i32), on_message: impl Fn(u32) + 'static) -> Option<OwnWindow> {
+  pub fn new(title: &str, rect: (i32, i32, i32, i32), on_message: impl Fn(u32) + 'static) -> Option<OwnWindow> {
+    Self::make(title, rect, WS_EX_TOOLWINDOW, WS_POPUP, true, on_message)
+  }
+
+  /// A framed window of the application's own (`WS_OVERLAPPEDWINDOW`: a title bar, a sizing border,
+  /// the minimise and maximise buttons and the system menu), shown without activation and not
+  /// topmost, whose procedure reports every message it is dispatched.
+  pub fn framed(title: &str, rect: (i32, i32, i32, i32), on_message: impl Fn(u32) + 'static) -> Option<OwnWindow> {
+    use windows::Win32::UI::WindowsAndMessaging::{WINDOW_EX_STYLE, WS_OVERLAPPEDWINDOW};
+    Self::make(title, rect, WINDOW_EX_STYLE(0), WS_OVERLAPPEDWINDOW, false, on_message)
+  }
+
+  fn make(
+    title: &str,
+    (x, y, width, height): (i32, i32, i32, i32),
+    ex_style: windows::Win32::UI::WindowsAndMessaging::WINDOW_EX_STYLE,
+    style: windows::Win32::UI::WindowsAndMessaging::WINDOW_STYLE,
+    topmost: bool,
+    on_message: impl Fn(u32) + 'static,
+  ) -> Option<OwnWindow> {
+    use windows::Win32::UI::WindowsAndMessaging::HWND_NOTOPMOST;
     let class = w!("sweetview.test-own-window");
     let description = WNDCLASSW { lpfnWndProc: Some(own_window_procedure), lpszClassName: class, ..Default::default() };
     // SAFETY: `description` is a fully initialised WNDCLASSW on this frame; its class name is a
@@ -332,7 +352,7 @@ impl OwnWindow {
     let title = HSTRING::from(title);
     // SAFETY: the class is registered above; `title` is a wide string owned by this frame for the
     // call; no parent, menu, instance or creation parameter is passed.
-    let made = unsafe { CreateWindowExW(WS_EX_TOOLWINDOW, class, &title, WS_POPUP, x, y, width, height, None, None, None, None) };
+    let made = unsafe { CreateWindowExW(ex_style, class, &title, style, x, y, width, height, None, None, None, None) };
     let hwnd = made.ok()?;
     // Owned from here: a failure below still destroys the window.
     let destroyed = Rc::new(std::cell::Cell::new(false));
@@ -344,8 +364,9 @@ impl OwnWindow {
       }
     });
     OWN_HANDLERS.with(|all| all.borrow_mut().insert(window.handle_value(), handler));
+    let band = if topmost { HWND_TOPMOST } else { HWND_NOTOPMOST };
     // SAFETY: `window.hwnd` is the live window made above; the flags are constants.
-    unsafe { SetWindowPos(window.hwnd, Some(HWND_TOPMOST), x, y, width, height, SWP_SHOWWINDOW | SWP_NOACTIVATE) }.ok()?;
+    unsafe { SetWindowPos(window.hwnd, Some(band), x, y, width, height, SWP_SHOWWINDOW | SWP_NOACTIVATE) }.ok()?;
     Some(window)
   }
 
