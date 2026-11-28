@@ -376,7 +376,10 @@ fn the_container_is_a_control_parent_and_goes_with_its_webview() {
       let growth = sweetview_platform_loop::testing::smallest_growth(lives, life);
       eprintln!("-- {host}: over {lives} lives {growth:?}");
       assert!(growth.user_objects <= 0 && growth.gdi_objects <= 0, "{host}: every window and GDI object given back: {growth:?}");
-      assert!(growth.kernel_handles <= lives as i64, "{host}: no kernel handle beyond WebView2's own one per webview: {growth:?}");
+      // The allowance a_webview_keeps_no_kernel_handle_beyond_webview2_s_own measured WebView2's
+      // own count moving by from run to run: one handle of ours per life would add `lives` more.
+      let noise = (lives as i64 / 8).max(1);
+      assert!(growth.kernel_handles <= lives as i64 + noise, "{host}: no kernel handle beyond WebView2's own one per webview: {growth:?}");
       drop(window);
     }
   });

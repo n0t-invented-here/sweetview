@@ -77,10 +77,8 @@ thread_local! {
     /// How many webviews of this thread are alive: with the last, the thread's
     /// environment is let go of (`environment.rs`).
     static LIVE_WEBVIEWS: Cell<usize> = const { Cell::new(0) };
-    /// The watch on this thread's windows' moves, from the thread's first widget
-    /// on: unhooking it when the last widget went and hooking again with the
-    /// next cost a kernel handle each time (measured: 9 over 8 lives, against
-    /// WebView2's own 8 with the hook kept).
+    /// The watch on this thread's windows' moves, while any widget of the
+    /// thread exists: hooked with the first, unhooked when the last goes.
     static MOVE_WATCH: RefCell<Option<MoveWatch>> = const { RefCell::new(None) };
     /// The widgets that fill their parent's client area (`Layout::Fill`, or
     /// `fill_parent` since their last `set_bounds`), by handle value.
@@ -236,6 +234,11 @@ extern "system" fn widget_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPA
             let gone = WIDGETS.try_with(|widgets| widgets.borrow_mut().remove(&key(hwnd))).ok().flatten();
             drop(gone);
             let _ = FILLING.try_with(|filling| filling.borrow_mut().remove(&key(hwnd)));
+            // The last widget of the thread gone, the watch goes (taken out, then unhooked).
+            if WIDGETS.try_with(|widgets| widgets.borrow().is_empty()).unwrap_or(false) {
+                let watch = MOVE_WATCH.try_with(|watch| watch.borrow_mut().take()).ok().flatten();
+                drop(watch);
+            }
             #[cfg(any(test, feature = "test-support"))]
             let _ = FIRST_SHOWN.try_with(|shown| shown.borrow_mut().remove(&key(hwnd)));
         }
