@@ -56,73 +56,94 @@ The functions an application hands Sweetview to call later (a tray's
 `onClick`, a menu item's `click`, a `Window` listener, a page's UI-thread
 method, ...) run on the UI thread, called from inside the event loop. An
 exception one of them throws is caught there: it never ends the loop, and
-it never reaches `process.on("uncaughtException")`. What Sweetview does with
-it on Windows:
+it never reaches `process.on("uncaughtException")` by itself. To see these
+faults, set one listener:
 
-| Callback | What happens to its exception |
-|---|---|
-| `Tray` `onClick`, `onDoubleClick`, its `menu` function, a tray menu item's `click` | logged `sweetview: message window handler threw:` with the error; a `menu` function that throws opens no menu |
-| A `Menu.popup` item's `click` | thrown from `Menu.popup`, to the code that called it: the click runs after the menu has closed, inside that call |
-| `Window` `onResize`, `onMove`, `onClose` | logged `sweetview: onResize handler threw:` (`onMove`, `onClose`); a close request is still taken, so the window stays open |
-| `Window` `onFileDrop`, `onNewTab`, `onTabSelect`, `onTabClose` | logged `sweetview: onFileDrop handler threw:` (and the others by name) |
-| `Notifier` `onClick` | logged `sweetview: notification onClick threw:` |
-| A hit-region refiner (`setHitRegions(polygons, refine)`) | logged `sweetview: hit region poll threw:`; the polygon's answer stands |
-| `installMouseHook`, `installKeyboardHook` handlers | logged `sweetview: mouse hook handler threw:` (`keyboard hook`); the event is not swallowed. On macOS the hooks are still the bindings package's, which does not catch: Bun throws the exception at the JavaScript that was running the loop |
-| `singleInstance` `onSecondInstance`, `onOpenUrl` listeners | logged `sweetview: onSecondInstance handler threw:`, `sweetview: onOpenUrl handler threw:`; the other listeners still run |
-| `uiMethods`, `deferredUiMethods` | not logged: the page's call is rejected with the error's message ([app](app.md#exceptions-in-page-calls-requests-and-the-worker)) |
-| An `onRequest` function | not logged: the request is answered `500 Internal Server Error` |
-| `onReady`, `onReadyTimeout` | logged `sweetview: onReady handler threw:` (`onReadyTimeout`) |
-| A method of the worker's service | the page's call is rejected with the error; see [app](app.md#exceptions-in-page-calls-requests-and-the-worker) |
+```ts
+import { onCallbackError } from "@n1h/sweetview/native";
 
-Each logged line is one `console.error(message, error)` call. Should
-anything get past these, the binding writes `sweetview: <kind> threw:
-<reason>` to stderr from native code, without `console.error`. An executable
-compiled with `--windows-hide-console` has no stderr, so in a shipped
-application nobody sees any of these lines unless the application routes
-them somewhere.
+onCallbackError((error, { kind, name }) => {
+  // error: the Error the handler threw (a thrown non-error is wrapped, with the value as its cause)
+  // kind: where it came from, such as "tray.onClick" or "uiMethods"; name: the method, for a page call
+});
+```
 
-To see its own faults, an application can:
+```ts
+function onCallbackError(handler: (error: Error, source: CallbackErrorSource) => void): () => void;
+type CallbackErrorSource = { readonly kind: CallbackKind; readonly name?: string };
+```
 
-- wrap each handler it hands Sweetview so that an exception goes to its own
-  `uncaughtException` listeners, as an unhandled one would. This wrapper
-  rethrows afterwards, so Sweetview's fallback still applies (the line is
-  logged, the page's call rejects, a hook lets the event through):
+It is also exported by `@n1h/sweetview` and `@n1h/sweetview-native`, with
+the types `CallbackErrorHandler`, `CallbackErrorSource` and `CallbackKind`.
+It returns the function that removes the listener; any number can be set,
+and each is called in the order it was added, on the UI thread.
 
-  ```ts
-  /**
-   * Wraps a handler Sweetview calls (a click, a listener, a UI-thread method). An exception it throws
-   * goes to the process's "uncaughtException" listeners, as an unhandled exception would, then on to
-   * Sweetview as before (logged; a page call is rejected; a hook lets the event through).
-   */
-  function reported<A extends unknown[], R>(handler: (...args: A) => R): (...args: A) => R {
-    return (...args: A): R => {
-      try {
-        return handler(...args);
-      } catch (err) {
-        const error = err instanceof Error ? err : new Error(String(err));
-        if (!process.emit("uncaughtException", error, "uncaughtException")) console.error(error);
-        throw err;
-      }
-    };
-  }
-  ```
+- With no listener set, Sweetview does what it always did: the
+  `console.error` line in the table below, or nothing where the table says
+  so.
+- With a listener set, the listener is called in place of that line, and
+  the faults that printed nothing (a page's call, a request, a worker's
+  method) are reported too. The callback's fallback still applies: the
+  page's call is rejected, the request answers 500, a hook lets the event
+  through, a menu function that throws opens no menu, a close request is
+  still taken.
+- A listener that throws never takes the application down: Sweetview
+  catches it, prints its own line for the original error and
+  `sweetview: an onCallbackError handler threw:` for the listener's, and
+  calls the next listener.
+- A listener may end the application: `process.exit(code)` from inside it
+  ends the process with that code, from inside either loop.
 
-  ```ts
-  process.on("uncaughtException", (err) => {
-    writeFaultLog(err); // the application's own reporter
-    process.exit(1);
-  });
-  const tray = new Tray({ tooltip: "Notes", onClick: reported(() => win.show()), menu: [{ label: "Export", click: reported(exportNotes) }] });
-  const win = new Window({ title: "Notes", onClose: reported(() => win.hide()) });
-  ```
+| `kind` | The callback | Printed with no listener | Its fallback |
+|---|---|---|---|
+| `tray.onClick`, `tray.onDoubleClick` | `Tray` `onClick`, `onDoubleClick` | `sweetview: message window handler threw:` | none |
+| `tray.menu` | a `Tray`'s `menu` function | `sweetview: message window handler threw:` | no menu opens |
+| `menu.click` | a tray menu item's `click` (on macOS also a `Menu.popup` item's) | `sweetview: message window handler threw:` | none |
+| `notifier.onClick` | `Notifier` `onClick` | `sweetview: notification onClick threw:` | none |
+| `window.onClose`, `window.onResize`, `window.onMove` | those `Window` listeners | `sweetview: onClose handler threw:` (`onResize`, `onMove`) | a close request is still taken: the window stays open |
+| `window.onFileDrop`, `window.onNewTab`, `window.onTabSelect`, `window.onTabClose` | those `Window` listeners | `sweetview: onFileDrop handler threw:` (and the others by name) | none |
+| `hitRegions.refine` | the refiner of `setHitRegions(polygons, refine)` | `sweetview: hit region poll threw:` | the polygon's answer stands |
+| `mouseHook`, `keyboardHook` | `installMouseHook`, `installKeyboardHook` handlers | `sweetview: mouse hook handler threw:` (`keyboard hook`) | the event is not swallowed |
+| `singleInstance.onSecondInstance`, `onOpenUrl` | those listeners | `sweetview: onSecondInstance handler threw:`, `sweetview: onOpenUrl handler threw:` | the other listeners still run |
+| `uiMethods`, `deferredUiMethods` | a page's UI-thread method (`name` is the method) | nothing | the page's call is rejected with the error's message |
+| `onRequest` | a synchronous `onRequest` function | nothing | the request is answered `500 Internal Server Error` |
+| `onReady`, `onReadyTimeout` | those `createApp` hooks | `sweetview: onReady handler threw:` (`onReadyTimeout`) | none |
+| `worker` | the worker, as the UI thread learns of its faults: a method that rejected a page's call (`name` is the method; the error has the message only), the worker's crash, a message it sent that could not be read, the delivery of its replies and events (the application's `onEvent` listeners included) | nothing for a rejected call; `sweetview: the worker failed:` for a crash; `sweetview: UI dispatch failed:` for the delivery | the page's call is rejected; after a crash every call waiting on the worker is rejected |
+| `timeout`, `interval`, `deferred` | a native timeout, interval or deferred job | `sweetview: message window handler threw:`, the binding's line, `sweetview: UI dispatch failed:` | an interval keeps its schedule |
+| `internal` | Sweetview's own code at a callback boundary (the tab machinery, its webview handlers, a window's dispose hooks); a fault here is a defect of Sweetview's | its own line | that boundary's |
 
-  A listener that exits ends the process from inside Sweetview's call.
-- replace `console.error` with a function that also writes to its own log.
-  It then receives every line in the table that says "logged", with the
-  error as its second argument. It does not receive the rejected page calls,
-  the `500` answers or the binding's last-resort line.
-- in the page, `await` each call (or attach a `catch`), so that a rejected
-  call is seen there.
+What a listener does not see: a fault inside the worker that the UI thread
+never learns of (a call sent with `notify`, which the worker logs as
+`<method> failed:`, and a worker route handler's exception, which the worker
+answers with `500`); and a `Menu.popup` item's `click` on Windows, which
+runs after the menu has closed, inside `Menu.popup`, so its exception comes
+out of `Menu.popup` to the code that called it. On Windows, a fault the
+binding itself catches past these (its `sweetview: <kind> threw:` line on
+stderr) reaches the listener too, with the binding's name for the callback as
+`name`.
+
+A shipped application has no console: an executable compiled with
+`--windows-hide-console` has no stderr, so without a listener these lines
+reach nobody. One listener sends them to the application's own reporter:
+
+```ts
+import { appendFileSync, mkdirSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { onCallbackError } from "@n1h/sweetview/native";
+
+const faultLog = join(process.env.LOCALAPPDATA ?? ".", "my-app", "faults.log");
+mkdirSync(dirname(faultLog), { recursive: true });
+onCallbackError((error, { kind, name }) => {
+  appendFileSync(faultLog, `${new Date().toISOString()} ${kind}${name ? ` ${name}` : ""}: ${error.stack ?? error.message}\n`);
+});
+```
+
+An application whose `process.on("uncaughtException")` listener already
+writes its fault log and exits hands the faults on with one line:
+`onCallbackError((error) => void process.emit("uncaughtException", error, "uncaughtException"))`.
+
+In the page, `await` each call (or `catch` it): a call a page never awaits
+is rejected unseen there, whatever the UI thread does with the fault.
 
 ## Guides
 

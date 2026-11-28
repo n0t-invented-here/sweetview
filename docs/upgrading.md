@@ -112,21 +112,20 @@ this page: it imports each new form and checks that it is what the row says.
   Sweetview calls on the UI thread (a tray's or a menu item's click, a
   `Window` listener, a notification click, a hit-region refiner, an input
   hook, a page's UI-thread method, a request handler) is caught by Sweetview
-  and never reaches `process.on("uncaughtException")`. Most are logged with
-  `console.error` (`sweetview: message window handler threw: …`,
-  `sweetview: onClose handler threw: …`); a page's UI-thread method that
-  throws rejects the page's call and logs nothing; a request handler that
-  throws answers `500` and logs nothing; a `Menu.popup` item's click throws
-  from `Menu.popup`. One kind changed from 0.x: the input hooks. 0.x's were
-  the bindings package's (`@n1h/sweetview-webview-bun` 2.x), which does not
-  catch a handler's exception: Bun throws it at the JavaScript that called
-  into the native loop (`run()` or `pumpEvents()`), which passes it on unless
-  something there catches it. On Windows a hook handler's exception is now caught
-  and logged (`sweetview: mouse hook handler threw: …`), and the event is not
-  swallowed; on macOS the hooks are still that package's. A compiled executable with
-  `--windows-hide-console` has no stderr, so an application that wants to
-  see its faults wraps its handlers, as
-  [the native module](native.md#exceptions-thrown-by-your-callbacks) shows.
+  and never reaches `process.on("uncaughtException")` by itself. With no
+  listener, most are logged with `console.error`
+  (`sweetview: message window handler threw: …`,
+  `sweetview: onClose handler threw: …`), and a page's UI-thread method or a
+  request handler that throws only rejects the call or answers `500`. One
+  listener, set once, is told about all of them, with the kind of callback
+  each came from:
+  [`onCallbackError`](native.md#exceptions-thrown-by-your-callbacks). One kind
+  changed from 0.x: the input hooks. 0.x's were the bindings package's
+  (`@n1h/sweetview-webview-bun` 2.x), which does not catch a handler's
+  exception: Bun throws it at the JavaScript that called into the native loop
+  (`run()` or `pumpEvents()`), which passes it on unless something there
+  catches it. Now a hook handler's exception is caught and reported like the
+  others, and the event is not swallowed.
 - **Window styles.** A frameless `Window` (`frame: false`) no longer has
   `WS_POPUP` in `GWL_STYLE`: it is an undecorated top-level window. An
   application that reads the style itself sees the difference;
@@ -226,14 +225,13 @@ this page: it imports each new form and checks that it is what the row says.
     host's or transport's `close()` is `dispose()`.
 11. If you set `WEBVIEW_PATH`, set `SWEETVIEW_NATIVE_PATH` to a binding you
     built instead, or nothing to use the one in the package.
-12. Faults: a `process.on("uncaughtException")` listener does not see an
-    exception thrown by a handler Sweetview calls; Sweetview logs it (or
-    rejects the page's call) and goes on. To send such faults to the
-    application's own reporter, wrap each handler with the `reported`
-    wrapper of
-    [the native module](native.md#exceptions-thrown-by-your-callbacks):
-    `new Tray({ …, onClick: reported(() => win.show()) })`, and in the page
-    `await` each call.
+12. Faults: if the application relied on a `process.on("uncaughtException")`
+    listener for faults in its callbacks, set
+    [`onCallbackError`](native.md#exceptions-thrown-by-your-callbacks) once,
+    beside it: `onCallbackError((error) => void process.emit("uncaughtException", error, "uncaughtException"))`
+    hands every such fault to that listener, or call the application's own
+    reporter there. A shipped executable has no console, so without it these
+    faults reach nobody.
 13. Check what an overlay application notices, in [What changed for every
     application](#what-changed-for-every-application): the opaque
     `unsafeHandle`, the error messages, the UI-thread checks, the frameless

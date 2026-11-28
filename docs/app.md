@@ -698,35 +698,40 @@ page). [WebView2 Feedback #3519](https://github.com/MicrosoftEdge/WebView2Feedba
 ## Exceptions in page calls, requests and the worker
 
 An exception thrown by one of these handlers never reaches
-`process.on("uncaughtException")`, and it is not logged either: the page or
-the request gets the failure instead.
+`process.on("uncaughtException")` by itself, and with no
+[`onCallbackError`](native.md#exceptions-thrown-by-your-callbacks) listener
+most of them print nothing: the page or the request gets the failure
+instead. With a listener set, each is reported to it, with the `kind` below,
+and the page or the request still gets its failure.
 
-| Handler | What happens to its exception |
-|---|---|
-| A `uiMethods` method | the page's call is rejected with the error's message |
-| A `deferredUiMethods` method | the page's call is rejected with the error's message, on the later tick the method ran in |
-| An `onRequest` function | the request is answered `500 Internal Server Error` |
-| A method of the worker's service (`hostService`) | the page's call is rejected with the error's message; a call sent with `notify` (no reply) is logged in the worker as `<method> failed:` ([worker](worker.md#replies-and-events)) |
-| The worker's own uncaught exception | the worker ends: `sweetview: the worker failed:` is logged on the UI thread, and every call waiting on it is rejected |
-| A worker route handler (`onRequest: "worker"`) | the request is answered `500` ([worker](worker.md)) |
+| Handler | `kind` | What the page or the request gets | Printed with no listener |
+|---|---|---|---|
+| A `uiMethods` method | `uiMethods`, `name` the method | the call is rejected with the error's message | nothing |
+| A `deferredUiMethods` method | `deferredUiMethods`, `name` the method | the call is rejected with the error's message, on the later tick the method ran in | nothing |
+| An `onRequest` function | `onRequest` | `500 Internal Server Error` | nothing |
+| `onReady`, `onReadyTimeout` | `onReady`, `onReadyTimeout` | (no effect on the page) | `sweetview: onReady handler threw:` (`onReadyTimeout`) |
+| A method of the worker's service (`hostService`) | `worker`, `name` the method; the error carries the message only, as the reply does | the call is rejected with the error's message | nothing |
+| The worker's own uncaught exception | `worker` | the worker ends, and every call waiting on it is rejected | `sweetview: the worker failed:` |
 
-A page that calls a method without awaiting it never sees the rejection.
-To see these, `await` each call in the page (or `catch` it) and report from
-there, or wrap the UI-thread handler with the `reported` wrapper of
-[the native module](native.md#exceptions-thrown-by-your-callbacks), which
-hands the exception to the application's `uncaughtException` listeners and
-then rethrows it, so the page's call is still rejected:
+What the UI thread never learns of is not reported: a worker method called
+with `notify` (no reply), which the worker logs as `<method> failed:`, and a
+worker route handler (`onRequest: "worker"`), which the worker answers with
+`500` ([worker](worker.md)). An `onCallbackError` listener set inside the
+worker is told only about callbacks Sweetview calls on that thread.
 
 ```ts
-const app = await createApp({
-  page,
-  uiMethods: { "settings.save": reported((params) => saveSettings(params)) },
-  deferredUiMethods: { "folder.pick": reported(() => pickFolder(app.window, "Pick a folder")) },
-});
+import { createApp } from "@n1h/sweetview";
+import { onCallbackError } from "@n1h/sweetview/native";
+
+onCallbackError((error, { kind, name }) => reportFault(`${kind}${name ? ` ${name}` : ""}`, error));
+const app = await createApp({ page, uiMethods: { "settings.save": (params) => saveSettings(params) } });
 ```
 
+In the page, `await` each call (or attach a `catch`): a call the page never
+awaits is rejected unseen there.
+
 The callbacks of the native module (trays, menus, window listeners,
-notifications, hooks) are logged instead; their table is in
+notifications, hooks) have their table in
 [the native module](native.md#exceptions-thrown-by-your-callbacks).
 
 ## Transport
