@@ -38,16 +38,6 @@ pub fn track_system_menu(_window: &impl NativeWindow, _at: Point, _state: System
 pub fn post_system_command(_window: &impl NativeWindow, _command: SystemCommand) {}
 pub fn request_close(_window: &impl NativeWindow) {}
 
-/// See the Windows implementation for the contract.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PopupEntry {
-  Item { label: String, enabled: bool },
-  Separator,
-}
-
-pub fn popup_menu(_window: &impl NativeWindow, _entries: &[PopupEntry], _at: Point) -> Result<Option<usize>, String> {
-  Err("sweetview: popup menus are not ported to this platform yet".into())
-}
 pub fn system_is_dark() -> bool {
   false
 }

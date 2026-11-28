@@ -15,13 +15,12 @@ use std::marker::PhantomData;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::rc::Rc;
 
-use windows::core::PCWSTR;
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{CreateSolidBrush, DeleteObject, FillRect, InvalidateRect, HBRUSH, HDC};
 use windows::Win32::UI::Shell::{RemoveWindowSubclass, SetWindowSubclass};
 use windows::Win32::UI::WindowsAndMessaging::{
-  AppendMenuW, CreatePopupMenu, DestroyMenu, EnableMenuItem, GetForegroundWindow, GetSystemMenu, SendMessageW, SetMenuDefaultItem, TrackPopupMenu, HMENU, MENU_ITEM_FLAGS, MF_ENABLED,
-  MF_GRAYED, MF_SEPARATOR, MF_STRING, SC_CLOSE, SC_MAXIMIZE, SC_MINIMIZE, SC_MOVE, SC_RESTORE, SC_SIZE, SWP_NOACTIVATE, SWP_NOZORDER,
+  EnableMenuItem, GetForegroundWindow, GetSystemMenu, SendMessageW, SetMenuDefaultItem, TrackPopupMenu, HMENU, MF_ENABLED,
+  MF_GRAYED, SC_CLOSE, SC_MAXIMIZE, SC_MINIMIZE, SC_MOVE, SC_RESTORE, SC_SIZE, SWP_NOACTIVATE, SWP_NOZORDER,
   TPM_RETURNCMD, TPM_RIGHTBUTTON, WM_CLOSE, WM_DPICHANGED, WM_ERASEBKGND, WM_NCDESTROY, WM_SYSCOMMAND, WS_CLIPCHILDREN,
 };
 
@@ -84,7 +83,7 @@ fn track(menu: &impl TrackedMenu, window: &impl NativeWindow, at: Point) -> u32 
   let hwnd = window.hwnd();
   set_foreground(hwnd);
   // SAFETY: the menu stays alive for the whole call: `menu` is borrowed for it, and a
-  // `TrackedMenu` is an `OwnedMenu` (destroyed only in its `Drop`) or a window's system
+  // `TrackedMenu` is a window's system
   // menu (alive while its window is, which `SystemMenu`'s lifetime ties to the borrowed
   // window). `hwnd` is named by `NativeWindow` and validated by the OS; no rectangle is passed.
   let chosen = unsafe { TrackPopupMenu(menu.menu(), TPM_RIGHTBUTTON | TPM_RETURNCMD, at.x, at.y, None, hwnd, None) };
@@ -187,69 +186,6 @@ pub fn show_system_menu(window: &impl NativeWindow, at: Point) {
   if let Some(command) = track_system_menu(window, at, state) {
     post_system_command(window, command);
   }
-}
-
-/// One line of a [`popup_menu`].
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PopupEntry {
-  Item { label: String, enabled: bool },
-  Separator,
-}
-
-/// A popup menu this crate made, destroyed on drop.
-struct OwnedMenu {
-  menu: HMENU,
-  _not_send: PhantomData<*const c_void>,
-}
-
-impl OwnedMenu {
-  fn new() -> Result<Self, String> {
-    // SAFETY: `CreatePopupMenu` has no preconditions; the menu is owned by the value returned.
-    let menu = unsafe { CreatePopupMenu() }.map_err(|e| format!("sweetview: CreatePopupMenu failed: {e}"))?;
-    Ok(Self { menu, _not_send: PhantomData })
-  }
-
-  fn append(&self, entry: &PopupEntry, command: usize) -> Result<(), String> {
-    // A separator: no id and no text. An item: its id and its label, where a lone `&`
-    // (a mnemonic prefix) is doubled so it shows as itself.
-    let (flags, id, wide) = match entry {
-      PopupEntry::Separator => (MF_SEPARATOR, 0, None),
-      PopupEntry::Item { label, enabled } => {
-        let wide: Vec<u16> = label.replace('&', "&&").encode_utf16().chain(Some(0)).collect();
-        (MF_STRING | if *enabled { MENU_ITEM_FLAGS(0) } else { MF_GRAYED }, command, Some(wide))
-      }
-    };
-    let text = wide.as_ref().map_or(PCWSTR::null(), |wide| PCWSTR(wide.as_ptr()));
-    // SAFETY: `self.menu` is owned by this value; `text` is null for a separator or points
-    // into `wide`, a NUL-terminated UTF-16 buffer that lives for the whole call; the menu copies it.
-    unsafe { AppendMenuW(self.menu, flags, id, text) }.map_err(|e| format!("sweetview: AppendMenuW failed: {e}"))
-  }
-}
-
-impl Drop for OwnedMenu {
-  fn drop(&mut self) {
-    // SAFETY: `self.menu` was made by `CreatePopupMenu` for this value alone and is destroyed only here.
-    let _destroyed = unsafe { DestroyMenu(self.menu) };
-  }
-}
-
-impl TrackedMenu for OwnedMenu {
-  fn menu(&self) -> HMENU {
-    self.menu
-  }
-}
-
-/// Shows `entries` as a popup menu at `at` (screen pixels), owned by `window`,
-/// and returns the index of the chosen entry once the menu closes; `None` when
-/// it was dismissed. Blocks in the menu's own loop until then.
-pub fn popup_menu(window: &impl NativeWindow, entries: &[PopupEntry], at: Point) -> Result<Option<usize>, String> {
-  let menu = OwnedMenu::new()?;
-  for (index, entry) in entries.iter().enumerate() {
-    // Command ids are 1-based: `TrackPopupMenu` answers 0 for "nothing chosen".
-    menu.append(entry, index + 1)?;
-  }
-  let chosen = track(&menu, window, at) as usize;
-  Ok(chosen.checked_sub(1).filter(|index| *index < entries.len()))
 }
 
 /// True when the system's app theme is dark (Settings › Personalization ›
