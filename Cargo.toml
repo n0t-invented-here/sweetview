@@ -39,6 +39,7 @@ ico = "0.6.0"
 sweetview-http = { path = "crates/sweetview-http" }
 sweetview-keycodes = { path = "crates/sweetview-keycodes" }
 sweetview-window-logic = { path = "crates/sweetview-window-logic" }
+sweetview-shell-data = { path = "crates/sweetview-shell-data" }
 # Each with its webview off unless a dependent asks for it: the native binding builds without it (D48).
 sweetview-runtime = { path = "crates/sweetview-runtime", default-features = false }
 sweetview-napi = { path = "crates/sweetview-napi", default-features = false }
