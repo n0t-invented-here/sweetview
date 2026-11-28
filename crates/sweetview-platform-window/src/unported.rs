@@ -122,7 +122,7 @@ pub fn left_button_down() -> bool {
 pub fn foreground_handle_value() -> isize {
   0
 }
-pub fn pass_foreground_back(_holder: isize, _to: isize) -> bool {
+pub fn pass_foreground_back(_holder: isize, _to: isize, _overlay: isize) -> bool {
   false
 }
 pub fn monitor_of(_window: &impl NativeWindow, _monitors: impl IntoIterator<Item = tao::monitor::MonitorHandle>) -> Option<tao::monitor::MonitorHandle> {
