@@ -163,10 +163,12 @@ onCallbackError((error, { kind, name }) => {
 });
 ```
 
-In 1.0 a fault caught at a callback boundary never reaches
+On Windows, a fault caught at a callback boundary never reaches
 `process.on("uncaughtException")`, and the application goes on: one whose
 `uncaughtException` listener writes its fault log writes these faults from
-its `onCallbackError` listener, as above.
+its `onCallbackError` listener, as above. On macOS, until its goal, no
+listener is called; the faults are printed as the paragraph on macOS above
+says.
 
 In the page, `await` each call (or `catch` it): a call a page never awaits
 is rejected unseen there, whatever the UI thread does with the fault.
