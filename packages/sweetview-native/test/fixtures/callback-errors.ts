@@ -78,6 +78,49 @@ if (mode === "exit-blocking" || mode === "exit-pumped") {
   process.exit(0);
 }
 
+if (mode === "chrome") {
+  // windowChromeEvents (review F3): the kind belongs to its registration; what the page view throws is never touched.
+  const win = new Window({ title: "callback-errors chrome", bounds: { x: 140, y: 140, width: 320, height: 240 }, noActivate: true });
+  win.show();
+  let thrown: unknown;
+  const view = { emit: () => { throw thrown; } };
+  const offChrome = windowChromeEvents(win, view);
+  const maximizeOnce = async () => {
+    const before = win.isMaximized();
+    win.toggleMaximize();
+    await pumpUntil(() => win.isMaximized() !== before, 3000);
+    await pumpFor(50);
+  };
+  const result: Record<string, unknown> = {};
+  // No listener: a frozen error is printed as itself.
+  thrown = Object.freeze(new Error("frozen without listener"));
+  await maximizeOnce();
+  result.printedWithoutListener = printed.splice(0);
+  // A listener: a primitive and a frozen error arrive with the kind; the frozen one is the same object.
+  const told: { kind: string; message: string; same: boolean }[] = [];
+  const offTold = onCallbackError((error, source) => void told.push({ kind: source.kind, message: error.message, same: error === thrown }));
+  thrown = "chrome primitive";
+  await maximizeOnce();
+  thrown = Object.freeze(new Error("frozen with listener"));
+  await maximizeOnce();
+  // The same mutable error, thrown by the chrome and then by a deferred job: each with its own kind.
+  thrown = new Error("thrown twice");
+  await maximizeOnce();
+  const again = thrown;
+  deferNative(() => {
+    throw again;
+  });
+  await pumpFor(100);
+  offTold();
+  offChrome();
+  win.dispose();
+  result.told = told.map(({ kind, message, same }) => `${kind}: ${message}${same ? "" : " (not the thrown value)"}`);
+  result.printedWithListener = printed.splice(0);
+  console.error = originalError;
+  console.log("RESULT " + JSON.stringify(result));
+  process.exit(0);
+}
+
 const off = onCallbackError(record);
 const steps: Record<string, unknown> = {};
 

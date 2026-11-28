@@ -8,7 +8,7 @@
 // the message Sweetview has always used for that handler.
 
 import { binding } from "../binding";
-import { reportCallbackError } from "../callback-errors";
+import { kindOfListener, reportCallbackError, type CallbackKind } from "../callback-errors";
 import type { Window as NativeWindow } from "../../prebuilt/binding";
 import { packRegions } from "../hit-regions";
 import type { Rect, WindowBackend, WindowHandle, WindowOptions } from "../window";
@@ -35,12 +35,15 @@ type RectHandler = (bounds: Rect) => void;
 
 type ListenerName = "onResize" | "onMove" | "onClose" | "onFileDrop" | "onMaximizeChange";
 
+/** The kind of each subscription, decided when it was added from the function registered. */
+const kindOfEntry = new WeakMap<(value: never) => void, CallbackKind>();
+
 function callEach<T>(handlers: Set<(value: T) => void>, value: T, name: ListenerName): void {
   for (const fn of [...handlers]) {
     try {
       fn(value);
     } catch (err) {
-      reportCallbackError(`window.${name}`, err, `sweetview: ${name} handler threw:`);
+      reportCallbackError(kindOfEntry.get(fn) ?? `window.${name}`, err, `sweetview: ${name} handler threw:`);
     }
   }
 }
@@ -56,6 +59,7 @@ function subscription<T>(register: (listener: ((value: T) => void) | null) => vo
     add(handler: (value: T) => void): () => void {
       // Each subscription can be removed on its own, even for the same function.
       const entry = (value: T) => handler(value);
+      kindOfEntry.set(entry, kindOfListener(handler, `window.${name}`));
       if (handlers.size === 0) register((value) => callEach(handlers, value, name));
       handlers.add(entry);
       return () => {

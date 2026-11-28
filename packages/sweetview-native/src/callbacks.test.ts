@@ -1216,6 +1216,19 @@ describe.if(onWindows)("onCallbackError", () => {
     ]);
   }, 120_000);
 
+  test("windowChromeEvents: its kind belongs to its registration; the thrown value is never touched, with or without a listener (review F3)", async () => {
+    const { r, exitCode } = await runFixture("callback-errors.ts", ["chrome"]);
+    expect(exitCode).toBe(0);
+    expect(r.printedWithoutListener).toEqual(["sweetview: onMaximizeChange handler threw: frozen without listener"]);
+    expect(r.told).toEqual([
+      "windowChromeEvents: chrome primitive (not the thrown value)",
+      "windowChromeEvents: frozen with listener",
+      "windowChromeEvents: thrown twice",
+      "deferred: thrown twice",
+    ]);
+    expect(r.printedWithListener).toEqual([]);
+  }, 60_000);
+
   for (const mode of ["exit-blocking", "exit-pumped"]) {
     test(`a listener that calls process.exit(3) from inside a native callback ends the process with 3 (${mode === "exit-blocking" ? "the blocking loop" : "the loop pumped from a Bun timer"}), and the end of the application releases cleanly`, async () => {
       // Spawned here, not through runFixture: a process the listener ends prints no RESULT line.
