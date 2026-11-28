@@ -14,11 +14,15 @@ win_icon := if os() == "windows" { "--windows-icon=build/app.ico" } else { "" }
 install:
     bun install --cwd ../..
 
+# On Windows the app loads the Rust binding: `just native build` builds it first (cargo's no-op when it is current)
+_build-native:
+    @& "{{just_executable()}}" --justfile "{{justfile()}}" native _build-if-windows
+
 frontend: install
     bun build frontend/main.ts --outdir build/frontend --minify
 
 # macOS: a bare binary has no bundle id, so the menu and window work but notifications do not show; use `open`.
-app: frontend
+app: frontend _build-native
     bun run app.ts
 
 compile: frontend compile-win compile-mac mac-app
@@ -26,7 +30,7 @@ compile: frontend compile-win compile-mac mac-app
 icons: install
     bun scripts/write-icons.ts
 
-compile-win: frontend icons
+compile-win: frontend icons _build-native
     bun build --compile --target=bun-windows-x64 --windows-hide-console {{win_icon}} --minify --sourcemap app.ts app-worker.ts --outfile dist/{{exe}}-windows-x64.exe
     bun ../../packages/sweetview-build/src/refresh-icons.ts
 

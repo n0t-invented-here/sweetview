@@ -16,9 +16,24 @@ const customPath = process.env.SWEETVIEW_NATIVE_PATH || undefined;
 
 let loaded: NativeBinding | undefined;
 
-function fail(file: string, cause: unknown): never {
+// Follows the message when the package's own file is not there. In a checkout of the repository it
+// is built from source and ignored by git; an installed package always ships it.
+const NOT_BUILT =
+  "The file is not there. In a checkout of the sweetview repository it is built from the Rust source: " +
+  "run `just native build` (it needs the Rust toolchain, installed with rustup from https://rustup.rs; " +
+  "the repository's recipes that run the demos and the tests build it first), or set SWEETVIEW_NATIVE_PATH " +
+  "to a binding you built. In an application that installed @n1h/sweetview-native the file ships with the " +
+  "package, so its absence means a broken install: install the package again.";
+
+function fail(file: string, cause: unknown, hint?: string): never {
   const reason = cause instanceof Error ? cause.message : String(cause);
-  throw new Error(`sweetview: the native binding could not be loaded from ${file}: ${reason}`);
+  const message = `sweetview: the native binding could not be loaded from ${file}: ${reason}`;
+  throw new Error(hint === undefined ? message : `${message}\n${hint}`);
+}
+
+/** Whether `require` failed because the file is not there, rather than because it would not load. */
+function isMissing(err: unknown): boolean {
+  return (err as { code?: unknown } | null)?.code === "MODULE_NOT_FOUND";
 }
 
 function load(): NativeBinding {
@@ -35,7 +50,7 @@ function load(): NativeBinding {
       try {
         return require("../prebuilt/sweetview.win32-x64-msvc.node") as NativeBinding;
       } catch (err) {
-        fail("@n1h/sweetview-native/prebuilt/sweetview.win32-x64-msvc.node", err);
+        fail("@n1h/sweetview-native/prebuilt/sweetview.win32-x64-msvc.node", err, isMissing(err) ? NOT_BUILT : undefined);
       }
     default:
       throw new Error(

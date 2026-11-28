@@ -9,14 +9,18 @@ set shell := ["pwsh", "-NoProfile", "-Command", "$ErrorActionPreference = 'Stop'
 install:
     bun install --cwd ../..
 
+# On Windows the app loads the Rust binding: `just native build` builds it first (cargo's no-op when it is current)
+_build-native:
+    @& "{{just_executable()}}" --justfile "{{justfile()}}" native _build-if-windows
+
 frontend: install
     bun build frontend/main.ts --outdir build/frontend --minify
 
-app: frontend
+app: frontend _build-native
     bun run app.ts
 
 # Drives the real tabbed app on the current OS and writes captures into `out`
-drive out="build/drive": frontend
+drive out="build/drive": frontend _build-native
     bun run scripts/{{ if os() == "windows" { "win" } else { "mac" } }}-drive.ts "{{out}}"
 
 # A missing path makes ri fail the recipe
