@@ -56,8 +56,9 @@ export function App() {
   }, [colorScheme]);
   useEffect(() => on("ui.theme", ({ scheme }) => setColorScheme(scheme)), [setColorScheme]);
   useEffect(() => onDisconnect(() => setDisconnected(true)), []);
-  // The first screen is rendered: the desktop app shows its window now (showOnReady). Elsewhere it does nothing.
-  useEffect(() => void signalReady().catch(() => {}), []);
+  // The first screen is rendered: the desktop app shows its window now (showOnReady). Elsewhere it
+  // does nothing; on macOS the page signals nothing, as at the tag pre-rust-rewrite (D42).
+  useEffect(() => void (/Mac/.test(navigator.platform) ? undefined : signalReady().catch(() => {})), []);
 
   return (
     <AppShell header={{ height: 60 }} padding="lg">

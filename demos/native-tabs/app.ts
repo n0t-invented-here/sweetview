@@ -114,11 +114,13 @@ if (import.meta.main) {
   const demo = await startDemoTabs();
   const loop = demo.app.run();
   try {
-    // The window shows itself once the first tab's page is ready.
-    const first = await demo.openTab(undefined, undefined, undefined, true);
+    // Windows: the window shows itself once the first tab's page is ready. macOS starts as at the
+    // tag pre-rust-rewrite until its goal (D42): shown below, after the tabs.
+    const first = await demo.openTab(undefined, undefined, undefined, process.platform !== "darwin");
     await demo.openTab();
     await demo.openTab("https://bun.sh");
     first.select();
+    if (process.platform === "darwin") demo.app.window.show();
   } catch (err) {
     // Without a window to close, the loop would never end.
     console.error("native-tabs:", err);

@@ -51,12 +51,11 @@ const app: App<Methods, Events> = await createApp<Methods, Events>({
   // The page's size in CSS pixels: the frame is sized around it at the screen's scale, centred, and kept on the screen.
   contentSize: { width: 1100, height: 800 },
   icon: APP_ICON,
-  // The page is dark: so are the title bar and what the window paints where no page is drawn.
-  appearance: "dark",
-  // Shown once the page has rendered (it calls signalReady), never before it has painted;
-  // the watchdog shows an error page in it if the page never says so.
-  showOnReady: true,
-  readyTimeoutMs: 15_000,
+  // Windows: the page is dark, so are the title bar and what the window paints where no page is
+  // drawn; shown once the page has rendered (it calls signalReady), never before it has painted,
+  // and the watchdog shows an error page in it if the page never says so. macOS starts as at the
+  // tag pre-rust-rewrite until its goal (D42): shown below, before run().
+  ...(process.platform === "darwin" ? {} : { appearance: "dark" as const, showOnReady: true, readyTimeoutMs: 15_000 }),
   assets: { "index.html": indexHtml({ title: APP_NAME }), "main.js": appJs, "main.css": appCss },
   worker: new URL("./app-worker.ts", import.meta.url),
   debug: process.env.WEBVIEW_DEBUG === "1",
@@ -141,7 +140,8 @@ setAppMenu({
   ].join("\n"),
 });
 
-app.run(); // blocks until Quit; the window shows itself once its page is ready
+if (process.platform === "darwin") app.window.show(); // macOS: as at the tag (D42)
+app.run(); // blocks until Quit; on Windows the window shows itself once its page is ready
 // Until the macOS goal of the Rust rewrite, macOS runs the code it ran at the tag pre-rust-rewrite,
 // which releases nothing at exit: there the demo tears down and exits as it did then.
 if (process.platform === "darwin") {

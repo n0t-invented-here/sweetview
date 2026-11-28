@@ -70,5 +70,6 @@ element<HTMLFormElement>("open").addEventListener("submit", async (event) => {
 });
 address.addEventListener("input", () => (error.hidden = true));
 
-// The first screen is rendered: a tab opened to show its window does so now (showOnReady).
-void signalReady().catch(() => {});
+// The first screen is rendered: a tab opened to show its window does so now (showOnReady). On
+// macOS the page signals nothing, as at the tag pre-rust-rewrite (D42).
+if (!/Mac/.test(navigator.platform)) void signalReady().catch(() => {});

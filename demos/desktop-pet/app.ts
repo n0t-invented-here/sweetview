@@ -161,9 +161,9 @@ const uiMethods: { [K in keyof UiMethods]: (params: UiMethods[K][0]) => UiMethod
 const petView: WebView<Methods, Events> = await WebView.attach<Methods, Events>(overlay, {
   title: APP_NAME,
   assets: petAssets,
-  // The pet appears once its page has drawn its first frame (it calls signalReady).
-  showOnReady: true,
-  readyTimeoutMs: 15_000,
+  // Windows: the pet appears once its page has drawn its first frame (it calls signalReady).
+  // macOS starts as at the tag pre-rust-rewrite until its goal (D42): shown below.
+  ...(process.platform === "darwin" ? {} : { showOnReady: true, readyTimeoutMs: 15_000 }),
   worker: new URL("./app-worker.ts", import.meta.url),
   debug: DEBUG,
   uiMethods,
@@ -175,11 +175,16 @@ const settingsView: WebView<Methods, Events> = await WebView.attach<Methods, Eve
   index: "settings/index.html",
   debug: DEBUG,
   uiMethods,
-  // Opened at start only with PET_SETTINGS=1, and then once its page has rendered; the tray
-  // shows it later with its page long painted.
-  showOnReady: process.env.PET_SETTINGS === "1",
-  readyTimeoutMs: process.env.PET_SETTINGS === "1" ? 15_000 : undefined,
+  // Opened at start only with PET_SETTINGS=1, and then on Windows once its page has rendered;
+  // the tray shows it later with its page long painted. macOS: as at the tag (D42), below.
+  ...(process.platform !== "darwin" && process.env.PET_SETTINGS === "1" ? { showOnReady: true, readyTimeoutMs: 15_000 } : {}),
 });
+
+if (process.platform === "darwin") {
+  // macOS starts as at the tag pre-rust-rewrite until its goal (D42).
+  overlay.show();
+  if (process.env.PET_SETTINGS === "1") settingsWindow.show();
+}
 // The settings page's own title bar follows the window's maximised state as it changes.
 windowChromeEvents(settingsWindow, settingsView);
 

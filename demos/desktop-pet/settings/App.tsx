@@ -18,8 +18,9 @@ export function App() {
     // The tray can change both too; follow it.
     const offSettings = bridge.on("settings.changed", setSettings);
     const offPet = bridge.on("pet.select", setPet);
-    // The first screen is rendered: with PET_SETTINGS=1 the window shows now (showOnReady).
-    void signalReady().catch(() => {});
+    // The first screen is rendered: with PET_SETTINGS=1 on Windows the window shows now
+    // (showOnReady); on macOS the page signals nothing, as at the tag (D42).
+    if (!/Mac/.test(navigator.platform)) void signalReady().catch(() => {});
     return () => {
       offSettings();
       offPet();

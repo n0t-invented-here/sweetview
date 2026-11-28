@@ -405,9 +405,11 @@ function step() {
 
   scene.render();
   if (!firstFrameDrawn) {
-    // The first frame is drawn: the window shows now (showOnReady), never before.
+    // The first frame is drawn: on Windows the window shows now (showOnReady), never before. On
+    // macOS the page signals nothing, as at the tag pre-rust-rewrite (D42); there WebKit does not
+    // run this loop for a hidden window, so a window waiting for it would never show.
     firstFrameDrawn = true;
-    void signalReady().catch(() => {});
+    if (!/Mac/.test(navigator.platform)) void signalReady().catch(() => {});
   }
 
   if (now - lastHitAt >= HIT_INTERVAL_MS) {
