@@ -1,7 +1,7 @@
 // The end of the application. Whatever Sweetview made for an application is
 // released by Sweetview when the application ends, so its last line is
 // `run()` (or the end of its script under `runEventLoop`) and nothing after
-// it is required (decision D35 in rust-rewrite/DECISIONS.md).
+// it is required (decision D36 in rust-rewrite/DECISIONS.md).
 //
 // Each object registers its own idempotent dispose here when it is made and
 // takes it back when it is disposed by hand. `releaseAll` runs what is left,

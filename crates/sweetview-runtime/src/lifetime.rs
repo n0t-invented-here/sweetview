@@ -2,7 +2,7 @@
 //!
 //! The binding calls [`release_all`] when the application ends: when its blocking
 //! loop has returned, and when the process exits for any reason JavaScript sees
-//! (decision D35). Each owner here already frees its OS resource when it is dropped
+//! (decision D36). Each owner here already frees its OS resource when it is dropped
 //! or disposed; this makes sure that happens before the process goes, in an order
 //! that is safe:
 //!

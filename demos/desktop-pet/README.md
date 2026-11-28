@@ -4,7 +4,7 @@ A desktop pet: one of 24 animals from the Cube Pets pack, rendered with [Babylon
 It walks along the bottom edge of the monitor, over the taskbar or Dock, and can be picked up with the mouse.
 
 It runs on Windows, with WebView2 in a popup window, and on macOS, with WKWebView in a borderless, non-opaque window.
-It uses the webview library from the npm package `@n1h/sweetview-webview-bun`.
+On Windows the webview is part of Sweetview's Rust binding; on macOS, until the macOS goal of the Rust rewrite, it is the webview library from the npm package `@n1h/sweetview-webview-bun`.
 
 ## What it does
 
@@ -77,22 +77,22 @@ The animal is not saved. Out-of-range values in `settings.json` are clamped on l
 
 Run `just <recipe>` in this folder or `just demos desktop-pet <recipe>` from the repo root.
 The recipes need Bun, `just` and `pwsh`, which is the recipe shell on every OS.
-No C++ toolchain is needed: `@n1h/sweetview-webview-bun` ships the webview library built.
+On Windows `app` and `compile-win` build the Rust binding first (`just native build`, which needs the Rust toolchain; cargo's no-op when the binding is current). No C++ toolchain is needed: on macOS `@n1h/sweetview-webview-bun` ships the webview library built.
 
 | Recipe | Does | Output | Platform |
 |---|---|---|---|
 | `install` | `bun install` at the repo root. | `node_modules/` | any |
 | `frontend` | Bundles and minifies the pet page (Babylon.js and the glTF loader included, about 3.8 MB) and the settings page (React and Mantine). | `build/frontend/`, `build/settings/` | any |
-| `app` | `frontend`, then runs `app.ts` uncompiled. | none | Windows, macOS |
+| `app` | `frontend` and, on Windows, the Rust binding, then runs `app.ts` uncompiled. | none | Windows, macOS |
 | `icons` | Writes the cat icon files. | `build/app.ico`, `build/AppIcon.icns` | any |
-| `compile-win` | `frontend` and `icons`, then `bun build --compile` with the page, the worker, the models and the webview library embedded and no console window. | `dist/desktop-pet-windows-x64.exe` | any host. The file icon is embedded only on a Windows host; elsewhere the exe has the stock icon. |
+| `compile-win` | `frontend`, `icons` and the Rust binding, then `bun build --compile` with the page, the worker, the models and the binding embedded and no console window. | `dist/desktop-pet-windows-x64.exe` | any host. The file icon is embedded only on a Windows host; elsewhere the exe has the stock icon. |
 | `compile-mac` | `frontend`, then `bun build --compile` for Apple silicon with the same files embedded. | `dist/desktop-pet-macos-arm64` | any host |
 | `mac-app` | `icons`, then wraps the macOS binary in a bundle named `Pet` with the bundle id from the justfile and `AppIcon.icns`. | `dist/Pet.app` | any host. Needs `dist/desktop-pet-macos-arm64` from `compile-mac`. |
 | `compile` | `frontend`, `compile-win`, `compile-mac`, `mac-app`. | `build/`, `dist/` | any host |
 | `clean` | Removes `build/` and `dist/`. | none | any |
 
-A change to the webview library reaches the pet through a new `@n1h/sweetview-webview-bun` release and a bump of that dependency.
-[`webview/README.md`](../../webview/README.md) describes the release steps.
+On Windows a change to the webview reaches the pet with the next build of the binding from this repository's `crates/`.
+On macOS a change to the webview library reaches it through a new `@n1h/sweetview-webview-bun` release and a bump of that dependency; [`webview/README.md`](../../webview/README.md) describes the release steps.
 The icon limits of each build host are in the platforms table of [`README.md`](../../README.md#platforms).
 
 ## How it works
@@ -110,7 +110,7 @@ Inside one, the native side sends `hit.probe`, the page answers with a triangle 
 The pet window is a frameless [`Window`](../../docs/native/windows.md#creating-a-window) with `frame: false, transparent: true, topmost: true, hideFromTaskbar: true, noActivate: true`, paired with [`WebView.attach`](../../docs/app.md#webviewattach) carrying the page and the models as assets.
 The settings window is a second `Window` and a second `WebView.attach` with no worker; its frame uses [`windowChromeMethods`, `windowChromeControls` and `resizeHandles`](../../docs/window-chrome.md).
 The settings file is a [`SettingsStore`](../../docs/settings-store.md) store.
-Serving the pages and the see-through background need `webview_set_asset` and `webview_set_background_color` ([`webview-library.md`](../../docs/webview-library.md)).
+Serving the pages and the see-through background need the webview's native asset serving and transparent background: on Windows the Rust binding has both; on macOS they are the webview library's `webview_set_asset` and `webview_set_background_color` ([`webview-library.md`](../../docs/webview-library.md)).
 
 ## macOS
 

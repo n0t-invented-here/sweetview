@@ -45,7 +45,7 @@ Windows:
 
 - The binding is `prebuilt/sweetview.win32-x64-msvc.node` in
   `@n1h/sweetview-native`, built from the crates under `crates/` of this
-  repository by `just native` ([Rebuilding](#rebuilding)). The published
+  repository by `just native build` ([Rebuilding](#rebuilding)). The published
   package carries it; a clone of the repository does not, and builds it.
 - `@n1h/sweetview-webview-bun` is not needed on Windows and is not loaded.
 
@@ -299,7 +299,10 @@ Windows) after teardown starts do nothing.
 
 On Windows, `@n1h/sweetview-native` loads its binding on first use with a
 literal `require` of `prebuilt/sweetview.win32-x64-msvc.node`, the form
-`bun build --compile` embeds in the executable. `SWEETVIEW_NATIVE_PATH`
+`bun build --compile` embeds in the executable. A `bun build --compile` for
+Windows made without that file fails at build time with
+`Could not resolve: "../prebuilt/sweetview.win32-x64-msvc.node"`; a build for
+macOS does not need it. `SWEETVIEW_NATIVE_PATH`
 names a binding you built yourself instead; it is read once, when the
 binding first loads, and a file that cannot be loaded throws
 `sweetview: the native binding could not be loaded from <path> (SWEETVIEW_NATIVE_PATH): <reason>`.
@@ -360,14 +363,27 @@ the page is running.
 
 ### The Windows binding
 
-From this repository's root, with a Rust toolchain and the
-[just](https://github.com/casey/just) recipes, `just native` runs
-`bun install`, then builds `crates/sweetview-platform-node` in release mode
-with the napi-rs CLI into `packages/sweetview-native/prebuilt/` and
-regenerates `prebuilt/binding.d.ts` from the Rust signatures. `just check`,
-`just pack` and `just publish` build it first. The built `.node` file is not
-tracked by git; `binding.d.ts` is. To try a binding built elsewhere without
-replacing the prebuilt one, set `SWEETVIEW_NATIVE_PATH` to its `.node` file.
+From this repository's root, with the Rust toolchain (installed with
+[rustup](https://rustup.rs), which on Windows also asks for the Visual Studio
+C++ build tools) and the [just](https://github.com/casey/just) recipes,
+`just native build` runs `bun install`, then builds
+`crates/sweetview-platform-node` in release mode with the napi-rs CLI into
+`packages/sweetview-native/prebuilt/` and regenerates `prebuilt/binding.d.ts`
+from the Rust signatures. When `cargo` is not on `PATH` it says so, and what to
+install, before anything else runs. The recipe is `build` in the `native`
+module, whose justfile is `packages/sweetview-native/justfile`.
+
+The built `.node` file is not tracked by git; `binding.d.ts` is. So a clone
+has no binding until it is built, and the recipes that run code build it
+first: `just check`, `just pack` and `just publish`, and on Windows `just test`
+and the demos' `app`, `compile` (`compile-win`) and `drive` recipes. When the
+binding is current, the build is cargo's no-op. Running a script directly
+(`bun run app.ts`, `bun test`) builds nothing; when the file is not there the
+loader's message, `sweetview: the native binding could not be loaded from
+@n1h/sweetview-native/prebuilt/sweetview.win32-x64-msvc.node: <reason>`, is
+followed by a line that says to run `just native build`. To try a binding
+built elsewhere without replacing the prebuilt one, set
+`SWEETVIEW_NATIVE_PATH` to its `.node` file.
 
 ### The macOS library
 

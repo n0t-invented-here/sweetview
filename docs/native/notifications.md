@@ -45,10 +45,13 @@ await runEventLoop(); // clicks arrive while the loop runs; the tray and notifie
 
 `createNotifier(options)` is the same as `new Notifier(options)`.
 `dispose()` releases the notifier's native resources and is safe to call
-twice: its pending toasts are hidden and its hidden notification icons
-removed. Sweetview does the same for every notifier still alive when the
-application ends ([the end of the application](../app.md#the-end-of-the-application)),
-so call it only for a notifier that should go before that. Clicks route to the notifier that sent the notification, so several
+twice: the toasts still showing (whose banner is on the screen, or that
+have reported nothing yet) are withdrawn and its hidden notification icons
+removed; a toast already in the notification centre stays there. Sweetview
+does the same for every notifier still alive when the application ends, so
+a notification still showing at Quit is withdrawn
+([the end of the application](../app.md#the-end-of-the-application) says what
+to do about it); call `dispose()` only for a notifier that should go before that. Clicks route to the notifier that sent the notification, so several
 notifiers in one process stay independent. The one exception is a click on a
 notification a previous process sent, covered under [macOS](#macos).
 

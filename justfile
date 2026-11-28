@@ -1,9 +1,11 @@
-# The just modules mirror the folders: demos/ for the apps, webview/ for the webview-bun and
-# webview fork clones and the patched library built from them.
+# The just modules mirror the folders: demos/ for the apps, native for packages/sweetview-native/
+# and the Rust binding it loads, webview/ for the webview-bun and webview fork clones and the
+# patched library built from them.
 
 set shell := ["pwsh", "-NoProfile", "-Command", "$ErrorActionPreference = 'Stop'; $PSNativeCommandUseErrorActionPreference = $true; trap { if ($_.Exception -is [System.Management.Automation.NativeCommandExitException]) { exit $_.Exception.ExitCode }; break };"]
 
 mod demos
+mod native "packages/sweetview-native/justfile"
 mod webview
 
 
@@ -13,19 +15,15 @@ mod webview
 install:
     bun install
 
-# Builds the Rust binding for this machine into packages/sweetview-native/prebuilt/, where the
-# native package loads it from, and regenerates its TypeScript declarations from the Rust.
-native: install
-    bunx napi build --platform --release --cwd packages/sweetview-native --manifest-path ../../crates/sweetview-platform-node/Cargo.toml --output-dir prebuilt --no-js --dts binding.d.ts
-
 typecheck: install
     bun run typecheck
 
-test: install
+# On Windows the tests load the binding, so it is built first (`just native build`).
+test: install native::_build-if-windows
     bun test
 
 # The binding is built first: the typecheck reads its generated declarations and the tests load it.
-check: native typecheck test
+check: native::build typecheck test
 
 compile: demos::web-app::compile demos::desktop-pet::compile demos::menubar-only::compile demos::menubar-notify::compile
 
@@ -33,7 +31,7 @@ clean: demos::web-app::clean demos::web-app-electron::clean demos::web-app-tauri
 
 # The native package ships the binding, so it is built first.
 [script("pwsh", "-NoProfile", "-File")]
-pack: native
+pack: native::build
     $ErrorActionPreference = 'Stop'
     $PSNativeCommandUseErrorActionPreference = $true
     foreach ($package in Get-ChildItem packages -Directory) {
@@ -43,7 +41,7 @@ pack: native
     }
 
 [script("pwsh", "-NoProfile", "-File")]
-publish: native
+publish: native::build
     $ErrorActionPreference = 'Stop'
     $PSNativeCommandUseErrorActionPreference = $true
     foreach ($package in @('sweetview-ipc', 'sweetview-ipc-ws', 'sweetview-ipc-electron', 'sweetview-ipc-tauri', 'sweetview-settings', 'sweetview-native', 'sweetview-build', 'sweetview')) {

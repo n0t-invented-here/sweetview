@@ -1,4 +1,4 @@
-// An application's last line is its loop: nothing after it is required (decision D35). Each
+// An application's last line is its loop: nothing after it is required (decision D36). Each
 // test runs test/fixtures/app-exit.ts in a process of its own, with a WebView2 profile of its
 // own, and checks that the process ends by itself with the exit code the application set,
 // within a few seconds of quitting, without a line on stderr Sweetview or WebView2 wrote, and

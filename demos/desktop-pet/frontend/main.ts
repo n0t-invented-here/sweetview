@@ -1,7 +1,7 @@
 // The page: renders the pet with Babylon.js and runs its little life. Every
 // frame it tells the UI thread where the window should be; the OS moves it.
 // The model, its texture and this bundle are fetched by relative URL from the
-// page's own origin, which the library serves from the executable.
+// page's own origin, which Sweetview serves from the executable.
 
 import "./main.css";
 import "@babylonjs/loaders/glTF/2.0";

@@ -136,7 +136,10 @@ by itself with the exit code the application set (0 unless it set another).
 
 It does that at each of these ends:
 
-- a blocking `run()` returns (after `quit()`, or because its window was disposed);
+- a blocking `run()` returns: after `quit()`, or because the window its
+  webview is attached to was disposed (a close request on a window with no
+  `onClose` listener disposes it, so closing the main window of a
+  `createApp` app without `onClose` ends here; see [Closing and quitting](#closing-and-quitting));
 - the process exits for any other reason Bun reports to JavaScript, through
   its `exit` event: the script ends (the pumped loop), `process.exit(code)`
   is called, or an exception is not caught. The exit code is the one the
@@ -149,8 +152,8 @@ What is released, in this order:
 2. webviews: each one's worker is terminated and its drain released, then
    the webview is destroyed, before the window it lives in;
 3. tray icons;
-4. notifiers: as `dispose()` does, their pending notifications are hidden
-   and their hidden notification icons removed;
+4. notifiers: as `dispose()` does, the notifications still showing are
+   withdrawn (see below) and their hidden notification icons removed;
 5. single-instance locks, so the next launch becomes the primary;
 6. windows, a tabbed window with its tabs;
 7. on Windows, whatever the binding still holds (menus handed out by
@@ -169,6 +172,28 @@ and logs nothing. An object made after an end (a second `createApp` after
 `run()` returned, say) works as usual and is released at the next end. When
 the process exits from inside a callback, a webview whose own callback is on
 the stack is left to the OS, which reclaims it with the process.
+
+Two consequences of these defaults:
+
+- **A second blocking `run()` starts from nothing.** Everything made before
+  a blocking `run()` (trays, notifiers, windows, webviews, hooks, the
+  single-instance lock) is released when that `run()` returns, because its
+  return is the end of the application. An application that runs the loop a
+  second time, a sign-in window first and the main window after it, say,
+  makes its objects again after the first `run()` returns: a new
+  `createApp`, a new `Tray`, a new `Notifier`, and `singleInstance` again.
+  To keep objects across both phases instead, run one loop for both: hide
+  the first window and show the second from a handler inside the same
+  `run()`, or use `runEventLoop`, whose loop can be run again and whose
+  objects are released only when the process exits.
+- **Notifications still showing at the end are withdrawn.** On Windows a
+  toast whose banner is still on the screen, or that has reported nothing
+  yet, is hidden, and a balloon goes with its notifier's hidden icon, exactly
+  as `notifier.dispose()` does. A toast whose banner has already gone to the
+  notification centre stays there. An application whose last notification
+  must be seen (an export finished just before Quit, say) keeps running
+  until it has been: quit from the notifier's `onClick`, or wait a few
+  seconds after `notify()` before calling `quit()`.
 
 ## Reference
 
