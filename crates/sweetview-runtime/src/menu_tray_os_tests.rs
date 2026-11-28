@@ -174,6 +174,25 @@ fn a_popup_menu_at_a_point_shows_check_marks_icons_submenus_separators_and_disab
   });
 }
 
+/// As at the tag, and as before the change that gave the foreground back after every popup menu:
+/// the owner of `Menu.popup`'s menu is made the foreground window to track it, and keeps it after
+/// the menu closes, here dismissed, though another window was in front before (review of
+/// `2a0b808`, F2).
+#[test]
+fn an_ordinary_owner_is_the_foreground_window_after_its_dismissed_menu() {
+  on_ui_thread(|runtime| {
+    let front = os::OwnWindow::new("rt os window in front", (40, 260, 160, 100), |_| {}).expect("front");
+    let owner = os::OwnWindow::new("rt os ordinary owner", (240, 260, 160, 100), |_| {}).expect("owner");
+    if !os::take_foreground(front.handle_value()) {
+      panic!("not run: this desktop's foreground could not be given to the test's window");
+    }
+    when_menu_opens(&runtime, |menu_window| os::press_keys(menu_window, &[VK_ESCAPE]));
+    let data = vec![item(1, "Open")];
+    assert_eq!(menu::popup(owner.handle_value(), &data, Some((260.0, 280.0)), PopupCorner::TopLeft).expect("popup"), None);
+    assert_eq!(os::foreground(), owner.handle_value(), "the owner holds the foreground after its menu");
+  });
+}
+
 /// "an item in a submenu is chosen; a dismissed menu chooses nothing".
 #[test]
 fn an_item_in_a_submenu_is_chosen_and_a_dismissed_menu_chooses_nothing() {
@@ -495,6 +514,42 @@ fn a_right_click_opens_a_menu_built_on_each_open_and_only_while_the_tray_has_one
     pump_until(&runtime, 5000, || opened.get() == 3 && os::open_popup_menu() == 0);
     assert_eq!(opened.get(), 3);
     tray.dispose();
+  });
+}
+
+/// A tray menu item whose handler shows a window gets that window to the foreground: nothing gives
+/// the foreground away before the chosen item's handler has run, so the process still holds it
+/// (its hidden menu owner does) when the handler asks for it (review of `2a0b808`, F2).
+#[test]
+fn a_tray_menu_items_handler_that_shows_a_window_gets_it_to_the_foreground() {
+  on_ui_thread(|runtime| {
+    let front = os::OwnWindow::new("rt os window in front", (40, 260, 160, 100), |_| {}).expect("front");
+    let settings = os::OwnWindow::new("rt os window a handler shows", (240, 260, 160, 100), |_| {}).expect("settings");
+    if !os::take_foreground(front.handle_value()) {
+      panic!("not run: this desktop's foreground could not be given to the test's window");
+    }
+    let at_handler = Rc::new(Cell::new(0isize));
+    let chosen = Rc::new(Cell::new(false));
+    let (seen, done, target) = (at_handler.clone(), chosen.clone(), settings.handle_value());
+    let tray = Tray::new(TrayInit {
+      has_menu: true,
+      open_menu: Rc::new(|| vec![item(1, "Settings")]),
+      menu_chosen: Rc::new(move |_| {
+        seen.set(os::foreground());
+        // As a handler's `window.show()` does.
+        BorrowedWindow::with_handle_value(target, |window| platform::show(window, false, false, false));
+        done.set(true);
+      }),
+      ..tray_init(&unique("tray menu foreground"))
+    })
+    .expect("tray");
+    when_menu_opens(&runtime, |menu_window| os::press_keys(menu_window, &[VK_DOWN, VK_RETURN]));
+    post_tray(&tray, &[WM_RBUTTONDOWN, WM_RBUTTONUP]);
+    pump_until(&runtime, 5000, || chosen.get());
+    tray.dispose();
+    assert!(chosen.get(), "the item was chosen");
+    assert_ne!(at_handler.get(), front.handle_value(), "the foreground was not given back before the handler ran");
+    assert_eq!(os::foreground(), settings.handle_value(), "the window the handler showed is in front");
   });
 }
 

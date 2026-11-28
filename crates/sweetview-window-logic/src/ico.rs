@@ -41,13 +41,38 @@ pub fn parse_ico(bytes: &[u8]) -> Result<Vec<IcoEntry>, String> {
   Ok(entries)
 }
 
-/// The image of `width == want`, else the smallest larger one, else the largest.
-pub fn pick_ico_entry(entries: &[IcoEntry], want: u32) -> Result<IcoEntry, String> {
+/// Which of several equally wide largest images a pick falls back to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WidestTie {
+  /// The first, as the sort of `icon.ts` keeps it: the notifier's balloon and tray icon.
+  First,
+  /// The last: the window's icon.
+  Last,
+}
+
+/// The image of `width == want`, else the smallest larger one, else the largest,
+/// of equally wide largest ones the one `tie` names.
+pub fn select_ico_entry(entries: &[IcoEntry], want: u32, tie: WidestTie) -> Result<IcoEntry, String> {
   if let Some(exact) = entries.iter().find(|e| e.width == want) {
     return Ok(*exact);
   }
   let larger = entries.iter().filter(|e| e.width > want).min_by_key(|e| e.width);
-  larger.or_else(|| entries.iter().max_by_key(|e| e.width)).copied().ok_or_else(|| ".ico has no images".into())
+  // `max_by_key` keeps the last of equals; reversed, it keeps the first.
+  let widest = match tie {
+    WidestTie::First => entries.iter().rev().max_by_key(|e| e.width),
+    WidestTie::Last => entries.iter().max_by_key(|e| e.width),
+  };
+  larger.or(widest).copied().ok_or_else(|| ".ico has no images".into())
+}
+
+/// The window's pick: [`select_ico_entry`] keeping the last of equally wide largest images.
+pub fn pick_ico_entry(entries: &[IcoEntry], want: u32) -> Result<IcoEntry, String> {
+  select_ico_entry(entries, want, WidestTie::Last)
+}
+
+/// The notifier's pick: [`select_ico_entry`] keeping the first of equally wide largest images.
+pub fn pick_ico_entry_keeping_first(entries: &[IcoEntry], want: u32) -> Result<IcoEntry, String> {
+  select_ico_entry(entries, want, WidestTie::First)
 }
 
 #[cfg(test)]
@@ -88,5 +113,29 @@ mod tests {
     let mut short = ico(&[(16, 4)]);
     short.pop();
     assert!(parse_ico(&short).is_err());
+  }
+  #[test]
+  fn the_notifiers_pick_is_exact_then_smallest_larger_then_the_first_largest() {
+    let entries = parse_ico(&ico(&[(16, 4), (32, 4)])).expect("parse");
+    assert_eq!(entries.iter().map(|e| e.width).collect::<Vec<_>>(), [16, 32], "one entry per image, in order");
+    assert_eq!(pick_ico_entry_keeping_first(&entries, 16).map(|e| e.width), Ok(16));
+    assert_eq!(pick_ico_entry_keeping_first(&entries, 24).map(|e| e.width), Ok(32));
+    assert_eq!(pick_ico_entry_keeping_first(&entries, 48).map(|e| e.width), Ok(32));
+    assert_eq!(pick_ico_entry_keeping_first(&[], 16), Err(".ico has no images".into()));
+    // Of equally wide largest images, the notifier's pick keeps the first and the window's the last.
+    let twins = parse_ico(&ico(&[(32, 4), (32, 4)])).expect("parse");
+    assert_eq!(pick_ico_entry_keeping_first(&twins, 48), Ok(twins[0]));
+    assert_eq!(pick_ico_entry(&twins, 48), Ok(twins[1]));
+  }
+
+  #[test]
+  fn an_image_past_the_end_is_named_and_a_zero_dimension_means_256() {
+    assert_eq!(parse_ico(&[0, 0, 2, 0, 1, 0]), Err("not a .ico file".into()));
+    assert_eq!(parse_ico(&[0, 0, 1, 0, 1, 0, 16]), Err("truncated .ico directory".into()));
+    let mut cut = ico(&[(16, 4), (32, 4)]);
+    cut.pop();
+    assert_eq!(parse_ico(&cut), Err(".ico image 1 runs past the end of the file".into()));
+    let entries = parse_ico(&ico(&[(0, 4)])).expect("parse");
+    assert_eq!((entries[0].width, entries[0].height), (256, 256));
   }
 }

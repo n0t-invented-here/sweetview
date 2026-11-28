@@ -16,7 +16,6 @@ publish = false
 [workspace.dependencies]
 # The crates the design rests on, as published on crates.io. No crate is forked.
 tao = "0.38.0"
-wry = { version = "0.58.2", features = ["devtools"] }
 muda = "0.22.0"
 tray-icon = "0.27.0"
 rfd = { version = "0.18.0", default-features = false }
@@ -31,7 +30,7 @@ windows-registry = "0.6.1"
 raw-window-handle = "0.6"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-# The known folders (FOLDERID_RoamingAppData) through a safe call; already in Cargo.lock through wry and tray-icon.
+# The known folders (FOLDERID_RoamingAppData) through a safe call; already in Cargo.lock through tray-icon.
 dirs = "7.0.0"
 # .ico and PNG decoding for tray and menu icons, which tray-icon and muda take as RGBA.
 ico = "0.6.0"
@@ -39,6 +38,7 @@ ico = "0.6.0"
 sweetview-http = { path = "crates/sweetview-http" }
 sweetview-keycodes = { path = "crates/sweetview-keycodes" }
 sweetview-window-logic = { path = "crates/sweetview-window-logic" }
+sweetview-shell-data = { path = "crates/sweetview-shell-data" }
 sweetview-runtime = { path = "crates/sweetview-runtime" }
 sweetview-napi = { path = "crates/sweetview-napi" }
 sweetview-platform-loop = { path = "crates/sweetview-platform-loop" }

@@ -199,16 +199,19 @@ Every frame carries the request ID as a decimal string, keeping all 64 bits.
 Chunks larger than the ring are split. If the headers alone cannot fit, the
 worker answers 500.
 
-When the engine can stream (always on Windows; on macOS, a webview library
-with the streaming symbols), the UI thread forwards each chunk to the native
-response as it arrives; a reader failure after the begin frame ends the
+When the engine has streamed responses (always on Windows; on macOS, a
+webview library with the streaming symbols), the UI thread forwards each
+chunk to the native response as it arrives; a reader failure after the begin frame ends the
 response with the bytes already sent. With a macOS library that only has
 `webview_complete_request`, the UI thread buffers the body and answers 500 on
 reader failure. Disposal discards partial responses.
 
-WKWebView hands streamed bytes to the page as they arrive. WebView2 delivers
-an intercepted response to the page only at its end, so for real-time push
-on Windows use IPC events (`emit` in the Service, `bridge.on` in the page).
+WKWebView hands streamed bytes to the page as they arrive. On Windows, in
+every case measured, the page got the whole response when the stream ended
+and nothing before, as under the C++ library
+([the webview](webview-library.md#streaming-responses)). So for real-time
+push on Windows use IPC events (`emit` in the Service, `bridge.on` in the
+page), and do not stream a body that never ends there.
 [WebView2 Feedback #3519](https://github.com/MicrosoftEdge/WebView2Feedback/issues/3519).
 
 ## writeWorkerFrame

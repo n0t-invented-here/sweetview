@@ -38,6 +38,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 use crate::toast_xml::{app_id_key, display_name, toast_xml, validate_app_id};
+use sweetview_shell_data::toast::copy_wide;
 use crate::{ico, BalloonEvent, ForcedPath, Notification, NotifierOptions, NotifyError, Shown, ToastEvent};
 
 /// The shell's balloon events, as today: `wParam` is the icon's uID, the low
@@ -91,18 +92,6 @@ fn hresult_error(method: &str) -> impl Fn(windows::core::Error) -> NotifyError +
 
 fn last_error() -> i32 {
   std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
-}
-
-/// Copies `value` into a fixed wide-character field, truncated so the NUL still
-/// fits, as today's `setWide` does.
-fn copy_wide(field: &mut [u16], value: &str) {
-  let room = field.len().saturating_sub(1);
-  let mut written = 0;
-  for (slot, unit) in field.iter_mut().zip(value.encode_utf16().take(room)) {
-    *slot = unit;
-    written += 1;
-  }
-  field[written..].fill(0);
 }
 
 // ---- the toast handlers ------------------------------------------------------
@@ -1109,15 +1098,6 @@ mod tests {
     assert!(toasts.pending.borrow().contains_key(&cookie));
     drop(toasts);
     assert_eq!(live_toast_handlers(), before, "every subscription was ended and its handler released");
-  }
-
-  #[test]
-  fn copy_wide_truncates_so_the_nul_fits() {
-    let mut field = [0xffffu16; 4];
-    copy_wide(&mut field, "abcdef");
-    assert_eq!(field, [97, 98, 99, 0]);
-    copy_wide(&mut field, "x");
-    assert_eq!(field, [120, 0, 0, 0]);
   }
 
   /// What `notifier.test.ts` "registers an AUMID and shows real WinRT toasts

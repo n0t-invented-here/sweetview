@@ -49,6 +49,20 @@ fn serial() -> std::sync::MutexGuard<'static, ()> {
   crate::TEST_SERIAL.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
+/// Review round 5, R5-1: a window wholly off every screen is on the screen nearest it, as
+/// `MonitorFromWindow` with `MONITOR_DEFAULTTONEAREST` answered at tag `pre-rust-rewrite`; there is
+/// no monitor only for a handle that names no window.
+#[test]
+fn a_window_off_every_screen_is_on_the_nearest_one() {
+  let _serial = serial();
+  let window = TestWindow::new();
+  assert!(set_placement(&window.foreign(), Placement::bounds(Rect::new(100_000, 100_000, 300, 200), false)));
+  assert!(monitor_handle_of(window.0).is_some(), "the nearest screen");
+  let gone = window.0;
+  drop(window);
+  assert_eq!(monitor_handle_of(gone), None, "a handle that names no window");
+}
+
 #[test]
 fn a_handle_value_is_lent_only_when_it_names_a_window() {
   let _serial = serial();
