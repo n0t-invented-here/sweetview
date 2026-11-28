@@ -26,6 +26,12 @@ import { scheduleNativeTimeout } from "../../../sweetview-native/src/event-loop"
 import { disableTransitions, isWindow } from "../../../sweetview-native/test/win32-os";
 
 const mode = process.env.SWEETVIEW_FLASH_TEST ?? "blocking";
+// With SWEETVIEW_FLASH_GO set, nothing is made before the parent says the watcher is watching.
+if (process.env.SWEETVIEW_FLASH_GO === "1") {
+  const reader = Bun.stdin.stream().getReader();
+  await reader.read();
+  reader.releaseLock();
+}
 /** The page's colour: dark, and not the backdrop's (#15161a), so the two can be told apart. */
 export const PAGE = "#1f2a33";
 const bounds = { x: 160, y: 140, width: 640, height: 420 };

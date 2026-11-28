@@ -8,10 +8,16 @@
 // src/quit-flash.test.ts.
 
 import { runEventLoop } from "@n1h/sweetview";
-import { Window } from "@n1h/sweetview/native";
+import { Screen, Window } from "@n1h/sweetview/native";
 
 /** The backstop's colour, as `#rrggbb`. */
 export const BACKSTOP = "#ff00ff";
+
+/** The backstop's rectangle: from (100, 80), 900 by 720 DIPs at the primary display's scale. */
+function backstopBounds() {
+  const scale = Screen.primary().scale;
+  return { x: 100, y: 80, width: Math.round(900 * scale), height: Math.round(720 * scale) };
+}
 
 if (import.meta.main) {
   const win = new Window({
@@ -21,11 +27,16 @@ if (import.meta.main) {
     noActivate: true,
     hideFromTaskbar: true,
     backgroundColor: BACKSTOP,
-    bounds: { x: 100, y: 80, width: 800, height: 560 },
+    // Wide enough for the fixture's window at any display scale: a tabbed window's minimum size
+    // is in DIPs, so it grows with the scale; the watcher checks the window lies inside.
+    bounds: backstopBounds(),
   });
   const loop = runEventLoop({ intervalMs: 5 });
   win.show();
-  // On the screen, its own opening transition done, before the parent goes on.
-  setTimeout(() => console.log("READY"), 500);
+  // On the screen, its own opening transition done, before the parent goes on; its rectangle for the watcher.
+  setTimeout(() => {
+    const b = win.bounds();
+    console.log(`READY ${b.x},${b.y},${b.width},${b.height}`);
+  }, 500);
   await loop;
 }

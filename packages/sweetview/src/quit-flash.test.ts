@@ -40,18 +40,36 @@ async function watchFixture(mode: string): Promise<Watched> {
   const backstop = Bun.spawn([process.execPath, fileURLToPath(new URL("../test/fixtures/backstop.ts", import.meta.url))], { stdout: "pipe", stderr: "pipe" });
   try {
     const reader = backstop.stdout.getReader();
-    for (let text = ""; !text.includes("READY"); ) {
+    let backstopText = "";
+    while (!/READY \S+\r?\n/.test(backstopText)) {
       const read = await reader.read();
       if (read.done) throw new Error(`the backstop ended: ${await new Response(backstop.stderr).text()}`);
-      text += new TextDecoder().decode(read.value);
+      backstopText += new TextDecoder().decode(read.value);
     }
     reader.releaseLock();
+    const backstopRect = backstopText.match(/READY (\S+)/)![1]!;
     const proc = Bun.spawn([process.execPath, fileURLToPath(new URL("../test/fixtures/quit-flash.ts", import.meta.url))], {
-      env: { ...process.env, WEBVIEW2_USER_DATA_FOLDER: profile, SWEETVIEW_FLASH_TEST: mode },
+      env: { ...process.env, WEBVIEW2_USER_DATA_FOLDER: profile, SWEETVIEW_FLASH_TEST: mode, SWEETVIEW_FLASH_GO: "1" },
+      stdin: "pipe",
       stdout: "pipe",
       stderr: "pipe",
     });
-    const watcher = Bun.spawn([process.execPath, fileURLToPath(new URL("../test/fixtures/window-watch.ts", import.meta.url)), String(proc.pid), out, "40000", BACKSTOP], { stdout: "pipe", stderr: "pipe" });
+    const watcher = Bun.spawn([process.execPath, fileURLToPath(new URL("../test/fixtures/window-watch.ts", import.meta.url)), String(proc.pid), out, "40000", `${BACKSTOP}@${backstopRect}`], { stdout: "pipe", stderr: "pipe" });
+    // The fixture makes nothing before the watcher is watching.
+    const watching = watcher.stdout.getReader();
+    let watcherText = "";
+    while (!watcherText.includes("WATCHING")) {
+      const read = await watching.read();
+      if (read.done) throw new Error("the watcher ended before it watched");
+      watcherText += new TextDecoder().decode(read.value);
+    }
+    // The rest of what the watcher prints, read on by the same reader.
+    const watcherRest = (async () => {
+      for (let read = await watching.read(); !read.done; read = await watching.read()) watcherText += new TextDecoder().decode(read.value);
+      return watcherText;
+    })();
+    proc.stdin.write("GO\n");
+    proc.stdin.end();
     let killed = false;
     const limit = setTimeout(() => {
       killed = true;
@@ -59,7 +77,7 @@ async function watchFixture(mode: string): Promise<Watched> {
     }, 40_000);
     const [exitCode, stdout, stderr] = await Promise.all([proc.exited, new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
     clearTimeout(limit);
-    const [watcherOut, watcherErr] = await Promise.all([new Response(watcher.stdout).text(), new Response(watcher.stderr).text(), watcher.exited]);
+    const [watcherOut, watcherErr] = await Promise.all([watcherRest, new Response(watcher.stderr).text(), watcher.exited]);
     if (!watcherOut.includes("DONE")) throw new Error(`the watcher failed: ${watcherOut} ${watcherErr}`);
     const samples = readFileSync(out, "utf8").trim().split(/\r?\n/).map((line) => JSON.parse(line) as Sample);
     const hwnd = stdout.match(/^READY (\d+)/m)?.[1];
@@ -100,7 +118,33 @@ function explain(run: Watched, flagged: Sample[]): void {
   console.error(`quit-flash watcher, window ${run.hwnd}, what it saw around ${flagged.length} sample(s) in question:\n${lines.join("\n")}\nfixture stdout:\n${run.stdout}`);
 }
 
+/**
+ * A run that could not judge what it was there to judge does not pass (R7 and S5 of D46's first
+ * review): a read that failed; a read of the window, visible before and after it, that was not
+ * the window's with nothing over it (it moved, or showed the backstop); the window outside the
+ * backstop. (Whether a presented frame went unread between two reads is not judged: on this
+ * display, a 30 Hz one with DWM composing about twice per refresh, neither DWM's count of
+ * compositions nor its count of refreshes tells a presented frame from one that is not.)
+ */
+function expectJudged(run: Watched) {
+  const mine = run.samples.filter((s) => s.hwnd === run.hwnd);
+  const failed = mine.filter((s) => s.failed !== undefined);
+  explain(run, failed);
+  expect(failed.map((s) => s.failed)).toEqual([]);
+  // Before the window's first read of its own pixels, DWM has not composed it with anything of
+  // its own yet (a window just shown), and the backstop it shows is what is behind it; from then
+  // on, a read of it that is not its own with nothing over it is one the run cannot judge.
+  const firstOwn = mine.findIndex((s) => s.ours === true);
+  const unexplained = mine.filter((s, i) => firstOwn >= 0 && i > firstOwn && onScreen(s) && s.ours === false && s.visibleAfter === true && (s.coveredBy?.length ?? 0) === 0);
+  explain(run, unexplained);
+  expect(unexplained.map((s) => s.t)).toEqual([]);
+  const outside = mine.filter((s) => onScreen(s) && s.insideBackstop === false);
+  explain(run, outside);
+  expect(outside.map((s) => s.t)).toEqual([]);
+}
+
 function expectEndedCleanly(run: Watched) {
+  expectJudged(run);
   // The watcher must have seen the window whenever it was on the screen: a read with another
   // window over it shows that window, so the run cannot judge this one and does not pass.
   const covered = run.samples.filter((s) => s.hwnd === run.hwnd && onScreen(s) && (s.coveredBy?.length ?? 0) > 0);

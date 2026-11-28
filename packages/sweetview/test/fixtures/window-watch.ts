@@ -63,6 +63,12 @@ export type Sample = {
    * (`ChildWindowFromPointEx`), each `class pid #handle left,top widthxheight`, outermost first.
    */
   owners?: { page: string[]; top: string[] };
+  /** A read that cannot be judged: a call of the capture failed (`GetClientRect`, `ClientToScreen`, `BitBlt`, `GetDIBits`); what it failed at. */
+  failed?: string;
+  /** The display's refresh rate when the read was made, in hertz. */
+  hz?: number;
+  /** With a backstop given: whether the client area lies inside it. */
+  insideBackstop?: boolean;
 };
 
 /** On the screen: visible, not cloaked by DWM, not minimised, with a client area. */
@@ -159,6 +165,8 @@ if (import.meta.main) {
   // The colour of what is behind the watched windows, when the caller put it there: a read that
   // shows it shows what is behind, not the window.
   const backstop = backstopArg ? ([1, 3, 5].map((i) => Number.parseInt(backstopArg.slice(i, i + 2), 16) & 0xf8) as [number, number, number]) : undefined;
+  // `#rrggbb@x,y,w,h`: the backstop's rectangle on the screen, which the watched windows must lie inside.
+  const backstopRect = backstopArg?.includes("@") ? backstopArg.split("@")[1]!.split(",").map(Number) : undefined;
   const isBackstop = (mode: [number, number, number]) => backstop !== undefined && mode.every((v, i) => Math.abs(v - backstop[i]!) <= 8);
   const pid = Number(pidArg);
   if (!Number.isInteger(pid) || pid <= 0 || !out) {
@@ -249,7 +257,7 @@ if (import.meta.main) {
   const SRCCOPY = 0x00cc0020;
 
   /** A rectangle of the screen: its most common colour and the share of it. */
-  const capture = (left: number, top: number, width: number, height: number): { width: number; height: number; mode: [number, number, number]; flat: number } => {
+  const capture = (left: number, top: number, width: number, height: number): { width: number; height: number; mode: [number, number, number]; flat: number; failed?: string } => {
     if (width <= 0 || height <= 0) return { width: 0, height: 0, mode: [0, 0, 0], flat: 0 };
     const origin = [left, top];
     if (bitmapSize[0] !== width || bitmapSize[1] !== height) {
@@ -258,16 +266,19 @@ if (import.meta.main) {
       bitmapSize = [width, height];
       pixels = new Uint8Array(width * height * 4);
     }
+    if (bitmap === 0n) return { width, height, mode: [0, 0, 0], flat: 0, failed: "CreateCompatibleBitmap" };
     const old = gdi32.SelectObject(memory, bitmap);
-    gdi32.BitBlt(memory, 0, 0, width, height, screen, origin[0]!, origin[1]!, SRCCOPY);
+    const blitted = gdi32.BitBlt(memory, 0, 0, width, height, screen, origin[0]!, origin[1]!, SRCCOPY);
     gdi32.SelectObject(memory, old);
+    // A failed copy would leave the last read's pixels in the bitmap: it is not a read.
+    if (blitted === 0) return { width, height, mode: [0, 0, 0], flat: 0, failed: "BitBlt" };
     info.fill(0);
     infoView.setUint32(0, 40, true);
     infoView.setInt32(4, width, true);
     infoView.setInt32(8, -height, true);
     infoView.setUint16(12, 1, true);
     infoView.setUint16(14, 32, true);
-    gdi32.GetDIBits(memory, bitmap, 0, height, ptr(pixels), ptr(info), 0);
+    if (gdi32.GetDIBits(memory, bitmap, 0, height, ptr(pixels), ptr(info), 0) !== height) return { width, height, mode: [0, 0, 0], flat: 0, failed: "GetDIBits" };
     histogram.fill(0);
     let total = 0;
     for (let y = 1; y < height; y += 4) {
@@ -319,26 +330,42 @@ if (import.meta.main) {
     return levels;
   };
 
-  /** The root windows the OS names at five points of the client area that are not `hwnd`, described. */
+  /**
+   * The windows above `hwnd` in the z-order that overlap any part of its client area: visible,
+   * not cloaked, not minimised; each described. Every top-level window is enumerated, in z-order
+   * from the top, so a partial cover anywhere counts, not only at chosen points.
+   */
+  const zOrder: bigint[] = [];
+  const enumAll = new JSCallback(
+    (window: bigint) => {
+      zOrder.push(window);
+      return 1;
+    },
+    { args: [u64, i64], returns: i32 },
+  );
+  const otherRect = new Int32Array(4);
+  const otherCloaked = new Uint32Array(1);
   const others = (hwnd: bigint, left: number, top: number, width: number, height: number): string[] => {
-    const inset = Math.min(8, Math.floor(width / 4), Math.floor(height / 4));
-    const points = [
-      [left + Math.floor(width / 2), top + Math.floor(height / 2)],
-      [left + inset, top + inset],
-      [left + width - 1 - inset, top + inset],
-      [left + inset, top + height - 1 - inset],
-      [left + width - 1 - inset, top + height - 1 - inset],
-    ];
+    zOrder.length = 0;
+    user32.EnumWindows(enumAll.ptr, 0n);
     const found: string[] = [];
-    for (const [x, y] of points) {
-      const at = user32.WindowFromPoint(BigInt.asUintN(32, BigInt(x!)) | (BigInt.asUintN(32, BigInt(y!)) << 32n));
-      const root = at === 0n ? 0n : user32.GetAncestor(at, GA_ROOT);
-      if (root === hwnd) continue;
-      user32.GetWindowThreadProcessId(root, ptr(pidBuf));
-      found.push(`${read(user32.GetWindowTextW, root)} [${read(user32.GetClassNameW, root)}] ${pidBuf[0]}`);
+    for (const window of zOrder) {
+      if (window === hwnd) break;
+      // The cheap questions first: most windows above are hidden or elsewhere, and the walk must
+      // leave a read within one refresh of the last.
+      if (user32.IsWindowVisible(window) === 0) continue;
+      if (user32.GetWindowRect(window, ptr(otherRect)) === 0) continue;
+      const overlaps = otherRect[0]! < left + width && otherRect[2]! > left && otherRect[1]! < top + height && otherRect[3]! > top;
+      if (!overlaps || user32.IsIconic(window) !== 0) continue;
+      otherCloaked[0] = 0;
+      dwmapi.DwmGetWindowAttribute(window, 14, ptr(otherCloaked), 4);
+      if (otherCloaked[0] !== 0) continue;
+      user32.GetWindowThreadProcessId(window, ptr(pidBuf));
+      found.push(`${read(user32.GetWindowTextW, window)} [${read(user32.GetClassNameW, window)}] ${pidBuf[0]}`);
     }
     return found;
   };
+  const gdiCaps = dlopen("gdi32.dll", { GetDeviceCaps: { args: [u64, i32], returns: i32 } }).symbols;
 
   // The last state written for each window: a window off the screen is written only when it changes.
   const known = new Map<bigint, string>();
@@ -371,12 +398,17 @@ if (import.meta.main) {
         sample.webviews = webviewCount;
         if (sample.visible && !sample.cloaked && !sample.iconic) {
           // Whose pixels these are is asked before the screen is read and again after it.
-          user32.GetClientRect(hwnd, ptr(rect));
           const origin = new Int32Array(2);
-          user32.ClientToScreen(hwnd, ptr(origin));
+          if (user32.GetClientRect(hwnd, ptr(rect)) === 0) sample.failed = "GetClientRect";
+          else if (user32.ClientToScreen(hwnd, ptr(origin)) === 0) sample.failed = "ClientToScreen";
           const [left, top, width, height] = [origin[0]!, origin[1]!, rect[2]! - rect[0]!, rect[3]! - rect[1]!];
           const before = others(hwnd, left, top, width, height);
-          Object.assign(sample, capture(left, top, width, height));
+          sample.hz = gdiCaps.GetDeviceCaps(screen, 116); // VREFRESH
+          if (sample.failed === undefined) Object.assign(sample, capture(left, top, width, height));
+          if (backstopRect) {
+            const [bx, by, bw, bh] = backstopRect as [number, number, number, number];
+            sample.insideBackstop = left >= bx && top >= by && left + width <= bx + bw && top + height <= by + bh;
+          }
           [sample.left, sample.top] = [left, top];
           cloakedBuf[0] = 0;
           dwmapi.DwmGetWindowAttribute(hwnd, 14, ptr(cloakedBuf), 4);
@@ -389,7 +421,9 @@ if (import.meta.main) {
           })();
           const after = sample.visibleAfter ? others(hwnd, left, top, width, height) : [];
           sample.coveredBy = [...new Set([...before, ...after])];
-          sample.owners = { page: chain(hwnd, left + Math.floor(width / 2), top + Math.floor(height / 2)), top: chain(hwnd, left + Math.floor(width / 2), top + 8) };
+          // Who owns the pixels, only when asked (SWEETVIEW_WATCH_OWNERS=1): walking the windows takes
+          // time a read needs to stay within one refresh of the last.
+          if (process.env.SWEETVIEW_WATCH_OWNERS === "1") sample.owners = { page: chain(hwnd, left + Math.floor(width / 2), top + Math.floor(height / 2)), top: chain(hwnd, left + Math.floor(width / 2), top + 8) };
           if (before.length > 0 || moved) sample.ours = false;
           // A window that shows the backstop over half of it shows what is behind it, not itself.
           else if (isBackstop(sample.mode) && sample.flat >= 0.5) sample.ours = false;
