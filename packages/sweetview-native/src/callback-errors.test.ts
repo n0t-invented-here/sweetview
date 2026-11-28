@@ -102,6 +102,15 @@ describe("reportCallbackError", () => {
   });
 });
 
+describe("onCallbackError's entry points", () => {
+  // docs/native.md: it is also exported by @n1h/sweetview and @n1h/sweetview/native (review 4, C6).
+  test("the root @n1h/sweetview and @n1h/sweetview/native export this package's own onCallbackError", async () => {
+    const root = (await import("../../sweetview/src/index")) as { onCallbackError?: unknown };
+    const native = (await import("../../sweetview/src/native/index")) as { onCallbackError?: unknown };
+    expect({ root: root.onCallbackError === onCallbackError, native: native.onCallbackError === onCallbackError }).toEqual({ root: true, native: true });
+  });
+});
+
 describe("the reporter is not an entry point", () => {
   // Every export of every entry point of @n1h/sweetview-native and @n1h/sweetview (review 2, P4).
   // An entry point that loads here is checked by its exports' names and by their values, one level

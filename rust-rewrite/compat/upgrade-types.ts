@@ -331,3 +331,31 @@ import type { FrameCallbacks as NoPublic_FrameCallbacks___n1h_sweetview_native }
 import type { FrameWindow as NoPublic_FrameWindow___n1h_sweetview } from "@n1h/sweetview";
 // @ts-expect-error no public call in 1.0
 import type { FrameWindow as NoPublic_FrameWindow___n1h_sweetview_native } from "@n1h/sweetview-native";
+
+// The macOS types of the rows that say `no public call in 1.0` (D45): no public entry exports them.
+// @ts-expect-error no public call in 1.0
+import type { Id as NoPublic_Id___n1h_sweetview } from "@n1h/sweetview";
+// @ts-expect-error no public call in 1.0
+import type { Id as NoPublic_Id___n1h_sweetview_native } from "@n1h/sweetview-native";
+// @ts-expect-error no public call in 1.0
+import type { TargetMethod as NoPublic_TargetMethod___n1h_sweetview } from "@n1h/sweetview";
+// @ts-expect-error no public call in 1.0
+import type { TargetMethod as NoPublic_TargetMethod___n1h_sweetview_native } from "@n1h/sweetview-native";
+// @ts-expect-error no public call in 1.0
+import type { CocoaRect as NoPublic_CocoaRect___n1h_sweetview } from "@n1h/sweetview";
+// @ts-expect-error no public call in 1.0
+import type { CocoaRect as NoPublic_CocoaRect___n1h_sweetview_native } from "@n1h/sweetview-native";
+// @ts-expect-error no public call in 1.0
+import type { WindowTabs as NoPublic_WindowTabs___n1h_sweetview } from "@n1h/sweetview";
+// @ts-expect-error no public call in 1.0
+import type { WindowTabs as NoPublic_WindowTabs___n1h_sweetview_native } from "@n1h/sweetview-native";
+// @ts-expect-error no public call in 1.0
+import type { WindowTabsOptions as NoPublic_WindowTabsOptions___n1h_sweetview } from "@n1h/sweetview";
+// @ts-expect-error no public call in 1.0
+import type { WindowTabsOptions as NoPublic_WindowTabsOptions___n1h_sweetview_native } from "@n1h/sweetview-native";
+// @ts-expect-error no public call in 1.0
+import type { DarwinTabGroupController as NoPublic_DarwinTabGroupController___n1h_sweetview } from "@n1h/sweetview";
+// @ts-expect-error no public call in 1.0
+import type { DarwinTabGroupController as NoPublic_DarwinTabGroupController___n1h_sweetview_native } from "@n1h/sweetview-native";
+export type Window__sweetview_native_handle = Window__sweetview_native["handle"];
+export type Window__sweetview_native_startResize = Window__sweetview_native["startResize"];

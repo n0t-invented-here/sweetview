@@ -9,6 +9,7 @@ import { appendFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { createHitRelay, createNotifier, createTray, Screen, setAppIcon, unpackRegions, Window, type MenuTemplate, type Notifier } from "@n1h/sweetview/native";
 import { indexHtml, WebView, windowChromeEvents, windowChromeMethods, type Asset } from "@n1h/sweetview";
+import type { WindowChromeMethodTable } from "@n1h/sweetview/window-chrome";
 import { demoWindowSize } from "../window-size";
 import { SettingsStore } from "@n1h/sweetview/settings-store";
 import petCss from "./build/frontend/main.css" with { type: "file" };
@@ -148,7 +149,8 @@ const changeSettings = (patch: Partial<Settings>): Settings => {
   return settings;
 };
 
-const uiMethods: { [K in keyof UiMethods]: (params: UiMethods[K][0]) => UiMethods[K][1] } = {
+// The chrome's methods are its table (no window.systemMenu on macOS); the pet's own are all required.
+const uiMethods: WindowChromeMethodTable & { [K in Exclude<keyof UiMethods, keyof WindowChromeMethodTable | "window.systemMenu">]: (params: UiMethods[K][0]) => UiMethods[K][1] } = {
   "pet.move": ({ x, y }) => overlay.moveTo(x, y),
   "pet.resize": ({ width, height }) => overlay.resize(width, height),
   "hit.regions": (flat) => hits.setRegions(unpackRegions(flat)),
@@ -165,12 +167,14 @@ const uiMethods: { [K in keyof UiMethods]: (params: UiMethods[K][0]) => UiMethod
   "pet.quit": () => petView.quit(),
 };
 
+// Until the macOS goal of the Rust rewrite, macOS shows the pet at once, as it did at the tag
+// pre-rust-rewrite (D42). Elsewhere it appears when its page has drawn the pet (signalReady()).
+const MAC_TAG_PATH = process.platform === "darwin";
 const petView: WebView<Methods, Events> = await WebView.attach<Methods, Events>(overlay, {
   title: APP_NAME,
+  // If the page fails before it signals, the watchdog shows the window with Sweetview's start-up error page.
+  ...(MAC_TAG_PATH ? {} : { showOnReady: true, readyTimeoutMs: 15_000 }),
   assets: petAssets,
-  // Windows: the pet appears once its page has drawn its first frame (it calls signalReady).
-  // macOS starts as at the tag pre-rust-rewrite until its goal (D42): shown below.
-  ...(process.platform === "darwin" ? {} : { showOnReady: true, readyTimeoutMs: 15_000 }),
   worker: new URL("./app-worker.ts", import.meta.url),
   debug: DEBUG,
   uiMethods,
@@ -182,21 +186,14 @@ const settingsView: WebView<Methods, Events> = await WebView.attach<Methods, Eve
   index: "settings/index.html",
   debug: DEBUG,
   uiMethods,
-  // Opened at start only with PET_SETTINGS=1, and then on Windows once its page has rendered;
-  // the tray shows it later with its page long painted. macOS: as at the tag (D42), below.
-  ...(process.platform !== "darwin" && process.env.PET_SETTINGS === "1" ? { showOnReady: true, readyTimeoutMs: 15_000 } : {}),
 });
-
-if (process.platform === "darwin") {
-  // macOS starts as at the tag pre-rust-rewrite until its goal (D42).
-  overlay.show();
-  if (process.env.PET_SETTINGS === "1") settingsWindow.show();
-}
 // The settings page's own title bar follows the window's maximised state as it changes. macOS, until
 // its goal, keeps the tag's path: no event, the page asks again after its own toggle (Chrome.tsx).
 if (process.platform !== "darwin") windowChromeEvents(settingsWindow, settingsView);
 
+if (MAC_TAG_PATH) overlay.show();
 hits.apply();
+if (process.env.PET_SETTINGS === "1") settingsWindow.show();
 
 // ---- tray ------------------------------------------------------------------------------
 

@@ -89,10 +89,12 @@ export type TabOptions<M extends MethodMap = MethodMap> = WebViewOptions<M> & {
 export type TabAttachHooks = {
   /** The tab's current logical host: file-drop demand comes from it and drops over the webview are delivered to it. */
   fileDropHost(): Window;
+  /** What `webview.window` names, read each time: the window the tab is in now. Without it, the window the webview was attached to. */
+  window?(): Window;
   /**
    * Replaces `window.show()` on the borrowed child window for `showOnReady` and the ready
    * watchdog. `drawn`, for the ready signal's reveal, calls its argument once the tab's page has
-   * drawn a frame since it was asked (D46); `fallbackMs` is the tab's `readyTimeoutMs`. The
+   * drawn a frame since it was asked (D48); `fallbackMs` is the tab's `readyTimeoutMs`. The
    * watchdog's reveal passes neither, and shows at once.
    */
   revealWindow?(drawn?: (done: () => void) => void, fallbackMs?: number): void;
@@ -137,10 +139,10 @@ export type TabAttachHooks = {
 export const tabAttachHooks: unique symbol = Symbol("sweetview.tabAttachHooks");
 
 /**
- * Asks a webview's page for the frame after next and calls `done` once it is drawn: two
- * animation frames, the second of which runs once the first has been composed. At once for a
- * webview with no RPC binding, and when the webview goes first. A callback, not a promise: a
- * blocking `run()` turns no promise continuation until it returns. Inside the package only.
+ * Asks a webview's page to say when a frame of it has been presented (`DRAWN_SCRIPT`) and calls
+ * `done` then. At once for a webview with no RPC binding, and when the webview goes first. A
+ * callback, not a promise: a blocking `run()` turns no promise continuation until it returns.
+ * Inside the package only.
  */
 // The page's answer once a frame of it has been presented: its first paint's entry, which the
 // engine records when the frame is presented; for a page that has painted before, two
@@ -158,7 +160,7 @@ export function afterNextDraw(raw: RawWebview, done: () => void): void {
 }
 
 /**
- * Sweetview's reveal of a window whose page has to draw first (D46): the window is shown cloaked
+ * Sweetview's reveal of a window whose page has to draw first (D48): the window is shown cloaked
  * (visible to its webviews, so they draw, and off the screen) and put on the screen once
  * `drawn` calls back: WebView2's render window is otherwise on the screen before its first frame,
  * which shows light. `fallbackMs` (the page's `readyTimeoutMs`) puts it on the screen if that
@@ -318,7 +320,7 @@ export function printsWorkerFailure(alreadyFailed: boolean, down: boolean): bool
 
 export class WebView<M extends MethodMap = MethodMap, E extends EventMap = EventMap> {
   readonly raw: RawWebview;
-  readonly window: Window;
+  readonly #window: () => Window;
   readonly #emit: (name: string, payload: unknown) => void;
   readonly #notify: (method: string, params: unknown) => void;
   readonly #onEvent: (fn: (event: AnyEvent<E>) => void) => () => void;
@@ -328,7 +330,7 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
 
   private constructor(parts: {
     raw: RawWebview;
-    window: Window;
+    window: () => Window;
     emit: (name: string, payload: unknown) => void;
     notify: (method: string, params: unknown) => void;
     onEvent: (fn: (event: AnyEvent<E>) => void) => () => void;
@@ -337,13 +339,18 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
     dispose: () => void;
   }) {
     this.raw = parts.raw;
-    this.window = parts.window;
+    this.#window = parts.window;
     this.#emit = parts.emit;
     this.#notify = parts.notify;
     this.#onEvent = parts.onEvent;
     this.#run = parts.run;
     this.#quit = parts.quit;
     this.#dispose = parts.dispose;
+  }
+
+  /** The window the webview is in; for a tab on Windows, the tabbed window the tab is in now (`tab.window`). */
+  get window(): Window {
+    return this.#window();
   }
 
   /** Mounts a webview inside an existing Layer 1 Window. */
@@ -484,7 +491,7 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
         }
       }
       // On Windows the webview was made with its window's colour as the browser's background
-      // (backgroundColor, or appearance's; a tab's, its tabbed window's), in the runtime (D46).
+      // (backgroundColor, or appearance's; a tab's, its tabbed window's), in the runtime (D48).
       if (options.allowExternalDrop !== undefined) {
         const error = engineHost.setAllowExternalDrop(options.allowExternalDrop);
         if (error !== undefined && error !== 0) throw new Error(`sweetview: webview_set_allow_external_drop failed (${error})`);
@@ -819,7 +826,7 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
         }
       };
       // `afterReady`: the ready signal's reveal, put on the screen once the page has drawn since
-      // (D46); the watchdog's shows at once.
+      // (D48); the watchdog's shows at once.
       const showWhenReady = (afterReady: boolean) => {
         if (!isLive() || !options.showOnReady) return;
         if (tabHooks?.revealWindow) tabHooks.revealWindow(afterReady ? requestDrawn : undefined, options.readyTimeoutMs);
@@ -953,7 +960,7 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
 
       const webview = new WebView<M, E>({
         raw,
-        window,
+        window: tabHooks?.window ?? (() => window),
         emit,
         notify(method, params) {
           if (worker && workerFailure !== undefined) console.error(`sweetview: ${method}: ${workerFailure}`);
@@ -983,7 +990,7 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
             running = false;
             try {
               // Off the screen before its webview goes, so the window is never seen with its
-              // client area empty (D46). It stays alive for code after run() and a second run(),
+              // client area empty (D48). It stays alive for code after run() and a second run(),
               // which shows it again; the end of the application destroys it. A window disposed
               // inside the loop was hidden by its dispose and is destroyed below.
               // macOS keeps the tag's order until its goal (D42).
@@ -1146,7 +1153,7 @@ export async function createApp<M extends MethodMap = MethodMap, E extends Event
         disposed = true;
         unsubAutoQuit?.();
         // Outside run(), the window's dispose hides it, then destroys the webview (its dispose
-        // hook), then the window (D46). Inside run(), the webview ends the loop, and run()
+        // hook), then the window (D48). Inside run(), the webview ends the loop, and run()
         // hides the window, destroys the webview and then disposes the window.
         if (macosKeepsTagPath()) {
           // The tag's order until the macOS goal (D42).

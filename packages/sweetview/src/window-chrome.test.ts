@@ -78,12 +78,13 @@ describe("window chrome", () => {
     expect(seen).toEqual([true, false]);
   });
 
-  test("window.systemMenu shows the window's system menu; a window without one is fine", () => {
+  // macOS keeps the tag's table, which has no window.systemMenu.
+  test.if(process.platform !== "darwin")("window.systemMenu shows the window's system menu; a window without showSystemMenu gets no such method", () => {
     const { window, calls } = fakeWindow();
-    windowChromeMethods(window)["window.systemMenu"]();
+    windowChromeMethods(window)["window.systemMenu"]!();
     expect(calls).toEqual(["systemMenu"]);
     const { showSystemMenu: _, ...withoutMenu } = window;
-    expect(() => windowChromeMethods(withoutMenu)["window.systemMenu"]()).not.toThrow();
+    expect(Object.hasOwn(windowChromeMethods(withoutMenu), "window.systemMenu")).toBe(false);
     const { sent, transport } = fakeTransport();
     windowChromeControls(transport).showSystemMenu();
     expect(sent).toEqual([["window.systemMenu", null]]);

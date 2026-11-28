@@ -16,7 +16,7 @@ mod imp {
   /// of the `windows` crate that reads the same setting as `GetDoubleClickTime`
   /// (the test below compares the two).
   pub fn double_click_time_ms() -> u32 {
-    // The factory the `windows` crate caches for `UISettings` must not outlive its DLL (D46).
+    // The factory the `windows` crate caches for `UISettings` must not outlive its DLL (D48).
     sweetview_platform_loop::hold_com_for_the_process();
     let ms = UISettings::new().and_then(|settings| settings.DoubleClickTime()).unwrap_or(0);
     if ms == 0 {

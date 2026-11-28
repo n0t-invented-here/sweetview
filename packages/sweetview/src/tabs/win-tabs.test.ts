@@ -23,18 +23,7 @@ import { fileURLToPath } from "node:url";
 type Check = { ok: boolean; detail?: unknown } | { skipped: string };
 
 const CHECKS = [
-  "backdrop: the strip and the page areas in their own colours (light)",
-  "backdrop: the strip and the page areas in their own colours (dark)",
-  "a frame given bounds takes them as its outer rectangle",
-  'a "system" frame starts in the system\'s theme (AppsUseLightTheme)',
-  "a frame made with no bounds is centred on the primary work area",
-  "before its first tab the frame shows the window's title",
-  "frame styles",
   "system menu",
-  "frame metrics: a 1040 x 720 page plus the strip, the caption removed, the system border kept",
-  "resize edges: left, right, bottom and the bottom corners",
-  "default minimum size: a 560 x 420 page plus the strip and the frame",
-  "dark appearance: dark title bar",
   "strip and page rectangles: the strip across the top, one tab over the page area",
   "a new tab is selected",
   "moving the window tells the strip's and every tab's webview",

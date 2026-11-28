@@ -404,12 +404,12 @@ function step() {
   root.rotation.y = yaw;
 
   scene.render();
-  if (!firstFrameDrawn) {
-    // The first frame is drawn: on Windows the window shows now (showOnReady), never before. On
-    // macOS the page signals nothing, as at the tag pre-rust-rewrite (D42); there WebKit does not
-    // run this loop for a hidden window, so a window waiting for it would never show.
-    firstFrameDrawn = true;
-    if (!/Mac/.test(navigator.platform)) void signalReady().catch(() => {});
+  if (!drawn && container !== undefined) {
+    // The pet is on the canvas (its model loaded and this frame drew it): the window made with
+    // showOnReady appears now. A model that fails to load never gets here, so the watchdog shows
+    // the start-up error page instead of an empty window.
+    drawn = true;
+    if (!macTagPath) void signalReady();
   }
 
   if (now - lastHitAt >= HIT_INTERVAL_MS) {
@@ -435,7 +435,9 @@ function step() {
 
 // ---- start ----------------------------------------------------------------
 
-let firstFrameDrawn = false;
+// macOS (WKWebView) keeps the start it had at the tag pre-rust-rewrite until the macOS goal (D42).
+const macTagPath = /Macintosh|Mac OS X/.test(navigator.userAgent);
+let drawn = false;
 
 Promise.all([bridge.rpc("screen.area"), bridge.rpc("pet.current"), bridge.rpc("settings.get")])
   .then(([screen, pet, saved]) => {

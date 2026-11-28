@@ -105,7 +105,7 @@ struct Live {
   webview: WebView,
   window: HostWindow,
   /// The backdrop the container window `wry` made for the webview paints until WebView2 draws
-  /// over it; dropped before the webview. `None` with no backdrop (D46).
+  /// over it; dropped before the webview. `None` with no backdrop (D48).
   container_backdrop: Option<ContainerBackdrop>,
 }
 
@@ -118,7 +118,7 @@ struct ContainerBackdrop;
 /// Makes the container window `wry` made for `webview` paint `colour` where WebView2 has not
 /// drawn yet. `wry`'s container has no background brush, and a parent that clips its children
 /// (a tab frame) does not paint under it, so until WebView2 presents its first frame there that
-/// part of the window is unpainted, and shows white (measured on a tab's first reveal, D46).
+/// part of the window is unpainted, and shows white (measured on a tab's first reveal, D48).
 #[cfg(windows)]
 fn paint_container(webview: &WebView, (red, green, blue): (u8, u8, u8)) -> Option<ContainerBackdrop> {
   use wry::WebViewExtWindows;
@@ -147,7 +147,7 @@ thread_local! {
 }
 
 /// Whether a webview made in the window `handle` was destroyed and its drop still waits for a
-/// later turn (a webview callback was on the stack): the window must outlive it (D46).
+/// later turn (a webview callback was on the stack): the window must outlive it (D48).
 pub(crate) fn drop_waits_in(handle: isize) -> bool {
   UNDROPPED
     .try_with(|all| {
@@ -792,14 +792,14 @@ impl Inner {
       Some(live) => {
         let Live { extras, webview, window, container_backdrop } = live;
         // A standalone webview's own window leaves the screen first, so it is never seen with
-        // its page gone, on every path that ends it (D46, R1 of its first review).
+        // its page gone, on every path that ends it (D48, R1 of its first review).
         if let HostWindow::Own { window, .. } = &window {
           window.set_visible(false);
         }
         drop(container_backdrop);
         drop(extras);
         match window {
-          // `wry` leaves the container of a webview that fills its window; it goes now (D46).
+          // `wry` leaves the container of a webview that fills its window; it goes now (D48).
           HostWindow::Filled(_) => sweetview_platform_webview::drop_filling(webview),
           _ => drop(webview),
         }
@@ -849,12 +849,12 @@ thread_local! {
     const { RefCell::new(None) };
 }
 
-/// Lets go of the process's WebView2 environment, for `Runtime::shutdown_for_tests`: a test's UI
-/// thread leaves its COM apartment when its runtime goes, and a COM object kept past that would be
-/// released by the thread's local-storage destructors, outside any apartment (a fault,
-/// `0xc000041d`, at the end of every test that made a webview).
-#[cfg(windows)]
-pub(crate) fn forget_environment() {
+/// Lets go of this thread's WebView2 environment. Tests only, from
+/// `Runtime::shutdown_for_tests`, which leaves the thread's COM apartment: the
+/// environment is a COM object of that apartment and must be released while it
+/// is still entered, not by the thread-local's destructor when the thread ends.
+pub(crate) fn release_environment_for_tests() {
+  #[cfg(windows)]
   let _ = ENVIRONMENT.try_with(|cell| cell.borrow_mut().take());
 }
 
@@ -948,7 +948,7 @@ mod tests {
     seen.get()
   }
 
-  /// R1 of the first review of D46: a standalone webview's window leaves the screen before the
+  /// R1 of the first review of D48: a standalone webview's window leaves the screen before the
   /// webview goes, on every path that ends it: `destroy()`, a close of its own window (the title
   /// bar's, `WM_CLOSE`), and the release at the end of the application. `Some(false)`: the window
   /// was hidden, and still a window, when the webview went.
@@ -967,7 +967,7 @@ mod tests {
     });
   }
 
-  /// R3 of the first review of D46: a webview whose drop waits because a webview callback is on
+  /// R3 of the first review of D48: a webview whose drop waits because a webview callback is on
   /// the stack (a synchronous handler that disposes the application) still goes before the window
   /// it fills. Inside a callback scope the webview is destroyed, then its window disposed; once
   /// the scope is left and the loop turns, the order the two went in is read from their

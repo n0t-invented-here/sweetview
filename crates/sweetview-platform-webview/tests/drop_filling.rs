@@ -1,6 +1,6 @@
 //! A webview that fills a window that stays (`wry`'s `build`): `drop_filling` gives back the
 //! container window `wry` made for it, which a plain drop leaves in the window until the window
-//! itself is destroyed, one more empty child for every webview the window had (D46).
+//! itself is destroyed, one more empty child for every webview the window had (D48).
 #![cfg(windows)]
 
 mod common;

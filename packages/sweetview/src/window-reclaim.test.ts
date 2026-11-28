@@ -1,5 +1,5 @@
 // A window that closes is destroyed, and what it held is given back (decision
-// D46): test/fixtures/window-reclaim.ts, in a process of its own with a
+// D48): test/fixtures/window-reclaim.ts, in a process of its own with a
 // WebView2 profile of its own, keeps a main window open and opens and closes a
 // second window with a webview 30 times by each path (a close request with no
 // onClose listener, dispose(), createApp's app.dispose(), a tab opened and
@@ -86,7 +86,7 @@ const median = (values: number[]) => {
 /** Private bytes: the median of the last ten rounds less that of the first ten after the warm-up. */
 const climb = (values: number[]) => median(values.slice(-10)) - median(values.slice(0, 10));
 
-describe.if(process.platform === "win32")("a closed window gives back what it held (D46)", () => {
+describe.if(process.platform === "win32")("a closed window gives back what it held (D48)", () => {
   test(
     `${ROUNDS} rounds of each close path`,
     async () => {
@@ -108,7 +108,7 @@ describe.if(process.platform === "win32")("a closed window gives back what it he
         // A window and its webview's container, or a tab's container alone.
         expect(r.closedHandles).toBeGreaterThanOrEqual(r.path === "tab" ? ROUNDS : ROUNDS * 2);
         expect({ path: r.path, user: growth("user") <= 0, gdi: growth("gdi") <= 0 }).toEqual({ path: r.path, user: true, gdi: true });
-        // Each count read for real: a baseline above zero (R9 and S5 of D46's first review).
+        // Each count read for real: a baseline above zero (R9 and S5 of D48's first review).
         for (const key of ["user", "gdi", "handles", "privateBytes"] as const) expect({ path: r.path, key, positive: r.afterWarmUp[key] > 0 }).toEqual({ path: r.path, key, positive: true });
         // A leak that happens once and stays (100, 101, 101) shows in neither measurement's
         // smaller growth, so the run's whole growth is judged too, and what may remain is named:

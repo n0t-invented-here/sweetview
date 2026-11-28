@@ -13,10 +13,9 @@ root module requires the native webview library from the optional peer
 `@n1h/sweetview-webview-bun` ([the webview](webview-library.md)).
 `WebView.attach` and `createApp` support Windows and macOS.
 
-Most apps need one call and one loop: `createApp` with a `page`, a
-`worker` and `showOnReady: true` (the page calls `signalReady()` once it has
-rendered, and the window appears then, never before its page has painted),
-then `app.run()`, as in the
+Most apps need one call and one loop: `createApp` with a `page` and a
+`worker`, shown when the page signals ready (`showOnReady`, with `readyTimeoutMs`
+for a page that fails first), then `app.run()`, as in the
 [Quickstart](../README.md#quickstart) and the
 [single-window example](#single-window-with-createapp). Read
 [the event loop](#the-event-loop) first: which loop an app runs decides where
@@ -157,17 +156,17 @@ What is released, in this order:
 
 1. input hooks (`installMouseHook`, `installKeyboardHook`): a system-wide
    hook that no loop answers holds up the desktop's input;
-2. every window still on the screen is hidden, so none is seen with its
-   page gone while the rest goes;
-3. webviews: each one's worker is terminated and its drain released, then
+2. webviews: every window still on the screen is hidden first, so none is
+   seen with its page gone while the rest goes; then each one's worker is
+   terminated and its drain released, then
    the webview is destroyed, before the window it lives in;
-4. tray icons;
-5. notifiers: their click handlers end and their hidden notification icons
+3. tray icons;
+4. notifiers: their click handlers end and their hidden notification icons
    go, but the notifications they showed are left for the user to read (see
    below);
-6. single-instance locks, so the next launch becomes the primary;
-7. windows, a tabbed window with its tabs, a torn-off window too;
-8. on Windows, whatever the native layer still holds for the application
+5. single-instance locks, so the next launch becomes the primary;
+6. windows, a tabbed window with its tabs, a torn-off window too;
+7. on Windows, whatever the native layer still holds for the application
    (menus, timers and callbacks it made), in the same order. A step that
    fails is reported on stderr and the others still run.
 
@@ -228,7 +227,7 @@ view.run();
 | Member | Meaning |
 |---|---|
 | `raw` | The underlying `RawWebview` instance (the `Webview` class of `@n1h/sweetview-native`). |
-| `window` | The `Window` this webview was attached to. For a tab's webview this is a borrowed wrapper the tab driver made (on Windows, of the frame the tab opened in; on macOS, of the tab's own `NSWindow`), not the logical tabbed window; use `tab.window` for that. |
+| `window` | The `Window` this webview was attached to. For a tab's webview on Windows it is the tabbed window the tab is in now (`tab.window`), which changes on tear-off and merge; on macOS it is a borrowed wrapper of the tab's own `NSWindow`, not the logical tabbed window, which `tab.window` is. |
 | `emit(name, payload)` | Delivers an event to the page by evaluating `__sweetview_emit(name, payload)`. A `payload` of `undefined` is sent as `null`. Listeners registered with `onEvent` do not see it. |
 | `notify(method, ...params)` | Posts a fire-and-forget call (`seq: null`) to the worker, with `params` sent as `null` when omitted. `uiMethods` are not consulted. Without a worker, logs `sweetview: <method>: this window has no worker` with `console.error` and sends nothing. |
 | `onEvent(fn)` | Registers `fn` for every event the worker sends, called before the page receives it. Returns an unsubscribe function. |
@@ -240,7 +239,7 @@ view.run();
 
 `WebView.attach(window, options: WebViewOptions<M>): Promise<WebView<M, E>>`
 
-Mounts a webview inside an existing `Window` created by `new Window(...)` or `Window.fromHandle(...)`. Geometry (the window's own: its client area, in physical pixels on Windows and points on macOS), DPI scale, `resizable`, `transparent`, `backgroundColor`, and default `title` are read directly from `window`, so callers never duplicate window options. The window stays hidden until the page calls `signalReady()` with `showOnReady` set (or the ready watchdog fires); without `showOnReady`, call `win.show()` when it is to appear.
+Mounts a webview inside an existing `Window` created by `new Window(...)` or `Window.fromHandle(...)`. Geometry (the window's own: its client area, in physical pixels on Windows and points on macOS), DPI scale, `resizable`, `transparent`, `backgroundColor`, and default `title` are read directly from `window`, so callers never duplicate window options. The window's visibility is left as it is: a hidden window stays hidden until the page calls `signalReady()` with `showOnReady` set, or, when `readyTimeoutMs` is given, until the ready watchdog fires (without `readyTimeoutMs` there is no watchdog); without `showOnReady`, call `win.show()` when it is to appear. A window already shown stays shown.
 
 What `WebView.attach` does, in order:
 
@@ -353,7 +352,7 @@ trusted ([the RPC trust boundary](#the-rpc-trust-boundary)).
 | `debug` | `boolean` | `false` | Enables devtools and the context menu. |
 | `uiMethods` | `UiMethods<M>` | `{}` | Synchronous handlers answered on the UI thread before consulting the worker. |
 | `deferredUiMethods` | `UiMethods<M>` | `{}` | Synchronous handlers invoked on a later native UI tick. |
-| `showOnReady` | `boolean` | `false` | Reveals the window when the page signals readiness or the watchdog fires. On Windows the ready signal's reveal shows the window off the screen (DWM's cloak) and puts it on the screen once the page has drawn since (two animation frames the host asks the page for), so the browser's own surface is never seen before its first frame; with `readyTimeoutMs` set, the window is put on the screen after that long if the page never draws. The watchdog's reveal shows it at once. On macOS it is shown on the signal. |
+| `showOnReady` | `boolean` | `false` | Reveals the window when the page signals readiness, or when the watchdog fires, which it does only with `readyTimeoutMs`. On Windows the ready signal's reveal shows the window off the screen (DWM's cloak) and puts it on the screen once a frame of the page has been presented (its first paint, which the browser records when that frame is presented; for a page that has painted before, two animation frames), so the browser's own surface is never seen before its first frame; with `readyTimeoutMs` set, the window is put on the screen after that long if the page never draws. The watchdog's reveal shows it at once. On macOS it is shown on the signal. |
 | `readyTimeoutMs` | `number` | disabled | A positive value up to 2147483647 arms a native startup watchdog; zero, a negative value or `NaN` leaves it off. |
 | `onReady`, `onReadyTimeout` | `() => void` | none | UI-thread hooks for the first ready handshake and for watchdog expiry. |
 | `readyFallbackHtml` | `string` | built-in error page | HTML shown on watchdog expiry. |
@@ -377,7 +376,7 @@ Explorer or Finder. See [file drops](native/windows.md#file-drops).
 |---|---|
 | `after` (`TabOptions`) | Optional `TabHandle` to insert the new tab after. Honored only when that tab is open in the same tabbed window the new tab opens in; otherwise, as when omitted, the tab opens after the selected tab. |
 | `webview` | The `WebView` mounted inside this tab. |
-| `window` | The logical tabbed `Window` (`tabs: true`) currently hosting this tab. It changes when the tab is torn off into a new window or merged into another. Compare `tab.webview.window`, the borrowed window the webview was attached to when the tab opened, which never changes and is rarely what app code wants. |
+| `window` | The logical tabbed `Window` (`tabs: true`) currently hosting this tab. It changes when the tab is torn off into a new window or merged into another. On Windows `tab.webview.window` is the same window; on macOS it is the borrowed window of the tab itself, which never changes and is rarely what app code wants. |
 | `title` | Current tab title. |
 | `setTitle(title)` | Updates the tab's title in the tab strip / title bar. |
 | `select()` | Focuses and activates this tab (and its hosting window). |
@@ -385,7 +384,7 @@ Explorer or Finder. See [file drops](native/windows.md#file-drops).
 | `moveToNewWindow()` | Detaches the tab into its own tabbed window (keeping its webview state intact) and resolves with the new `Window`. |
 | `dispose()` | Tears down the tab and its webview. |
 
-Tabs are host-aware: `showOnReady` and the ready watchdog reveal the tab's
+Tabs are host-aware: `showOnReady` and the ready watchdog (armed only by `readyTimeoutMs`) reveal the tab's
 current logical host (its tabbed window) if that host is hidden, not the
 borrowed window the webview was attached to; on Windows the ready signal's
 reveal puts it on the screen once the tab's page and the tab strip have drawn,
@@ -402,8 +401,14 @@ only.
 import { createApp } from "@n1h/sweetview";
 import index from "./index.html";
 
-// The window appears once the page calls signalReady() after its first render.
-const app = await createApp({ title: "Notes", page: index, worker: "./worker.ts", contentSize: { width: 1100, height: 720 }, showOnReady: true, readyTimeoutMs: 15_000 });
+const app = await createApp({
+  title: "Notes",
+  page: index,
+  worker: "./worker.ts",
+  contentSize: { width: 1100, height: 720 },
+  showOnReady: true, // shown when the page calls signalReady()
+  readyTimeoutMs: 15_000, // or with a start-up error page, if the page fails first
+});
 app.run();
 ```
 
@@ -415,7 +420,7 @@ frame in physical pixels instead; give one or the other
 
 Layer 2 declarative helper that combines `new Window(options)` with `WebView.attach` (or native tab setup when `options.tabs` is `true`). `options` is both `WindowOptions` and `WebViewOptions`.
 
-- The window is created hidden. Set `showOnReady: true` and call `signalReady()` from `@n1h/sweetview/page` once the page has rendered: the window appears then, or when the ready watchdog fires. Call `app.window.show()` yourself only for a window that is to appear later (from a tray click, say). In a tabbed app, opening a tab does not show the window either, unless that tab sets `showOnReady`.
+- The window is created hidden. Set `showOnReady: true` and call `signalReady()` from `@n1h/sweetview/page` once the page has rendered: the window appears then. Set `readyTimeoutMs` (15 s, say) too, so a page that fails before it signals still gets its window, with a start-up error page. Call `app.window.show()` yourself only for a window that is to appear later (from a tray click, say). In a tabbed app, opening a tab does not show the window either, unless that tab sets `showOnReady`.
 - When the app quits on its own is under [Closing and quitting](#closing-and-quitting).
 - If `WebView.attach` throws during `createApp`, the newly created `Window` is disposed before rethrowing.
 - On a non-tabbed app, `app.openTab` throws `sweetview: openTab() requires createApp({ tabs: true })`.
@@ -424,7 +429,7 @@ Layer 2 declarative helper that combines `new Window(options)` with `WebView.att
 
 The two kinds of app end differently.
 
-- **Single-window app, blocking `app.run()`.** Without an `onClose` option, closing the window disposes it. Disposing the window `app.webview` is attached to always ends `app.run()`: the webview's own window-dispose hook stops the worker and calls `quit()`, even when another owned window (a settings window, say) is still visible. To keep the process running after the main window closes, pass `onClose` (for example `onClose: () => app.window.hide()`) and call `app.quit()` yourself when the app should end. With `onClose`, nothing quits automatically.
+- **Single-window app, blocking `app.run()`.** Without an `onClose` option, closing the window disposes it. Disposing the window `app.webview` is attached to always ends `app.run()`: the webview's own window-dispose hook stops the worker and calls `quit()`, even when another owned window (a settings window, say) is still visible. A tray application, which keeps running after its window closes, declares it: `closeToTrayOnLastWindow(app.window, onHide)` hides the window when it is the last one visible (when another window is visible it closes as usual, which ends `app.run()`), and the application calls `app.quit()` from its tray menu. Only a window that must never close, whatever else is on the screen, passes an `onClose` of its own that hides it; with `onClose`, nothing quits automatically.
 - **Tabbed app, `runEventLoop()`.** Without an `onClose` option, disposing `app.window` calls `quitEventLoop()` only when `Window.visibleWindows()` is empty afterwards, so a visible torn-off window or any other visible owned window keeps the loop running. With `onClose`, nothing quits automatically; the [multi-tab example](#multi-tab-app) quits from it.
 
 What a person sees at Quit (a tray's Quit calling `app.quit()`, say): the
@@ -653,7 +658,9 @@ app.run();
 
 For a page-controlled reveal, set `showOnReady: true` and call
 `await signalReady()` from [`@n1h/sweetview/page`](page.md#the-ready-handshake)
-after you install listeners and render the initial UI. The first signal from
+after you install listeners and render the initial UI; set `readyTimeoutMs`
+too, or a page that fails before it signals leaves its window hidden, since
+the watchdog is off without it. The first signal from
 a webview cancels that webview's watchdog, calls the native `signalReady()`,
 calls its `onReady`, then shows its window. Later signals resolve without
 doing anything again.
@@ -662,7 +669,7 @@ Two scopes are involved. The native `signalReady()` is process-wide: the
 first webview to become ready drains the buffered URL activations for the
 whole app ([activation](native/activation-and-single-instance.md#onopenurl-and-startup-buffering)),
 and later webviews find it already done. `onReady`, `onReadyTimeout`,
-`showOnReady` and the watchdog are per webview.
+`showOnReady` and the watchdog (`readyTimeoutMs`) are per webview.
 
 With a positive `readyTimeoutMs`, the watchdog uses a Win32 timer or a macOS
 `NSTimer`, so it also runs inside the blocking `app.run()`. If it fires
@@ -856,6 +863,8 @@ const app = await createApp<Methods, Events>({
   bounds: { x: 120, y: 120, width: 1000, height: 720 },
   page: index,
   worker: "./app-worker.ts",
+  showOnReady: true,
+  readyTimeoutMs: 15_000,
   uiMethods: { "window.size": () => 800 },
   showOnReady: true, // the page calls signalReady() once it has rendered
   readyTimeoutMs: 15_000,
@@ -863,7 +872,7 @@ const app = await createApp<Methods, Events>({
 
 app.onEvent((event) => console.log(event.name, event.payload.count));
 app.notify("notes.list");
-app.run();
+app.run(); // the window appears when the page calls signalReady()
 ```
 
 ### Multi-tab app

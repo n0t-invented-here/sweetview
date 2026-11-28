@@ -294,6 +294,17 @@ describe("docs/upgrading.md", () => {
     "`FrameWindow` and `FrameCallbacks` members that changed": "win32/tab-window",
     "`@n1h/sweetview-native/win32/window`": "win32/window",
     "`@n1h/sweetview-native/win32/menu`": "win32/menu",
+    "`@n1h/sweetview-native/darwin/objc`": "darwin/objc",
+    "`@n1h/sweetview-native/darwin/screen`": "darwin/screen",
+    "`@n1h/sweetview-native/darwin/tabs`": "darwin/tabs",
+    "`@n1h/sweetview-native/darwin/window`": "darwin/window",
+  };
+  /** The macOS rows with no public call: Sweetview's Objective-C runtime calls, its AppKit coordinate helpers and the tabs library's AppKit tab groups. */
+  const DARWIN_NO_PUBLIC: Record<string, string[]> = {
+    objc: ["ID", "Id", "NIL", "TargetMethod", "alloc", "allocRaw", "asId", "class_addMethod", "cls", "cstr", "dataSymbolAddress", "defineYesClass", "invokeBlock", "jsString", "makeBlock", "makeTarget", "nsString", "objc_allocateClassPair", "objc_getClass", "objc_registerClassPair", "release", "retain", "retainCallback", "sel", "send", "sendBool", "sendBytesLen", "sendCStr", "sendF64", "sendF64PtrSelPtrBool", "sendF64Void", "sendInt", "sendIntArg", "sendIntRetBool", "sendPoint", "sendPtr", "sendPtrArg", "sendPtrIntVoid", "sendPtrPointPtrRetBool", "sendPtrPtr", "sendPtrPtrPtr", "sendPtrPtrPtrVoid", "sendPtrPtrRetBool", "sendPtrSelPtr", "sendPtrSelPtrPtrVoid", "sendPtrSelPtrVoid", "sendPtrSelU32U32Void", "sendRectBool", "sendRectUIntUIntBool", "sendRetBool", "sendRetF64", "sendSelPtrF64", "sendSize", "sendSuperPtr", "sendU32RetPtr", "sendUInt", "sendUIntArg", "sendUIntPtrPtrBool", "sendUIntPtrVoid", "sendUIntRetPtr", "sharedApp"],
+    screen: ["CocoaRect", "cursorPoint", "fromCocoa", "primaryHeight", "primaryScreen", "rectOf", "toCocoa"],
+    tabs: ["WindowTabs", "WindowTabsOptions", "createWindowTabs", "installTabMenus", "pooled"],
+    window: ["DarwinTabGroupController", "bindDarwinTabGroup", "darwinTabWindowClass", "getDarwinTabActiveHandle", "setDarwinTabCloseRequest", "stopDarwinWindowResize"],
   };
   /** The pane rows (rust-rewrite-api-review-fixes): a webview of the application's own at a rectangle, which 1.0 has no call for. */
   const PANE_ROWS = ["`createPane(…)`", "`adoptPane(…)`", "`placePane(…)`", "`showPane(…)`", "`hidePane(…)`", "`destroyPane(…)`"];
@@ -303,9 +314,10 @@ describe("docs/upgrading.md", () => {
     ...["CAPTION_WIDTH", "DRAG_ROOM", "NEW_TAB_WIDTH", "STRIP_HEIGHT", "StripEvents", "StripMethods", "StripPoint", "StripState", "StripTab", "TABS_LEFT", "TAB_MAX_WIDTH", "TAB_MIN_WIDTH", "dropIndex", "scrollToShow", "tabWidth", "tabsViewport"].map((n) => `\`@n1h/sweetview-native/win32/strip-shared\` | \`${n}\``),
     ...["FrameCallbacks", "FrameWindow", "getTabFrame"].map((n) => `\`@n1h/sweetview-native/win32/tab-window\` | \`${n}\``),
     ...["stripPane", "layout()", "stripRect()"].map((n) => `\`FrameWindow\` and \`FrameCallbacks\` members that changed | \`${n}\``),
-    ...["_debugTrackedCount", "asHwnd", "systemIsDark"].map((n) => `\`@n1h/sweetview-native/win32/window\` | \`${n}\``),
+    ...["_debugTrackedCount", "systemIsDark"].map((n) => `\`@n1h/sweetview-native/win32/window\` | \`${n}\``),
     ...["buildMenu", "destroyMenu"].map((n) => `\`@n1h/sweetview-native/win32/menu\` | \`${n}\``),
     ...PANE_ROWS.map((old) => `\`FrameWindow\` and \`FrameCallbacks\` members that changed | ${old}`),
+    ...Object.entries(DARWIN_NO_PUBLIC).flatMap(([module, names]) => names.map((n) => `\`@n1h/sweetview-native/darwin/${module}\` | \`${n}\``)),
   ];
   const noPublic = () => rows.filter((r) => r.write === NO_PUBLIC_CALL);
   /** The export a no-public-call row is about: the Old name, or for a member row the type it is a member of. */
@@ -324,8 +336,12 @@ describe("docs/upgrading.md", () => {
     const missingTypeCheck: string[] = [];
     for (const r of noPublic()) {
       const name = exportOf(r);
-      const source = (await import(`../../packages/sweetview-native/src/${internalSource[r.section]}`)) as Record<string, unknown>;
-      if (name in source) {
+      const file = internalSource[r.section]!;
+      // A macOS module loads macOS libraries when imported: off macOS its exports are read from its source.
+      const isValue = file.startsWith("darwin/")
+        ? new RegExp(`^export (?:async )?(?:const|let|function|class) ${name}\\b`, "m").test(readFileSync(join(root, "packages", "sweetview-native", "src", `${file}.ts`), "utf8"))
+        : name in ((await import(`../../packages/sweetview-native/src/${file}`)) as Record<string, unknown>);
+      if (isValue) {
         for (const [spec, mod] of modules) if (name in mod) exported.push(`${name} (${r.section}) from ${spec}`);
       } else {
         // A type: upgrade-types.ts must fail to import it from the two public entries an application would look in.

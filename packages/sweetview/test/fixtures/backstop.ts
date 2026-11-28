@@ -1,4 +1,4 @@
-// What lies behind the window quit-flash.ts shows, made known (decision D46): a frameless,
+// What lies behind the window quit-flash.ts shows, made known (decision D48): a frameless,
 // topmost window of a colour no window of the fixture paints (magenta), covering more than the
 // fixture's window, in a process of its own, so it stays while the fixture's process ends. The
 // fixture's window, topmost too and shown after it, is above it. A read of the screen that shows

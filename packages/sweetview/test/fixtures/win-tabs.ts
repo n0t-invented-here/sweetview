@@ -47,7 +47,6 @@ const user32 = dlopen("user32.dll", {
   GetDC: { args: [u64], returns: u64 },
   ReleaseDC: { args: [u64, u64], returns: i32 },
 }).symbols;
-const gdi32 = dlopen("gdi32.dll", { GetPixel: { args: [u64, i32, i32], returns: u32 } }).symbols;
 const kernel32 = dlopen("kernel32.dll", {
   GlobalAlloc: { args: [u32, u64], returns: u64 },
   GlobalLock: { args: [u64], returns: FFIType.ptr },
@@ -67,7 +66,6 @@ const WS_EX_TOOLWINDOW = 0x80n;
 const WS_EX_LAYERED = 0x80000n;
 const WS_EX_NOACTIVATE = 0x08000000n;
 const WM_GETMINMAXINFO = 0x0024;
-const WM_NCHITTEST = 0x0084;
 const WM_DROPFILES = 0x0233;
 const WM_DPICHANGED = 0x02e0;
 
@@ -135,7 +133,6 @@ function clientOrigin(hwnd: bigint) {
 }
 const style = (hwnd: bigint) => BigInt(user32.GetWindowLongPtrW(hwnd, -16));
 const exStyle = (hwnd: bigint) => BigInt(user32.GetWindowLongPtrW(hwnd, -20));
-const hitTest = (hwnd: bigint, x: number, y: number) => Number(user32.SendMessageW(hwnd, WM_NCHITTEST, 0n, BigInt(((y & 0xffff) << 16) | (x & 0xffff))));
 function minTrack(hwnd: bigint): [number, number] {
   const info = new Int32Array(10);
   user32.SendMessageW(hwnd, WM_GETMINMAXINFO, 0n, BigInt(ptr(info)));
@@ -153,13 +150,6 @@ function workArea(hwnd: bigint): Rect {
   return { x: info[5]!, y: info[6]!, width: info[7]! - info[5]!, height: info[8]! - info[6]! };
 }
 
-/** The work area of the primary monitor (the one at the origin), from the OS. */
-function primaryWorkArea(): Rect {
-  const info = new Int32Array(10);
-  info[0] = 40;
-  user32.GetMonitorInfoW(user32.MonitorFromPoint(0n, 1), ptr(info)); // MONITOR_DEFAULTTOPRIMARY
-  return { x: info[5]!, y: info[6]!, width: info[7]! - info[5]!, height: info[8]! - info[6]! };
-}
 /** The system's app theme from the registry, as Windows keeps it: dark when AppsUseLightTheme is 0 (light when absent). */
 function registryDark(): boolean {
   const run = Bun.spawnSync(["reg", "query", "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize", "/v", "AppsUseLightTheme"], { stdout: "pipe", stderr: "pipe" });
@@ -190,13 +180,6 @@ function webviewChildren(frame: bigint): { rect: Rect; visible: boolean }[] {
 function windowAt(x: number, y: number): bigint {
   const hit = user32.WindowFromPoint(BigInt.asUintN(32, BigInt(x)) | (BigInt.asUintN(32, BigInt(y)) << 32n));
   return hit === 0n ? 0n : user32.GetAncestor(hit, 2); // GA_ROOT
-}
-/** A pixel on the screen, as "#rrggbb". */
-function screenPixel(x: number, y: number): string {
-  const screen = user32.GetDC(0n);
-  const c = gdi32.GetPixel(screen, x, y);
-  user32.ReleaseDC(0n, screen);
-  return `#${[c & 0xff, (c >> 8) & 0xff, (c >> 16) & 0xff].map((v) => v.toString(16).padStart(2, "0")).join("")}`;
 }
 
 const html = (n: string) =>
@@ -295,95 +278,17 @@ const make = (options: ConstructorParameters<typeof Window>[0]) => {
 };
 
 try {
-  // ---- the backdrop: the strip's and the page's colours where no webview covers them -----------------
-  // Frames with no tab yet have no webview: what shows is what the frame paints. Read from the
-  // screen, only where the frame is the window on top (another session's window may cover it).
-  for (const appearance of ["light", "dark"] as const) {
-    const name = `backdrop: the strip and the page areas in their own colours (${appearance})`;
-    // Inside the primary screen's work area, whatever its size.
-    const work = Screen.primary().workArea;
-    const bare = make({ tabs: true, appearance, topmost: true, bounds: { x: work.x + 60, y: work.y + 60, width: Math.min(640, work.width - 120), height: Math.min(420, work.height - 120) } });
-    bare.show();
-    const bareHwnd = BigInt(bare.handle!);
-    const bareScale = user32.GetDpiForWindow(bareHwnd) / 96;
-    const o = clientOrigin(bareHwnd);
-    const c = clientRect(bareHwnd);
-    const stripAt = { x: o.x + 30, y: o.y + Math.round((STRIP_HEIGHT - 4) * bareScale) };
-    const pageAt = { x: o.x + 30, y: o.y + c.height - 10 };
-    const want = appearance === "light" ? { strip: "#e9eaee", page: "#f9f9fb" } : { strip: "#292a30", page: "#15161a" };
-    let seen = { strip: "", page: "" };
-    let ours = false;
-    await until(() => {
-      ours = windowAt(stripAt.x, stripAt.y) === bareHwnd && windowAt(pageAt.x, pageAt.y) === bareHwnd;
-      seen = { strip: screenPixel(stripAt.x, stripAt.y), page: screenPixel(pageAt.x, pageAt.y) };
-      return ours && seen.strip === want.strip && seen.page === want.page;
-    }, 2000);
-    if (!ours) skip(name, "another window covers the frame on the shared desktop");
-    else check(name, seen.strip === want.strip && seen.page === want.page, { seen, want, stripAt, pageAt });
-    bare.dispose();
-  }
-
-  // ---- where a frame goes; the dark state a "system" frame starts in ---------------------------------
-  {
-    const area = primaryWorkArea();
-    const given = { x: area.x + 50, y: area.y + 40, width: Math.min(820, area.width - 100), height: Math.min(600, area.height - 80) };
-    const placed = make({ tabs: true, bounds: given });
-    const at = windowRect(BigInt(placed.handle!));
-    check("a frame given bounds takes them as its outer rectangle", rectEq(at, given), { given, at });
-    placed.dispose();
-    // No strip yet, so nothing has reported a theme: the frame's state is what it read from the system.
-    const fresh = make({ tabs: true, appearance: "system" });
-    const freshHwnd = BigInt(fresh.handle!);
-    const want = registryDark();
-    const frameDark = getTabFrame(freshHwnd)!.isDark();
-    check("a \"system\" frame starts in the system's theme (AppsUseLightTheme)", frameDark === want && dwmDark(freshHwnd) === want, { registryDark: want, frameDark, dwmDark: dwmDark(freshHwnd) });
-    fresh.dispose();
-  }
+  // The frame before its first tab (its backdrop, bounds, theme, title, styles, border, resize
+  // edges, default minimum and dark title bar) is proven in Rust:
+  // crates/sweetview-runtime/src/window_os_tests.rs, "a tab frame ...".
 
   // ---- the frame, read back from the OS ----------------------------------------------
   const win = make({ tabs: true, appearance: "dark" });
   const hwnd = BigInt(win.handle!);
-  {
-    // Made with no bounds: centred on the primary monitor's work area. A frame taller than the
-    // work area starts at its top, so the strip is on the screen (a 1024 x 768 screen is one).
-    const r = windowRect(hwnd);
-    const area = primaryWorkArea();
-    const want = { x: area.x + Math.trunc((area.width - r.width) / 2), y: area.y + Math.max(0, Math.trunc((area.height - r.height) / 2)) };
-    check("a frame made with no bounds is centred on the primary work area", Math.abs(r.x - want.x) <= 1 && Math.abs(r.y - want.y) <= 1, { outer: r, area, want });
-  }
-  check("before its first tab the frame shows the window's title", getTitle(hwnd) === unique, getTitle(hwnd));
-  const s = style(hwnd);
-  check("frame styles", (s & (WS_CAPTION | WS_SYSMENU | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_CLIPCHILDREN)) === (WS_CAPTION | WS_SYSMENU | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_CLIPCHILDREN), `0x${s.toString(16)}`);
   check("system menu", user32.GetSystemMenu(hwnd, 0) !== 0n);
   const dpi = user32.GetDpiForWindow(hwnd);
   const scale = dpi / 96;
-  const outer = windowRect(hwnd);
   const client = clientRect(hwnd);
-  const at = clientOrigin(hwnd);
-  const edge = user32.GetSystemMetricsForDpi(32, dpi) + user32.GetSystemMetricsForDpi(92, dpi); // SM_CXSIZEFRAME + SM_CXPADDEDBORDER
-  check(
-    "frame metrics: a 1040 x 720 page plus the strip, the caption removed, the system border kept",
-    client.width === Math.round(1040 * scale) &&
-      client.height === Math.round((720 + STRIP_HEIGHT) * scale) &&
-      at.x - outer.x === edge &&
-      outer.x + outer.width - (at.x + client.width) === edge &&
-      outer.y + outer.height - (at.y + client.height) === edge &&
-      at.y - outer.y <= Math.round(scale),
-    { dpi, outer, client, origin: at, edge },
-  );
-  const mid = { x: outer.x + outer.width / 2, y: outer.y + outer.height / 2 };
-  const hits = [
-    hitTest(hwnd, outer.x + 2, Math.round(mid.y)),
-    hitTest(hwnd, outer.x + outer.width - 3, Math.round(mid.y)),
-    hitTest(hwnd, Math.round(mid.x), outer.y + outer.height - 3),
-    hitTest(hwnd, outer.x + 2, outer.y + outer.height - 3),
-    hitTest(hwnd, outer.x + outer.width - 3, outer.y + outer.height - 3),
-  ];
-  check("resize edges: left, right, bottom and the bottom corners", JSON.stringify(hits) === JSON.stringify([10, 11, 15, 16, 17]), hits);
-  const track = minTrack(hwnd);
-  const wantTrack = [Math.round(560 * scale) + (outer.width - client.width), Math.round((420 + STRIP_HEIGHT) * scale) + (outer.height - client.height)];
-  check("default minimum size: a 560 x 420 page plus the strip and the frame", Math.abs(track[0] - wantTrack[0]!) <= 1 && Math.abs(track[1] - wantTrack[1]!) <= 1, { track, wantTrack });
-  check("dark appearance: dark title bar", dwmDark(hwnd));
 
   // ---- open, select, close ----------------------------------------------------------------
   const selects: TabHandle[] = [];
@@ -660,7 +565,7 @@ try {
   await until(() => user32.IsWindow(BigInt(last.handle!)) === 0, 2000);
   check("last tab: with no listener the window closes with it", user32.IsWindow(BigInt(last.handle!)) === 0 && only.webview.raw.unsafeHandle === null);
 
-  // ---- forcing the last tab closed with no listener: the window goes from the screen first (D46, R2) -----
+  // ---- forcing the last tab closed with no listener: the window goes from the screen first (D48, R2) -----
   for (const how of ["tab.dispose()", "tab.webview.dispose()"] as const) {
     const forced = make({ tabs: true });
     const tab = await WebView.openTab(forced, page("forced"));

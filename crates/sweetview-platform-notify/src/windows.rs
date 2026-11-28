@@ -429,7 +429,7 @@ struct Toasts {
 impl Toasts {
   fn new(options: &NotifierOptions) -> Result<Self, NotifyError> {
     // `windows` caches the agile factories of the toast classes for the process; the notifier
-    // balances `RoInitialize` with `RoUninitialize`, so the process's hold keeps their DLLs (D46).
+    // balances `RoInitialize` with `RoUninitialize`, so the process's hold keeps their DLLs (D48).
     sweetview_platform_loop::hold_com_for_the_process();
     let ro = RoInit::new()?;
     let app_id = crate::toast_xml::app_id(options.app_id.as_deref());
@@ -1117,7 +1117,9 @@ mod tests {
     // A real IToastNotifier.Show under this app id, on a notifier of its own: a toast, not a fallback.
     {
       let real = Notifier::new(options.clone(), |_, _| {}).expect("notifier");
-      let Some(Shown::Toast(_)) = real.show(&note("really shown")) else { panic!("WinRT toasts are unavailable on this machine") };
+      // Title and body with every character XML gives a meaning: WinRT accepts the document they make.
+      let marked = Notification { title: "<Title> & \"quotes\"".into(), body: "It’s <body> & 'more'".into(), ..note("really shown") };
+      let Some(Shown::Toast(_)) = real.show(&marked) else { panic!("WinRT toasts are unavailable on this machine, or refused the document") };
       assert!(real.toasts_available());
       assert_eq!(real.balloons_shown(), 0, "the real toast did not fall back");
     }
@@ -1189,7 +1191,7 @@ mod tests {
     let options = NotifierOptions { app_id: Some(app_id.clone()), app_name: Some("Sweetview fallback test".into()), icon_ico: None };
     let notifier = Notifier::new(options, on_click).expect("notifier");
     assert!(matches!(notifier.show(&note("winrt")), Some(Shown::Toast(_))));
-    assert!(display_name_of(&app_id).is_some(), "the explicit app id was registered");
+    assert_eq!(display_name_of(&app_id).as_deref(), Some("Sweetview fallback test"), "the explicit app id was registered under the app's name");
     notifier.force_path(ForcedPath::ToastShowFails);
     let fallback = Notification { data_json: Some("[1]".into()), ..note("fallback") };
     let Some(Shown::Balloon(uid)) = notifier.show(&fallback) else { panic!("the balloon did not take over") };
@@ -1240,10 +1242,19 @@ mod tests {
     .expect("notifier");
     notifier.force_path(ForcedPath::BalloonOnly);
     let Some(Shown::Balloon(uid)) = notifier.show(&note("drop me")) else { panic!("balloon") };
+    let Some(Shown::Balloon(queued)) = notifier.show(&note("queued")) else { panic!("balloon") };
+    // Both clicks are posted before either is dispatched: the one queued behind the click that
+    // drops the notifier is never delivered.
     assert!(notifier.simulate_balloon_event(uid, BalloonEvent::Clicked));
+    assert!(notifier.simulate_balloon_event(queued, BalloonEvent::Clicked));
     *slot.borrow_mut() = Some(notifier);
     pump_until(|| calls.get() == 1);
-    assert_eq!(calls.get(), 1);
+    let settle = Instant::now() + Duration::from_millis(100);
+    while Instant::now() < settle {
+      pump();
+      std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(calls.get(), 1, "the queued click was not delivered");
     assert!(slot.borrow().is_none());
   }
 

@@ -102,7 +102,7 @@ impl Window {
     self.inner.hide();
   }
 
-  /// Shows a hidden window off the screen until `uncloak` (D46); true when it is cloaked.
+  /// Shows a hidden window off the screen until `uncloak` (D48); true when it is cloaked.
   pub fn show_cloaked(&self) -> napi::Result<bool> {
     self.inner.show_cloaked().or_throw()
   }
@@ -193,11 +193,11 @@ impl Window {
     self.inner.answer_hit(seq, solid);
   }
 
-  pub fn on_resize(&self, env: Env, function: Option<RectFn<'_>>) -> napi::Result<()> {
-    self.inner.on_resize(rect_listener(env, function, "an onResize handler")?).or_throw()
+  pub fn on_resize(&self, env: Env, key: u32, function: Option<RectFn<'_>>) -> napi::Result<()> {
+    self.inner.on_resize(key.into(), rect_listener(env, function, "an onResize handler")?).or_throw()
   }
 
-  pub fn on_maximize_change(&self, env: Env, function: Option<Function<'_, bool, ()>>) -> napi::Result<()> {
+  pub fn on_maximize_change(&self, env: Env, key: u32, function: Option<Function<'_, bool, ()>>) -> napi::Result<()> {
     let listener: Option<rt::BoolListener> = match function {
       Some(function) => {
         let callback = JsCallback::new(env, &function, "an onMaximizeChange handler")?;
@@ -207,11 +207,11 @@ impl Window {
       }
       None => None,
     };
-    self.inner.on_maximize_change(listener).or_throw()
+    self.inner.on_maximize_change(key.into(), listener).or_throw()
   }
 
-  pub fn on_move(&self, env: Env, function: Option<RectFn<'_>>) -> napi::Result<()> {
-    self.inner.on_move(rect_listener(env, function, "an onMove handler")?).or_throw()
+  pub fn on_move(&self, env: Env, key: u32, function: Option<RectFn<'_>>) -> napi::Result<()> {
+    self.inner.on_move(key.into(), rect_listener(env, function, "an onMove handler")?).or_throw()
   }
 
   pub fn on_close_request(&self, env: Env, function: Option<Function<'_, (), ()>>) -> napi::Result<()> {

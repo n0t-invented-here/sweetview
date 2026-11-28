@@ -151,7 +151,8 @@ webview.setAsset(
       try { await bindAddsListener(); seen.bindAddsListener = "resolved"; } catch (e) { seen.bindAddsListener = "rejected: " + e; }
       try { await bindThenGetter(); seen.bindThenGetter = "resolved"; } catch (e) { seen.bindThenGetter = "rejected"; }
       try { await bindThenThrows(); seen.bindThenThrows = "resolved"; } catch (e) { seen.bindThenThrows = "rejected"; }
-      rawThrows();
+      // A raw binding that throws leaves the page's call unanswered (docs/native.md): no answer in 500 ms.
+      seen.rawThrows = await Promise.race([rawThrows().then(() => "resolved", () => "rejected"), new Promise((r) => setTimeout(() => r("unanswered"), 500))]);
       save();
       load();
       seen.throws = (await fetch("/throws")).status;

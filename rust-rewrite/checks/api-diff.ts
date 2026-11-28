@@ -29,7 +29,7 @@
 // form; the same name exported by another entry point. It prints what has no
 // counterpart, what changed line by line, and what is new. Judgement about
 // whether a guide row really provides the same capability is left to the
-// report (rust-rewrite/evidence/api-audit.md); this tool supplies the facts.
+// report (the public API audit, kept on the machine with the run output, outside git); this tool supplies the facts.
 //
 // Paths in the output are relative to each checkout's root.
 

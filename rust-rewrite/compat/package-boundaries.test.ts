@@ -11,10 +11,8 @@
 // entry that is gone.
 //
 // `./darwin/*` and the macOS files stay as they are until the macOS goal (D42): they are listed
-// with the entries and their importers. The page checks leave the macOS entries out on purpose:
-// macOS runs the path of tag `pre-rust-rewrite` until its goal, which rewrites the guide's Darwin
-// rows. Those rows are pinned by name and by a digest of each (darwin-rows.ts), so a new or changed
-// Darwin row is seen.
+// with the entries and their importers. The pages, the guide's rows included, name no internal
+// entry on either platform: a macOS row names the public call or says `no public call in 1.0`.
 //
 // `scan(root)` reads a tree; the tests run it on this repository, and on small trees of their own
 // that each hold one way an internal could leak, to prove the scan sees it.
@@ -23,9 +21,10 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
-import { createHash } from "node:crypto";
-import { DARWIN_ROWS } from "./darwin-rows";
-import { PUBLIC } from "./public-entries";
+import ts from "typescript";
+import { NOT_MODULES, PUBLIC } from "./public-entries";
+import { PUBLIC_SURFACE, PUBLIC_VALUES } from "./public-surface";
+import { entryFaults, exportEntries, publicEntries, surfaceOf, valueGaps } from "./public-surface-of";
 
 const root = join(import.meta.dir, "..", "..");
 const posix = (p: string) => p.split(sep).join("/");
@@ -82,7 +81,7 @@ const SWEETVIEW = new Set(Object.keys(PUBLIC));
  * that is not one of its public entry points (so a newly named internal entry is caught without
  * naming it here), a shorthand subpath with no package name (`./internal`, `/win32/window`,
  * `./win32/*`), or a package's source file that is not a public entry's file. The macOS
- * (`/darwin/`) entries are left to the macOS goal (D42).
+ * entries count as any other.
  */
 type MentionContext = { base: string; publicFiles: Set<string>; dirOf: Map<string, string> };
 /** Whether `file` (repository-relative) is a source file an application has no entry to: present, under a package's `src/`, not a test, and not the file of a public entry. */
@@ -96,7 +95,6 @@ const internalSource = (file: string, ctx: MentionContext) => /\/src\//.test(fil
  * - a shorthand subpath with no package name (`./internal`, `/win32/window`, `./win32/*`);
  * - a package's source file given to import or to run (`from "…/packages/<pkg>/src/…"`,
  *   `bun packages/<pkg>/src/…`) that is no public entry's file.
- * The macOS (`/darwin/`) entries are left to the macOS goal (D42).
  */
 function internalMentions(text: string, ctx: MentionContext): string[] {
   const found: string[] = [];
@@ -104,14 +102,14 @@ function internalMentions(text: string, ctx: MentionContext): string[] {
     const pkg = `@n1h/${m[1]}`;
     if (!SWEETVIEW.has(pkg)) continue; // not a package of this repository
     const sub = (m[2] ?? "").replace(/\.+$/, "");
-    if (sub.startsWith("/darwin/")) continue;
     if (/\.\w+$/.test(sub)) {
       const dir = ctx.dirOf.get(pkg);
       if (dir !== undefined && internalSource(`${dir}${sub}`, ctx)) found.push(`${pkg}${sub}`);
     } else if (!PUBLIC[pkg]!.includes(`.${sub}`)) found.push(`${pkg}${sub}`);
   }
-  for (const m of text.matchAll(/(?:^|[\s`"'(\[])(\.?\/(?:internal|shell-icons|win32\/[\w*.-]+))(?![\w/-])/g)) found.push(m[1]!);
-  for (const m of text.matchAll(/(?:(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*)["'][^"']*?|\bbun\s+(?:run\s+)?)(packages\/[\w-]+\/src\/[\w/.-]*\w)/g)) {
+  for (const m of text.matchAll(/(?:^|[\s`"'(\[])(\.?\/(?:internal|shell-icons|win32\/[\w*.-]+|darwin\/[\w*.-]+))(?![\w/-])/g)) found.push(m[1]!);
+  // Named anywhere: in an import, a command, backticks or a link.
+  for (const m of text.matchAll(/(?<![\w-])(packages\/[\w-]+\/src\/[\w/.-]*\w)/g)) {
     if (internalSource(m[1]!, ctx)) found.push(m[1]!);
   }
   return found;
@@ -137,6 +135,9 @@ function cellsOf(line: string): string[] {
   return cells;
 }
 
+/** A guide section named by an internal entry of the native package (its Old side). */
+const INTERNAL_SECTION = /^`@n1h\/sweetview-native\/(?:internal|shell-icons|win32\/|darwin\/)/;
+
 function walk(dir: string, keep: (name: string) => boolean, out: string[] = []): string[] {
   if (!existsSync(dir)) return out;
   for (const e of readdirSync(dir, { withFileTypes: true })) {
@@ -149,7 +150,6 @@ function walk(dir: string, keep: (name: string) => boolean, out: string[] = []):
 }
 
 const SPEC = /(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*|^\s*import\s+)["']([^"']+)["']/gm;
-const REEXPORT = /\bexport\s+(?:type\s+)?(?:\*(?:\s+as\s+[\w$]+)?|\{[^}]*\})\s*from\s*["']([^"']+)["']/g;
 const code = (n: string) => /\.(m?[jt]sx?)$/.test(n) && !n.endsWith(".d.ts");
 
 type Pkg = { name: string; dir: string; exports: Map<string, string | undefined> };
@@ -161,9 +161,7 @@ type Scan = {
   unexported: string[];
   reached: string[];
   pendingImports: Record<string, string[]>;
-  reexports: string[];
   demoReach: Record<string, string[]>;
-  darwinRows: Record<string, string>;
   guideRows: string[];
   guideProse: string[];
   pageLines: string[];
@@ -179,7 +177,7 @@ function scan(base: string): Scan {
       return { name: pkg.name, dir, exports: new Map(Object.entries(pkg.exports).map(([k, t]) => [k, typeof target(t) === "string" ? resolve(dir, target(t) as string) : undefined])) };
     });
   const byName = new Map(packages.map((p) => [p.name, p]));
-  const out: Scan = { unlistedEntries: [], staleEntries: [], unexported: [], reached: [], pendingImports: {}, reexports: [], demoReach: {}, darwinRows: {}, guideRows: [], guideProse: [], pageLines: [] };
+  const out: Scan = { unlistedEntries: [], staleEntries: [], unexported: [], reached: [], pendingImports: {}, demoReach: {}, guideRows: [], guideProse: [], pageLines: [] };
 
   // Entries: the documented ones and the pending internal ones, nothing else.
   for (const p of packages) {
@@ -189,10 +187,15 @@ function scan(base: string): Scan {
   }
 
   // Imports across package boundaries.
+  // The package (or demo) a file belongs to: the nearest folder with a package.json, never above
+  // packages/<name> or demos/<name>; a file directly under packages/ or demos/ belongs to no package
+  // but its own folder, so every relative reach out of it is seen.
   const ownPackage = (file: string) => {
+    const [top, name] = posix(relative(base, file)).split("/");
+    const limit = name !== undefined && (top === "packages" || top === "demos") && posix(relative(base, dirname(file))) !== top ? join(base, top, name) : dirname(file);
     let d = dirname(file);
-    while (!existsSync(join(d, "package.json")) && d !== dirname(d)) d = dirname(d);
-    return d;
+    while (!existsSync(join(d, "package.json")) && d !== limit && d.startsWith(limit)) d = dirname(d);
+    return d.startsWith(limit) ? d : limit;
   };
   const isTest = (rel: string) => /\.test(\.worker)?\.tsx?$/.test(rel) || /^packages\/[^/]+\/test\//.test(rel);
   const pending = new Set(Object.entries(PENDING_ENTRIES).flatMap(([name, entries]) => Object.keys(entries).map((key) => `${name}${key.slice(1)}`)));
@@ -211,37 +214,6 @@ function scan(base: string): Scan {
       if (!p) continue; // not a package of this repository
       if (!p.exports.has(`.${s[2] ?? ""}`)) out.unexported.push(`${rel}: ${spec}`);
       if (pending.has(spec)) (out.pendingImports[rel] ??= []).includes(spec) || out.pendingImports[rel]!.push(spec);
-    }
-  }
-
-  // Re-exports: no public entry module reaches an internal entry's module through `export … from`.
-  const resolveFrom = (from: string, spec: string): string | undefined => {
-    if (spec.startsWith(".")) {
-      const t = resolve(dirname(from), spec);
-      return [t, `${t}.ts`, `${t}.tsx`, join(t, "index.ts")].find((f) => existsSync(f) && statSync(f).isFile());
-    }
-    const s = /^(@n1h\/[^/]+)(\/.+)?$/.exec(spec);
-    return s ? byName.get(s[1]!)?.exports.get(`.${s[2] ?? ""}`) : undefined;
-  };
-  const internalFiles = new Map<string, string>();
-  for (const p of packages) for (const [key, file] of p.exports) if (file && !(PUBLIC[p.name] ?? []).includes(key)) internalFiles.set(file, `${p.name}${key.slice(1)}`);
-  for (const p of packages) {
-    for (const key of PUBLIC[p.name] ?? []) {
-      const entry = p.exports.get(key);
-      if (!entry || !existsSync(entry)) continue;
-      const seen = new Set<string>();
-      const visit = (file: string, chain: string[]) => {
-        if (seen.has(file)) return;
-        seen.add(file);
-        for (const m of readFileSync(file, "utf8").matchAll(REEXPORT)) {
-          const next = resolveFrom(file, m[1]!);
-          if (!next || !existsSync(next)) continue;
-          const via = [...chain, posix(relative(base, next))];
-          if (internalFiles.has(next)) out.reexports.push(`${p.name}${key.slice(1)} re-exports ${internalFiles.get(next)}: ${via.join(" -> ")}`);
-          else visit(next, via);
-        }
-      };
-      visit(entry, [posix(relative(base, entry))]);
     }
   }
 
@@ -265,16 +237,13 @@ function scan(base: string): Scan {
         const cells = cellsOf(line.trim());
         if (cells.every((c) => /^:?-+:?$/.test(c)) || cells[0] === "Old") continue;
         const rest = cells.slice(1).join(" | ");
-        // A macOS row (D42): pinned, not checked.
-        if (section.includes("/darwin/") || rest.includes("/darwin/")) {
-          out.darwinRows[`${section} | ${cells[0]}`] = createHash("sha256").update(line).digest("hex").slice(0, 12);
-          continue;
-        }
         const named = internalMentions(rest, ctx);
-        if (named.length > 0 || (/^`@n1h\/sweetview-native\/(internal|win32\/)/.test(section) && /\bof this subpath\b/.test(rest))) out.guideRows.push(`${section} | ${cells[0]}`);
+        if (named.length > 0 || (INTERNAL_SECTION.test(section) && /\bof this subpath\b/.test(rest))) out.guideRows.push(`${section} | ${cells[0]}`);
         continue;
       }
       for (const m of internalMentions(line, ctx)) out.guideProse.push(`${line.trim()}: ${m}`);
+      // Under an internal entry's heading, "of this subpath" names that entry.
+      if (INTERNAL_SECTION.test(section) && /\bof this subpath\b/.test(line)) out.guideProse.push(`${line.trim()}: of this subpath (${section})`);
     }
   }
 
@@ -312,18 +281,28 @@ const sorted = (r: Record<string, string[]>) =>
   );
 
 /** A tree of its own under the system temp directory, `files` by path; removed after `run`. */
-function withTree(files: Record<string, string | object>, run: (dir: string) => void): void {
+function withTree<T>(files: Record<string, string | object>, run: (dir: string) => T): T {
   const dir = mkdtempSync(join(tmpdir(), "sweetview-boundaries-"));
+  const clean = () => rmSync(dir, { recursive: true, force: true });
+  let result: T;
   try {
     for (const [path, content] of Object.entries(files)) {
       mkdirSync(dirname(join(dir, path)), { recursive: true });
       writeFileSync(join(dir, path), typeof content === "string" ? content : JSON.stringify(content));
     }
-    run(dir);
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
+    result = run(dir);
+  } catch (e) {
+    clean();
+    throw e;
   }
+  if (result instanceof Promise) return result.finally(clean) as T;
+  clean();
+  return result;
 }
+
+/** An entry that is parsed and not loaded here: a script run by path, the types-only entry, or an entry for another OS. */
+const parseOnly = (spec: string): boolean =>
+  NOT_MODULES.has(spec) || (spec.includes("/darwin/") && process.platform !== "darwin") || (spec.includes("/win32/") && process.platform !== "win32");
 
 describe("internals are not public API (D45)", () => {
   const here = scan(root);
@@ -340,24 +319,94 @@ describe("internals are not public API (D45)", () => {
     expect(sorted(here.pendingImports)).toEqual(sorted(PENDING_IMPORTS));
   });
 
-  test("no public entry module re-exports from an internal entry's module, directly or through others", () => {
-    expect(here.reexports).toEqual([]);
+  test("the public surface of every public entry point is pinned by name: values and types, as the compiler sees them", () => {
+    expect(surfaceOf(root, publicEntries(root))).toEqual(PUBLIC_SURFACE);
   });
 
-  test("counter-example: a public index re-exporting from the internal entry, and a facade entry re-exporting that index, are both found", () => {
+  test("every exports target of every package exists and loads; a script, the types-only entry and another OS's entry exist and parse", async () => {
+    expect(await entryFaults(exportEntries(root, "all"), parseOnly)).toEqual([]);
+  });
+
+  test("every public entry module has exactly its pinned values at run time, and each is a name of the pinned surface", async () => {
+    const modules = publicEntries(root).filter((e) => !NOT_MODULES.has(e.spec));
+    expect(Object.keys(PUBLIC_VALUES).sort()).toEqual(modules.map((e) => e.spec).sort());
+    const unpinned = Object.entries(PUBLIC_VALUES).flatMap(([spec, names]) => names.filter((n) => !(PUBLIC_SURFACE[spec] ?? []).includes(n)).map((n) => `${spec}: ${n}`));
+    expect({ gaps: await valueGaps(modules, PUBLIC_VALUES), unpinned }).toEqual({ gaps: [], unpinned: [] });
+  });
+
+  test("counter-examples: a missing target, a script that does not parse, a module that does not load, and a pinned value turned type-only, are found", async () => {
+    const found = await withTree(
+      {
+        "packages/sweetview-build/package.json": { name: "@n1h/sweetview-build", exports: { ".": "./src/index.ts", "./gone": "./src/gone.ts", "./make-app": "./src/make-app.ts", "./broken": "./src/broken.ts" } },
+        "packages/sweetview-build/src/index.ts": 'export type { Tool } from "./tool";\n',
+        "packages/sweetview-build/src/tool.ts": "export class Tool {}\n",
+        "packages/sweetview-build/src/make-app.ts": "const = ;\n",
+        "packages/sweetview-build/src/broken.ts": 'throw new Error("broken at load");\n',
+      },
+      async (dir) => {
+        const all = exportEntries(dir, "all");
+        return {
+          faults: await entryFaults(all, (spec) => spec.endsWith("/make-app")),
+          gaps: await valueGaps(all.filter((e) => e.spec === "@n1h/sweetview-build"), { "@n1h/sweetview-build": ["Tool"] }),
+          // The pin by name alone still passes: the compiler sees `Tool` either way.
+          names: surfaceOf(dir, all.filter((e) => e.spec === "@n1h/sweetview-build"), { module: ts.ModuleKind.ESNext, moduleResolution: ts.ModuleResolutionKind.Bundler })["@n1h/sweetview-build"],
+        };
+      },
+    );
+    expect(found).toEqual({
+      faults: ["@n1h/sweetview-build/gone: its target does not exist", "@n1h/sweetview-build/make-app: its target does not parse", "@n1h/sweetview-build/broken: its target does not load (Error: broken at load)"],
+      gaps: ["@n1h/sweetview-build: Tool is pinned as a value and is not one at run time"],
+      names: ["Tool"],
+    });
+  });
+
+  test("counter-examples: an internal published under another name, in any of four spellings, changes the pinned surface", () => {
+    const internal = "export const wakeNative = () => {};\nexport const scheduleNativeTimeout = () => {};\n";
+    const forms: Record<string, string> = {
+      "a const alias": 'import { wakeNative } from "./internal";\nexport const wake = wakeNative;\nexport class Window {}\n',
+      "a destructured export": 'import * as inside from "./internal";\nexport const { wakeNative: wake } = inside;\nexport class Window {}\n',
+      "a default export with no semicolon": 'import * as inside from "./internal";\nexport class Window {}\nexport default inside\n',
+      "an export list with no from": 'import { wakeNative } from "./internal";\nexport class Window {}\nexport { wakeNative as wake };\n',
+    };
+    const options: ts.CompilerOptions = { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022, moduleResolution: ts.ModuleResolutionKind.Bundler, strict: true };
+    const seen: Record<string, string[]> = {};
+    for (const [form, index] of Object.entries(forms)) {
+      withTree(
+        {
+          "packages/sweetview-native/package.json": { name: "@n1h/sweetview-native", exports: { ".": "./src/index.ts", "./internal": "./src/internal.ts" } },
+          "packages/sweetview-native/src/index.ts": index,
+          "packages/sweetview-native/src/internal.ts": internal,
+        },
+        (dir) => {
+          seen[form] = surfaceOf(dir, publicEntries(dir), options)["@n1h/sweetview-native"]!;
+        },
+      );
+    }
+    // Pinned as `["Window"]`, each form adds a name the pin does not have.
+    expect(seen).toEqual({
+      "a const alias": ["Window", "wake"],
+      "a destructured export": ["Window", "wake"],
+      "a default export with no semicolon": ["Window", "default"],
+      "an export list with no from": ["Window", "wake"],
+    });
+  });
+
+  test("counter-examples: a file directly under demos/ or in a demo folder with no package.json reaching into a package's source, and a page naming an internal source file in backticks or a link, are found", () => {
     withTree(
       {
-        "packages/sweetview-native/package.json": { name: "@n1h/sweetview-native", exports: { ".": "./src/index.ts", "./internal": "./src/internal.ts" } },
-        "packages/sweetview-native/src/index.ts": 'export { wakeNative as wake } from "./internal";\n',
-        "packages/sweetview-native/src/internal.ts": "export const wakeNative = () => {};\n",
-        "packages/sweetview/package.json": { name: "@n1h/sweetview", exports: { "./native": "./src/native/index.ts" } },
-        "packages/sweetview/src/native/index.ts": 'export * from "@n1h/sweetview-native";\n',
+        "packages/sweetview-native/package.json": { name: "@n1h/sweetview-native", exports: { ".": "./src/index.ts" } },
+        "packages/sweetview-native/src/index.ts": "export const x = 1;\n",
+        "packages/sweetview-native/src/win32/menu.ts": "export const buildMenu = () => {};\n",
+        "demos/shared.ts": 'import { buildMenu } from "../packages/sweetview-native/src/win32/menu";\n',
+        "demos/loose/app.ts": 'import { buildMenu } from "../../packages/sweetview-native/src/win32/menu";\n',
+        "docs/page.md": "The menu handle is built in `packages/sweetview-native/src/win32/menu.ts`; see [the menu](../packages/sweetview-native/src/win32/menu.ts).\n",
       },
       (dir) => {
-        expect(scan(dir).reexports.sort()).toEqual([
-          "@n1h/sweetview-native re-exports @n1h/sweetview-native/internal: packages/sweetview-native/src/index.ts -> packages/sweetview-native/src/internal.ts",
-          "@n1h/sweetview/native re-exports @n1h/sweetview-native/internal: packages/sweetview/src/native/index.ts -> packages/sweetview-native/src/index.ts -> packages/sweetview-native/src/internal.ts",
-        ]);
+        const found = scan(dir);
+        expect({ reach: found.demoReach, pages: found.pageLines }).toEqual({
+          reach: { "demos/shared.ts": ["../packages/sweetview-native/src/win32/menu"], "demos/loose/app.ts": ["../../packages/sweetview-native/src/win32/menu"] },
+          pages: ["docs/page.md: packages/sweetview-native/src/win32/menu.ts", "docs/page.md: packages/sweetview-native/src/win32/menu.ts"],
+        });
       },
     );
   });
@@ -414,27 +463,25 @@ describe("internals are not public API (D45)", () => {
     );
   });
 
-  test("the guide's macOS rows, left out of these checks until the macOS goal (D42), are exactly the pinned ones, unchanged", () => {
-    expect(here.darwinRows).toEqual(DARWIN_ROWS);
-  });
-
-  test("counter-example: a new macOS row and a changed one are seen", () => {
-    const first = Object.keys(DARWIN_ROWS)[0]!;
-    const [section, old] = first.split(" | ") as [string, string];
-    const added = `${section} | \`addedRow\``;
+  test("counter-example: a macOS row that names a darwin entry, and a shorthand darwin spelling, are found as any other", () => {
     withTree(
       {
         "docs/upgrading.md": [
-          `### ${section}`,
+          "### `@n1h/sweetview-native/darwin/objc`",
           "| Old | Write now | Change |",
           "|---|---|---|",
-          `| ${old} | \`import { x } from "@n1h/sweetview-native/darwin/objc"\` | changed |`,
-          '| `addedRow` | `import { addedRow } from "@n1h/sweetview-native/darwin/objc"` | new |',
+          '| `sel` | `import { sel } from "@n1h/sweetview-native/darwin/objc"` | unchanged; macOS only |',
+          "Keep importing `./darwin/window` on macOS.",
+          "| `send` | `import { Window } from \"@n1h/sweetview-native\"`; `new Window(options)` | keep `send` of this subpath |",
+          "Keep using `sel` of this subpath.",
         ].join("\n"),
       },
       (dir) => {
-        const found = scan(dir).darwinRows;
-        expect({ added: added in found && !(added in DARWIN_ROWS), changed: found[first] !== undefined && found[first] !== DARWIN_ROWS[first] }).toEqual({ added: true, changed: true });
+        const found = scan(dir);
+        expect({ rows: found.guideRows, prose: found.guideProse }).toEqual({
+          rows: ["`@n1h/sweetview-native/darwin/objc` | `sel`", "`@n1h/sweetview-native/darwin/objc` | `send`"],
+          prose: ["Keep importing `./darwin/window` on macOS.: ./darwin/window", "Keep using `sel` of this subpath.: of this subpath (`@n1h/sweetview-native/darwin/objc`)"],
+        });
       },
     );
   });
