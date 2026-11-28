@@ -1,0 +1,1195 @@
+# api-diff summary
+before (tag): 610 symbols, 5622 facts, 37 entry points
+bindings 2.7.0: 22 symbols, 219 facts
+after (head): 710 symbols, 7290 facts, 48 entry points
+guide rows: 946 (Part A 240, Part B 668, Part C 38)
+tag -> head: same key 507, via guide row 90 (of which mapped to another kind 73), same name elsewhere 0, removed 0, guide target not an export 13; identical 472; member facts removed 38, changed 74, added 280
+bindings -> head: same key 0, via guide row 22 (of which mapped to another kind 0), same name elsewhere 0, removed 0, guide target not an export 0; identical 10; member facts removed 2, changed 21, added 55
+0.x (guide Part A): 240 rows, 0 whose first span imports a name the head does not export
+bindings names listed for 2.8.0 and not in the installed package: 10
+added at head: 171 symbols
+
+# tag pre-rust-rewrite -> head (guide Part B)
+
+CHANGED @n1h/sweetview::AppOptions  ->  @n1h/sweetview::AppOptions  [same entry and name]
+  ~ .bounds doc.notes
+      before: outer-frame
+      after:  physical-px,points,outer-frame   [guide rows naming `bounds`: 289,532,564,578,579,581]
+  + .contentSize = property?: { width: number; height: number; } | undefined
+  + .contentSize doc.notes = dip
+  + .backgroundColor = property?: string | undefined
+  + .backgroundColor doc.default = what the system or `appearance` gives
+  + .onMaximizeChange = property?: ((maximized: boolean) => void) | undefined
+CHANGED @n1h/sweetview::createApp  ->  @n1h/sweetview::createApp  [same entry and name]
+  ~ call[0].p0{options}.bounds doc.notes
+      before: outer-frame
+      after:  physical-px,points,outer-frame   [guide rows naming `bounds`: 289,532,564,578,579,581]
+  + call[0].p0{options}.contentSize = property?: { width: number; height: number; } | undefined
+  + call[0].p0{options}.contentSize doc.notes = dip
+  + call[0].p0{options}.backgroundColor = property?: string | undefined
+  + call[0].p0{options}.backgroundColor doc.default = what the system or `appearance` gives
+  + call[0].p0{options}.onMaximizeChange = property?: ((maximized: boolean) => void) | undefined
+CHANGED @n1h/sweetview::RawWebview  ->  @n1h/sweetview::RawWebview  [same entry and name]
+  ~ new[0]
+      before: (handle: Pointer) => Webview
+      after:  (handle: WebviewHandle) => Webview   [guide rows naming `new`: 276,280,325,409,416,417]
+  ~ new[0].p0
+      before: handle: Pointer
+      after:  handle: number   [guide rows naming `new`: 276,280,325,409,416,417]
+  ~ new[1]
+      before: (debug?: boolean, size?: Size, window?: Pointer | null) => Webview
+      after:  (debug?: boolean, size?: Size, window?: WindowHandle) => Webview   [guide rows naming `new`: 276,280,325,409,416,417]
+  ~ new[1].p2
+      before: window?: Pointer | null | undefined
+      after:  window?: WindowHandle | undefined   [guide rows naming `new`: 276,280,325,409,416,417]
+  ~ #unsafeHandle
+      before: get: Pointer | null
+      after:  get: number | null   [guide rows naming `unsafeHandle`: 280,501,701,1631,1632,1633]
+  ~ #unsafeWindowHandle
+      before: get: bigint | Pointer | null
+      after:  get: number | null   [guide rows naming `unsafeWindowHandle`: 1648]
+  ~ #bindRaw
+      before: method (name: string, callback: (seq: string, req: string, arg: Pointer | null) => void, arg?: Pointer | null) => void
+      after:  method <A = null>(name: string, callback: (seq: string, req: string, arg: A) => void, arg?: A) => void   [guide rows naming `bindRaw`: 1652]
+  ~ #bindRaw(0)
+      before: (name: string, callback: (seq: string, req: string, arg: Pointer | null) => void, arg?: Pointer | null) => void
+      after:  <A = null>(name: string, callback: (seq: string, req: string, arg: A) => void, arg?: A) => void   [guide rows naming `bindRaw`: 1652]
+  ~ #bindRaw(0).p1
+      before: callback: (seq: string, req: string, arg: Pointer | null) => void
+      after:  callback: (seq: string, req: string, arg: A) => void   [guide rows naming `bindRaw`: 1652]
+  ~ #bindRaw(0).p2
+      before: arg?: Pointer | null = null
+      after:  arg?: A = null as A   [guide rows naming `bindRaw`: 1652]
+  ~ #bind doc.notes
+      before: async
+      after:  worker,throws,async   [no guide row names it]
+  + #unsafeHandle doc.notes = worker
+  + #destroy doc.notes = throws
+  + #framesOrigin = get: string
+  + #framesOrigin doc.notes = seconds
+  + #setRequestHandler = method (handler: RequestHandler | null) => void
+  + #setRequestHandler doc.notes = worker,throws
+  + #setRequestHandler(0) = (handler: RequestHandler | null) => void
+  + #setRequestHandler(0).p0 = handler: RequestHandler | null
+  + #setRequestHandler(0).returns = void
+  + #completeRequest = method (id: bigint, response?: WebviewResponse) => void
+  + #completeRequest @throws = {WebviewError} Bad headers, a status outside 100-599, a body over 4 GiB - 1, or a webview already destroyed (`WEBVIEW_ERROR_INVALID_STATE`, code -3).
+  + #completeRequest(0) = (id: bigint, response?: WebviewResponse) => void
+  + #completeRequest(0).p0 = id: bigint
+  + #completeRequest(0).p1 = response?: WebviewResponse = {}
+  + #completeRequest(0).p1{response}.status = property?: number | undefined
+  + #completeRequest(0).p1{response}.status doc.default = 200
+  + #completeRequest(0).p1{response}.headers = property?: Record<string, string> | [name: string, value: string][] | undefined
+  + #completeRequest(0).p1{response}.headers doc.notes = throws
+  + #completeRequest(0).p1{response}.body = property?: string | ArrayBuffer | Uint8Array<ArrayBufferLike> | null | undefined
+  + #completeRequest(0).returns = void
+  + #beginResponse = method (id: bigint, head?: WebviewResponseHead) => void
+  + #beginResponse doc.notes = worker
+  + #beginResponse(0) = (id: bigint, head?: WebviewResponseHead) => void
+  + #beginResponse(0).p0 = id: bigint
+  + #beginResponse(0).p1 = head?: WebviewResponseHead = {}
+  + #beginResponse(0).p1{head}.status = property?: number | undefined
+  + #beginResponse(0).p1{head}.status doc.default = 200
+  + #beginResponse(0).p1{head}.headers = property?: Record<string, string> | [name: string, value: string][] | undefined
+  + #beginResponse(0).returns = void
+  + #writeResponseChunk = method (id: bigint, chunk: Uint8Array | ArrayBuffer | string) => void
+  + #writeResponseChunk(0) = (id: bigint, chunk: Uint8Array | ArrayBuffer | string) => void
+  + #writeResponseChunk(0).p0 = id: bigint
+  + #writeResponseChunk(0).p1 = chunk: string | ArrayBuffer | Uint8Array<ArrayBufferLike>
+  + #writeResponseChunk(0).returns = void
+  + #endResponse = method (id: bigint) => void
+  + #endResponse(0) = (id: bigint) => void
+  + #endResponse(0).p0 = id: bigint
+  + #endResponse(0).returns = void
+  + #setFileDropHandler = method (handler: FileDropHandler | null) => void
+  + #setFileDropHandler @throws = {WebviewError} The platform refused the change; the previous handler stays in place. A destroyed webview throws `WEBVIEW_ERROR_INVALID_STATE` (code -3).
+  + #setFileDropHandler(0) = (handler: FileDropHandler | null) => void
+  + #setFileDropHandler(0).p0 = handler: FileDropHandler | null
+  + #setFileDropHandler(0).returns = void
+  + #setAllowExternalDrop = method (allow: boolean) => void
+  + #setAllowExternalDrop @throws = {WebviewError} The platform refused the change (a WebView2 Runtime without `AllowExternalDrop` throws `WEBVIEW_ERROR_UNSPECIFIED`, code -1).
+  + #setAllowExternalDrop(0) = (allow: boolean) => void
+  + #setAllowExternalDrop(0).p0 = allow: boolean
+  + #setAllowExternalDrop(0).returns = void
+  + #setBackgroundColor @throws = {WebviewError} A channel that is not an integer from 0 to 255 (`WEBVIEW_ERROR_INVALID_ARGUMENT`, code -2), or the platform's own error.
+  + #bindRaw @throws = {WebviewError} A name already bound (`WEBVIEW_ERROR_DUPLICATE`, code 1); the existing binding is left untouched.
+  + #bindRaw(0).generics = A
+  + #unbind @throws = {WebviewError} A name that is not bound (`WEBVIEW_ERROR_NOT_FOUND`, code 2).
+CHANGED @n1h/sweetview::SizeHint  ->  @n1h/sweetview::SizeHint  [same entry and name]
+  ~ kind
+      before: const enum
+      after:  enum   [guide rows naming `kind`: 642,1528]
+CHANGED @n1h/sweetview::windowChromeMethods  ->  @n1h/sweetview::windowChromeMethods  [same entry and name]
+  ~ call[0]
+      before: (window: Pick<Window, "hide" | "isMaximized" | "startDrag" | "startResize" | "minimize" | "toggleMaximize">, options?: WindowChromeOptions) => WindowChromeMethodTable
+      after:  (window: Pick<Window, "hide" | "isMaximized" | "startDrag" | "startResize" | "minimize" | "toggleMaximize"> & Partial<Pick<Window, "showSystemMenu">>, options?: WindowChromeOptions) => WindowChromeMethodTable   [guide rows naming `call`: 520,1162,1231,1335,1349,1350]
+  ~ call[0].p0
+      before: window: Pick<Window, "hide" | "isMaximized" | "startDrag" | "startResize" | "minimize" | "toggleMaximize">
+      after:  window: Pick<Window, "hide" | "isMaximized" | "startDrag" | "startResize" | "minimize" | "toggleMaximize"> & Partial<Pick<Window, "showSystemMenu">>   [guide rows naming `call`: 520,1162,1231,1335,1349,1350]
+  + call[0].p0{window}.hide = property: () => void
+  + call[0].p0{window}.isMaximized = property: () => boolean
+  + call[0].p0{window}.startDrag = property: () => void
+  + call[0].p0{window}.startResize = property: (edge: ResizeEdge) => void
+  + call[0].p0{window}.minimize = property: () => void
+  + call[0].p0{window}.toggleMaximize = property: () => void
+  + call[0].p0{window}.showSystemMenu = property?: (() => void) | undefined
+CHANGED @n1h/sweetview::WindowChromeMethods  ->  @n1h/sweetview::WindowChromeMethods  [same entry and name]
+  ~ type
+      before: { "window.info": [void, WindowChromeInfo]; "window.drag": [void, void]; "window.resize": [ResizeEdge, void]; "window.minimize": [void, void]; "window.maximize": [void, void]; "window.close": [void, void]; }
+      after:  { "window.info": [void, WindowChromeInfo]; "window.drag": [void, void]; "window.resize": [ResizeEdge, void]; "window.minimize": [void, void]; "window.maximize": [void, void]; "window.systemMenu": [void, void]; "window.close": [void, void]; }   [guide rows naming `type`: 274,275,278,281,282,283]
+  + .window.systemMenu = property: [void, void]
+CHANGED @n1h/sweetview::WindowChromeMethodTable  ->  @n1h/sweetview::WindowChromeMethodTable  [same entry and name]
+  ~ type
+      before: { "window.info": (params: void) => WindowChromeInfo; "window.drag": (params: void) => void; "window.resize": (params: ResizeEdge) => void; "window.minimize": (params: void) => void; "window.maximize": (params: void) => void; "window.close": (params: void) => void; }
+      after:  { "window.info": (params: void) => WindowChromeInfo; "window.drag": (params: void) => void; "window.resize": (params: ResizeEdge) => void; "window.minimize": (params: void) => void; "window.maximize": (params: void) => void; "window.systemMenu": (params: void) => void; "window.close": (params: void) => void; }   [guide rows naming `type`: 274,275,278,281,282,283]
+  + .window.systemMenu = property: (params: void) => void
+CHANGED @n1h/sweetview/window-chrome::WindowChromeControls  ->  @n1h/sweetview/window-chrome::WindowChromeControls  [same entry and name]
+  ~ type
+      before: { info(): Promise<WindowChromeInfo>; onTitlePointerDown(event: { button: number; }): void; onHandlePointerDown(edge: ResizeEdge): (event: { button: number; }) => void; minimize(): void; toggleMaximize(): void; close(): void; }
+      after:  { info(): Promise<WindowChromeInfo>; onMaximizeChange(fn: (maximized: boolean) => void): () => void; onTitlePointerDown(event: { button: number; }): void; onHandlePointerDown(edge: ResizeEdge): (event: { button: number; }) => void; minimize(): void; toggleMaximize(): void; showSystemMenu(): void; close(): void; }   [guide rows naming `type`: 274,275,278,281,282,283]
+  + .onMaximizeChange = method (fn: (maximized: boolean) => void) => () => void
+  + .onMaximizeChange doc.notes = ui-thread
+  + .showSystemMenu = method () => void
+CHANGED @n1h/sweetview/window-chrome::windowChromeMethods  ->  @n1h/sweetview/window-chrome::windowChromeMethods  [same entry and name]
+  ~ call[0]
+      before: (window: Pick<Window, "hide" | "isMaximized" | "startDrag" | "startResize" | "minimize" | "toggleMaximize">, options?: WindowChromeOptions) => WindowChromeMethodTable
+      after:  (window: Pick<Window, "hide" | "isMaximized" | "startDrag" | "startResize" | "minimize" | "toggleMaximize"> & Partial<Pick<Window, "showSystemMenu">>, options?: WindowChromeOptions) => WindowChromeMethodTable   [guide rows naming `call`: 520,1162,1231,1335,1349,1350]
+  ~ call[0].p0
+      before: window: Pick<Window, "hide" | "isMaximized" | "startDrag" | "startResize" | "minimize" | "toggleMaximize">
+      after:  window: Pick<Window, "hide" | "isMaximized" | "startDrag" | "startResize" | "minimize" | "toggleMaximize"> & Partial<Pick<Window, "showSystemMenu">>   [guide rows naming `call`: 520,1162,1231,1335,1349,1350]
+  + call[0].p0{window}.hide = property: () => void
+  + call[0].p0{window}.isMaximized = property: () => boolean
+  + call[0].p0{window}.startDrag = property: () => void
+  + call[0].p0{window}.startResize = property: (edge: ResizeEdge) => void
+  + call[0].p0{window}.minimize = property: () => void
+  + call[0].p0{window}.toggleMaximize = property: () => void
+  + call[0].p0{window}.showSystemMenu = property?: (() => void) | undefined
+CHANGED @n1h/sweetview/window-chrome::WindowChromeMethods  ->  @n1h/sweetview/window-chrome::WindowChromeMethods  [same entry and name]
+  ~ type
+      before: { "window.info": [void, WindowChromeInfo]; "window.drag": [void, void]; "window.resize": [ResizeEdge, void]; "window.minimize": [void, void]; "window.maximize": [void, void]; "window.close": [void, void]; }
+      after:  { "window.info": [void, WindowChromeInfo]; "window.drag": [void, void]; "window.resize": [ResizeEdge, void]; "window.minimize": [void, void]; "window.maximize": [void, void]; "window.systemMenu": [void, void]; "window.close": [void, void]; }   [guide rows naming `type`: 274,275,278,281,282,283]
+  + .window.systemMenu = property: [void, void]
+CHANGED @n1h/sweetview/window-chrome::WindowChromeMethodTable  ->  @n1h/sweetview/window-chrome::WindowChromeMethodTable  [same entry and name]
+  ~ type
+      before: { "window.info": (params: void) => WindowChromeInfo; "window.drag": (params: void) => void; "window.resize": (params: ResizeEdge) => void; "window.minimize": (params: void) => void; "window.maximize": (params: void) => void; "window.close": (params: void) => void; }
+      after:  { "window.info": (params: void) => WindowChromeInfo; "window.drag": (params: void) => void; "window.resize": (params: ResizeEdge) => void; "window.minimize": (params: void) => void; "window.maximize": (params: void) => void; "window.systemMenu": (params: void) => void; "window.close": (params: void) => void; }   [guide rows naming `type`: 274,275,278,281,282,283]
+  + .window.systemMenu = property: (params: void) => void
+CHANGED @n1h/sweetview/ipc::SessionKind  ->  @n1h/sweetview/ipc::SessionKind  [same entry and name]
+  ~ type
+      before: "webview" | "web"
+      after:  "webview" | "web" | "electron" | "tauri"   [guide rows naming `type`: 274,275,278,281,282,283]
+  + literal "electron" = member
+  + literal "tauri" = member
+CHANGED @n1h/sweetview/ipc::TransportKind  ->  @n1h/sweetview/ipc::TransportKind  [same entry and name]
+  ~ type
+      before: "webview" | "web"
+      after:  "webview" | "web" | "electron" | "tauri"   [guide rows naming `type`: 274,275,278,281,282,283]
+  + literal "electron" = member
+  + literal "tauri" = member
+CHANGED @n1h/sweetview/native::createWindow  ->  @n1h/sweetview/native::createWindow  [same entry and name]
+  ~ call[0].p0{options}.bounds doc.notes
+      before: outer-frame
+      after:  physical-px,points,outer-frame   [guide rows naming `bounds`: 289,532,564,578,579,581]
+  + call[0].p0{options}.contentSize = property?: { width: number; height: number; } | undefined
+  + call[0].p0{options}.contentSize doc.notes = dip
+  + call[0].p0{options}.backgroundColor = property?: string | undefined
+  + call[0].p0{options}.backgroundColor doc.default = what the system or `appearance` gives
+  + call[0].p0{options}.onMaximizeChange = property?: ((maximized: boolean) => void) | undefined
+CHANGED @n1h/sweetview/native::Menu  ->  @n1h/sweetview/native::Menu  [same entry and name]
+  ~ type
+      before: { popup(owner: WindowRef, menu: MenuSource, at?: Point): boolean; }
+      after:  { popup(owner: WindowRef, menu: MenuSource, at?: Point, options?: MenuPopupOptions): boolean; }   [guide rows naming `type`: 274,275,278,281,282,283]
+  ~ .popup
+      before: method (owner: WindowRef, menu: MenuSource, at?: Point) => boolean
+      after:  method (owner: WindowRef, menu: MenuSource, at?: Point, options?: MenuPopupOptions) => boolean   [guide rows naming `popup`: 1162,1238,1283,1329,1330,1331]
+  ~ .popup doc.default
+      before: cursor position)
+      after:  cursor position), below the   [guide rows naming `popup`: 1162,1238,1283,1329,1330,1331]
+  + .popup doc.notes = points
+CHANGED @n1h/sweetview/native::Window  ->  @n1h/sweetview/native::Window  [same entry and name]
+  ~ new[0].p0{options}.bounds doc.notes
+      before: outer-frame
+      after:  physical-px,points,outer-frame   [guide rows naming `bounds`: 289,532,564,578,579,581]
+  + new[0].p0{options}.contentSize = property?: { width: number; height: number; } | undefined
+  + new[0].p0{options}.contentSize doc.notes = dip
+  + new[0].p0{options}.backgroundColor = property?: string | undefined
+  + new[0].p0{options}.backgroundColor doc.default = what the system or `appearance` gives
+  + new[0].p0{options}.onMaximizeChange = property?: ((maximized: boolean) => void) | undefined
+  + #isMinimized = method () => boolean
+  + #isMinimized(0) = () => boolean
+  + #isMinimized(0).returns = boolean
+  + #showSystemMenu = method () => void
+  + #showSystemMenu(0) = () => void
+  + #showSystemMenu(0).returns = void
+  + #onMaximizeChange = method (handler: (maximized: boolean) => void) => () => void
+  + #onMaximizeChange(0) = (handler: (maximized: boolean) => void) => () => void
+  + #onMaximizeChange(0).p0 = handler: (maximized: boolean) => void
+  + #onMaximizeChange(0).returns = () => void
+CHANGED @n1h/sweetview/native::WindowOptions  ->  @n1h/sweetview/native::WindowOptions  [same entry and name]
+  ~ type
+      before: { identity?: AppIdentity; title?: string; bounds?: Rect; minWidth?: number; minHeight?: number; frame?: boolean; resizable?: boolean; appearance?: Appearance; icon?: Icon; tabs?: boolean; transparent?: boolean; colorKey?: string; opacity?: number; topmost?: boolean; hideFromTaskbar?: boolean; noActivate?: boolean; onResize?: (bounds: Rect) => void; onMove?: (bounds: Rect) => void; onClose?: () => void; onFileDrop?: (paths: string[]) => void; onNewTab?: (origin: Window) => void; onTabSelect?: (tab: TabHandle) => void; onTabClose?: (tab: TabHandle) => void; }
+      after:  { identity?: AppIdentity; title?: string; bounds?: Rect; contentSize?: { width: number; height: number; }; minWidth?: number; minHeight?: number; frame?: boolean; resizable?: boolean; appearance?: Appearance; icon?: Icon; tabs?: boolean; transparent?: boolean; colorKey?: string; backgroundColor?: string; opacity?: number; topmost?: boolean; hideFromTaskbar?: boolean; noActivate?: boolean; onResize?: (bounds: Rect) => void; onMaximizeChange?: (maximized: boolean) => void; onMove?: (bounds: Rect) => void; onClose?: () => void; onFileDrop?: (paths: string[]) => void; onNewTab?: (origin: Window) => void; onTabSelect?: (tab: TabHandle) => void; onTabClose?: (tab: TabHandle) => void; }   [guide rows naming `type`: 274,275,278,281,282,283]
+  ~ .bounds doc.notes
+      before: outer-frame
+      after:  physical-px,points,outer-frame   [guide rows naming `bounds`: 289,532,564,578,579,581]
+  + .contentSize = property?: { width: number; height: number; } | undefined
+  + .contentSize doc.notes = dip
+  + .backgroundColor = property?: string | undefined
+  + .backgroundColor doc.default = what the system or `appearance` gives
+  + .onMaximizeChange = property?: ((maximized: boolean) => void) | undefined
+CHANGED @n1h/sweetview-ipc::SessionKind  ->  @n1h/sweetview-ipc::SessionKind  [same entry and name]
+  ~ type
+      before: "webview" | "web"
+      after:  "webview" | "web" | "electron" | "tauri"   [guide rows naming `type`: 274,275,278,281,282,283]
+  + literal "electron" = member
+  + literal "tauri" = member
+CHANGED @n1h/sweetview-ipc::TransportKind  ->  @n1h/sweetview-ipc::TransportKind  [same entry and name]
+  ~ type
+      before: "webview" | "web"
+      after:  "webview" | "web" | "electron" | "tauri"   [guide rows naming `type`: 274,275,278,281,282,283]
+  + literal "electron" = member
+  + literal "tauri" = member
+CHANGED @n1h/sweetview-native::createWindow  ->  @n1h/sweetview-native::createWindow  [same entry and name]
+  ~ call[0].p0{options}.bounds doc.notes
+      before: outer-frame
+      after:  physical-px,points,outer-frame   [guide rows naming `bounds`: 289,532,564,578,579,581]
+  + call[0].p0{options}.contentSize = property?: { width: number; height: number; } | undefined
+  + call[0].p0{options}.contentSize doc.notes = dip
+  + call[0].p0{options}.backgroundColor = property?: string | undefined
+  + call[0].p0{options}.backgroundColor doc.default = what the system or `appearance` gives
+  + call[0].p0{options}.onMaximizeChange = property?: ((maximized: boolean) => void) | undefined
+CHANGED @n1h/sweetview-native::Menu  ->  @n1h/sweetview-native::Menu  [same entry and name]
+  ~ type
+      before: { popup(owner: WindowRef, menu: MenuSource, at?: Point): boolean; }
+      after:  { popup(owner: WindowRef, menu: MenuSource, at?: Point, options?: MenuPopupOptions): boolean; }   [guide rows naming `type`: 274,275,278,281,282,283]
+  ~ .popup
+      before: method (owner: WindowRef, menu: MenuSource, at?: Point) => boolean
+      after:  method (owner: WindowRef, menu: MenuSource, at?: Point, options?: MenuPopupOptions) => boolean   [guide rows naming `popup`: 1162,1238,1283,1329,1330,1331]
+  ~ .popup doc.default
+      before: cursor position)
+      after:  cursor position), below the   [guide rows naming `popup`: 1162,1238,1283,1329,1330,1331]
+  + .popup doc.notes = points
+CHANGED @n1h/sweetview-native::Window  ->  @n1h/sweetview-native::Window  [same entry and name]
+  ~ new[0].p0{options}.bounds doc.notes
+      before: outer-frame
+      after:  physical-px,points,outer-frame   [guide rows naming `bounds`: 289,532,564,578,579,581]
+  + new[0].p0{options}.contentSize = property?: { width: number; height: number; } | undefined
+  + new[0].p0{options}.contentSize doc.notes = dip
+  + new[0].p0{options}.backgroundColor = property?: string | undefined
+  + new[0].p0{options}.backgroundColor doc.default = what the system or `appearance` gives
+  + new[0].p0{options}.onMaximizeChange = property?: ((maximized: boolean) => void) | undefined
+  + #isMinimized = method () => boolean
+  + #isMinimized(0) = () => boolean
+  + #isMinimized(0).returns = boolean
+  + #showSystemMenu = method () => void
+  + #showSystemMenu(0) = () => void
+  + #showSystemMenu(0).returns = void
+  + #onMaximizeChange = method (handler: (maximized: boolean) => void) => () => void
+  + #onMaximizeChange(0) = (handler: (maximized: boolean) => void) => () => void
+  + #onMaximizeChange(0).p0 = handler: (maximized: boolean) => void
+  + #onMaximizeChange(0).returns = () => void
+CHANGED @n1h/sweetview-native::WindowOptions  ->  @n1h/sweetview-native::WindowOptions  [same entry and name]
+  ~ type
+      before: { identity?: AppIdentity; title?: string; bounds?: Rect; minWidth?: number; minHeight?: number; frame?: boolean; resizable?: boolean; appearance?: Appearance; icon?: Icon; tabs?: boolean; transparent?: boolean; colorKey?: string; opacity?: number; topmost?: boolean; hideFromTaskbar?: boolean; noActivate?: boolean; onResize?: (bounds: Rect) => void; onMove?: (bounds: Rect) => void; onClose?: () => void; onFileDrop?: (paths: string[]) => void; onNewTab?: (origin: Window) => void; onTabSelect?: (tab: TabHandle) => void; onTabClose?: (tab: TabHandle) => void; }
+      after:  { identity?: AppIdentity; title?: string; bounds?: Rect; contentSize?: { width: number; height: number; }; minWidth?: number; minHeight?: number; frame?: boolean; resizable?: boolean; appearance?: Appearance; icon?: Icon; tabs?: boolean; transparent?: boolean; colorKey?: string; backgroundColor?: string; opacity?: number; topmost?: boolean; hideFromTaskbar?: boolean; noActivate?: boolean; onResize?: (bounds: Rect) => void; onMaximizeChange?: (maximized: boolean) => void; onMove?: (bounds: Rect) => void; onClose?: () => void; onFileDrop?: (paths: string[]) => void; onNewTab?: (origin: Window) => void; onTabSelect?: (tab: TabHandle) => void; onTabClose?: (tab: TabHandle) => void; }   [guide rows naming `type`: 274,275,278,281,282,283]
+  ~ .bounds doc.notes
+      before: outer-frame
+      after:  physical-px,points,outer-frame   [guide rows naming `bounds`: 289,532,564,578,579,581]
+  + .contentSize = property?: { width: number; height: number; } | undefined
+  + .contentSize doc.notes = dip
+  + .backgroundColor = property?: string | undefined
+  + .backgroundColor doc.default = what the system or `appearance` gives
+  + .onMaximizeChange = property?: ((maximized: boolean) => void) | undefined
+GUIDE-TARGET-NOT-AN-EXPORT @n1h/sweetview-native/win32/api::advapi32  ->  guide line 1226: import { dlopen } from "bun:ffi" ; dlopen("advapi32.dll", { … })  (declare your own table; URL schemes are `registerUrlScheme`)
+MAPPED @n1h/sweetview-native/win32/api::asPointer (const: (v: bigint | number | null) => Pointer)  ->  @n1h/sweetview-native::Window (class)  [guide line 1227: import { Window } from "@n1h/sweetview-native" ; Window.fromHandle(handle)  (a `WindowHandle` (number, bigint or `bun:ffi` pointer) is accepted as it is)]
+  ? Window.fromHandle(handle): member present
+CHANGED @n1h/sweetview-native/win32/api::CF_UNICODETEXT  ->  @n1h/sweetview-native::Clipboard  [guide line 1149: import { Clipboard } from "@n1h/sweetview-native" ; Clipboard.readText()  (and `Clipboard.writeText(text)`, on the UI thread)]
+  ? Clipboard.readText(): member present
+  ~ type
+      before: 13
+      after:  ClipboardBackend   [guide rows naming `type`: 274,275,278,281,282,283]
+  - value = 13   [no guide row names it]
+  + doc.notes = ui-thread
+  + .readText = method () => string | null
+  + .writeText = method (text: string) => void
+  + .clear = method () => void
+MAPPED @n1h/sweetview-native/win32/api::COINIT_APARTMENTTHREADED (const: 2)  ->  @n1h/sweetview-native::Window (class)  [guide line 1150: import { Window } from "@n1h/sweetview-native" ; new Window(options)  (the binding initialises COM on the UI thread when it loads)]
+  ? new Window(options): constructor present
+GUIDE-TARGET-NOT-AN-EXPORT @n1h/sweetview-native/win32/api::comctl32  ->  guide line 1228: import { dlopen } from "bun:ffi" ; dlopen("comctl32.dll", { … })  (declare your own table for your own calls)
+MAPPED @n1h/sweetview-native/win32/api::DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 (const: -4n)  ->  @n1h/sweetview-native::Window (class)  [guide line 1151: import { Window } from "@n1h/sweetview-native" ; Window#scale()  (the process is per-monitor DPI aware once the binding loads)]
+  ? Window#scale(): member present
+MAPPED @n1h/sweetview-native/win32/api::DWM_BB_BLURREGION (const: 2)  ->  @n1h/sweetview-native::Window (class)  [guide line 1152: import { Window } from "@n1h/sweetview-native" ; new Window(options)  (`transparent: true`)]
+  ? new Window(options): constructor present
+  ? `transparent` named in the change column: found as new[0].p0{options}.transparent
+MAPPED @n1h/sweetview-native/win32/api::DWM_BB_ENABLE (const: 1)  ->  @n1h/sweetview-native::Window (class)  [guide line 1153: import { Window } from "@n1h/sweetview-native" ; new Window(options)  (`transparent: true`)]
+  ? new Window(options): constructor present
+  ? `transparent` named in the change column: found as new[0].p0{options}.transparent
+GUIDE-TARGET-NOT-AN-EXPORT @n1h/sweetview-native/win32/api::dwmapi  ->  guide line 1229: import { dlopen } from "bun:ffi" ; dlopen("dwmapi.dll", { … })  (declare your own table; transparency is `new Window({ transparent: true })`)
+MAPPED @n1h/sweetview-native/win32/api::ERROR_ALREADY_EXISTS (const: 183)  ->  @n1h/sweetview-native::singleInstance (function)  [guide line 1154: import { singleInstance } from "@n1h/sweetview-native" ; singleInstance(options)  (the lock's `isPrimary` says which instance this is)]
+  ? singleInstance(options): call present
+  ? `isPrimary` named in the change column: not found on singleInstance
+MAPPED @n1h/sweetview-native/win32/api::ERROR_FILE_NOT_FOUND (const: 2)  ->  @n1h/sweetview-native::unregisterUrlScheme (function)  [guide line 1155: import { unregisterUrlScheme } from "@n1h/sweetview-native" ; unregisterUrlScheme(scheme)  (unregistering a scheme that is not registered does nothing)]
+  ? unregisterUrlScheme(scheme): call present
+GUIDE-TARGET-NOT-AN-EXPORT @n1h/sweetview-native/win32/api::gdi32  ->  guide line 1230: import { dlopen } from "bun:ffi" ; dlopen("gdi32.dll", { … })  (declare your own table for your own calls)
+CHANGED @n1h/sweetview-native/win32/api::GMEM_MOVEABLE  ->  @n1h/sweetview-native::Clipboard  [guide line 1156: import { Clipboard } from "@n1h/sweetview-native" ; Clipboard.writeText(text)  (on the UI thread)]
+  ? Clipboard.writeText(text): member present
+  ~ type
+      before: 2
+      after:  ClipboardBackend   [guide rows naming `type`: 274,275,278,281,282,283]
+  - value = 0x0002   [no guide row names it]
+  + doc.notes = ui-thread
+  + .readText = method () => string | null
+  + .writeText = method (text: string) => void
+  + .clear = method () => void
+MAPPED @n1h/sweetview-native/win32/api::GW_CHILD (const: 5)  ->  @n1h/sweetview::WebView (class)  [guide line 1159: import { WebView } from "@n1h/sweetview" ; WebView.attach(window, options)  (Sweetview places and sizes the webview inside the window itself)]
+  ? WebView.attach(window, options): member present
+MAPPED @n1h/sweetview-native/win32/api::GWL_EXSTYLE (const: -20)  ->  @n1h/sweetview-native::Window (class)  [guide line 1157: import { Window } from "@n1h/sweetview-native" ; Window#setClickThrough(on)  (extended styles are window options and methods)]
+  ? Window#setClickThrough(on): member present
+MAPPED @n1h/sweetview-native/win32/api::GWL_STYLE (const: -16)  ->  @n1h/sweetview-native::Window (class)  [guide line 1158: import { Window } from "@n1h/sweetview-native" ; Window.fromHandle(handle)  (the wrapper reads the frame from the window's style)]
+  ? Window.fromHandle(handle): member present
+GUIDE-TARGET-NOT-AN-EXPORT @n1h/sweetview-native/win32/api::hInstance  ->  guide line 1231: import { dlopen } from "bun:ffi" ; dlopen("kernel32.dll", { … })  (call `GetModuleHandleW` from your own table)
+MAPPED @n1h/sweetview-native/win32/api::HKEY_CURRENT_USER (const: 2147483649n)  ->  @n1h/sweetview-native::registerUrlScheme (function)  [guide line 1160: import { registerUrlScheme } from "@n1h/sweetview-native" ; registerUrlScheme(scheme, options)  (the registry writes are internal)]
+  ? registerUrlScheme(scheme, options): call present
+MAPPED @n1h/sweetview-native/win32/api::HTCAPTION (const: 2)  ->  @n1h/sweetview-native::Window (class)  [guide line 1161: import { Window } from "@n1h/sweetview-native" ; Window#startDrag()  (the OS move loop from a page's pointer-down)]
+  ? Window#startDrag(): member present
+MAPPED @n1h/sweetview-native/win32/api::HWND_MESSAGE (const: -3n)  ->  @n1h/sweetview-native::Window (class)  [guide line 1162: import { Window } from "@n1h/sweetview-native" ; new Window(options)  (a hidden `new Window()` is the owner a menu or dialog needs (`Menu.popup`, `pickFolder`), and `dispose()` is `destroy()`; the other uses each have a public call: a second instance's arguments (`WM_COPYDATA`) arrive at `singleInstance`'s `onSecondInstance`, work handed to the UI thread is a `deferredUiMethods` handler, a global hotkey is `installKeyboardHook`, the tray's `TaskbarCreated` is Sweetview's own, and the clipboard, notifications and the tray need no window of yours; only a system broadcast Sweetview reports nothing of (`WM_POWERBROADCAST`, `WM_DEVICECHANGE`, `WM_QUERYENDSESSION`) still needs a window of your own from your own `dlopen` table)]
+  ? new Window(options): constructor present
+  ? `pickFolder` named in the change column: not found on Window
+  ? `singleInstance` named in the change column: not found on Window
+  ? `onSecondInstance` named in the change column: not found on Window
+  ? `deferredUiMethods` named in the change column: not found on Window
+  ? `installKeyboardHook` named in the change column: not found on Window
+  ? `dlopen` named in the change column: not found on Window
+MAPPED @n1h/sweetview-native/win32/api::HWND_NOTOPMOST (const: -2n)  ->  @n1h/sweetview-native::Window (class)  [guide line 1163: import { Window } from "@n1h/sweetview-native" ; Window#setTopmost(on)  (`setTopmost(false)`)]
+  ? Window#setTopmost(on): member present
+MAPPED @n1h/sweetview-native/win32/api::HWND_TOPMOST (const: -1n)  ->  @n1h/sweetview-native::Window (class)  [guide line 1164: import { Window } from "@n1h/sweetview-native" ; Window#setTopmost(on)  (or `topmost: true`)]
+  ? Window#setTopmost(on): member present
+  ? `topmost` named in the change column: found as new[0].p0{options}.topmost
+MAPPED @n1h/sweetview-native/win32/api::ICON_BIG (const: 1n)  ->  @n1h/sweetview-native::Window (class)  [guide line 1165: import { Window } from "@n1h/sweetview-native" ; Window#setIcon(icon)  (both icon sizes come from the `.ico`)]
+  ? Window#setIcon(icon): member present
+MAPPED @n1h/sweetview-native/win32/api::ICON_SMALL (const: 0n)  ->  @n1h/sweetview-native::Window (class)  [guide line 1166: import { Window } from "@n1h/sweetview-native" ; Window#setIcon(icon)  (both icon sizes come from the `.ico`)]
+  ? Window#setIcon(icon): member present
+GUIDE-TARGET-NOT-AN-EXPORT @n1h/sweetview-native/win32/api::kernel32  ->  guide line 1232: import { dlopen } from "bun:ffi" ; dlopen("kernel32.dll", { … })  (declare your own table for your own calls)
+MAPPED @n1h/sweetview-native/win32/api::KEY_WRITE (const: 131078)  ->  @n1h/sweetview-native::registerUrlScheme (function)  [guide line 1167: import { registerUrlScheme } from "@n1h/sweetview-native" ; registerUrlScheme(scheme, options)  (the registry writes are internal)]
+  ? registerUrlScheme(scheme, options): call present
+GUIDE-TARGET-NOT-AN-EXPORT @n1h/sweetview-native/win32/api::lastError  ->  guide line 1233: import { dlopen } from "bun:ffi" ; dlopen("kernel32.dll", { … })  (Sweetview's calls throw an `Error` that carries the OS error; for your own calls use your own table)
+MAPPED @n1h/sweetview-native/win32/api::LWA_ALPHA (const: 2)  ->  @n1h/sweetview-native::Window (class)  [guide line 1168: import { Window } from "@n1h/sweetview-native" ; new Window(options)  (`opacity` from 0 to 1)]
+  ? new Window(options): constructor present
+  ? `opacity` named in the change column: found as new[0].p0{options}.opacity
+MAPPED @n1h/sweetview-native/win32/api::LWA_COLORKEY (const: 1)  ->  @n1h/sweetview-native::Window (class)  [guide line 1169: import { Window } from "@n1h/sweetview-native" ; new Window(options)  (`colorKey: "#rrggbb"`)]
+  ? new Window(options): constructor present
+  ? `colorKey` named in the change column: found as new[0].p0{options}.colorKey
+CHANGED @n1h/sweetview-native/win32/api::MDT_EFFECTIVE_DPI  ->  @n1h/sweetview-native::Screen  [guide line 1170: import { Screen } from "@n1h/sweetview-native" ; Screen.of(window)  (`scale` of the `ScreenInfo`; `Window.scale()` for a window)]
+  ? Screen.of(window): member present
+  ? `scale` named in the change column: not found on Screen
+  ~ type
+      before: 0
+      after:  { primary(): ScreenInfo; all(): ScreenInfo[]; at(point: Point): ScreenInfo; of(window: WindowRef): ScreenInfo; bounds(): Rect; cursor(): Point; }   [guide rows naming `type`: 274,275,278,281,282,283]
+  - value = 0   [no guide row names it]
+  + .primary = method () => ScreenInfo
+  + .all = method () => ScreenInfo[]
+  + .at = method (point: Point) => ScreenInfo
+  + .of = method (window: WindowRef) => ScreenInfo
+  + .bounds = method () => Rect
+  + .cursor = method () => Point
+CHANGED @n1h/sweetview-native/win32/api::MONITOR_DEFAULTTONEAREST  ->  @n1h/sweetview-native::Screen  [guide line 1173: import { Screen } from "@n1h/sweetview-native" ; Screen.at(point)  (the monitor at a point, or the nearest one)]
+  ? Screen.at(point): member present
+  ~ type
+      before: 2
+      after:  { primary(): ScreenInfo; all(): ScreenInfo[]; at(point: Point): ScreenInfo; of(window: WindowRef): ScreenInfo; bounds(): Rect; cursor(): Point; }   [guide rows naming `type`: 274,275,278,281,282,283]
+  - value = 2   [no guide row names it]
+  + .primary = method () => ScreenInfo
+  + .all = method () => ScreenInfo[]
+  + .at = method (point: Point) => ScreenInfo
+  + .of = method (window: WindowRef) => ScreenInfo
+  + .bounds = method () => Rect
+  + .cursor = method () => Point
+CHANGED @n1h/sweetview-native/win32/api::MONITORINFO_SIZE  ->  @n1h/sweetview-native::Screen  [guide line 1172: import { Screen } from "@n1h/sweetview-native" ; Screen.all()  (every monitor as a `ScreenInfo`)]
+  ? Screen.all(): member present
+  ~ type
+      before: 40
+      after:  { primary(): ScreenInfo; all(): ScreenInfo[]; at(point: Point): ScreenInfo; of(window: WindowRef): ScreenInfo; bounds(): Rect; cursor(): Point; }   [guide rows naming `type`: 274,275,278,281,282,283]
+  - value = 40   [no guide row names it]
+  + .primary = method () => ScreenInfo
+  + .all = method () => ScreenInfo[]
+  + .at = method (point: Point) => ScreenInfo
+  + .of = method (window: WindowRef) => ScreenInfo
+  + .bounds = method () => Rect
+  + .cursor = method () => Point
+CHANGED @n1h/sweetview-native/win32/api::MONITORINFOF_PRIMARY  ->  @n1h/sweetview-native::Screen  [guide line 1171: import { Screen } from "@n1h/sweetview-native" ; Screen.all()  (each `ScreenInfo` has `primary`)]
+  ? Screen.all(): member present
+  ? `primary` named in the change column: found as .primary
+  ~ type
+      before: 1
+      after:  { primary(): ScreenInfo; all(): ScreenInfo[]; at(point: Point): ScreenInfo; of(window: WindowRef): ScreenInfo; bounds(): Rect; cursor(): Point; }   [guide rows naming `type`: 274,275,278,281,282,283]
+  - value = 1   [no guide row names it]
+  + .primary = method () => ScreenInfo
+  + .all = method () => ScreenInfo[]
+  + .at = method (point: Point) => ScreenInfo
+  + .of = method (window: WindowRef) => ScreenInfo
+  + .bounds = method () => Rect
+  + .cursor = method () => Point
+GUIDE-TARGET-NOT-AN-EXPORT @n1h/sweetview-native/win32/api::ole32  ->  guide line 1234: import { dlopen } from "bun:ffi" ; dlopen("ole32.dll", { … })  (declare your own table; the binding initialises COM on the UI thread itself)
+MAPPED @n1h/sweetview-native/win32/api::PM_REMOVE (const: 1)  ->  @n1h/sweetview-native::pumpEvents (function)  [guide line 1174: import { pumpEvents } from "@n1h/sweetview-native" ; pumpEvents()  (dispatches every waiting message)]
+  ? pumpEvents(): call present
+MAPPED @n1h/sweetview-native/win32/api::REG_SZ (const: 1)  ->  @n1h/sweetview-native::registerUrlScheme (function)  [guide line 1175: import { registerUrlScheme } from "@n1h/sweetview-native" ; registerUrlScheme(scheme, options)  (the registry writes are internal)]
+  ? registerUrlScheme(scheme, options): call present
+MAPPED @n1h/sweetview-native/win32/api::RPC_E_CHANGED_MODE (const: -2147417850)  ->  @n1h/sweetview-native::Window (class)  [guide line 1176: import { Window } from "@n1h/sweetview-native" ; new Window(options)  (the binding initialises COM on the UI thread when it loads)]
+  ? new Window(options): constructor present
+GUIDE-TARGET-NOT-AN-EXPORT @n1h/sweetview-native/win32/api::shcore  ->  guide line 1235: import { dlopen } from "bun:ffi" ; dlopen("shcore.dll", { … })  (declare your own table; DPI and scale come from `Screen` and `Window.scale()`)
+GUIDE-TARGET-NOT-AN-EXPORT @n1h/sweetview-native/win32/api::shell32  ->  guide line 1236: import { dlopen } from "bun:ffi" ; dlopen("shell32.dll", { … })  (declare your own table; file drops are `Window.onFileDrop`)
+MAPPED @n1h/sweetview-native/win32/api::SM_CXICON (const: 11)  ->  @n1h/sweetview-native::Window (class)  [guide line 1178: import { Window } from "@n1h/sweetview-native" ; Window#setIcon(icon)  (Sweetview picks each size from the `.ico`)]
+  ? Window#setIcon(icon): member present
+CHANGED @n1h/sweetview-native/win32/api::SM_CXSCREEN  ->  @n1h/sweetview-native::Screen  [guide line 1179: import { Screen } from "@n1h/sweetview-native" ; Screen.primary()  (`bounds` of the `ScreenInfo`)]
+  ? Screen.primary(): member present
+  ? `bounds` named in the change column: found as .bounds
+  ~ type
+      before: 0
+      after:  { primary(): ScreenInfo; all(): ScreenInfo[]; at(point: Point): ScreenInfo; of(window: WindowRef): ScreenInfo; bounds(): Rect; cursor(): Point; }   [guide rows naming `type`: 274,275,278,281,282,283]
+  - value = 0   [no guide row names it]
+  + .primary = method () => ScreenInfo
+  + .all = method () => ScreenInfo[]
+  + .at = method (point: Point) => ScreenInfo
+  + .of = method (window: WindowRef) => ScreenInfo
+  + .bounds = method () => Rect
+  + .cursor = method () => Point
+MAPPED @n1h/sweetview-native/win32/api::SM_CXSMICON (const: 49)  ->  @n1h/sweetview-native::Window (class)  [guide line 1180: import { Window } from "@n1h/sweetview-native" ; Window#setIcon(icon)  (Sweetview picks each size from the `.ico`)]
+  ? Window#setIcon(icon): member present
+CHANGED @n1h/sweetview-native/win32/api::SM_CXVIRTUALSCREEN  ->  @n1h/sweetview-native::Screen  [guide line 1181: import { Screen } from "@n1h/sweetview-native" ; Screen.bounds()  (the rectangle around every monitor)]
+  ? Screen.bounds(): member present
+  ~ type
+      before: 78
+      after:  { primary(): ScreenInfo; all(): ScreenInfo[]; at(point: Point): ScreenInfo; of(window: WindowRef): ScreenInfo; bounds(): Rect; cursor(): Point; }   [guide rows naming `type`: 274,275,278,281,282,283]
+  - value = 78   [no guide row names it]
+  + .primary = method () => ScreenInfo
+  + .all = method () => ScreenInfo[]
+  + .at = method (point: Point) => ScreenInfo
+  + .of = method (window: WindowRef) => ScreenInfo
+  + .bounds = method () => Rect
+  + .cursor = method () => Point
+CHANGED @n1h/sweetview-native/win32/api::SM_CYSCREEN  ->  @n1h/sweetview-native::Screen  [guide line 1182: import { Screen } from "@n1h/sweetview-native" ; Screen.primary()  (`bounds` of the `ScreenInfo`)]
+  ? Screen.primary(): member present
+  ? `bounds` named in the change column: found as .bounds
+  ~ type
+      before: 1
+      after:  { primary(): ScreenInfo; all(): ScreenInfo[]; at(point: Point): ScreenInfo; of(window: WindowRef): ScreenInfo; bounds(): Rect; cursor(): Point; }   [guide rows naming `type`: 274,275,278,281,282,283]
+  - value = 1   [no guide row names it]
+  + .primary = method () => ScreenInfo
+  + .all = method () => ScreenInfo[]
+  + .at = method (point: Point) => ScreenInfo
+  + .of = method (window: WindowRef) => ScreenInfo
+  + .bounds = method () => Rect
+  + .cursor = method () => Point
+CHANGED @n1h/sweetview-native/win32/api::SM_CYVIRTUALSCREEN  ->  @n1h/sweetview-native::Screen  [guide line 1183: import { Screen } from "@n1h/sweetview-native" ; Screen.bounds()  (the rectangle around every monitor)]
+  ? Screen.bounds(): member present
+  ~ type
+      before: 79
+      after:  { primary(): ScreenInfo; all(): ScreenInfo[]; at(point: Point): ScreenInfo; of(window: WindowRef): ScreenInfo; bounds(): Rect; cursor(): Point; }   [guide rows naming `type`: 274,275,278,281,282,283]
+  - value = 79   [no guide row names it]
+  + .primary = method () => ScreenInfo
+  + .all = method () => ScreenInfo[]
+  + .at = method (point: Point) => ScreenInfo
+  + .of = method (window: WindowRef) => ScreenInfo
+  + .bounds = method () => Rect
+  + .cursor = method () => Point
+CHANGED @n1h/sweetview-native/win32/api::SM_XVIRTUALSCREEN  ->  @n1h/sweetview-native::Screen  [guide line 1184: import { Screen } from "@n1h/sweetview-native" ; Screen.bounds()  (the rectangle around every monitor)]
+  ? Screen.bounds(): member present
+  ~ type
+      before: 76
+      after:  { primary(): ScreenInfo; all(): ScreenInfo[]; at(point: Point): ScreenInfo; of(window: WindowRef): ScreenInfo; bounds(): Rect; cursor(): Point; }   [guide rows naming `type`: 274,275,278,281,282,283]
+  - value = 76   [no guide row names it]
+  + .primary = method () => ScreenInfo
+  + .all = method () => ScreenInfo[]
+  + .at = method (point: Point) => ScreenInfo
+  + .of = method (window: WindowRef) => ScreenInfo
+  + .bounds = method () => Rect
+  + .cursor = method () => Point
+CHANGED @n1h/sweetview-native/win32/api::SM_YVIRTUALSCREEN  ->  @n1h/sweetview-native::Screen  [guide line 1185: import { Screen } from "@n1h/sweetview-native" ; Screen.bounds()  (the rectangle around every monitor)]
+  ? Screen.bounds(): member present
+  ~ type
+      before: 77
+      after:  { primary(): ScreenInfo; all(): ScreenInfo[]; at(point: Point): ScreenInfo; of(window: WindowRef): ScreenInfo; bounds(): Rect; cursor(): Point; }   [guide rows naming `type`: 274,275,278,281,282,283]
+  - value = 77   [no guide row names it]
+  + .primary = method () => ScreenInfo
+  + .all = method () => ScreenInfo[]
+  + .at = method (point: Point) => ScreenInfo
+  + .of = method (window: WindowRef) => ScreenInfo
+  + .bounds = method () => Rect
+  + .cursor = method () => Point
+MAPPED @n1h/sweetview-native/win32/api::SMTO_ABORTIFHUNG (const: 2)  ->  @n1h/sweetview-native::singleInstance (function)  [guide line 1177: import { singleInstance } from "@n1h/sweetview-native" ; singleInstance(options)  (the hand-off to the first instance is internal)]
+  ? singleInstance(options): call present
+CHANGED @n1h/sweetview-native/win32/api::SPI_GETWORKAREA  ->  @n1h/sweetview-native::Screen  [guide line 1186: import { Screen } from "@n1h/sweetview-native" ; Screen.primary()  (`workArea` of the `ScreenInfo`)]
+  ? Screen.primary(): member present
+  ? `workArea` named in the change column: not found on Screen
+  ~ type
+      before: 48
+      after:  { primary(): ScreenInfo; all(): ScreenInfo[]; at(point: Point): ScreenInfo; of(window: WindowRef): ScreenInfo; bounds(): Rect; cursor(): Point; }   [guide rows naming `type`: 274,275,278,281,282,283]
+  - value = 0x0030   [no guide row names it]
+  + .primary = method () => ScreenInfo
+  + .all = method () => ScreenInfo[]
+  + .at = method (point: Point) => ScreenInfo
+  + .of = method (window: WindowRef) => ScreenInfo
+  + .bounds = method () => Rect
+  + .cursor = method () => Point
+MAPPED @n1h/sweetview-native/win32/api::SW_HIDE (const: 0)  ->  @n1h/sweetview-native::Window (class)  [guide line 1192: import { Window } from "@n1h/sweetview-native" ; Window#hide()  (use the method)]
+  ? Window#hide(): member present
+MAPPED @n1h/sweetview-native/win32/api::SW_MAXIMIZE (const: 3)  ->  @n1h/sweetview-native::Window (class)  [guide line 1193: import { Window } from "@n1h/sweetview-native" ; Window#toggleMaximize()  (use the method)]
+  ? Window#toggleMaximize(): member present
+MAPPED @n1h/sweetview-native/win32/api::SW_MINIMIZE (const: 6)  ->  @n1h/sweetview-native::Window (class)  [guide line 1194: import { Window } from "@n1h/sweetview-native" ; Window#minimize()  (use the method)]
+  ? Window#minimize(): member present
+MAPPED @n1h/sweetview-native/win32/api::SW_RESTORE (const: 9)  ->  @n1h/sweetview-native::Window (class)  [guide line 1195: import { Window } from "@n1h/sweetview-native" ; Window#show()  (`show()` restores a minimised window)]
+  ? Window#show(): member present
+MAPPED @n1h/sweetview-native/win32/api::SW_SHOW (const: 5)  ->  @n1h/sweetview-native::Window (class)  [guide line 1196: import { Window } from "@n1h/sweetview-native" ; Window#show()  (use the method)]
+  ? Window#show(): member present
+MAPPED @n1h/sweetview-native/win32/api::SW_SHOWNOACTIVATE (const: 4)  ->  @n1h/sweetview-native::Window (class)  [guide line 1197: import { Window } from "@n1h/sweetview-native" ; new Window(options)  (`noActivate: true`; `show()` then never takes focus)]
+  ? new Window(options): constructor present
+  ? `noActivate` named in the change column: found as new[0].p0{options}.noActivate
+MAPPED @n1h/sweetview-native/win32/api::SWP_FRAMECHANGED (const: 32)  ->  @n1h/sweetview-native::Window (class)  [guide line 1187: import { Window } from "@n1h/sweetview-native" ; new Window(options)  (styles are set when the window is made)]
+  ? new Window(options): constructor present
+MAPPED @n1h/sweetview-native/win32/api::SWP_NOACTIVATE (const: 16)  ->  @n1h/sweetview-native::Window (class)  [guide line 1188: import { Window } from "@n1h/sweetview-native" ; Window#setBounds(rect)  (moving a window never activates it)]
+  ? Window#setBounds(rect): member present
+MAPPED @n1h/sweetview-native/win32/api::SWP_NOMOVE (const: 2)  ->  @n1h/sweetview-native::Window (class)  [guide line 1189: import { Window } from "@n1h/sweetview-native" ; Window#resize(width, height)  (resizes without moving)]
+  ? Window#resize(width, height): member present
+MAPPED @n1h/sweetview-native/win32/api::SWP_NOSIZE (const: 1)  ->  @n1h/sweetview-native::Window (class)  [guide line 1190: import { Window } from "@n1h/sweetview-native" ; Window#moveTo(x, y)  (moves without resizing)]
+  ? Window#moveTo(x, y): member present
+MAPPED @n1h/sweetview-native/win32/api::SWP_NOZORDER (const: 4)  ->  @n1h/sweetview-native::Window (class)  [guide line 1191: import { Window } from "@n1h/sweetview-native" ; Window#setBounds(rect)  (moves and resizes in one step)]
+  ? Window#setBounds(rect): member present
+MAPPED @n1h/sweetview-native/win32/api::toPointer (const: (v: bigint | number | null) => Pointer | null)  ->  @n1h/sweetview-native::Window (class)  [guide line 1237: import { Window } from "@n1h/sweetview-native" ; Window.fromHandle(handle)  (a `WindowHandle` (number, bigint or `bun:ffi` pointer) is accepted as it is)]
+  ? Window.fromHandle(handle): member present
+GUIDE-TARGET-NOT-AN-EXPORT @n1h/sweetview-native/win32/api::user32  ->  guide line 1238: import { dlopen } from "bun:ffi" ; dlopen("user32.dll", { … })  (declare your own table for your own calls; Sweetview's window, screen, menu and clipboard calls are `Window`, `Screen`, `Menu`, `Clipboard` (`IsIconic` is `Window#isMinimized()`, `IsZoomed` is `Window#isMaximized()`, a menu with `TPM_BOTTOMALIGN` is `Menu.popup(owner, menu, at, { above: true })`))
+MAPPED @n1h/sweetview-native/win32/api::WM_APP (const: 32768)  ->  @n1h/sweetview-native::Tray (class)  [guide line 1198: import { Tray } from "@n1h/sweetview-native" ; new Tray(options)  (Sweetview's private messages are internal; tray and notification callbacks arrive as `Tray` and `Notifier` events)]
+  ? new Tray(options): constructor present
+MAPPED @n1h/sweetview-native/win32/api::WM_CLOSE (const: 16)  ->  @n1h/sweetview-native::Window (class)  [guide line 1199: import { Window } from "@n1h/sweetview-native" ; Window#onClose(handler)  (a close request reaches `onClose` listeners)]
+  ? Window#onClose(handler): member present
+  ? `onClose` named in the change column: found as new[0].p0{options}.onClose
+MAPPED @n1h/sweetview-native/win32/api::WM_COPYDATA (const: 74)  ->  @n1h/sweetview-native::singleInstance (function)  [guide line 1200: import { singleInstance } from "@n1h/sweetview-native" ; singleInstance(options)  (a second instance's arguments arrive at `onSecondInstance`)]
+  ? singleInstance(options): call present
+  ? `onSecondInstance` named in the change column: found as call[0].p0{options}.onSecondInstance
+MAPPED @n1h/sweetview-native/win32/api::WM_DESTROY (const: 2)  ->  @n1h/sweetview-native::Window (class)  [guide line 1201: import { Window } from "@n1h/sweetview-native" ; Window#dispose()  (an owned window is destroyed by `dispose()`)]
+  ? Window#dispose(): member present
+MAPPED @n1h/sweetview-native/win32/api::WM_DROPFILES (const: 563)  ->  @n1h/sweetview-native::Window (class)  [guide line 1202: import { Window } from "@n1h/sweetview-native" ; Window#onFileDrop(handler)  (use the event)]
+  ? Window#onFileDrop(handler): member present
+MAPPED @n1h/sweetview-native/win32/api::WM_GETMINMAXINFO (const: 36)  ->  @n1h/sweetview-native::Window (class)  [guide line 1203: import { Window } from "@n1h/sweetview-native" ; new Window(options)  (`minWidth` and `minHeight`)]
+  ? new Window(options): constructor present
+  ? `minWidth` named in the change column: found as new[0].p0{options}.minWidth
+  ? `minHeight` named in the change column: found as new[0].p0{options}.minHeight
+MAPPED @n1h/sweetview-native/win32/api::WM_LBUTTONDBLCLK (const: 515)  ->  @n1h/sweetview-native::Tray (class)  [guide line 1204: import { Tray } from "@n1h/sweetview-native" ; new Tray(options)  (a tray double click is `onDoubleClick`)]
+  ? new Tray(options): constructor present
+  ? `onDoubleClick` named in the change column: found as new[0].p0{options}.onDoubleClick
+MAPPED @n1h/sweetview-native/win32/api::WM_LBUTTONUP (const: 514)  ->  @n1h/sweetview-native::Tray (class)  [guide line 1205: import { Tray } from "@n1h/sweetview-native" ; new Tray(options)  (a tray click is `onClick`)]
+  ? new Tray(options): constructor present
+  ? `onClick` named in the change column: found as new[0].p0{options}.onClick
+MAPPED @n1h/sweetview-native/win32/api::WM_MOVE (const: 3)  ->  @n1h/sweetview-native::Window (class)  [guide line 1206: import { Window } from "@n1h/sweetview-native" ; Window#onMove(handler)  (use the event)]
+  ? Window#onMove(handler): member present
+MAPPED @n1h/sweetview-native/win32/api::WM_NCDESTROY (const: 130)  ->  @n1h/sweetview-native::Window (class)  [guide line 1207: import { Window } from "@n1h/sweetview-native" ; Window#dispose()  (Sweetview releases its hooks in `dispose()`)]
+  ? Window#dispose(): member present
+MAPPED @n1h/sweetview-native/win32/api::WM_NCLBUTTONDOWN (const: 161)  ->  @n1h/sweetview-native::Window (class)  [guide line 1208: import { Window } from "@n1h/sweetview-native" ; Window#startDrag()  (the OS move loop from a page's pointer-down)]
+  ? Window#startDrag(): member present
+MAPPED @n1h/sweetview-native/win32/api::WM_NULL (const: 0)  ->  @n1h/sweetview-native::pumpEvents (function)  [guide line 1209: import { pumpEvents } from "@n1h/sweetview-native" ; pumpEvents()  (a wake is internal; `pumpEvents()` dispatches what is waiting)]
+  ? pumpEvents(): call present
+MAPPED @n1h/sweetview-native/win32/api::WM_QUIT (const: 18)  ->  @n1h/sweetview-native::quitEventLoop (function)  [guide line 1210: import { quitEventLoop } from "@n1h/sweetview-native" ; quitEventLoop()  (ends the loop `runEventLoop` runs)]
+  ? quitEventLoop(): call present
+  ? `runEventLoop` named in the change column: not found on quitEventLoop
+MAPPED @n1h/sweetview-native/win32/api::WM_RBUTTONUP (const: 517)  ->  @n1h/sweetview-native::Tray (class)  [guide line 1211: import { Tray } from "@n1h/sweetview-native" ; new Tray(options)  (the tray's right-click menu is `menu`)]
+  ? new Tray(options): constructor present
+  ? `menu` named in the change column: found as new[0].p0{options}.menu
+MAPPED @n1h/sweetview-native/win32/api::WM_SETICON (const: 128)  ->  @n1h/sweetview-native::Window (class)  [guide line 1212: import { Window } from "@n1h/sweetview-native" ; Window#setIcon(icon)  (sets the title bar, taskbar and Alt+Tab icon)]
+  ? Window#setIcon(icon): member present
+MAPPED @n1h/sweetview-native/win32/api::WM_SETTINGCHANGE (const: 26)  ->  @n1h/sweetview-native::Window (class)  [guide line 1213: import { Window } from "@n1h/sweetview-native" ; new Window(options)  (`appearance: "system"` follows the system's light or dark setting)]
+  ? new Window(options): constructor present
+  ? `appearance` named in the change column: found as new[0].p0{options}.appearance
+MAPPED @n1h/sweetview-native/win32/api::WM_SIZE (const: 5)  ->  @n1h/sweetview-native::Window (class)  [guide line 1214: import { Window } from "@n1h/sweetview-native" ; Window#onResize(handler) ; Window#onMaximizeChange(handler)  (use the events: `onResize` for the new bounds, `onMaximizeChange` for `SIZE_MAXIMIZED` and `SIZE_RESTORED`, once per change)]
+  ? Window#onResize(handler): member present
+  ? Window#onMaximizeChange(handler): member present
+  ? `onResize` named in the change column: found as new[0].p0{options}.onResize
+  ? `onMaximizeChange` named in the change column: found as new[0].p0{options}.onMaximizeChange
+MAPPED @n1h/sweetview-native/win32/api::WM_TIMER (const: 275)  ->  @n1h/sweetview-native::runEventLoop (function)  [guide line 1215: import { runEventLoop } from "@n1h/sweetview-native" ; runEventLoop(options)  (Bun's own timers run while `runEventLoop` pumps the loop)]
+  ? runEventLoop(options): call present
+  ? `runEventLoop` named in the change column: not found on runEventLoop
+MAPPED @n1h/sweetview-native/win32/api::WS_CLIPCHILDREN (const: 33554432)  ->  @n1h/sweetview::WebView (class)  [guide line 1216: import { WebView } from "@n1h/sweetview" ; WebView.attach(window, options)  (Sweetview hosts the webview in the window itself)]
+  ? WebView.attach(window, options): member present
+MAPPED @n1h/sweetview-native/win32/api::WS_EX_APPWINDOW (const: 262144)  ->  @n1h/sweetview-native::Window (class)  [guide line 1217: import { Window } from "@n1h/sweetview-native" ; new Window(options)  (`hideFromTaskbar: false`, the default)]
+  ? new Window(options): constructor present
+  ? `hideFromTaskbar` named in the change column: found as new[0].p0{options}.hideFromTaskbar
+MAPPED @n1h/sweetview-native/win32/api::WS_EX_LAYERED (const: 524288)  ->  @n1h/sweetview-native::Window (class)  [guide line 1218: import { Window } from "@n1h/sweetview-native" ; new Window(options)  (`colorKey`, `opacity` or `transparent: true`)]
+  ? new Window(options): constructor present
+  ? `colorKey` named in the change column: found as new[0].p0{options}.colorKey
+  ? `opacity` named in the change column: found as new[0].p0{options}.opacity
+  ? `transparent` named in the change column: found as new[0].p0{options}.transparent
+MAPPED @n1h/sweetview-native/win32/api::WS_EX_NOACTIVATE (const: 134217728)  ->  @n1h/sweetview-native::Window (class)  [guide line 1219: import { Window } from "@n1h/sweetview-native" ; new Window(options)  (`noActivate: true`)]
+  ? new Window(options): constructor present
+  ? `noActivate` named in the change column: found as new[0].p0{options}.noActivate
+MAPPED @n1h/sweetview-native/win32/api::WS_EX_TOOLWINDOW (const: 128)  ->  @n1h/sweetview-native::Window (class)  [guide line 1220: import { Window } from "@n1h/sweetview-native" ; new Window(options)  (`hideFromTaskbar: true`)]
+  ? new Window(options): constructor present
+  ? `hideFromTaskbar` named in the change column: found as new[0].p0{options}.hideFromTaskbar
+MAPPED @n1h/sweetview-native/win32/api::WS_EX_TRANSPARENT (const: 32)  ->  @n1h/sweetview-native::Window (class)  [guide line 1221: import { Window } from "@n1h/sweetview-native" ; Window#setClickThrough(on)  (use the method)]
+  ? Window#setClickThrough(on): member present
+MAPPED @n1h/sweetview-native/win32/api::WS_MAXIMIZEBOX (const: 65536)  ->  @n1h/sweetview-native::Window (class)  [guide line 1222: import { Window } from "@n1h/sweetview-native" ; new Window(options)  (`resizable: true`)]
+  ? new Window(options): constructor present
+  ? `resizable` named in the change column: found as new[0].p0{options}.resizable
+MAPPED @n1h/sweetview-native/win32/api::WS_OVERLAPPEDWINDOW (const: 13565952)  ->  @n1h/sweetview-native::Window (class)  [guide line 1223: import { Window } from "@n1h/sweetview-native" ; new Window(options)  (`frame: true`, the default)]
+  ? new Window(options): constructor present
+  ? `frame` named in the change column: found as new[0].p0{options}.frame
+MAPPED @n1h/sweetview-native/win32/api::WS_POPUP (const: 2147483648)  ->  @n1h/sweetview-native::Window (class)  [guide line 1224: import { Window } from "@n1h/sweetview-native" ; new Window(options)  (`frame: false`; a frameless window no longer has `WS_POPUP` in `GWL_STYLE`)]
+  ? new Window(options): constructor present
+  ? `frame` named in the change column: found as new[0].p0{options}.frame
+MAPPED @n1h/sweetview-native/win32/api::WS_THICKFRAME (const: 262144)  ->  @n1h/sweetview-native::Window (class)  [guide line 1225: import { Window } from "@n1h/sweetview-native" ; new Window(options)  (`resizable: true`)]
+  ? new Window(options): constructor present
+  ? `resizable` named in the change column: found as new[0].p0{options}.resizable
+MAPPED @n1h/sweetview-native/win32/api::wstr (const: (s: string) => Uint8Array)  ->  @n1h/sweetview-native::Window (class)  [guide line 1239: import { Window } from "@n1h/sweetview-native" ; Window#setTitle(title)  (public calls take JavaScript strings; for your own calls encode with `Buffer.from(text + "\0", "utf16le")`)]
+  ? Window#setTitle(title): member present
+MAPPED @n1h/sweetview-native/win32/tab-window::createFrameWindow (function: (options: FrameWindowOptions) => FrameWindow)  ->  @n1h/sweetview-native::Window (class)  [guide line 1278: import { Window } from "@n1h/sweetview-native" ; new Window(options)  (the frame is a binding `Window` now: `new Window({ tabs: true, … })`, then `getTabFrame(BigInt(win.handle))` of this subpath; tabs open with `WebView.openTab`)]
+  ? new Window(options): constructor present
+CHANGED @n1h/sweetview-native/win32/tab-window::cursorPosition  ->  @n1h/sweetview-native/win32/tab-window::cursorPosition  [same entry and name]
+  ~ kind
+      before: function
+      after:  const   [guide rows naming `kind`: 642,1528]
+  - alias-of = cursor   [no guide row names it]
+  + type = () => Point
+CHANGED @n1h/sweetview-native/win32/tab-window::FrameCallbacks  ->  @n1h/sweetview-native/win32/tab-window::FrameCallbacks  [same entry and name]
+  ~ type
+      before: { onCloseRequest?: (() => void) | undefined; onActivate?: ((active: boolean) => void) | undefined; onResized?: (() => void) | undefined; onMoved?: (() => void) | undefined; }
+      after:  { onActivate?(active: boolean): void; onResized?(): void; onMoved?(): void; }   [guide rows naming `type`: 274,275,278,281,282,283]
+  - .onCloseRequest = property?: (() => void) | undefined   [guide rows naming `onCloseRequest`: 549,1306]
+  ~ .onActivate
+      before: property?: ((active: boolean) => void) | undefined
+      after:  method?    [guide rows naming `onActivate`: 1275]
+  ~ .onResized
+      before: property?: (() => void) | undefined
+      after:  method?    [guide rows naming `onResized`: 1275]
+  ~ .onMoved
+      before: property?: (() => void) | undefined
+      after:  method?    [guide rows naming `onMoved`: 1275]
+CHANGED @n1h/sweetview-native/win32/tab-window::FrameWindow  ->  @n1h/sweetview-native/win32/tab-window::FrameWindow  [same entry and name]
+  ~ type
+      before: { readonly hwnd: bigint; readonly stripPane: bigint; createPane(): bigint; adoptPane(pane: bigint): void; placePane(pane: bigint): void; showPane(pane: bigint): void; hidePane(pane: bigint): void; destroyPane(pane: bigint): void; layout(): void; pageSize(): { width: number; height: number; }; show(): void; hide(): void; isVisible(): boolean; bounds(): Rect; setBounds(rect: Rect): void; setTitle(title: string): void; stripRect(): Rect; scale(): number; isForeground(): boolean; isMaximized(): boolean; minimize(): void; toggleMaximize(): void; startDrag(held?: Point): void; startResize(edge: ResizeEdge, held?: Point): void; setTopmost(on: boolean): void; appearance(): Appearance; isDark(): boolean; setSystemDark(dark: boolean): void; addCallbacks(callbacks: FrameCallbacks): () => void; destroy(): void; }
+      after:  { readonly hwnd: bigint; stripBounds(): Rect; pageRect(): Rect; stripRect(): Rect; pageSize(): { width: number; height: number; }; show(): void; hide(): void; isVisible(): boolean; bounds(): Rect; setBounds(rect: Rect): void; setTitle(title: string): void; scale(): number; isForeground(): boolean; isMaximized(): boolean; minimize(): void; toggleMaximize(): void; startDrag(held?: Point): void; startResize(edge: ResizeEdge, held?: Point): void; setTopmost(on: boolean): void; appearance(): Appearance; isDark(): boolean; setSystemDark(dark: boolean): void; showSystemMenu(): void; requestClose(): void; addCallbacks(callbacks: FrameCallbacks): () => void; }   [guide rows naming `type`: 274,275,278,281,282,283]
+  - .stripPane = readonly property: bigint   [guide rows naming `stripPane`: 1296]
+  - .createPane = method () => bigint   [guide rows naming `createPane`: 1297]
+  - .adoptPane = method (pane: bigint) => void   [guide rows naming `adoptPane`: 1298]
+  - .placePane = method (pane: bigint) => void   [guide rows naming `placePane`: 1299]
+  - .showPane = method (pane: bigint) => void   [guide rows naming `showPane`: 1300]
+  - .hidePane = method (pane: bigint) => void   [guide rows naming `hidePane`: 1301]
+  - .destroyPane = method (pane: bigint) => void   [guide rows naming `destroyPane`: 1302]
+  - .layout = method () => void   [guide rows naming `layout`: 1303]
+  - .destroy = method () => void   [guide rows naming `destroy`: 1162,1304,1348,1349,1350,1650]
+  + .stripBounds = method () => Rect
+  + .stripBounds doc.notes = physical-px
+  + .pageRect = method () => Rect
+  + .stripRect doc.notes = physical-px
+  + .pageSize doc.notes = dip
+  + .startDrag doc.notes = dip
+  + .showSystemMenu = method () => void
+  + .requestClose = method () => void
+CHANGED @n1h/sweetview-native/win32/tab-window::FrameWindowOptions  ->  @n1h/sweetview-native::WindowOptions  [guide line 1277: import type { WindowOptions } from "@n1h/sweetview-native" ; WindowOptions#tabs  (the frame is a binding `Window` now: `new Window({ tabs: true, … })` takes every window option)]
+  ? WindowOptions#tabs: member present
+  ~ type
+      before: { title: string; bounds?: Rect; width?: number; height?: number; minWidth?: number; minHeight?: number; stripHeight: number; appearance?: Appearance; systemDark?: boolean; resizable?: boolean; topmost?: boolean; opacity?: number; hideFromTaskbar?: boolean; noActivate?: boolean; at?: Point; onCloseRequest(): void; onActivate(active: boolean): void; onResized(): void; onFileDrop?(drop: bigint): void; onMoved(): void; }
+      after:  { identity?: AppIdentity; title?: string; bounds?: Rect; contentSize?: { width: number; height: number; }; minWidth?: number; minHeight?: number; frame?: boolean; resizable?: boolean; appearance?: Appearance; icon?: Icon; tabs?: boolean; transparent?: boolean; colorKey?: string; backgroundColor?: string; opacity?: number; topmost?: boolean; hideFromTaskbar?: boolean; noActivate?: boolean; onResize?: (bounds: Rect) => void; onMaximizeChange?: (maximized: boolean) => void; onMove?: (bounds: Rect) => void; onClose?: () => void; onFileDrop?: (paths: string[]) => void; onNewTab?: (origin: Window) => void; onTabSelect?: (tab: TabHandle) => void; onTabClose?: (tab: TabHandle) => void; }   [guide rows naming `type`: 274,275,278,281,282,283]
+  ~ .title
+      before: property: string
+      after:  property?: string | undefined   [guide rows naming `title`: 290,291,450,723,724,917]
+  ~ .bounds doc.notes
+      before: dip,outer-frame
+      after:  physical-px,points,outer-frame   [guide rows naming `bounds`: 289,532,564,578,579,581]
+  - .width = property?: number | undefined   [guide rows naming `width`: 289,532,533,534,566,1189]
+  - .height = property?: number | undefined   [guide rows naming `height`: 289,532,533,534,566,1189]
+  ~ .minWidth doc.notes
+      before: physical-px,dip
+      after:  outer-frame   [guide rows naming `minWidth`: 1203]
+  - .stripHeight = property: number   [no guide row names it]
+  - .systemDark = property?: boolean | undefined   [no guide row names it]
+  - .systemDark doc.default = false   [no guide row names it]
+  ~ .resizable doc.default
+      before: true
+      after:  true when frame is true, false when frameless   [guide rows naming `resizable`: 536,1222,1225]
+  - .at = property?: Point | undefined   [guide rows naming `at`: 532,579,1162,1173,1200,1238]
+  - .onCloseRequest = method () => void   [guide rows naming `onCloseRequest`: 549,1306]
+  - .onActivate = method (active: boolean) => void   [guide rows naming `onActivate`: 1275]
+  - .onResized = method () => void   [guide rows naming `onResized`: 1275]
+  ~ .onFileDrop
+      before: method? 
+      after:  property?: ((paths: string[]) => void) | undefined   [guide rows naming `onFileDrop`: 1202,1236]
+  - .onMoved = method () => void   [guide rows naming `onMoved`: 1275]
+  + .identity = property?: AppIdentity | undefined
+  + .bounds doc.default = 320x240 centered on the primary work area
+  + .contentSize = property?: { width: number; height: number; } | undefined
+  + .contentSize doc.notes = dip
+  + .frame = property?: boolean | undefined
+  + .frame doc.default = true
+  + .icon = property?: Icon | undefined
+  + .tabs = property?: boolean | undefined
+  + .tabs doc.default = false
+  + .transparent = property?: boolean | undefined
+  + .transparent doc.default = false
+  + .colorKey = property?: string | undefined
+  + .backgroundColor = property?: string | undefined
+  + .backgroundColor doc.default = what the system or `appearance` gives
+  + .onResize = property?: ((bounds: Rect) => void) | undefined
+  + .onMaximizeChange = property?: ((maximized: boolean) => void) | undefined
+  + .onMove = property?: ((bounds: Rect) => void) | undefined
+  + .onClose = property?: (() => void) | undefined
+  + .onNewTab = property?: ((origin: Window) => void) | undefined
+  + .onTabSelect = property?: ((tab: TabHandle) => void) | undefined
+  + .onTabClose = property?: ((tab: TabHandle) => void) | undefined
+CHANGED @n1h/sweetview-native/win32/tab-window::getTabFrame  ->  @n1h/sweetview-native/win32/tab-window::getTabFrame  [same entry and name]
+  ~ kind
+      before: const
+      after:  function   [guide rows naming `kind`: 642,1528]
+  - type = (hwnd: bigint) => FrameWindow | undefined   [guide rows naming `type`: 274,275,278,281,282,283]
+CHANGED @n1h/sweetview-native/win32/window::asHwnd  ->  @n1h/sweetview-native/win32/window::asHwnd  [same entry and name]
+  + doc.notes = throws
+MAPPED @n1h/sweetview-native/win32/window::colorRef (const: (hex: string) => number)  ->  @n1h/sweetview-native::Window (class)  [guide line 1320: import { Window } from "@n1h/sweetview-native" ; new Window(options)  (pass `colorKey: "#rrggbb"`; Sweetview converts the colour itself)]
+  ? new Window(options): constructor present
+  ? `colorKey` named in the change column: found as new[0].p0{options}.colorKey
+CHANGED @n1h/sweetview-native/win32/window::createWindow  ->  @n1h/sweetview-native/win32/window::createWindow  [same entry and name]
+  ~ call[0].p0{options}.bounds doc.notes
+      before: outer-frame
+      after:  physical-px,points,outer-frame   [guide rows naming `bounds`: 289,532,564,578,579,581]
+  + call[0].p0{options}.contentSize = property?: { width: number; height: number; } | undefined
+  + call[0].p0{options}.contentSize doc.notes = dip
+  + call[0].p0{options}.backgroundColor = property?: string | undefined
+  + call[0].p0{options}.backgroundColor doc.default = what the system or `appearance` gives
+  + call[0].p0{options}.onMaximizeChange = property?: ((maximized: boolean) => void) | undefined
+CHANGED @n1h/sweetview-native/win32/window::fromHandle  ->  @n1h/sweetview-native/win32/window::fromHandle  [same entry and name]
+  + doc.notes = throws
+MAPPED @n1h/sweetview-native/win32/menu::bitmapItemInfo (function: (hbm: bigint) => Uint8Array)  ->  @n1h/sweetview-native::Menu (const)  [guide line 1332: import { Menu } from "@n1h/sweetview-native" ; Menu.popup(owner, menu, at)  (an item's picture is the `icon` field of its menu item)]
+  ? Menu.popup(owner, menu, at): member present
+  ? `icon` named in the change column: not found on Menu
+MAPPED @n1h/sweetview-native/win32/menu::escapeLabel (const: (label: string) => string)  ->  @n1h/sweetview-native::Menu (const)  [guide line 1335: import { Menu } from "@n1h/sweetview-native" ; Menu.popup(owner, menu, at)  (nothing to call: the native layer doubles `&` in a label itself)]
+  ? Menu.popup(owner, menu, at): member present
+CHANGED @n1h/sweetview-native/win32/menu::MII_HBMPITEM  ->  @n1h/sweetview-native::Menu  [guide line 1329: import { Menu } from "@n1h/sweetview-native" ; Menu.popup(owner, menu, at)  (an item's picture is the `icon` field of its menu item)]
+  ? Menu.popup(owner, menu, at): member present
+  ? `icon` named in the change column: not found on Menu
+  ~ type
+      before: 72
+      after:  { popup(owner: WindowRef, menu: MenuSource, at?: Point, options?: MenuPopupOptions): boolean; }   [guide rows naming `type`: 274,275,278,281,282,283]
+  - value = 72   [no guide row names it]
+  + .popup = method (owner: WindowRef, menu: MenuSource, at?: Point, options?: MenuPopupOptions) => boolean
+  + .popup doc.notes = points
+  + .popup doc.default = cursor position), below the
+CHANGED @n1h/sweetview-native/win32/menu::MII_MASK  ->  @n1h/sweetview-native::Menu  [guide line 1330: import { Menu } from "@n1h/sweetview-native" ; Menu.popup(owner, menu, at)  (an item's picture is the `icon` field of its menu item)]
+  ? Menu.popup(owner, menu, at): member present
+  ? `icon` named in the change column: not found on Menu
+  ~ type
+      before: 4
+      after:  { popup(owner: WindowRef, menu: MenuSource, at?: Point, options?: MenuPopupOptions): boolean; }   [guide rows naming `type`: 274,275,278,281,282,283]
+  - value = 4   [no guide row names it]
+  + .popup = method (owner: WindowRef, menu: MenuSource, at?: Point, options?: MenuPopupOptions) => boolean
+  + .popup doc.notes = points
+  + .popup doc.default = cursor position), below the
+CHANGED @n1h/sweetview-native/win32/menu::MII_SIZE  ->  @n1h/sweetview-native::Menu  [guide line 1331: import { Menu } from "@n1h/sweetview-native" ; Menu.popup(owner, menu, at)  (an item's picture is the `icon` field of its menu item)]
+  ? Menu.popup(owner, menu, at): member present
+  ? `icon` named in the change column: not found on Menu
+  ~ type
+      before: 80
+      after:  { popup(owner: WindowRef, menu: MenuSource, at?: Point, options?: MenuPopupOptions): boolean; }   [guide rows naming `type`: 274,275,278,281,282,283]
+  - value = 80   [no guide row names it]
+  + .popup = method (owner: WindowRef, menu: MenuSource, at?: Point, options?: MenuPopupOptions) => boolean
+  + .popup doc.notes = points
+  + .popup doc.default = cursor position), below the
+CHANGED @n1h/sweetview-native/win32/menu::popupMenu  ->  @n1h/sweetview-native/win32/menu::popupMenu  [same entry and name]
+  ~ call[0]
+      before: (owner: WindowHandle, template: MenuTemplate, at?: Point) => boolean
+      after:  (owner: WindowHandle, template: MenuTemplate, at?: Point, options?: MenuPopupOptions) => boolean   [guide rows naming `call`: 520,1162,1231,1335,1349,1350]
+  + doc.notes = points
+  + call[0].p3 = options?: MenuPopupOptions | undefined
+  + call[0].p3{options}.above = property?: boolean | undefined
+  + call[0].p3{options}.above doc.notes = points
+MAPPED @n1h/sweetview-native/win32/message-window::createMessageWindow (function: (handler: MessageHandler) => MessageWindow)  ->  @n1h/sweetview-native::Window (class)  [guide line 1349: import { Window } from "@n1h/sweetview-native" ; new Window(options) ; Window#dispose()  (a hidden `new Window()` is the owner a menu or dialog needs (`Menu.popup`, `pickFolder`), and `dispose()` is `destroy()`; the other uses each have a public call: a second instance's arguments (`WM_COPYDATA`) arrive at `singleInstance`'s `onSecondInstance`, work handed to the UI thread is a `deferredUiMethods` handler, a global hotkey is `installKeyboardHook`, the tray's `TaskbarCreated` is Sweetview's own, and the clipboard, notifications and the tray need no window of yours; only a system broadcast Sweetview reports nothing of (`WM_POWERBROADCAST`, `WM_DEVICECHANGE`, `WM_QUERYENDSESSION`) still needs a window of your own from your own `dlopen` table)]
+  ? new Window(options): constructor present
+  ? Window#dispose(): member present
+  ? `pickFolder` named in the change column: not found on Window
+  ? `singleInstance` named in the change column: not found on Window
+  ? `onSecondInstance` named in the change column: not found on Window
+  ? `deferredUiMethods` named in the change column: not found on Window
+  ? `installKeyboardHook` named in the change column: not found on Window
+  ? `dlopen` named in the change column: not found on Window
+MAPPED @n1h/sweetview-native/win32/message-window::createMessageWindowRaw (function: (handler: MessageHandler) => MessageWindow)  ->  @n1h/sweetview-native::Window (class)  [guide line 1350: import { Window } from "@n1h/sweetview-native" ; new Window(options) ; Window#dispose()  (Sweetview's own message windows are internal; a hidden `new Window()` is the owner a menu or dialog needs (`Menu.popup`, `pickFolder`), and `dispose()` is `destroy()`; the other uses each have a public call: a second instance's arguments (`WM_COPYDATA`) arrive at `singleInstance`'s `onSecondInstance`, work handed to the UI thread is a `deferredUiMethods` handler, a global hotkey is `installKeyboardHook`, the tray's `TaskbarCreated` is Sweetview's own, and the clipboard, notifications and the tray need no window of yours; only a system broadcast Sweetview reports nothing of (`WM_POWERBROADCAST`, `WM_DEVICECHANGE`, `WM_QUERYENDSESSION`) still needs a window of your own from your own `dlopen` table)]
+  ? new Window(options): constructor present
+  ? Window#dispose(): member present
+  ? `pickFolder` named in the change column: not found on Window
+  ? `singleInstance` named in the change column: not found on Window
+  ? `onSecondInstance` named in the change column: not found on Window
+  ? `deferredUiMethods` named in the change column: not found on Window
+  ? `installKeyboardHook` named in the change column: not found on Window
+  ? `dlopen` named in the change column: not found on Window
+GUIDE-TARGET-NOT-AN-EXPORT @n1h/sweetview-native/win32/message-window::MessageHandler  ->  guide line 1347: type MessageHandler = (message: number, wParam: bigint, lParam: bigint) => void  (declare the type in your own code)
+GUIDE-TARGET-NOT-AN-EXPORT @n1h/sweetview-native/win32/message-window::MessageWindow  ->  guide line 1348: type MessageWindow = { readonly hwnd: bigint; readonly destroy: () => void }  (declare the type in your own code)
+CHANGED @n1h/sweetview-native/darwin/window::bindDarwinTabGroup  ->  @n1h/sweetview-native/darwin/window::bindDarwinTabGroup  [same entry and name]
+  + call[0].p0{backend}.isMinimized = method () => boolean
+  + call[0].p0{backend}.showSystemMenu = method () => void
+  + call[0].p0{backend}.onMaximizeChange = method (handler: (maximized: boolean) => void) => () => void
+  + call[0].p1{controller}.isMinimized = method () => boolean
+CHANGED @n1h/sweetview-native/darwin/window::createWindow  ->  @n1h/sweetview-native/darwin/window::createWindow  [same entry and name]
+  ~ call[0].p0{options}.bounds doc.notes
+      before: outer-frame
+      after:  physical-px,points,outer-frame   [guide rows naming `bounds`: 289,532,564,578,579,581]
+  + call[0].p0{options}.contentSize = property?: { width: number; height: number; } | undefined
+  + call[0].p0{options}.contentSize doc.notes = dip
+  + call[0].p0{options}.backgroundColor = property?: string | undefined
+  + call[0].p0{options}.backgroundColor doc.default = what the system or `appearance` gives
+  + call[0].p0{options}.onMaximizeChange = property?: ((maximized: boolean) => void) | undefined
+CHANGED @n1h/sweetview-native/darwin/window::DarwinTabGroupController  ->  @n1h/sweetview-native/darwin/window::DarwinTabGroupController  [same entry and name]
+  ~ type
+      before: { show(): void; hide(): void; isVisible(): boolean; bounds(): Rect; setBounds(rect: Rect): void; setTitle(title: string): void; minimize(): void; toggleMaximize(): void; isMaximized(): boolean; dispose(): void; setFileDropEnabled(enabled: boolean): void; setTopmost?(on: boolean): void; startDrag?(): void; startResize?(edge: ResizeEdge): void; activeHandle?(): Id | null; }
+      after:  { show(): void; hide(): void; isVisible(): boolean; bounds(): Rect; setBounds(rect: Rect): void; setTitle(title: string): void; minimize(): void; toggleMaximize(): void; isMaximized(): boolean; isMinimized(): boolean; dispose(): void; setFileDropEnabled(enabled: boolean): void; setTopmost?(on: boolean): void; startDrag?(): void; startResize?(edge: ResizeEdge): void; activeHandle?(): Id | null; }   [guide rows naming `type`: 274,275,278,281,282,283]
+  + .isMinimized = method () => boolean
+CHANGED @n1h/sweetview-native/darwin/window::getDarwinTabActiveHandle  ->  @n1h/sweetview-native/darwin/window::getDarwinTabActiveHandle  [same entry and name]
+  + call[0].p0{backend}.isMinimized = method () => boolean
+  + call[0].p0{backend}.showSystemMenu = method () => void
+  + call[0].p0{backend}.onMaximizeChange = method (handler: (maximized: boolean) => void) => () => void
+
+# bindings package @n1h/sweetview-webview-bun 2.7.0 -> head (guide Part C)
+
+CHANGED @n1h/sweetview-webview-bun::Feature  ->  @n1h/sweetview-native::Feature  [guide line 1608: import { Feature } from "@n1h/sweetview-native" ; Feature.MouseHook === 0 ; Feature.KeyboardHook === 1  (an ordinary `enum` now (it was a `const enum`): its members are values at run time)]
+  ? Feature.MouseHook === 0: member present
+  ? Feature.KeyboardHook === 1: member present
+  ? `enum` named in the change column: not found on Feature
+  ~ kind
+      before: const enum
+      after:  enum   [guide rows naming `kind`: 642,1528]
+CHANGED @n1h/sweetview-webview-bun::installKeyboardHook  ->  @n1h/sweetview-native::installKeyboardHook  [guide line 1634: import { installKeyboardHook } from "@n1h/sweetview-native" ; installKeyboardHook(handler)  (unchanged; installed and disposed of on the UI thread)]
+  ? installKeyboardHook(handler): call present
+  ~ doc.notes
+      before: throws
+      after:  seconds,ui-thread,throws   [no guide row names it]
+  + @throws = {Error} `webview_keyboard_hook_install failed: ...` when a keyboard hook is already installed, a permission is missing (macOS), or the platform has none.
+CHANGED @n1h/sweetview-webview-bun::installMouseHook  ->  @n1h/sweetview-native::installMouseHook  [guide line 1635: import { installMouseHook } from "@n1h/sweetview-native" ; installMouseHook(handler)  (unchanged; installed and disposed of on the UI thread)]
+  ? installMouseHook(handler): call present
+  ~ doc.notes
+      before: throws
+      after:  seconds,ui-thread,throws   [no guide row names it]
+  + @throws = {Error} `webview_mouse_hook_install failed: ...` when a mouse hook is already installed, a permission is missing (macOS), or the platform has none.
+CHANGED @n1h/sweetview-webview-bun::KeyEvent  ->  @n1h/sweetview-native::KeyEvent  [guide line 1610: import { KeyEvent } from "@n1h/sweetview-native" ; KeyEvent.Down === 0 ; KeyEvent.Up === 1 ; KeyEvent.Repeat === 2  (an ordinary `enum` now (it was a `const enum`): its members are values at run time)]
+  ? KeyEvent.Down === 0: member present
+  ? KeyEvent.Up === 1: member present
+  ? KeyEvent.Repeat === 2: member present
+  ? `enum` named in the change column: not found on KeyEvent
+  ~ kind
+      before: const enum
+      after:  enum   [guide rows naming `kind`: 642,1528]
+CHANGED @n1h/sweetview-webview-bun::Modifier  ->  @n1h/sweetview-native::Modifier  [guide line 1614: import { Modifier } from "@n1h/sweetview-native" ; Modifier.Shift === 1 ; Modifier.Control === 2 ; Modifier.Alt === 4 ; Modifier.Meta === 8  (an ordinary `enum` now (it was a `const enum`): its members are values at run time)]
+  ? Modifier.Shift === 1: member present
+  ? Modifier.Control === 2: member present
+  ? Modifier.Alt === 4: member present
+  ? Modifier.Meta === 8: member present
+  ? `enum` named in the change column: not found on Modifier
+  ~ kind
+      before: const enum
+      after:  enum   [guide rows naming `kind`: 642,1528]
+CHANGED @n1h/sweetview-webview-bun::MouseEvent  ->  @n1h/sweetview-native::MouseEvent  [guide line 1616: import { MouseEvent } from "@n1h/sweetview-native" ; MouseEvent.Move === 0 ; MouseEvent.LeftDown === 1 ; MouseEvent.LeftUp === 2 ; MouseEvent.RightDown === 3 ; MouseEvent.RightUp === 4 ; MouseEvent.MiddleDown === 5 ; MouseEvent.MiddleUp === 6 ; MouseEvent.Wheel === 7  (an ordinary `enum` now (it was a `const enum`): its members are values at run time)]
+  ? MouseEvent.Move === 0: member present
+  ? MouseEvent.LeftDown === 1: member present
+  ? MouseEvent.LeftUp === 2: member present
+  ? MouseEvent.RightDown === 3: member present
+  ? MouseEvent.RightUp === 4: member present
+  ? MouseEvent.MiddleDown === 5: member present
+  ? MouseEvent.MiddleUp === 6: member present
+  ? MouseEvent.Wheel === 7: member present
+  ? `enum` named in the change column: not found on MouseEvent
+  ~ kind
+      before: const enum
+      after:  enum   [guide rows naming `kind`: 642,1528]
+CHANGED @n1h/sweetview-webview-bun::MouseHandler  ->  @n1h/sweetview-native::MouseHandler  [guide line 1617: import type { MouseHandler } from "@n1h/sweetview-native"  (unchanged)]
+  - doc.notes = ui-thread   [no guide row names it]
+CHANGED @n1h/sweetview-webview-bun::MouseMessage  ->  @n1h/sweetview-native::MouseMessage  [guide line 1619: import type { MouseMessage } from "@n1h/sweetview-native"  (unchanged)]
+  - doc.notes = physical-px,points   [no guide row names it]
+CHANGED @n1h/sweetview-webview-bun::Permission  ->  @n1h/sweetview-native::Permission  [guide line 1620: import { Permission } from "@n1h/sweetview-native" ; Permission.DeviceControl === 1 ; Permission.InputMonitoring === 2  (an ordinary `enum` now (it was a `const enum`): its members are values at run time)]
+  ? Permission.DeviceControl === 1: member present
+  ? Permission.InputMonitoring === 2: member present
+  ? `enum` named in the change column: not found on Permission
+  ~ kind
+      before: const enum
+      after:  enum   [guide rows naming `kind`: 642,1528]
+CHANGED @n1h/sweetview-webview-bun::permissions  ->  @n1h/sweetview-native::permissions  [guide line 1637: import { permissions } from "@n1h/sweetview-native"  (unchanged)]
+  ~ type
+      before: { needed(feature: Feature): Permission[]; status(permission: Permission): PermissionStatus; request(permission: Permission): PermissionStatus; ready(feature: Feature): boolean; autoRequest: boolean; }
+      after:  Permissions   [guide rows naming `type`: 274,275,278,281,282,283]
+  ~ .autoRequest
+      before: get set: boolean
+      after:  property: boolean   [no guide row names it]
+  + .autoRequest doc.default = true
+CHANGED @n1h/sweetview-webview-bun::SizeHint  ->  @n1h/sweetview-native::SizeHint  [guide line 1624: import { SizeHint } from "@n1h/sweetview-native" ; SizeHint.NONE === 0 ; SizeHint.MIN === 1 ; SizeHint.MAX === 2 ; SizeHint.FIXED === 3  (an ordinary `enum` now (it was a `const enum`): its members are values at run time)]
+  ? SizeHint.NONE === 0: member present
+  ? SizeHint.MIN === 1: member present
+  ? SizeHint.MAX === 2: member present
+  ? SizeHint.FIXED === 3: member present
+  ? `enum` named in the change column: not found on SizeHint
+  ~ kind
+      before: const enum
+      after:  enum   [guide rows naming `kind`: 642,1528]
+CHANGED @n1h/sweetview-webview-bun::Webview  ->  @n1h/sweetview-native::Webview  [guide line 1626: import { Webview } from "@n1h/sweetview-native" ; new Webview(debug, size, window)  (the same class; the members that changed are in the next table)]
+  ? new Webview(debug, size, window): constructor present
+  ~ new[0]
+      before: (handle: Pointer) => Webview
+      after:  (handle: WebviewHandle) => Webview   [guide rows naming `new`: 276,280,325,409,416,417]
+  ~ new[0].p0
+      before: handle: Pointer
+      after:  handle: number   [guide rows naming `new`: 276,280,325,409,416,417]
+  ~ new[1]
+      before: (debug?: boolean, size?: Size, window?: Pointer | null) => Webview
+      after:  (debug?: boolean, size?: Size, window?: WindowHandle) => Webview   [guide rows naming `new`: 276,280,325,409,416,417]
+  ~ new[1].p2
+      before: window?: Pointer | null | undefined
+      after:  window?: WindowHandle | undefined   [guide rows naming `new`: 276,280,325,409,416,417]
+  ~ #unsafeHandle
+      before: get: Pointer | null
+      after:  get: number | null   [guide rows naming `unsafeHandle`: 280,501,701,1631,1632,1633]
+  ~ #unsafeWindowHandle
+      before: get: bigint | Pointer | null
+      after:  get: number | null   [guide rows naming `unsafeWindowHandle`: 1648]
+  ~ #bindRaw
+      before: method (name: string, callback: (seq: string, req: string, arg: Pointer | null) => void, arg?: Pointer | null) => void
+      after:  method <A = null>(name: string, callback: (seq: string, req: string, arg: A) => void, arg?: A) => void   [guide rows naming `bindRaw`: 1652]
+  ~ #bindRaw(0)
+      before: (name: string, callback: (seq: string, req: string, arg: Pointer | null) => void, arg?: Pointer | null) => void
+      after:  <A = null>(name: string, callback: (seq: string, req: string, arg: A) => void, arg?: A) => void   [guide rows naming `bindRaw`: 1652]
+  ~ #bindRaw(0).p1
+      before: callback: (seq: string, req: string, arg: Pointer | null) => void
+      after:  callback: (seq: string, req: string, arg: A) => void   [guide rows naming `bindRaw`: 1652]
+  ~ #bindRaw(0).p2
+      before: arg?: Pointer | null = null
+      after:  arg?: A = null as A   [guide rows naming `bindRaw`: 1652]
+  ~ #bind doc.notes
+      before: async
+      after:  worker,throws,async   [no guide row names it]
+  + #unsafeHandle doc.notes = worker
+  + #destroy doc.notes = throws
+  + #framesOrigin = get: string
+  + #framesOrigin doc.notes = seconds
+  + #setRequestHandler = method (handler: RequestHandler | null) => void
+  + #setRequestHandler doc.notes = worker,throws
+  + #setRequestHandler(0) = (handler: RequestHandler | null) => void
+  + #setRequestHandler(0).p0 = handler: RequestHandler | null
+  + #setRequestHandler(0).returns = void
+  + #completeRequest = method (id: bigint, response?: WebviewResponse) => void
+  + #completeRequest @throws = {WebviewError} Bad headers, a status outside 100-599, a body over 4 GiB - 1, or a webview already destroyed (`WEBVIEW_ERROR_INVALID_STATE`, code -3).
+  + #completeRequest(0) = (id: bigint, response?: WebviewResponse) => void
+  + #completeRequest(0).p0 = id: bigint
+  + #completeRequest(0).p1 = response?: WebviewResponse = {}
+  + #completeRequest(0).p1{response}.status = property?: number | undefined
+  + #completeRequest(0).p1{response}.status doc.default = 200
+  + #completeRequest(0).p1{response}.headers = property?: Record<string, string> | [name: string, value: string][] | undefined
+  + #completeRequest(0).p1{response}.headers doc.notes = throws
+  + #completeRequest(0).p1{response}.body = property?: string | ArrayBuffer | Uint8Array<ArrayBufferLike> | null | undefined
+  + #completeRequest(0).returns = void
+  + #beginResponse = method (id: bigint, head?: WebviewResponseHead) => void
+  + #beginResponse doc.notes = worker
+  + #beginResponse(0) = (id: bigint, head?: WebviewResponseHead) => void
+  + #beginResponse(0).p0 = id: bigint
+  + #beginResponse(0).p1 = head?: WebviewResponseHead = {}
+  + #beginResponse(0).p1{head}.status = property?: number | undefined
+  + #beginResponse(0).p1{head}.status doc.default = 200
+  + #beginResponse(0).p1{head}.headers = property?: Record<string, string> | [name: string, value: string][] | undefined
+  + #beginResponse(0).returns = void
+  + #writeResponseChunk = method (id: bigint, chunk: Uint8Array | ArrayBuffer | string) => void
+  + #writeResponseChunk(0) = (id: bigint, chunk: Uint8Array | ArrayBuffer | string) => void
+  + #writeResponseChunk(0).p0 = id: bigint
+  + #writeResponseChunk(0).p1 = chunk: string | ArrayBuffer | Uint8Array<ArrayBufferLike>
+  + #writeResponseChunk(0).returns = void
+  + #endResponse = method (id: bigint) => void
+  + #endResponse(0) = (id: bigint) => void
+  + #endResponse(0).p0 = id: bigint
+  + #endResponse(0).returns = void
+  + #setFileDropHandler = method (handler: FileDropHandler | null) => void
+  + #setFileDropHandler @throws = {WebviewError} The platform refused the change; the previous handler stays in place. A destroyed webview throws `WEBVIEW_ERROR_INVALID_STATE` (code -3).
+  + #setFileDropHandler(0) = (handler: FileDropHandler | null) => void
+  + #setFileDropHandler(0).p0 = handler: FileDropHandler | null
+  + #setFileDropHandler(0).returns = void
+  + #setAllowExternalDrop = method (allow: boolean) => void
+  + #setAllowExternalDrop @throws = {WebviewError} The platform refused the change (a WebView2 Runtime without `AllowExternalDrop` throws `WEBVIEW_ERROR_UNSPECIFIED`, code -1).
+  + #setAllowExternalDrop(0) = (allow: boolean) => void
+  + #setAllowExternalDrop(0).p0 = allow: boolean
+  + #setAllowExternalDrop(0).returns = void
+  + #setBackgroundColor @throws = {WebviewError} A channel that is not an integer from 0 to 255 (`WEBVIEW_ERROR_INVALID_ARGUMENT`, code -2), or the platform's own error.
+  + #bindRaw @throws = {WebviewError} A name already bound (`WEBVIEW_ERROR_DUPLICATE`, code 1); the existing binding is left untouched.
+  + #bindRaw(0).generics = A
+  + #unbind @throws = {WebviewError} A name that is not bound (`WEBVIEW_ERROR_NOT_FOUND`, code 2).
+
+# bindings names listed for 2.8.0 that the installed 2.7.0 does not export (10): checked by name and guide row only
+
+NAME-ONLY @n1h/sweetview-webview-bun::WebviewError  ->  guide line 1627: import { WebviewError } from "@n1h/sweetview-native" ; new WebviewError(fn, code) (unchanged); target class: (fn: string, code: number) => WebviewError
+NAME-ONLY @n1h/sweetview-webview-bun::WebviewRequest  ->  guide line 1628: import type { WebviewRequest } from "@n1h/sweetview-native" (unchanged); target interface: WebviewRequest
+NAME-ONLY @n1h/sweetview-webview-bun::WebviewResponse  ->  guide line 1629: import type { WebviewResponse } from "@n1h/sweetview-native" (unchanged); target interface: WebviewResponse
+NAME-ONLY @n1h/sweetview-webview-bun::RequestHandler  ->  guide line 1622: import type { RequestHandler } from "@n1h/sweetview-native" (unchanged); target type: (request: WebviewRequest) => WebviewResponse | void | Promise<WebviewResponse | void>
+NAME-ONLY @n1h/sweetview-webview-bun::completeWebviewRequest  ->  guide line 1632: import { completeWebviewRequest } from "@n1h/sweetview-native" ; completeWebviewRequest(handle, id, response) (`handle` is the opaque number of `Webview.unsafeHandle`, not a pointer; still callable from any thread); target function: (handle: WebviewHandle, id: bigint, response?: WebviewResponse) => void
+NAME-ONLY @n1h/sweetview-webview-bun::WebviewResponseHead  ->  guide line 1630: import type { WebviewResponseHead } from "@n1h/sweetview-native" (unchanged); target interface: WebviewResponseHead
+NAME-ONLY @n1h/sweetview-webview-bun::beginWebviewResponse  ->  guide line 1631: import { beginWebviewResponse } from "@n1h/sweetview-native" ; beginWebviewResponse(handle, id, head) (`handle` is the opaque number of `Webview.unsafeHandle`, not a pointer; still callable from any thread); target function: (handle: WebviewHandle, id: bigint, head?: WebviewResponseHead) => void
+NAME-ONLY @n1h/sweetview-webview-bun::writeWebviewResponseChunk  ->  guide line 1639: import { writeWebviewResponseChunk } from "@n1h/sweetview-native" ; writeWebviewResponseChunk(handle, id, chunk) (`handle` is the opaque number of `Webview.unsafeHandle`, not a pointer; still callable from any thread); target function: (handle: WebviewHandle, id: bigint, chunk: Uint8Array | ArrayBuffer | string) => void
+NAME-ONLY @n1h/sweetview-webview-bun::endWebviewResponse  ->  guide line 1633: import { endWebviewResponse } from "@n1h/sweetview-native" ; endWebviewResponse(handle, id) (`handle` is the opaque number of `Webview.unsafeHandle`, not a pointer; still callable from any thread); target function: (handle: WebviewHandle, id: bigint) => void
+NAME-ONLY @n1h/sweetview-webview-bun::FileDropHandler  ->  guide line 1609: import type { FileDropHandler } from "@n1h/sweetview-native" (unchanged); target type: (paths: string[]) => void
+
+# added at head: exports matched by no before symbol (same key, guide row or same name)
+
+ADDED @n1h/sweetview::windowChromeEvents (function)
+ADDED @n1h/sweetview::WindowChromeEvents (type)
+ADDED @n1h/sweetview/window-chrome::windowChromeEvents (function)
+ADDED @n1h/sweetview/window-chrome::WindowChromeEvents (type)
+ADDED @n1h/sweetview/ipc-electron::ContextBridgeLike (type)
+ADDED @n1h/sweetview/ipc-electron::createSweetviewIpcApi (function)
+ADDED @n1h/sweetview/ipc-electron::ELECTRON_API_KEY (const)
+ADDED @n1h/sweetview/ipc-electron::ELECTRON_CHANNEL (const)
+ADDED @n1h/sweetview/ipc-electron::ELECTRON_HELLO_CHANNEL (const)
+ADDED @n1h/sweetview/ipc-electron::electronHost (function)
+ADDED @n1h/sweetview/ipc-electron::ElectronHost (type)
+ADDED @n1h/sweetview/ipc-electron::ElectronHostOptions (type)
+ADDED @n1h/sweetview/ipc-electron::electronTransport (function)
+ADDED @n1h/sweetview/ipc-electron::ElectronTransport (type)
+ADDED @n1h/sweetview/ipc-electron::exposeSweetviewIpc (function)
+ADDED @n1h/sweetview/ipc-electron::IpcMainEventLike (type)
+ADDED @n1h/sweetview/ipc-electron::IpcMainLike (type)
+ADDED @n1h/sweetview/ipc-electron::IpcRendererLike (type)
+ADDED @n1h/sweetview/ipc-electron::isElectron (const)
+ADDED @n1h/sweetview/ipc-electron::SweetviewIpcApi (type)
+ADDED @n1h/sweetview/ipc-electron::WebContentsLike (type)
+ADDED @n1h/sweetview/ipc-electron/client::ELECTRON_API_KEY (const)
+ADDED @n1h/sweetview/ipc-electron/client::electronTransport (function)
+ADDED @n1h/sweetview/ipc-electron/client::ElectronTransport (type)
+ADDED @n1h/sweetview/ipc-electron/client::isElectron (const)
+ADDED @n1h/sweetview/ipc-electron/client::SweetviewIpcApi (type)
+ADDED @n1h/sweetview/ipc-electron/preload::ContextBridgeLike (type)
+ADDED @n1h/sweetview/ipc-electron/preload::createSweetviewIpcApi (function)
+ADDED @n1h/sweetview/ipc-electron/preload::ELECTRON_API_KEY (const)
+ADDED @n1h/sweetview/ipc-electron/preload::ELECTRON_CHANNEL (const)
+ADDED @n1h/sweetview/ipc-electron/preload::ELECTRON_HELLO_CHANNEL (const)
+ADDED @n1h/sweetview/ipc-electron/preload::exposeSweetviewIpc (function)
+ADDED @n1h/sweetview/ipc-electron/preload::IpcRendererLike (type)
+ADDED @n1h/sweetview/ipc-electron/preload::SweetviewIpcApi (type)
+ADDED @n1h/sweetview/ipc-electron/server::ELECTRON_CHANNEL (const)
+ADDED @n1h/sweetview/ipc-electron/server::ELECTRON_HELLO_CHANNEL (const)
+ADDED @n1h/sweetview/ipc-electron/server::electronHost (function)
+ADDED @n1h/sweetview/ipc-electron/server::ElectronHost (type)
+ADDED @n1h/sweetview/ipc-electron/server::ElectronHostOptions (type)
+ADDED @n1h/sweetview/ipc-electron/server::IpcMainEventLike (type)
+ADDED @n1h/sweetview/ipc-electron/server::IpcMainLike (type)
+ADDED @n1h/sweetview/ipc-electron/server::WebContentsLike (type)
+ADDED @n1h/sweetview/ipc-tauri::isTauri (const)
+ADDED @n1h/sweetview/ipc-tauri::TAURI_COMMAND (const)
+ADDED @n1h/sweetview/ipc-tauri::TAURI_EVENT (const)
+ADDED @n1h/sweetview/ipc-tauri::TauriApi (type)
+ADDED @n1h/sweetview/ipc-tauri::tauriGlobalApi (function)
+ADDED @n1h/sweetview/ipc-tauri::TauriInvoke (type)
+ADDED @n1h/sweetview/ipc-tauri::TauriListen (type)
+ADDED @n1h/sweetview/ipc-tauri::tauriTransport (function)
+ADDED @n1h/sweetview/ipc-tauri::TauriTransport (type)
+ADDED @n1h/sweetview/ipc-tauri/client::isTauri (const)
+ADDED @n1h/sweetview/ipc-tauri/client::TAURI_COMMAND (const)
+ADDED @n1h/sweetview/ipc-tauri/client::TAURI_EVENT (const)
+ADDED @n1h/sweetview/ipc-tauri/client::TauriApi (type)
+ADDED @n1h/sweetview/ipc-tauri/client::tauriGlobalApi (function)
+ADDED @n1h/sweetview/ipc-tauri/client::TauriInvoke (type)
+ADDED @n1h/sweetview/ipc-tauri/client::TauriListen (type)
+ADDED @n1h/sweetview/ipc-tauri/client::tauriTransport (function)
+ADDED @n1h/sweetview/ipc-tauri/client::TauriTransport (type)
+ADDED @n1h/sweetview/native::beginWebviewResponse (function)
+ADDED @n1h/sweetview/native::completeWebviewRequest (function)
+ADDED @n1h/sweetview/native::endWebviewResponse (function)
+ADDED @n1h/sweetview/native::Feature (enum) [same name as a bindings export]
+ADDED @n1h/sweetview/native::FileDropHandler (type)
+ADDED @n1h/sweetview/native::installKeyboardHook (function) [same name as a bindings export]
+ADDED @n1h/sweetview/native::installMouseHook (function) [same name as a bindings export]
+ADDED @n1h/sweetview/native::KeyboardHook (type) [same name as a bindings export]
+ADDED @n1h/sweetview/native::KeyEvent (enum) [same name as a bindings export]
+ADDED @n1h/sweetview/native::KeyHandler (type) [same name as a bindings export]
+ADDED @n1h/sweetview/native::KeyMessage (type) [same name as a bindings export]
+ADDED @n1h/sweetview/native::MenuPopupOptions (type)
+ADDED @n1h/sweetview/native::Modifier (enum) [same name as a bindings export]
+ADDED @n1h/sweetview/native::Modifiers (type) [same name as a bindings export]
+ADDED @n1h/sweetview/native::modifiersFrom (function) [same name as a bindings export]
+ADDED @n1h/sweetview/native::MouseEvent (enum) [same name as a bindings export]
+ADDED @n1h/sweetview/native::MouseHandler (type) [same name as a bindings export]
+ADDED @n1h/sweetview/native::MouseHook (type) [same name as a bindings export]
+ADDED @n1h/sweetview/native::MouseMessage (type) [same name as a bindings export]
+ADDED @n1h/sweetview/native::Permission (enum) [same name as a bindings export]
+ADDED @n1h/sweetview/native::permissions (const) [same name as a bindings export]
+ADDED @n1h/sweetview/native::PermissionStatus (type) [same name as a bindings export]
+ADDED @n1h/sweetview/native::RawWebview (class)
+ADDED @n1h/sweetview/native::RequestHandler (type)
+ADDED @n1h/sweetview/native::Size (interface) [same name as a bindings export]
+ADDED @n1h/sweetview/native::SizeHint (enum) [same name as a bindings export]
+ADDED @n1h/sweetview/native::unload (function) [same name as a bindings export]
+ADDED @n1h/sweetview/native::Webview (class) [same name as a bindings export]
+ADDED @n1h/sweetview/native::WEBVIEW_VERSION (const) [same name as a bindings export]
+ADDED @n1h/sweetview/native::WebviewError (class)
+ADDED @n1h/sweetview/native::WebviewHandle (type)
+ADDED @n1h/sweetview/native::WebviewRequest (interface)
+ADDED @n1h/sweetview/native::WebviewResponse (interface)
+ADDED @n1h/sweetview/native::WebviewResponseHead (interface)
+ADDED @n1h/sweetview/native::writeWebviewResponseChunk (function)
+ADDED @n1h/sweetview-ipc-electron::ContextBridgeLike (type)
+ADDED @n1h/sweetview-ipc-electron::createSweetviewIpcApi (function)
+ADDED @n1h/sweetview-ipc-electron::ELECTRON_API_KEY (const)
+ADDED @n1h/sweetview-ipc-electron::ELECTRON_CHANNEL (const)
+ADDED @n1h/sweetview-ipc-electron::ELECTRON_HELLO_CHANNEL (const)
+ADDED @n1h/sweetview-ipc-electron::electronHost (function)
+ADDED @n1h/sweetview-ipc-electron::ElectronHost (type)
+ADDED @n1h/sweetview-ipc-electron::ElectronHostOptions (type)
+ADDED @n1h/sweetview-ipc-electron::electronTransport (function)
+ADDED @n1h/sweetview-ipc-electron::ElectronTransport (type)
+ADDED @n1h/sweetview-ipc-electron::exposeSweetviewIpc (function)
+ADDED @n1h/sweetview-ipc-electron::IpcMainEventLike (type)
+ADDED @n1h/sweetview-ipc-electron::IpcMainLike (type)
+ADDED @n1h/sweetview-ipc-electron::IpcRendererLike (type)
+ADDED @n1h/sweetview-ipc-electron::isElectron (const)
+ADDED @n1h/sweetview-ipc-electron::SweetviewIpcApi (type)
+ADDED @n1h/sweetview-ipc-electron::WebContentsLike (type)
+ADDED @n1h/sweetview-ipc-electron/client::ELECTRON_API_KEY (const)
+ADDED @n1h/sweetview-ipc-electron/client::electronTransport (function)
+ADDED @n1h/sweetview-ipc-electron/client::ElectronTransport (type)
+ADDED @n1h/sweetview-ipc-electron/client::isElectron (const)
+ADDED @n1h/sweetview-ipc-electron/client::SweetviewIpcApi (type)
+ADDED @n1h/sweetview-ipc-electron/preload::ContextBridgeLike (type)
+ADDED @n1h/sweetview-ipc-electron/preload::createSweetviewIpcApi (function)
+ADDED @n1h/sweetview-ipc-electron/preload::ELECTRON_API_KEY (const)
+ADDED @n1h/sweetview-ipc-electron/preload::ELECTRON_CHANNEL (const)
+ADDED @n1h/sweetview-ipc-electron/preload::ELECTRON_HELLO_CHANNEL (const)
+ADDED @n1h/sweetview-ipc-electron/preload::exposeSweetviewIpc (function)
+ADDED @n1h/sweetview-ipc-electron/preload::IpcRendererLike (type)
+ADDED @n1h/sweetview-ipc-electron/preload::SweetviewIpcApi (type)
+ADDED @n1h/sweetview-ipc-electron/server::ELECTRON_CHANNEL (const)
+ADDED @n1h/sweetview-ipc-electron/server::ELECTRON_HELLO_CHANNEL (const)
+ADDED @n1h/sweetview-ipc-electron/server::electronHost (function)
+ADDED @n1h/sweetview-ipc-electron/server::ElectronHost (type)
+ADDED @n1h/sweetview-ipc-electron/server::ElectronHostOptions (type)
+ADDED @n1h/sweetview-ipc-electron/server::IpcMainEventLike (type)
+ADDED @n1h/sweetview-ipc-electron/server::IpcMainLike (type)
+ADDED @n1h/sweetview-ipc-electron/server::WebContentsLike (type)
+ADDED @n1h/sweetview-ipc-tauri::isTauri (const)
+ADDED @n1h/sweetview-ipc-tauri::TAURI_COMMAND (const)
+ADDED @n1h/sweetview-ipc-tauri::TAURI_EVENT (const)
+ADDED @n1h/sweetview-ipc-tauri::TauriApi (type)
+ADDED @n1h/sweetview-ipc-tauri::tauriGlobalApi (function)
+ADDED @n1h/sweetview-ipc-tauri::TauriInvoke (type)
+ADDED @n1h/sweetview-ipc-tauri::TauriListen (type)
+ADDED @n1h/sweetview-ipc-tauri::tauriTransport (function)
+ADDED @n1h/sweetview-ipc-tauri::TauriTransport (type)
+ADDED @n1h/sweetview-ipc-tauri/client::isTauri (const)
+ADDED @n1h/sweetview-ipc-tauri/client::TAURI_COMMAND (const)
+ADDED @n1h/sweetview-ipc-tauri/client::TAURI_EVENT (const)
+ADDED @n1h/sweetview-ipc-tauri/client::TauriApi (type)
+ADDED @n1h/sweetview-ipc-tauri/client::tauriGlobalApi (function)
+ADDED @n1h/sweetview-ipc-tauri/client::TauriInvoke (type)
+ADDED @n1h/sweetview-ipc-tauri/client::TauriListen (type)
+ADDED @n1h/sweetview-ipc-tauri/client::tauriTransport (function)
+ADDED @n1h/sweetview-ipc-tauri/client::TauriTransport (type)
+ADDED @n1h/sweetview-native::MenuPopupOptions (type)
+ADDED @n1h/sweetview-native::RawWebview (class)
+ADDED @n1h/sweetview-native::WebviewHandle (type)
+ADDED [internal] @n1h/sweetview-native/internal::createChildWebview (function)
+ADDED [internal] @n1h/sweetview-native/internal::deferNative (function)
+ADDED [internal] @n1h/sweetview-native/internal::engineOf (function)
+ADDED [internal] @n1h/sweetview-native/internal::macosKeepsTagPath (function)
+ADDED [internal] @n1h/sweetview-native/internal::NativeEngine (class)
+ADDED [internal] @n1h/sweetview-native/internal::openNativeDrain (function)
+ADDED [internal] @n1h/sweetview-native/internal::quitNativeLoop (function)
+ADDED [internal] @n1h/sweetview-native/internal::releaseAll (function)
+ADDED [internal] @n1h/sweetview-native/internal::releaseAtEnd (function)
+ADDED [internal] @n1h/sweetview-native/internal::ReleaseKind (type)
+ADDED [internal] @n1h/sweetview-native/internal::runNativeLoop (function)
+ADDED [internal] @n1h/sweetview-native/internal::wakeNative (function)
+ADDED @n1h/sweetview-native/shell-icons::refreshShellIcons (function)
+ADDED [internal] @n1h/sweetview-native/win32/menu::BuiltMenuData (type)
+ADDED [internal] @n1h/sweetview-native/win32/menu::handleValue (function)
+ADDED [internal] @n1h/sweetview-native/win32/menu::iconBytes (const)
+ADDED [internal] @n1h/sweetview-native/win32/menu::menuData (function)
