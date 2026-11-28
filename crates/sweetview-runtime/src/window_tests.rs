@@ -98,7 +98,9 @@ fn show_activates_unless_no_activate() {
     quiet.minimize();
     assert!(native(&quiet, |w| platform::is_minimized(w)));
     quiet.show().expect("restore");
+    runtime.pump();
     assert!(!native(&quiet, |w| platform::is_minimized(w)) && quiet.is_visible());
+    assert!(!native(&quiet, |w| platform::is_active(w)), "a minimised noActivate window is restored without activation");
     quiet.hide();
     assert!(!quiet.is_visible());
     quiet.dispose();

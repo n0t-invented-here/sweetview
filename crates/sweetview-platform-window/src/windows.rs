@@ -337,14 +337,16 @@ pub fn bring_to_front(window: &impl NativeWindow) {
   set_foreground(hwnd);
 }
 
-/// `show()`: a minimised window is restored; otherwise it is shown, without
-/// activation for `no_activate`; then, unless it must not activate or is
+/// `show()`: a minimised window is restored, otherwise it is shown, either
+/// without activation for `no_activate` (as at tag `pre-rust-rewrite`'s tab
+/// frame); then, unless it must not activate or is
 /// topmost, it is brought to the front. Every window goes through it, a `tao`
 /// window included: `tao`'s `set_visible` shows with `SW_SHOW`, which
 /// activates even a `WS_EX_NOACTIVATE` window (D9).
 pub fn show(window: &impl NativeWindow, no_activate: bool, topmost: bool) {
   if is_minimized(window) {
-    show_window(window.hwnd(), SW_RESTORE);
+    // `SW_SHOWNOACTIVATE` restores a minimised window too, without activating it.
+    show_window(window.hwnd(), if no_activate { SW_SHOWNOACTIVATE } else { SW_RESTORE });
   } else {
     show_window(window.hwnd(), if no_activate { SW_SHOWNOACTIVATE } else { SW_SHOW });
   }
