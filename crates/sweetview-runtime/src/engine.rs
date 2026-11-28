@@ -756,7 +756,11 @@ impl Inner {
       Some(live) => {
         let Live { extras, webview, window } = live;
         drop(extras);
-        drop(webview);
+        match window {
+          // `wry` leaves the container of a webview that fills its window; it goes now (D42).
+          HostWindow::Filled(_) => sweetview_platform_webview::drop_filling(webview),
+          _ => drop(webview),
+        }
         if let HostWindow::Own { window, listener } = window {
           self.runtime.remove_event_listener(listener);
           // Gone now, as the C++ library's `webview_destroy` closed it: `tao`

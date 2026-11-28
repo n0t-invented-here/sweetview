@@ -27,6 +27,7 @@ use windows::Win32::Foundation::{E_NOTIMPL, E_OUTOFMEMORY, STG_E_INVALIDFUNCTION
 use windows::Win32::System::Com::{IStream, STREAM_SEEK_SET};
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VIRTUAL_KEY, VK_CONTROL, VK_MENU, VK_SHIFT};
 use windows::Win32::UI::Shell::SHCreateMemStream;
+use windows::Win32::UI::WindowsAndMessaging::{DestroyWindow, GetParent};
 use wry::WebViewExtWindows;
 
 use self::handlers::{
@@ -40,6 +41,30 @@ use crate::{
     failure_reason, file_drop_flag_script, is_file_drop_message, ExtrasOptions, KeyData, NavigationFailure, RawRequest,
     FILE_DROP_SCRIPT,
 };
+
+/// Drops a webview made with `wry`'s `build` (it fills the window it was given) and destroys
+/// the container window `wry` made for it in that window. `wry` 0.58.2 destroys the container of
+/// a webview made with `build_as_child` only: a filled one's stayed behind, an empty child of the
+/// window, until the window itself was destroyed, one more for every webview the window had (D42).
+pub fn drop_filling(webview: wry::WebView) {
+    let container = webview.hwnd();
+    // SAFETY: one call that reads a window's parent: `container` is the window `wry` made for
+    // `webview`, which owns it and is alive here, so the handle names that window.
+    let parent = unsafe { GetParent(container) }.ok();
+    drop(webview);
+    let Some(parent) = parent else { return };
+    // SAFETY: one call that reads a window's parent; it fails for a handle that names no window.
+    // A handle value is reused only after its window is destroyed, and `wry` destroyed the
+    // container only if its parent was (which destroys its children): a container still a child of
+    // the same parent is the same window.
+    let still_there = unsafe { GetParent(container) }.ok() == Some(parent);
+    if still_there {
+        // SAFETY: one call: `container` names the window `wry` made on this thread for the webview
+        // just dropped (checked above), which nothing else owns or names any more; `DestroyWindow`
+        // refuses a window of another thread.
+        let _destroyed = unsafe { DestroyWindow(container) };
+    }
+}
 
 /// A request handed to the request handler and not yet answered.
 struct Pending {

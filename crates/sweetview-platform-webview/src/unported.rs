@@ -22,6 +22,11 @@ pub struct WebviewExtras {
     _not_send: PhantomData<Rc<()>>,
 }
 
+/// Drops a webview that fills its window. Elsewhere `wry` leaves nothing behind.
+pub fn drop_filling(webview: wry::WebView) {
+    drop(webview);
+}
+
 /// Sets the colour painted behind the page. Not served on this platform yet.
 #[allow(unused_variables)]
 pub fn set_background_color(webview: &wry::WebView, r: u8, g: u8, b: u8, a: u8) -> ErrorCode {
