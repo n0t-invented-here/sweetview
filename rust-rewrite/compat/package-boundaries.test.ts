@@ -233,6 +233,38 @@ function scan(base: string): Scan {
           if (internalFiles.has(next)) out.reexports.push(`${p.name}${key.slice(1)} re-exports ${internalFiles.get(next)}: ${via.join(" -> ")}`);
           else visit(next, via);
         }
+        // A name imported and then exported with no `from` (`import { x } from "./internal"; export { x as y }`,
+        // `export default x`): followed to the module it was imported from.
+        const src = readFileSync(file, "utf8");
+        const imported = new Map<string, string>();
+        for (const m of src.matchAll(/\bimport\s+(?:type\s+)?([\w$\s,{}*]*?)\s*from\s*["']([^"']+)["']/g)) {
+          const [clause, spec] = [m[1]!, m[2]!];
+          const def = /^\s*([\w$]+)\s*(?:,|$)/.exec(clause);
+          if (def) imported.set(def[1]!, spec);
+          const ns = /\*\s*as\s+([\w$]+)/.exec(clause);
+          if (ns) imported.set(ns[1]!, spec);
+          for (const part of /\{([^}]*)\}/.exec(clause)?.[1]?.split(",") ?? []) {
+            const [orig, local] = part.trim().replace(/^type\s+/, "").split(/\s+as\s+/);
+            const name = (local ?? orig)?.trim();
+            if (name) imported.set(name, spec);
+          }
+        }
+        const exportedLocal: string[] = [];
+        for (const m of src.matchAll(/\bexport\s+(?:type\s+)?\{([^}]*)\}(?!\s*from)/g)) {
+          for (const part of m[1]!.split(",")) {
+            const orig = part.trim().replace(/^type\s+/, "").split(/\s+as\s+/)[0]?.trim();
+            if (orig) exportedLocal.push(orig);
+          }
+        }
+        for (const m of src.matchAll(/\bexport\s+default\s+([\w$]+)\s*;/g)) exportedLocal.push(m[1]!);
+        for (const name of exportedLocal) {
+          const spec = imported.get(name);
+          const next = spec === undefined ? undefined : resolveFrom(file, spec);
+          if (!next || !existsSync(next)) continue;
+          const via = [...chain, posix(relative(base, next))];
+          if (internalFiles.has(next)) out.reexports.push(`${p.name}${key.slice(1)} exports ${name} from ${internalFiles.get(next)}: ${via.join(" -> ")}`);
+          else visit(next, via);
+        }
       };
       visit(entry, [posix(relative(base, entry))]);
     }
@@ -345,6 +377,26 @@ describe("internals are not public API (D45)", () => {
         expect(scan(dir).reexports.sort()).toEqual([
           "@n1h/sweetview-native re-exports @n1h/sweetview-native/internal: packages/sweetview-native/src/index.ts -> packages/sweetview-native/src/internal.ts",
           "@n1h/sweetview/native re-exports @n1h/sweetview-native/internal: packages/sweetview/src/native/index.ts -> packages/sweetview-native/src/index.ts -> packages/sweetview-native/src/internal.ts",
+        ]);
+      },
+    );
+  });
+
+  test("counter-example: a public index that imports an internal and exports it under its own name, with no from on the export, is found", () => {
+    withTree(
+      {
+        "packages/sweetview-native/package.json": { name: "@n1h/sweetview-native", exports: { ".": "./src/index.ts", "./internal": "./src/internal.ts" } },
+        "packages/sweetview-native/src/index.ts": 'import { wakeNative } from "./internal";\nimport { Window } from "./window";\nexport { wakeNative as wake, Window };\n',
+        "packages/sweetview-native/src/internal.ts": "export const wakeNative = () => {};\n",
+        "packages/sweetview-native/src/window.ts": "export class Window {}\n",
+        "packages/sweetview-native/src/helper.ts": 'import * as inside from "./internal";\nexport default inside;\n',
+        "packages/sweetview/package.json": { name: "@n1h/sweetview", exports: { ".": "./src/index.ts" } },
+        "packages/sweetview/src/index.ts": 'import inside from "../../sweetview-native/src/helper";\nexport { inside };\n',
+      },
+      (dir) => {
+        expect(scan(dir).reexports.sort()).toEqual([
+          "@n1h/sweetview exports inside from @n1h/sweetview-native/internal: packages/sweetview/src/index.ts -> packages/sweetview-native/src/helper.ts -> packages/sweetview-native/src/internal.ts",
+          "@n1h/sweetview-native exports wakeNative from @n1h/sweetview-native/internal: packages/sweetview-native/src/index.ts -> packages/sweetview-native/src/internal.ts",
         ]);
       },
     );
