@@ -241,10 +241,8 @@ impl Runtime {
     });
     drop(guard);
     let Ok(code) = ran else { return true };
-    // A pumped loop always has its own repaint request queued, which the OS
-    // serves before any timer; the timers are taken explicitly.
-    self.signals.dispatch_due_timers();
-    // The run also ends when the OS hands `tao` a `WM_QUIT`, with code 0.
+    // Timer ticks are posted messages (D38): `messages_waiting` sees them and `tao`'s loop
+    // dispatches them, so nothing is left to take here. The run also ends when the OS hands `tao` a `WM_QUIT`, with code 0.
     let quit_message = code != PUMP_DONE;
     let quit_pending = self.quit_pending.replace(false);
     !(quit_message || quit_pending)

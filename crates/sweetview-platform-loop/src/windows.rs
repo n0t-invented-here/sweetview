@@ -28,10 +28,11 @@ use windows::Win32::Foundation::{ERROR_CLASS_ALREADY_EXISTS, HINSTANCE, HMODULE,
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Threading::{GetCurrentProcess, GetGuiResources, GetProcessHandleCount, GR_GDIOBJECTS, GR_USEROBJECTS};
 use windows::Win32::UI::WindowsAndMessaging::{
-  CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetClassInfoExW, GetMessageW, InSendMessageEx, IsWindow, PeekMessageW,
+  CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetClassInfoExW, GetInputState, GetMessageW, InSendMessageEx, IsWindow, PeekMessageW,
   PostMessageW, PostQuitMessage, RegisterClassExW, TranslateMessage, UnregisterClassW, HWND_MESSAGE, ISMEX_SEND, MSG,
   PEEK_MESSAGE_REMOVE_TYPE, PM_NOREMOVE, PM_NOYIELD, PM_QS_INPUT, PM_QS_POSTMESSAGE, PM_QS_SENDMESSAGE, PM_REMOVE, WINDOW_EX_STYLE,
-  WINDOW_STYLE, WM_APP, WM_CLOSE, WM_NCDESTROY, WM_QUIT, WNDCLASSEXW, WNDPROC,
+  WINDOW_STYLE, WM_APP, WM_CLOSE, WM_CREATE, WM_GETMINMAXINFO, WM_NCCALCSIZE, WM_NCCREATE, WM_NCDESTROY, WM_QUIT, WNDCLASSEXW,
+  WNDPROC,
 };
 
 use crate::signal::{Signal, SignalError, TimerId};
@@ -130,8 +131,13 @@ const HELD_POSTS: usize = 1024;
 /// Where posts to one [`MessageWindow`] go.
 ///
 /// `hwnd` is zero once the window is gone: `MessageWindow::drop` zeroes it
-/// before destroying the window, and so does the window procedure when it
-/// learns that other code destroyed it.
+/// before destroying the window, a poster or `live_hwnd` when `IsWindow` shows
+/// that other code destroyed it, and the window procedure at the first creation
+/// message of a later window of this crate made under the same handle value.
+///
+/// A post the queue refuses after the window was confirmed alive (a full queue)
+/// is held too, and sent first, in order, at the next post or the next message
+/// the window gets.
 ///
 /// A window procedure cannot tell the `WM_NCDESTROY` that `DestroyWindow` sends
 /// from one posted to a live window (this process or another can post one; the
@@ -163,6 +169,22 @@ impl Target {
   fn window(&self) -> HWND {
     HWND(self.hwnd as *mut core::ffi::c_void)
   }
+
+  /// Posts what is held, in the order it was posted, to `hwnd`, which the caller knows names
+  /// this target's live window; stops at the first post the queue refuses, which stays held with
+  /// everything after it. True when nothing is left held.
+  fn flush(&mut self, hwnd: HWND) -> bool {
+    while let Some(&(message, wparam, lparam)) = self.held.first() {
+      // SAFETY: `hwnd` names this target's live window for the call (each caller says why), and
+      // the parameters are integers the receiving procedure reads as integers.
+      let posted = unsafe { PostMessageW(Some(hwnd), message, WPARAM(wparam), LPARAM(lparam)) };
+      if posted.is_err() {
+        return false;
+      }
+      self.held.remove(0);
+    }
+    true
+  }
 }
 
 impl PostTarget {
@@ -189,19 +211,17 @@ impl PostTarget {
     let _ = posted;
   }
 
-  /// The window procedure got a message for `hwnd` after a `WM_NCDESTROY`, so
-  /// the window is alive: arm it again and send what was held.
+  /// The window procedure got a message for `hwnd`, so the window is alive: arm it again after a
+  /// `WM_NCDESTROY`, and send what is held, in order. A post the queue refuses stays held, for
+  /// the next post or the next message the window gets.
   fn still_alive(&self, hwnd: HWND) {
     let mut target = self.lock();
-    if !target.ending || target.hwnd != hwnd.0 as isize {
+    if target.hwnd != hwnd.0 as isize || (!target.ending && target.held.is_empty()) {
       return;
     }
     target.ending = false;
-    for (message, wparam, lparam) in std::mem::take(&mut target.held) {
-      // SAFETY: as in `begin_ending`: `hwnd` is the window whose procedure is running this call.
-      let posted = unsafe { PostMessageW(Some(hwnd), message, WPARAM(wparam), LPARAM(lparam)) };
-      let _ = posted;
-    }
+    // `hwnd` is the window whose procedure is running this call, so it names the window.
+    let _flushed = target.flush(hwnd);
   }
 }
 
@@ -242,10 +262,22 @@ impl Poster {
       target.held.push((message, wparam, lparam));
       return true;
     }
+    if !target.held.is_empty() {
+      // Posts the queue refused earlier go first, in order; this one joins them.
+      if target.held.len() >= HELD_POSTS {
+        return false;
+      }
+      target.held.push((message, wparam, lparam));
+      let hwnd = target.window();
+      // `target.hwnd` names the live window here, as for the post below.
+      let _flushed = target.flush(hwnd);
+      return true;
+    }
     // SAFETY: `target.hwnd` is non-zero and not `ending` only while the window exists: it is
-    // zeroed before the owner destroys the window, and marked `ending` by the window procedure
-    // on any `WM_NCDESTROY` of the window's thread, which `DestroyWindow` sends before the handle
-    // is given up, all under this lock, which is held for the whole call. The parameters are
+    // zeroed before the owner destroys the window, marked `ending` by the window procedure on any
+    // `WM_NCDESTROY` of the window's thread, which `DestroyWindow` sends before the handle is given
+    // up, and zeroed at the first creation message of any later window of this crate made under
+    // the same value (see `answer`), all under this lock, which is held for the whole call. The parameters are
     // integers the receiving procedure reads as integers.
     let posted = unsafe { PostMessageW(Some(target.window()), message, WPARAM(wparam), LPARAM(lparam)) };
     posted.is_ok()
@@ -312,10 +344,13 @@ impl MessageWindow {
         }
       }
     }
+    let making = Making::begin();
     // SAFETY: the class and window names are HSTRINGs alive for the whole call, no
     // creation parameter is passed, and HWND_MESSAGE makes a message-only window
-    // with no parent to keep alive. Messages sent during creation find no entry
-    // in `PROCEDURES` yet and go to `DefWindowProcW`.
+    // with no parent to keep alive. Messages sent during creation find no entry in
+    // `PROCEDURES` and go to `DefWindowProcW`: this window's entry is added after this
+    // call, and one left under the same handle value by a window destroyed earlier is
+    // removed, its owner disarmed, at the first of them (`is_being_made`, `answer`).
     let created = unsafe {
       CreateWindowExW(
         WINDOW_EX_STYLE(0),
@@ -332,6 +367,7 @@ impl MessageWindow {
         None,
       )
     };
+    drop(making);
     let hwnd = match created {
       Ok(hwnd) => hwnd,
       Err(error) => {
@@ -411,9 +447,10 @@ impl HasWindowHandle for MessageWindow {
     let value = NonZeroIsize::new(hwnd.0 as isize).ok_or(HandleError::Unavailable)?;
     let raw = RawWindowHandle::Win32(Win32WindowHandle::new(value));
     // SAFETY: `borrow_raw` asks that the handle name a window for the whole borrow.
-    // `live_hwnd` just read it from the post target, which the window procedure zeroes
-    // on `WM_NCDESTROY` whoever destroys the window, so it names this value's window
-    // now; this value destroys it only in `Drop`, which the borrow of `&self` excludes.
+    // `live_hwnd` just read it from the post target, which the window procedure marks
+    // `ending` on any `WM_NCDESTROY` of this thread and which `live_hwnd` then refuses, so
+    // it names this value's window now; this value destroys it only in `Drop`, which the
+    // borrow of `&self` excludes.
     // Should other code of this thread destroy the lent handle during the borrow, the
     // OS validates it on each later call and refuses it, and this value refuses the next.
     Ok(unsafe { WindowHandle::borrow_raw(raw) })
@@ -439,9 +476,10 @@ impl Drop for MessageWindow {
       // SAFETY: `self.hwnd` was created by `new` on this thread (the type is not `Send`)
       // and still exists: `live` was read from the post target, which the window procedure
       // marks on any `WM_NCDESTROY` of this thread before `DestroyWindow` gives the handle
-      // value up, and a marked one counts only when the window's own `WM_STILL_ALIVE` is
-      // still queued for it, so its handle value has not been given to another window. It
-      // is not used again after this call.
+      // value up (a marked one counts only when the window's own `WM_STILL_ALIVE` is still
+      // queued for it), and which a later window of this crate made under the same value
+      // disarms at its first creation message; so the value still names this window. Not used
+      // again after this call.
       let destroyed = unsafe { DestroyWindow(self.hwnd) };
       // Nothing useful can be done with a failure while dropping.
       let _ = destroyed;
@@ -465,6 +503,14 @@ impl Drop for MessageWindow {
 /// What the window procedure does with one message: `Some` when it answered
 /// it, `None` to hand it to `DefWindowProcW`.
 fn answer(hwnd: HWND, message: u32, wparam: usize, lparam: isize) -> Option<isize> {
+  if is_being_made(message) {
+    // A window of this crate is being made under this handle value (`WM_GETMINMAXINFO` comes
+    // even before `WM_NCCREATE`). An entry is added only after `CreateWindowExW` returns, so one
+    // found now was left by a window destroyed earlier: its owner is disarmed and the entry
+    // forgotten before anything of the new window runs.
+    forget_stale(hwnd);
+    return None;
+  }
   // The closure is cloned out of the table first, so it may drop its own window.
   // `try_with`: a message can arrive while the thread's storage is being torn down.
   let found = PROCEDURES
@@ -494,6 +540,43 @@ fn answer(hwnd: HWND, message: u32, wparam: usize, lparam: isize) -> Option<isiz
     // `DefWindowProcW` destroys a window on `WM_CLOSE`; only the owner destroys this one.
     None if message == WM_CLOSE => Some(0),
     answered => answered,
+  }
+}
+
+thread_local! {
+  /// True while `MessageWindow::new` is inside `CreateWindowExW` on this thread.
+  static MAKING: Cell<bool> = const { Cell::new(false) };
+}
+
+/// True for the messages the OS sends a window while `CreateWindowExW` makes it, while this
+/// thread is making a window of this crate. Outside that, the same message numbers (which anyone
+/// can post) go to the window's owner as usual.
+fn is_being_made(message: u32) -> bool {
+  matches!(message, WM_GETMINMAXINFO | WM_NCCREATE | WM_NCCALCSIZE | WM_CREATE) && MAKING.try_with(Cell::get).unwrap_or(false)
+}
+
+/// Marks this thread as making a window for as long as it lives.
+struct Making;
+
+impl Making {
+  fn begin() -> Self {
+    let _ = MAKING.try_with(|making| making.set(true));
+    Self
+  }
+}
+
+impl Drop for Making {
+  fn drop(&mut self) {
+    let _ = MAKING.try_with(|making| making.set(false));
+  }
+}
+
+/// Forgets the table entry under `hwnd`, which belongs to a window destroyed earlier, and
+/// disarms its owner, so neither acts on the new window that has that handle value now.
+fn forget_stale(hwnd: HWND) {
+  let stale = PROCEDURES.try_with(|procedures| procedures.borrow_mut().remove(&(hwnd.0 as isize))).ok().flatten();
+  if let Some(entry) = stale {
+    entry.target.lock().disarm();
   }
 }
 
@@ -686,7 +769,7 @@ impl Waker {
   }
 }
 
-/// The message a timer's tick posts. `wParam` carries the timer's id.
+/// The message a timer's tick posts. `wParam` carries the timer's id, `lParam` the tick's number.
 const WM_SWEETVIEW_TICK: u32 = WM_APP + 0x54;
 
 /// The shortest period a timer gets, as `SetTimer` gives (`USER_TIMER_MINIMUM`).
@@ -694,73 +777,185 @@ const SHORTEST_PERIOD_MS: u32 = 10;
 /// The longest period a timer gets, as `SetTimer` gives (`USER_TIMER_MAXIMUM`).
 const LONGEST_PERIOD_MS: u32 = 0x7FFF_FFFF;
 
-/// One timer of a [`SignalWindow`], as its tick thread keeps it.
+/// A posted tick not taken within this many periods, and at least [`LOST_AFTER_LEAST`], counts as
+/// lost (a loop that removed it without dispatching it, a queue that refused a re-post), and the
+/// timer's tick is posted again under a new number; the lost one is dropped if it arrives later.
+const LOST_AFTER_PERIODS: u32 = 4;
+const LOST_AFTER_LEAST: Duration = Duration::from_millis(250);
+
+/// A tick taken while keyboard or mouse-button input waits is handed back and posted again this
+/// much later, so the input is taken first, as it was ahead of a `WM_TIMER`; for no longer than
+/// [`INPUT_DEFER_LIMIT`] after the tick came due, after which it runs whatever waits (D38).
+const INPUT_DEFER_STEP: Duration = Duration::from_millis(1);
+const INPUT_DEFER_LIMIT: Duration = Duration::from_millis(100);
+
+/// The longest the tick thread sleeps before it looks at its stop flag again, for a stop whose
+/// wake it missed (`stop_ticker` cannot always take the lock).
+const TICKER_WAKE_CAP: Duration = Duration::from_millis(100);
+
+/// How long the release at the end of the application waits for the tick thread to return.
+const TICKER_STOP_WAIT: Duration = Duration::from_millis(20);
+
+fn lost_after(period: Duration) -> Duration {
+  (period * LOST_AFTER_PERIODS).max(LOST_AFTER_LEAST)
+}
+
+/// Where one timer's tick is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Phase {
+  /// The next tick is posted at `Schedule::next`.
+  Waiting,
+  /// Tick number `tick` was posted at `at` and has not been taken.
+  Posted { tick: isize, at: Instant },
+  /// The UI thread took the tick and runs the timer's job; the next period starts when it returns.
+  Running,
+}
+
+/// One timer of a [`SignalWindow`].
 struct Schedule {
   period: Duration,
-  /// When the next tick is due.
+  /// When the next tick is posted, while `Waiting`.
   next: Instant,
-  /// A tick was posted and the UI thread has not taken it yet: no second one is posted, so a
-  /// timer that comes due while the thread is busy delivers once, as a `WM_TIMER` does.
-  outstanding: bool,
+  phase: Phase,
+  /// The number of the last tick posted.
+  last_tick: isize,
+  /// When the tick being delivered came due, for the limit on how long input may hold it back.
+  due_since: Option<Instant>,
 }
 
 /// The timers of one [`SignalWindow`], shared between the UI thread and the tick thread.
 #[derive(Default)]
 struct Ticks {
-  state: Mutex<TickState>,
+  timers: Mutex<HashMap<usize, Schedule>>,
   changed: Condvar,
 }
 
-#[derive(Default)]
-struct TickState {
-  timers: HashMap<usize, Schedule>,
-  stop: bool,
+/// What the UI thread does with a tick it took.
+#[derive(Debug, PartialEq, Eq)]
+enum Take {
+  /// Run the timer's job, then `finish_tick`.
+  Run,
+  /// Handed back: input is waiting.
+  Later,
+  /// A tick of a cancelled timer, or one posted again after it was counted lost: dropped.
+  Stale,
 }
 
 impl Ticks {
-  fn lock(&self) -> MutexGuard<'_, TickState> {
-    self.state.lock().unwrap_or_else(PoisonError::into_inner)
+  fn lock(&self) -> MutexGuard<'_, HashMap<usize, Schedule>> {
+    self.timers.lock().unwrap_or_else(PoisonError::into_inner)
   }
 
-  /// The UI thread took the tick of timer `id`. True while that timer is set: a tick posted
-  /// before the timer was cancelled finds none and is dropped.
-  fn take_tick(&self, id: usize) -> bool {
-    match self.lock().timers.get_mut(&id) {
-      Some(timer) => {
-        timer.outstanding = false;
-        true
-      }
-      None => false,
+  /// The UI thread took tick number `tick` of timer `id`; `input_waiting` says whether keyboard or
+  /// mouse-button input is waiting in its queue.
+  fn take_tick(&self, id: usize, tick: isize, input_waiting: bool) -> Take {
+    let mut timers = self.lock();
+    let Some(timer) = timers.get_mut(&id) else { return Take::Stale };
+    if !matches!(timer.phase, Phase::Posted { tick: posted, .. } if posted == tick) {
+      return Take::Stale;
     }
+    let now = Instant::now();
+    if input_waiting && timer.due_since.is_some_and(|since| now.saturating_duration_since(since) < INPUT_DEFER_LIMIT) {
+      timer.phase = Phase::Waiting;
+      timer.next = now + INPUT_DEFER_STEP;
+      drop(timers);
+      self.changed.notify_all();
+      return Take::Later;
+    }
+    timer.phase = Phase::Running;
+    timer.due_since = None;
+    Take::Run
+  }
+
+  /// The job of timer `id` returned (or unwound): its next period starts now, so a job that takes
+  /// longer than its period leaves the rest of the queue a whole period before its next tick.
+  fn finish_tick(&self, id: usize) {
+    let mut timers = self.lock();
+    if let Some(timer) = timers.get_mut(&id) {
+      if timer.phase == Phase::Running {
+        timer.phase = Phase::Waiting;
+        timer.next = Instant::now() + timer.period;
+      }
+    }
+    drop(timers);
+    self.changed.notify_all();
   }
 }
 
-/// The tick thread's body: posts each timer's tick to the signal window when it comes due, until
-/// told to stop. Posting never blocks, so the lock is held only for moments.
-fn post_ticks(ticks: &Ticks, poster: &Poster) {
-  let mut state = ticks.lock();
-  while !state.stop {
-    let now = Instant::now();
-    let mut earliest: Option<Instant> = None;
-    for (id, timer) in &mut state.timers {
-      if timer.next <= now {
-        if !timer.outstanding && poster.post(WM_SWEETVIEW_TICK, *id, 0) {
-          timer.outstanding = true;
-        }
-        // As a native timer counts: the next period starts when this one ended, and one that
-        // was missed altogether is not made up.
-        timer.next += timer.period;
-        if timer.next <= now {
-          timer.next = now + timer.period;
-        }
-      }
-      earliest = Some(earliest.map_or(timer.next, |at| at.min(timer.next)));
-    }
-    state = match earliest {
-      Some(at) => ticks.changed.wait_timeout(state, at.saturating_duration_since(now)).unwrap_or_else(PoisonError::into_inner).0,
-      None => ticks.changed.wait(state).unwrap_or_else(PoisonError::into_inner),
-    };
+/// Runs `finish_tick` when the job returns or unwinds.
+struct Finish<'a>(&'a Ticks, usize);
+
+impl Drop for Finish<'_> {
+  fn drop(&mut self) {
+    self.0.finish_tick(self.1);
   }
+}
+
+/// The tick thread's body: posts each timer's tick when it comes due, in the order they came due
+/// and then the order they were set, until `stop` is set. Posting never blocks, so the lock is
+/// held only for moments.
+fn post_ticks(ticks: &Ticks, poster: &Poster, stop: &AtomicBool) {
+  let mut timers = ticks.lock();
+  while !stop.load(Ordering::Acquire) {
+    let now = Instant::now();
+    let mut due: Vec<(Instant, usize)> = timers
+      .iter()
+      .filter_map(|(id, timer)| match timer.phase {
+        Phase::Waiting if timer.next <= now => Some((timer.due_since.unwrap_or(timer.next), *id)),
+        Phase::Posted { at, .. } if now.saturating_duration_since(at) >= lost_after(timer.period) => Some((at, *id)),
+        _ => None,
+      })
+      .collect();
+    due.sort();
+    for (came_due, id) in due {
+      let Some(timer) = timers.get_mut(&id) else { continue };
+      let tick = timer.last_tick.wrapping_add(1);
+      if poster.post(WM_SWEETVIEW_TICK, id, tick) {
+        timer.last_tick = tick;
+        timer.due_since.get_or_insert(came_due);
+        timer.phase = Phase::Posted { tick, at: now };
+      } else {
+        // Not queued (the window is gone, or its queue is full): tried again a period later.
+        timer.phase = Phase::Waiting;
+        timer.next = now + timer.period;
+      }
+    }
+    let wake = timers
+      .values()
+      .filter_map(|timer| match timer.phase {
+        Phase::Waiting => Some(timer.next),
+        Phase::Posted { at, .. } => Some(at + lost_after(timer.period)),
+        Phase::Running => None,
+      })
+      .min();
+    let sleep = wake.map_or(TICKER_WAKE_CAP, |at| at.saturating_duration_since(Instant::now()).min(TICKER_WAKE_CAP));
+    timers = ticks.changed.wait_timeout(timers, sleep).unwrap_or_else(PoisonError::into_inner).0;
+  }
+}
+
+/// True when keyboard or mouse-button input waits in this thread's queue. `GetInputState` only
+/// reads the queue's state; it does not mark anything in the queue as seen.
+fn input_waiting() -> bool {
+  // MEASURE: 0 = gap only, 1 = gap + input, 2 = gap + input + paint.
+  let mode: u8 = std::env::var("SWEETVIEW_TICK_MODE").ok().and_then(|v| v.parse().ok()).unwrap_or(1);
+  if mode == 0 {
+    return false;
+  }
+  // SAFETY: `GetInputState` takes nothing and reads the calling thread's queue state.
+  let input = unsafe { GetInputState() }.as_bool();
+  if mode == 2 {
+    // SAFETY: measurement only.
+    let paint = (unsafe { windows::Win32::UI::WindowsAndMessaging::GetQueueStatus(windows::Win32::UI::WindowsAndMessaging::QS_PAINT) } >> 16) != 0;
+    return input || paint;
+  }
+  input
+}
+
+/// The tick thread, with its own stop flag and the flag it sets as the last thing it does.
+struct Ticker {
+  thread: std::thread::JoinHandle<()>,
+  stop: Arc<AtomicBool>,
+  returned: Arc<AtomicBool>,
 }
 
 /// A message-only window owned by the UI thread. Dropping it stops its tick
@@ -770,12 +965,15 @@ fn post_ticks(ticks: &Ticks, poster: &Poster) {
 /// thread's queue holds nothing else, after every paint request, and a modal
 /// loop such as a popup menu's can wait with one already due and never take it
 /// (D38). Each tick is instead a message posted to the window by a thread of
-/// this value's own; posted messages come before input, paint and `WM_TIMER`,
-/// and wake any loop that waits for new messages.
+/// this value's own; a posted message wakes any loop that waits for new
+/// messages. A posted message also comes ahead of input and paint, so a tick is
+/// kept from crowding them out: a timer's next period starts only when its job
+/// returns, and a tick taken while keyboard or mouse-button input waits is
+/// posted again shortly after, up to a limit (D38).
 pub struct SignalWindow {
   next_timer: Cell<usize>,
   ticks: Arc<Ticks>,
-  /// The thread that posts the ticks, started with the first timer and joined in `Drop`.
+  /// The thread that posts the ticks, started with the first timer.
   ticker: RefCell<Option<Ticker>>,
   window: MessageWindow,
 }
@@ -787,14 +985,17 @@ impl SignalWindow {
   pub fn new(handler: impl Fn(Signal) + 'static) -> Result<Self, SignalError> {
     let ticks = Arc::new(Ticks::default());
     let taken = ticks.clone();
-    let window = MessageWindow::new("SweetviewSignalWindow", "sweetview.signal", move |message, wparam, _lparam| {
-      let signal = match message {
-        WM_SWEETVIEW_WAKE => Signal::Wake(wparam as u64),
-        WM_SWEETVIEW_TICK if taken.take_tick(wparam) => Signal::Timer(TimerId(wparam)),
-        WM_SWEETVIEW_TICK => return Some(0),
+    let window = MessageWindow::new("SweetviewSignalWindow", "sweetview.signal", move |message, wparam, lparam| {
+      match message {
+        WM_SWEETVIEW_WAKE => handler(Signal::Wake(wparam as u64)),
+        WM_SWEETVIEW_TICK => {
+          if taken.take_tick(wparam, lparam, input_waiting()) == Take::Run {
+            let _finish = Finish(&taken, wparam);
+            handler(Signal::Timer(TimerId(wparam)));
+          }
+        }
         _ => return None,
-      };
-      handler(signal);
+      }
       Some(0)
     })
     .map_err(|e| SignalError(e.to_string()))?;
@@ -808,7 +1009,8 @@ impl SignalWindow {
 
   /// Starts a timer that delivers `Signal::Timer` every `interval_ms`
   /// milliseconds until it is cancelled. The period is held to 10 ms and
-  /// above, as `SetTimer` holds it.
+  /// above, as `SetTimer` holds it, and the next period starts when the job of
+  /// the last tick has returned.
   pub fn set_timer(&self, interval_ms: u32) -> Result<TimerId, SignalError> {
     if self.window.live_hwnd().is_none() {
       return Err(SignalError("a timer could not be set: the signal window is gone".into()));
@@ -817,8 +1019,8 @@ impl SignalWindow {
     let id = self.next_timer.get();
     self.next_timer.set(id.wrapping_add(1).max(1));
     let period = Duration::from_millis(u64::from(interval_ms.clamp(SHORTEST_PERIOD_MS, LONGEST_PERIOD_MS)));
-    let schedule = Schedule { period, next: Instant::now() + period, outstanding: false };
-    self.ticks.lock().timers.insert(id, schedule);
+    let schedule = Schedule { period, next: Instant::now() + period, phase: Phase::Waiting, last_tick: 0, due_since: None };
+    self.ticks.lock().insert(id, schedule);
     self.ticks.changed.notify_all();
     Ok(TimerId(id))
   }
@@ -826,18 +1028,17 @@ impl SignalWindow {
   fn start_ticker(&self) -> Result<(), SignalError> {
     let mut ticker = self.ticker.borrow_mut();
     if ticker.is_none() {
-      self.ticks.lock().stop = false;
       let (ticks, poster) = (self.ticks.clone(), self.window.poster());
-      let returned = Arc::new(AtomicBool::new(false));
-      let said = returned.clone();
+      let (stop, returned) = (Arc::new(AtomicBool::new(false)), Arc::new(AtomicBool::new(false)));
+      let (stopped, said) = (stop.clone(), returned.clone());
       let thread = std::thread::Builder::new()
         .name("sweetview-timers".into())
         .spawn(move || {
-          post_ticks(&ticks, &poster);
+          post_ticks(&ticks, &poster, &stopped);
           said.store(true, Ordering::Release);
         })
         .map_err(|e| SignalError(format!("a timer could not be set: its thread did not start: {e}")))?;
-      *ticker = Some(Ticker { thread, returned });
+      *ticker = Some(Ticker { thread, stop, returned });
     }
     Ok(())
   }
@@ -845,24 +1046,13 @@ impl SignalWindow {
   /// Cancels a timer. Cancelling one that is not set does nothing. A
   /// cancelled timer delivers nothing more, a tick already posted included.
   pub fn cancel_timer(&self, timer: TimerId) {
-    self.ticks.lock().timers.remove(&timer.0);
-  }
-
-  /// Delivers the ticks that are waiting now, ahead of anything else in the
-  /// thread's queue. A pump calls this after each burst, so a tick posted while
-  /// the burst was ending is not left for the next one.
-  pub fn dispatch_due_timers(&self) {
-    // Bounded: a handler that keeps timers due cannot hold the caller here.
-    for _ in 0..64 {
-      let Some(message) = peek(Some(&self.window), WM_SWEETVIEW_TICK, WM_SWEETVIEW_TICK, PM_REMOVE) else { break };
-      message.dispatch();
-    }
+    self.ticks.lock().remove(&timer.0);
   }
 
   /// How many timers are set. For tests that check nothing is left running.
   #[doc(hidden)]
   pub fn timers_set_for_tests(&self) -> usize {
-    self.ticks.lock().timers.len()
+    self.ticks.lock().len()
   }
 
   /// True while the tick thread runs. For tests of the release at the end of the application.
@@ -874,40 +1064,37 @@ impl SignalWindow {
   /// Ends the tick thread when no timer is set, as the release at the end of the
   /// application leaves it; the next timer starts a new one.
   pub fn stop_ticker_if_idle(&self) {
-    if !self.ticks.lock().timers.is_empty() {
+    if !self.ticks.lock().is_empty() {
       return;
     }
-    self.stop_ticker();
+    self.stop_ticker(TICKER_STOP_WAIT);
   }
 
-  /// Tells the tick thread to end and joins it once it says it returned.
+  /// Tells the tick thread to end, waits up to `wait` for it to say it returned, and joins it
+  /// then; otherwise it is left to end on its own (it owns everything it uses, and the window's
+  /// drop disarms its `Poster`).
   ///
-  /// When the process exits, Windows ends every other thread before it runs the
-  /// exiting thread's thread-local destructors, which is where a runtime kept in
-  /// thread-local storage drops this value. `std`'s `join` panics on a thread the
-  /// OS ended, and a panic there aborts the process; that thread may also have
-  /// been ended while it held the lock. So the lock is only tried, for a moment,
-  /// and the thread is joined only when it said it returned; one the OS ended is
-  /// left to the process's end.
-  fn stop_ticker(&self) {
+  /// The thread is told under the lock when the lock is free, so the wake cannot fall between
+  /// its look at its flag and its wait; when the lock is held, it looks at its flag again within
+  /// `TICKER_WAKE_CAP`. At process exit Windows ends every other thread before it runs the exiting
+  /// thread's thread-local destructors, where a runtime kept in thread-local storage drops this
+  /// value; the lock may then belong to a thread the OS ended, and `std`'s `join` panics on such
+  /// a thread. So `Drop` waits for nothing (`wait` is zero) and joins nothing.
+  fn stop_ticker(&self, wait: Duration) {
     let Some(ticker) = self.ticker.borrow_mut().take() else { return };
-    let deadline = Instant::now() + Duration::from_millis(500);
-    loop {
-      match self.ticks.state.try_lock() {
-        Ok(mut state) => break state.stop = true,
-        Err(TryLockError::Poisoned(poisoned)) => break poisoned.into_inner().stop = true,
-        Err(TryLockError::WouldBlock) if Instant::now() < deadline => std::thread::yield_now(),
-        Err(TryLockError::WouldBlock) => return,
-      }
+    ticker.stop.store(true, Ordering::Release);
+    match self.ticks.timers.try_lock() {
+      Ok(_timers) => self.ticks.changed.notify_all(),
+      Err(TryLockError::Poisoned(_timers)) => self.ticks.changed.notify_all(),
+      Err(TryLockError::WouldBlock) => self.ticks.changed.notify_all(),
     }
-    self.ticks.changed.notify_all();
-    loop {
-      let finished = ticker.thread.is_finished();
+    if wait.is_zero() {
+      return;
+    }
+    let deadline = Instant::now() + wait;
+    while Instant::now() < deadline {
       if ticker.returned.load(Ordering::Acquire) {
         let _ = ticker.thread.join();
-        return;
-      }
-      if finished || Instant::now() >= deadline {
         return;
       }
       std::thread::yield_now();
@@ -915,17 +1102,9 @@ impl SignalWindow {
   }
 }
 
-/// The tick thread, with the flag it sets as the last thing it does.
-struct Ticker {
-  thread: std::thread::JoinHandle<()>,
-  returned: Arc<AtomicBool>,
-}
-
 impl Drop for SignalWindow {
   fn drop(&mut self) {
-    // Ends the thread without clearing the timers first: their lock may be held by a thread
-    // the OS ended (see `stop_ticker`). A tick posted meanwhile goes with the window.
-    self.stop_ticker();
+    self.stop_ticker(Duration::ZERO);
     // `self.window` is dropped next: it disarms the wakers and destroys the window.
   }
 }
@@ -934,7 +1113,7 @@ impl Drop for SignalWindow {
 mod tests {
   use super::*;
   use crate::testing::assert_gives_back_every_handle;
-  use std::time::{Duration, Instant};
+  use windows::Win32::UI::WindowsAndMessaging::{CallNextHookEx, SetWindowsHookExW, UnhookWindowsHookEx, HCBT_CREATEWND, WH_CBT};
 
   /// Dispatches this thread's queued messages until `done` or the deadline.
   fn pump_until(done: impl Fn() -> bool) {
@@ -967,27 +1146,6 @@ mod tests {
     let seen = seen.borrow();
     assert!(seen.contains(&Signal::Wake(0xDEAD_BEEF_0001)), "the wake arrived: {seen:?}");
     assert!(seen.iter().filter(|s| **s == Signal::Timer(timer)).count() >= 2, "the timer repeated: {seen:?}");
-  }
-
-  #[test]
-  fn due_timers_are_delivered_on_request_while_other_messages_are_queued() {
-    let _serial = serial();
-    let fired = Rc::new(Cell::new(0u32));
-    let count = fired.clone();
-    let window = SignalWindow::new(move |signal| {
-      if matches!(signal, Signal::Timer(_)) {
-        count.set(count.get() + 1);
-      }
-    })
-    .expect("signal window");
-    let _timer = window.set_timer(1).expect("timer");
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while fired.get() < 3 && Instant::now() < deadline {
-      std::thread::sleep(Duration::from_millis(5));
-      // No general pump runs here: only the timers of this window are taken.
-      window.dispatch_due_timers();
-    }
-    assert!(fired.get() >= 3, "timers fired {} times", fired.get());
   }
 
   #[test]
@@ -1144,7 +1302,6 @@ mod tests {
     assert!(!waker.wake(1), "posts fail");
     assert!(window.set_timer(1000).is_err(), "timers are refused");
     window.cancel_timer(timer);
-    window.dispatch_due_timers();
     assert!(PROCEDURES.with(|p| !p.borrow().contains_key(&(hwnd.0 as isize))), "the closure is forgotten");
     drop(window);
     // The class stays usable, and a new window of it works.
@@ -1223,6 +1380,216 @@ mod tests {
     }
     sender.join().expect("sender thread");
     assert!(window.live_hwnd().is_some(), "a WM_NCDESTROY from another thread changed nothing");
+  }
+
+  /// A tick that never reaches the window (a loop took it off the queue and did not dispatch it)
+  /// counts as lost after a while; the timer's tick is posted again and the timer goes on (the
+  /// third review's H4).
+  #[test]
+  fn a_lost_tick_is_posted_again_and_the_timer_goes_on() {
+    let _serial = serial();
+    let ticks = Rc::new(Cell::new(0u32));
+    let count = ticks.clone();
+    let window = SignalWindow::new(move |signal| {
+      if matches!(signal, Signal::Timer(_)) {
+        count.set(count.get() + 1);
+      }
+    })
+    .expect("signal window");
+    let _timer = window.set_timer(10).expect("timer");
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut taken_away = false;
+    while !taken_away && Instant::now() < deadline {
+      taken_away = peek(Some(&window.window), WM_SWEETVIEW_TICK, WM_SWEETVIEW_TICK, PM_REMOVE).is_some();
+      std::thread::sleep(Duration::from_millis(1));
+    }
+    assert!(taken_away, "the first tick was posted");
+    let lost_at = Instant::now();
+    pump_until(|| ticks.get() >= 3);
+    assert!(ticks.get() >= 3, "the timer went on after its tick was lost: {} ticks", ticks.get());
+    let took = lost_at.elapsed();
+    assert!(took >= lost_after(Duration::from_millis(10)) - Duration::from_millis(20), "posted again only once counted lost: {took:?}");
+    assert!(took < Duration::from_secs(2), "{took:?}");
+  }
+
+  /// A post that the queue refuses when held posts are sent stays held, and goes out first, in
+  /// order, with the next message the window gets or the next post (the third review's H4).
+  #[test]
+  fn a_held_post_the_queue_refuses_stays_held_and_goes_out_in_order() {
+    let _serial = serial();
+    let seen: Rc<RefCell<Vec<usize>>> = Rc::new(RefCell::new(Vec::new()));
+    let sink = seen.clone();
+    let window = MessageWindow::new("SweetviewLoopHeldTest", "sweetview.held-test", move |message, wparam, _| {
+      (message == WM_APP + 9).then(|| {
+        sink.borrow_mut().push(wparam);
+        0
+      })
+    })
+    .expect("message window");
+    let poster = window.poster();
+    let hwnd = lent_hwnd(&window);
+    post_directly(&window, WM_NCDESTROY);
+    next_message().expect("the posted WM_NCDESTROY").dispatch();
+    assert!(poster.post(WM_APP + 9, 1, 0) && poster.post(WM_APP + 9, 2, 0), "held while unconfirmed");
+    // Fill the thread's queue to its limit, behind the window's own confirmation.
+    let mut filled = 0;
+    // SAFETY: `hwnd` is the live window `window` lends; the parameters are integers.
+    while filled < 20_000 && unsafe { PostMessageW(Some(hwnd), WM_APP + 10, WPARAM(0), LPARAM(0)) }.is_ok() {
+      filled += 1;
+    }
+    assert!(filled > 0 && filled < 20_000, "the queue has a limit: {filled}");
+    // The confirmation comes out first and arms the window: the first held post takes the slot it
+    // freed, the second is refused and stays held.
+    let confirmation = next_message().expect("the confirmation");
+    assert_eq!(confirmation.0.message, WM_STILL_ALIVE);
+    confirmation.dispatch();
+    assert_eq!(window.target.lock().held, vec![(WM_APP + 9, 2, 0)], "the refused post stays held");
+    // The next message the window gets (the first filler) sends the held post, behind the first.
+    dispatch_waiting();
+    assert_eq!(*seen.borrow(), vec![1, 2], "the refused post went out in order");
+    assert!(poster.post(WM_APP + 9, 3, 0));
+    pump_until(|| seen.borrow().len() == 3);
+    assert_eq!(*seen.borrow(), vec![1, 2, 3]);
+  }
+
+  /// Timers that come due at the same wake tick in the order they came due, and those set in
+  /// order for the same period in the order they were set (the third review's H5).
+  #[test]
+  fn timers_due_at_the_same_wake_tick_in_the_order_they_were_set() {
+    let _serial = serial();
+    let order: Rc<RefCell<Vec<TimerId>>> = Rc::new(RefCell::new(Vec::new()));
+    let sink = order.clone();
+    let window = SignalWindow::new(move |signal| {
+      if let Signal::Timer(timer) = signal {
+        sink.borrow_mut().push(timer);
+      }
+    })
+    .expect("signal window");
+    for round in 0..20 {
+      let set: Vec<TimerId> = (0..6).map(|_| window.set_timer(30).expect("timer")).collect();
+      pump_until(|| order.borrow().len() >= set.len());
+      for timer in &set {
+        window.cancel_timer(*timer);
+      }
+      let first: Vec<TimerId> = order.borrow().iter().take(set.len()).copied().collect();
+      assert_eq!(first, set, "round {round}: the first ticks came in the order the timers were set");
+      dispatch_waiting();
+      order.borrow_mut().clear();
+    }
+  }
+
+  /// Dropping a window with a timer set waits for nothing, and its tick thread ends by itself
+  /// (the third review's H2). A thread left to end does not tick beside the next one (H6).
+  #[test]
+  fn a_drop_waits_for_nothing_and_a_thread_left_to_end_does_not_tick_beside_its_successor() {
+    let _serial = serial();
+    let window = SignalWindow::new(|_| {}).expect("signal window");
+    let _timer = window.set_timer(10).expect("timer");
+    let returned = window.ticker.borrow().as_ref().map(|ticker| ticker.returned.clone()).expect("a tick thread");
+    let started = Instant::now();
+    drop(window);
+    let took = started.elapsed();
+    assert!(took < Duration::from_millis(50), "the drop waited {took:?}");
+    let deadline = Instant::now() + Duration::from_secs(1);
+    while !returned.load(Ordering::Acquire) && Instant::now() < deadline {
+      std::thread::sleep(Duration::from_millis(1));
+    }
+    assert!(returned.load(Ordering::Acquire), "the thread left to end returned by itself");
+
+    let ticks: Rc<RefCell<Vec<(TimerId, Instant)>>> = Rc::new(RefCell::new(Vec::new()));
+    let sink = ticks.clone();
+    let window = SignalWindow::new(move |signal| {
+      if let Signal::Timer(timer) = signal {
+        sink.borrow_mut().push((timer, Instant::now()));
+      }
+    })
+    .expect("signal window");
+    let timer = window.set_timer(50).expect("timer");
+    let first = window.ticker.borrow().as_ref().map(|ticker| ticker.returned.clone()).expect("a tick thread");
+    window.stop_ticker(Duration::ZERO);
+    let _second = window.set_timer(1000).expect("a timer, on a new thread");
+    let deadline = Instant::now() + Duration::from_secs(1);
+    while !first.load(Ordering::Acquire) && Instant::now() < deadline {
+      dispatch_waiting();
+      std::thread::sleep(Duration::from_millis(1));
+    }
+    assert!(first.load(Ordering::Acquire), "the first thread ended");
+    pump_until(|| ticks.borrow().iter().filter(|(t, _)| *t == timer).count() >= 6);
+    let at: Vec<Instant> = ticks.borrow().iter().filter(|(t, _)| *t == timer).map(|(_, at)| *at).collect();
+    assert!(at.len() >= 6, "{} ticks", at.len());
+    for pair in at.windows(2) {
+      let gap = pair[1].duration_since(pair[0]);
+      assert!(gap >= Duration::from_millis(40), "one thread ticks the 50 ms timer: a gap of {gap:?}");
+    }
+  }
+
+  /// The stale owner's post target and a count of its closure's calls.
+  type Planted = (Arc<PostTarget>, Rc<Cell<u32>>);
+
+  thread_local! {
+    /// What `plant_stale_entry` plants at the next window this thread makes.
+    static PLANT: RefCell<Option<Planted>> = const { RefCell::new(None) };
+  }
+
+  /// A `WH_CBT` hook that, when the next window of this thread is being made, plants under its
+  /// handle value the entry a window destroyed earlier under that value would have left.
+  extern "system" fn plant_stale_entry(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    if code == HCBT_CREATEWND as i32 {
+      if let Some((target, calls)) = PLANT.with(|plant| plant.borrow_mut().take()) {
+        let value = wparam.0 as isize;
+        {
+          let mut stale = target.lock();
+          stale.hwnd = value;
+          stale.ending = true;
+        }
+        let procedure: Procedure = Rc::new(move |_, _, _| {
+          calls.set(calls.get() + 1);
+          None
+        });
+        PROCEDURES.with(|procedures| procedures.borrow_mut().insert(value, Entry { procedure, target }));
+      }
+    }
+    // SAFETY: passes the hook's own arguments on, as every hook procedure does.
+    unsafe { CallNextHookEx(None, code, wparam, lparam) }
+  }
+
+  /// A table entry left by a window destroyed earlier under the handle value a new window gets is
+  /// forgotten at the new window's `WM_NCCREATE`, before anything of the new window runs: its
+  /// closure is never called, its owner is disarmed, and that owner's drop leaves the new window
+  /// alone (the third review's H3).
+  #[test]
+  fn a_stale_entry_under_a_new_windows_handle_value_is_forgotten_at_its_creation() {
+    let _serial = serial();
+    let stale = Arc::new(PostTarget::new(HWND(std::ptr::null_mut())));
+    let calls = Rc::new(Cell::new(0u32));
+    PLANT.with(|plant| *plant.borrow_mut() = Some((stale.clone(), calls.clone())));
+    // SAFETY: `GetCurrentThreadId` takes nothing.
+    let thread = unsafe { windows::Win32::System::Threading::GetCurrentThreadId() };
+    // SAFETY: a thread hook of this thread with a procedure of this module; removed below.
+    let hook = unsafe { SetWindowsHookExW(WH_CBT, Some(plant_stale_entry), None, thread) }.expect("hook");
+    let seen = Rc::new(Cell::new(0u32));
+    let sink = seen.clone();
+    let made = MessageWindow::new("SweetviewLoopStaleTest", "sweetview.stale-test", move |message, _, _| {
+      (message == WM_APP + 9).then(|| {
+        sink.set(sink.get() + 1);
+        0
+      })
+    });
+    // SAFETY: the hook set above.
+    let _ = unsafe { UnhookWindowsHookEx(hook) };
+    let window = made.expect("message window");
+    assert!(PLANT.with(|plant| plant.borrow().is_none()), "the stale entry was planted under the new window's handle value");
+    assert_eq!(calls.get(), 0, "the stale closure never ran for the new window");
+    assert_eq!(stale.lock().hwnd, 0, "the stale owner is disarmed");
+    let hwnd = lent_hwnd(&window);
+    assert!(PROCEDURES.with(|p| p.borrow().get(&(hwnd.0 as isize)).is_some_and(|entry| Arc::ptr_eq(&entry.target, &window.target))));
+    // The stale owner goes, as its owner's `Drop` would run: the new window is left alone.
+    *classes().entry("SweetviewLoopStaleTest".into()).or_insert(0) += 1;
+    drop(MessageWindow { hwnd, class: "SweetviewLoopStaleTest".into(), target: stale, _not_send: PhantomData });
+    assert!(names_a_window(hwnd), "the new window is alive");
+    assert!(window.poster().post(WM_APP + 9, 0, 0));
+    pump_until(|| seen.get() == 1);
+    assert_eq!(seen.get(), 1, "and works");
   }
 
   /// A class of the same name that other code registered with its own
