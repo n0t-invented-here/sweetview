@@ -15,6 +15,7 @@ use std::marker::PhantomData;
 use std::num::NonZeroIsize;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::rc::Rc;
+use std::time::{Duration, Instant};
 
 use raw_window_handle::{DisplayHandle, HandleError, HasDisplayHandle, HasWindowHandle, RawWindowHandle, Win32WindowHandle, WindowHandle};
 use sweetview_window_logic::ico::{parse_ico, pick_ico_entry};
@@ -593,13 +594,14 @@ impl WindowIcons {
   /// True while the window still exists and shows one of these icons, or does
   /// not answer the question: a window lent by its handle value may belong to
   /// another process, and one that is hung or slow keeps its icons parked.
-  fn still_shown(&self) -> bool {
+  /// Asks no later than `until`: a window not asked in time counts as still showing them.
+  fn still_shown(&self, until: Instant) -> bool {
     let hwnd = HWND(self.window as *mut c_void);
     if !is_window_handle(hwnd) {
       return false;
     }
     let shows = |kind, mine: &Option<OwnedIcon>| {
-      mine.as_ref().is_some_and(|icon| shown_icon(hwnd, kind).is_none_or(|shown| shown == icon.0 .0 as isize))
+      mine.as_ref().is_some_and(|icon| shown_icon(hwnd, kind, until).is_none_or(|shown| shown == icon.0 .0 as isize))
     };
     shows(ICON_SMALL, &self.small) || shows(ICON_BIG, &self.big)
   }
@@ -608,16 +610,26 @@ impl WindowIcons {
 /// How long a parked window may take to answer `WM_GETICON`.
 const ICON_QUERY_MS: u32 = 100;
 
+/// How long one sweep of the parked icons may spend asking in all (D41): with many slow parked
+/// windows the sweep stops asking at this bound, and the windows it did not ask keep their icons
+/// parked until a later sweep.
+const SWEEP_BUDGET: Duration = Duration::from_millis(200);
+
 /// The icon `hwnd` answers `WM_GETICON` with for `kind`, or `None` when it did not answer
-/// within [`ICON_QUERY_MS`] or the OS reports its thread hung, so no `setIcon` waits on a window
-/// of another process. A window of this thread answers at once, as a plain send does.
-fn shown_icon(hwnd: HWND, kind: u32) -> Option<isize> {
+/// within [`ICON_QUERY_MS`] or by `until`, or the OS reports its thread hung, so no `setIcon`
+/// waits on a window of another process. A window of this thread answers at once, as a plain
+/// send does.
+fn shown_icon(hwnd: HWND, kind: u32, until: Instant) -> Option<isize> {
+  let left = u32::try_from(until.saturating_duration_since(Instant::now()).as_millis()).unwrap_or(u32::MAX);
+  if left == 0 {
+    return None;
+  }
   let mut shown = 0usize;
   // SAFETY: `WM_GETICON` carries an integer each way; `hwnd` is a parked window's value, which
   // the OS validates; `shown` is a usize owned by this frame for the call to fill. `SMTO_BLOCK`
   // keeps this thread from handling other messages while it waits, so nothing runs re-entrantly.
   let answered = unsafe {
-    SendMessageTimeoutW(hwnd, WM_GETICON, WPARAM(kind as usize), LPARAM(0), SMTO_ABORTIFHUNG | SMTO_BLOCK, ICON_QUERY_MS, Some(&mut shown))
+    SendMessageTimeoutW(hwnd, WM_GETICON, WPARAM(kind as usize), LPARAM(0), SMTO_ABORTIFHUNG | SMTO_BLOCK, left.min(ICON_QUERY_MS), Some(&mut shown))
   };
   (answered.0 != 0).then_some(shown as isize)
 }
@@ -627,7 +639,8 @@ fn sweep_parked_icons() {
   let done: Vec<WindowIcons> = PARKED
     .try_with(|parked| {
       let mut parked = parked.borrow_mut();
-      let (keep, done): (Vec<_>, Vec<_>) = parked.drain(..).partition(WindowIcons::still_shown);
+      let until = Instant::now() + SWEEP_BUDGET;
+      let (keep, done): (Vec<_>, Vec<_>) = parked.drain(..).partition(|icons| icons.still_shown(until));
       *parked = keep;
       done
     })
@@ -641,7 +654,7 @@ impl Drop for WindowIcons {
     if self.small.is_none() && self.big.is_none() {
       return;
     }
-    if !self.still_shown() {
+    if !self.still_shown(Instant::now() + Duration::from_millis(u64::from(ICON_QUERY_MS))) {
       // `small` and `big` are destroyed as this value's fields drop.
       return;
     }
