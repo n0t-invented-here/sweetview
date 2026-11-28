@@ -168,9 +168,18 @@ The double-click time is the safe WinRT `UISettings::DoubleClickTime` of `window
 
 `TestWindow`, a plain `STATIC` window an application would hand over (`CreateWindowExW`, `DestroyWindow`, `SendMessageW`), a second `DestroyWindow` that destroys a lent window from inside the call it is lent to, and a shell file drop built as the shell builds one (`GlobalAlloc`, `GlobalLock`, the `DROPFILES` write, the path copy, `GlobalUnlock`, and `GlobalSize` to see that `DragFinish` freed it), and a thread of the test's own that pumps its window and then stops answering (`PeekMessageW`, `DispatchMessageW`), for the parked icons' limit (D41), and a second such thread with six windows, for the sweep's budget (D41).
 
-### `crates/sweetview-platform-window/src/test_support.rs` (2, test)
+### `crates/sweetview-platform-window/src/test_support.rs` (78, test)
 
-Compiled only for tests (this crate's, and the runtime's through the `test-support` feature of a dev-dependency). `shows_valid_icons` reads a window's icons with `WM_GETICON` and asks `GetIconInfo` whether each is an icon (`GetIconInfo`, and `DeleteObject` for the bitmaps it hands back), to prove a released window still shows icons that exist.
+Compiled only for tests (this crate's, and the runtime's through the `test-support` feature of a dev-dependency): what a test reads back from the OS or does as a person or another application would, which no crate offers. The helper groups, in the file's order:
+
+- **Icons and the system menu**: `shows_valid_icons` (`WM_GETICON`, `GetIconInfo`, `DeleteObject`), whether a released window still shows icons that exist; `system_menu_enabled` (`GetSystemMenu`, `GetMenuState`), which system menu items a window offers.
+- **Messages and windows by handle value**: `post`, `foreground`, `take_foreground`, `taskbar`, `window_titled`, `window_at`, `own_top_level_windows`, `layered_attributes`.
+- **Input**: `send_key`, `send_left_button`, `key_is_down`, `buttons_down`, `cursor`, `set_cursor` (`SendInput`, `GetAsyncKeyState`, `GetCursorPos`, `SetCursorPos`).
+- **The application's own modal loops**: `message_box`, `own_popup_menu`.
+- **A window of the application's own**: `OwnWindow`, a window class and window the test registers and makes itself.
+- **The test process**: `keep_com_loaded_for_the_test_process`.
+- **Read back from the OS**: `send`, `title_of`, `client_size`, `client_to_screen`, `min_track_size`, `uses_dark_title_bar`, `screen_pixel`, `in_move_size`, `this_thread_sees_left_down`, `move_cursor_as_input`, `shell_drop`, `send_file_drop`.
+- **Menus**: `popup_menus_open`, `open_popup_menu`, `menu_of_window`, `read_menu`, `press_keys`, `menu_item_rect`, `menu_item_id`, `sub_menu`, `is_menu`, `track_menu`, `send_right_button`, `registered_message`, `dpi_of`, `frame_edge`.
 
 ### `crates/sweetview-platform-window/src/tab_frame.rs` (16)
 
