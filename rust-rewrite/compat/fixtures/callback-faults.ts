@@ -109,7 +109,9 @@ async function throwFromEach(label: string): Promise<Record<string, unknown>> {
     noActivate: true,
     assets: { "index.html": new TextEncoder().encode(page) },
     worker: new URL("./callback-faults.worker.ts", import.meta.url),
-    onRequest: () => {
+    onRequest: (request) => {
+      // The page's fetch; the browser's own requests (its favicon) are answered 404.
+      if (!request.url.endsWith("/dynamic")) return { status: 404 };
       ran.onRequest = true;
       throw new Error(`${label}: onRequest`);
     },

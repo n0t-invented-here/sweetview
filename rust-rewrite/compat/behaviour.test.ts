@@ -337,7 +337,8 @@ describe.skipIf(!onWindows)("Windows behaviour an application notices", () => {
 
     // stderr: the lines Sweetview logs with no listener, and none of the listener's phase.
     const errorsOf = (label: string) => [...stderr.matchAll(new RegExp(`^error: ${label}: (.+)$`, "gm"))].map((m) => m[1]!.trim());
-    expect(errorsOf("without")).toEqual(["tray click", "tray menu item", "window onClose", "onReady"]);
+    // The worker crash's own text appears when its crash frame wins the race (see above); the line below checks the crash.
+    expect(errorsOf("without").filter((e) => e !== "worker crash")).toEqual(["tray click", "tray menu item", "window onClose", "onReady"]);
     expect(stderr.match(/^sweetview: message window handler threw:/gm)?.length).toBe(2);
     expect(stderr.match(/^sweetview: onClose handler threw:/gm)?.length).toBe(1);
     expect(stderr.match(/^sweetview: onReady handler threw:/gm)?.length).toBe(1);

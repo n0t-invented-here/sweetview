@@ -25,7 +25,7 @@ import { deferNative, openNativeDrain, runNativeLoop, quitNativeLoop, wakeNative
 import { emitWindowNewTab, emitWindowTabClose, emitWindowTabSelect, onWindowDispose, Window } from "../../src/window";
 import { createNotifier, debugNativeNotifier } from "../../src/win32/notifier";
 import { currentTray } from "../../src/win32/tray";
-import { TRAY, VK, WM_CLOSE, doubleClickTime, isWindow, openPopupMenu, postTrayMouse, pressKeys, sendDrop, user32 } from "../win32-os";
+import { TRAY, VK, WM_CLOSE, doubleClickTime, handOffToInstance, isWindow, openPopupMenu, postTrayMouse, pressKeys, sendDrop, user32 } from "../win32-os";
 import { native, report, finish, watchdog } from "./kit";
 
 const mode = process.argv[2] ?? "listener";
@@ -202,18 +202,7 @@ onOpenUrl(boom("open url"));
 signalReady();
 const lockId = `dev.sweetview.test.callback-errors-${process.pid}-${Date.now()}`;
 const lock = await singleInstance({ appId: lockId, args: [], onSecondInstance: boom("second instance") });
-{
-  const { FindWindowExW, SendMessageW } = user32;
-  const wide = (s: string) => new Uint8Array(Buffer.from(s + "\0", "utf16le"));
-  const { ptr } = await import("bun:ffi");
-  const target = FindWindowExW(-3n, 0n, ptr(wide("SweetviewSingleInstanceWindow")), ptr(wide(`sweetview.instance.${lockId}`)));
-  const bytes = new Uint8Array(Buffer.from(JSON.stringify({ args: ["svtest://one"], cwd: "C:\\", url: "svtest://one" }), "utf8"));
-  const data = new DataView(new ArrayBuffer(24));
-  data.setBigUint64(0, 0x53575631n, true);
-  data.setUint32(8, bytes.length, true);
-  data.setBigUint64(16, BigInt(ptr(bytes)), true);
-  steps.handedOff = Number(SendMessageW(target, 0x004a, 0n, BigInt(ptr(data.buffer))));
-}
+steps.handedOff = handOffToInstance(lockId, { args: ["svtest://one"], cwd: "C:\\", url: "svtest://one" });
 lock.dispose();
 
 report.arrivals = arrivals.splice(0);

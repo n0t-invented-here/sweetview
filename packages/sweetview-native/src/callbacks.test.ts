@@ -20,6 +20,10 @@
 
 import { afterEach, describe, expect, test } from "bun:test";
 import { dlopen, FFIType, ptr } from "bun:ffi";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { untilDesktopIsOurs } from "../test/desktop";
 import { runFixture } from "../test/run-fixture";
 import { _resetActivationForTest, onOpenUrl, signalReady, singleInstance, type SecondInstanceEvent } from "./activation";
@@ -1212,7 +1216,15 @@ describe.if(onWindows)("onCallbackError", () => {
 
   for (const mode of ["exit-blocking", "exit-pumped"]) {
     test(`a listener that calls process.exit(3) from inside a native callback ends the process with 3 (${mode === "exit-blocking" ? "the blocking loop" : "the loop pumped from a Bun timer"}), and the end of the application releases cleanly`, async () => {
-      const { stdout, stderr, exitCode } = await runFixture("callback-errors.ts", [mode]);
+      // Spawned here, not through runFixture: a process the listener ends prints no RESULT line.
+      const profile = mkdtempSync(join(tmpdir(), "sweetview-callback-exit-"));
+      const child = Bun.spawn([process.execPath, fileURLToPath(new URL("../test/fixtures/callback-errors.ts", import.meta.url)), mode], {
+        env: { ...process.env, WEBVIEW2_USER_DATA_FOLDER: profile },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+      rmSync(profile, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
       expect({ exitCode, result: stdout.includes("RESULT"), sweetviewLines: stderr.split(/\r?\n/).filter((line) => /sweetview|panic|error/i.test(line)) }).toEqual({ exitCode: 3, result: false, sweetviewLines: [] });
     }, 60_000);
   }
