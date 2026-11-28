@@ -179,8 +179,13 @@ impl Ctx {
 
     /// Pumps until a message with `tag` arrives, and returns it.
     pub fn wait(&mut self, view: &View, tag: &str) -> Value {
+        self.wait_for(view, tag, Duration::from_secs(20))
+    }
+
+    /// [`wait`](Self::wait) with a timeout of `timeout`.
+    pub fn wait_for(&mut self, view: &View, tag: &str, timeout: Duration) -> Value {
         let mut found = None;
-        self.pump(Some(view), Duration::from_secs(20), || {
+        self.pump(Some(view), timeout, || {
             found = view.take(tag);
             found.is_some()
         });

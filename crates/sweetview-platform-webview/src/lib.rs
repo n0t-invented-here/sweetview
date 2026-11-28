@@ -43,7 +43,7 @@ mod platform;
 #[cfg(windows)]
 pub use platform::{create_environment, default_user_data_folder};
 pub use platform::{set_background_color, with_page_behaviour, UserScript, WebviewExtras};
-pub use shared::Responder;
+pub use shared::{Responder, BACKLOG_LIMIT};
 pub use sweetview_http::ErrorCode;
 
 /// The web message the file drop script posts, with the dropped files attached.

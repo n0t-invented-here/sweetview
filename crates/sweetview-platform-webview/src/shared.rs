@@ -11,10 +11,12 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, Weak};
+use std::thread::ThreadId;
 
 use sweetview_http::{validate_body_len, validate_request_id, validate_response_head, ErrorCode, Header};
 
 use crate::stream::StreamState;
+pub use crate::stream::BACKLOG_LIMIT;
 
 /// Work queued for the UI thread, run by `WebviewExtras::drain`.
 pub(crate) enum Job {
@@ -39,6 +41,9 @@ pub(crate) struct Shared {
     submitted: Mutex<HashSet<u64>>,
     streams: Mutex<HashMap<u64, Arc<StreamState>>>,
     wake: Arc<dyn Fn() + Send + Sync>,
+    /// The thread that made this (the UI thread): its writes to a streamed
+    /// body never wait.
+    ui_thread: ThreadId,
 }
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -66,7 +71,12 @@ impl Shared {
             submitted: Mutex::new(HashSet::new()),
             streams: Mutex::new(HashMap::new()),
             wake,
+            ui_thread: std::thread::current().id(),
         })
+    }
+
+    fn open_stream(&self, id: u64) -> Option<Arc<StreamState>> {
+        lock(&self.streams).get(&id).cloned()
     }
 
     pub(crate) fn is_alive(&self) -> bool {
@@ -253,6 +263,15 @@ impl Responder {
     /// Appends body bytes (at most 4 GiB - 1) to a streamed answer; copied
     /// before it returns, with no trip to the UI thread. A chunk for a stream
     /// that ended, was never begun, or that the browser let go of does nothing.
+    ///
+    /// Back-pressure: on any thread but the UI thread, while the stream is
+    /// [`backlogged`](Self::backlogged) the call waits (blocked, not spinning)
+    /// until the page has read it down to half of [`BACKLOG_LIMIT`], or the
+    /// stream ends or is let go, or the webview goes (then
+    /// [`ErrorCode::InvalidState`]). So such a writer never has more than the
+    /// limit and one chunk unread, and nothing is dropped or reordered. On the
+    /// UI thread it never waits: the bytes are kept however far behind the
+    /// page is, and a writer there paces itself with `backlogged`.
     pub fn write_chunk(&self, id: u64, chunk: &[u8]) -> ErrorCode {
         if !self.shared.is_alive() {
             return ErrorCode::InvalidState;
@@ -276,8 +295,25 @@ impl Responder {
             }
             stream.clone()
         };
-        stream.push(chunk);
+        if std::thread::current().id() == self.shared.ui_thread {
+            stream.push(chunk);
+        } else if !stream.push_paced(chunk) && !self.shared.is_alive() {
+            return ErrorCode::InvalidState;
+        }
         ErrorCode::Ok
+    }
+
+    /// True while streamed answer `id` has [`BACKLOG_LIMIT`] or more bytes the
+    /// page has not read, until the page brings them down to half of that;
+    /// false for a stream that is not open.
+    pub fn backlogged(&self, id: u64) -> bool {
+        self.shared.open_stream(id).is_some_and(|stream| stream.is_backlogged())
+    }
+
+    /// Bytes of streamed answer `id` written and not yet read by the page; 0
+    /// for a stream that is not open.
+    pub fn backlog(&self, id: u64) -> usize {
+        self.shared.open_stream(id).map_or(0, |stream| stream.buffered())
     }
 
     /// Ends a streamed answer. Ending one twice, or one never begun, does nothing.
@@ -373,6 +409,59 @@ mod tests {
         assert_eq!(stream.read(&mut buf), (ReadEnd::Ended, 2));
         assert_eq!(&buf[..2], b"ab");
         assert_eq!(shared.open_stream_count(), 0);
+    }
+
+    // D44: a writer on another thread is held to the page's reading; the UI thread is never held.
+    #[test]
+    fn writers_off_the_ui_thread_wait_while_backlogged() {
+        let (shared, r, _) = setup();
+        assert_eq!(r.begin(11, 200, None), ErrorCode::Ok);
+        let Some(Job::BeginStream { stream, .. }) = shared.next_job() else { panic!("expected a stream head") };
+        assert!(!r.backlogged(11));
+        // This thread made the shared state, so it is the UI thread here: it is never held.
+        let big = vec![1u8; BACKLOG_LIMIT];
+        assert_eq!(r.write_chunk(11, &big), ErrorCode::Ok);
+        assert_eq!(r.write_chunk(11, &big), ErrorCode::Ok);
+        assert!(r.backlogged(11));
+        assert_eq!(r.backlog(11), 2 * BACKLOG_LIMIT);
+        assert_eq!(r.backlog(12), 0, "no such stream");
+        assert!(!r.backlogged(12));
+        let writer = {
+            let r = r.clone();
+            std::thread::spawn(move || r.write_chunk(11, b"tail"))
+        };
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        assert!(!writer.is_finished(), "a writer on another thread waits while the stream is backlogged");
+        let mut buf = vec![0u8; BACKLOG_LIMIT];
+        assert_eq!(stream.read(&mut buf), (ReadEnd::Filled, BACKLOG_LIMIT));
+        assert!(!writer.is_finished(), "still above half the limit");
+        assert_eq!(stream.read(&mut buf[..BACKLOG_LIMIT / 2]), (ReadEnd::Filled, BACKLOG_LIMIT / 2));
+        assert_eq!(writer.join().unwrap(), ErrorCode::Ok, "released once the page is down to half the limit");
+        assert_eq!(r.backlog(11), BACKLOG_LIMIT / 2 + 4);
+        assert_eq!(r.end(11), ErrorCode::Ok);
+        let mut rest = Vec::new();
+        loop {
+            let (end, n) = stream.read(&mut buf);
+            rest.extend_from_slice(&buf[..n]);
+            if end == ReadEnd::Ended {
+                break;
+            }
+        }
+        assert_eq!(rest.len(), BACKLOG_LIMIT / 2 + 4);
+        assert!(rest.ends_with(b"tail"), "the waiting chunk was kept, after the bytes before it");
+
+        // A writer held when the webview goes is released and told so.
+        assert_eq!(r.begin(13, 200, None), ErrorCode::Ok);
+        assert!(matches!(shared.next_job(), Some(Job::BeginStream { .. })));
+        assert_eq!(r.write_chunk(13, &big), ErrorCode::Ok);
+        let writer = {
+            let r = r.clone();
+            std::thread::spawn(move || r.write_chunk(13, b"x"))
+        };
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        assert!(!writer.is_finished());
+        drop(shared.close());
+        assert_eq!(writer.join().unwrap(), ErrorCode::InvalidState);
     }
 
     // streaming_istream.hh: a body WebView2 let go of is forgotten on the UI

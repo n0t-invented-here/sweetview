@@ -14,10 +14,50 @@ use std::time::{Duration, Instant};
 
 use common::{Ctx, View};
 use serde_json::Value;
-use sweetview_platform_webview::{ErrorCode, RawRequest};
+use sweetview_platform_webview::{ErrorCode, RawRequest, BACKLOG_LIMIT};
 
 /// How long a written chunk may take to reach the page's reader.
 const BOUND: Duration = Duration::from_secs(3);
+
+/// The fast writer's body: far more than the backlog limit, in chunks of this size.
+const BULK_BYTES: usize = 24 * BACKLOG_LIMIT + 4321;
+const BULK_CHUNK: usize = 64 * 1024 + 7;
+
+/// Byte `i` of the fast writer's body, which the page checks.
+fn pattern(i: usize) -> u8 {
+    ((i % 251) ^ ((i / 65_536) % 256)) as u8
+}
+
+/// The page reads `url` slowly (a pause every 256 KiB), checks every byte
+/// against [`pattern`] and posts `bulk-done` with the total and the first
+/// wrong position, if any.
+fn bulk_reader_js(url: &str) -> String {
+    format!(
+        r#"(async () => {{
+  try {{
+    const r = await fetch({url:?});
+    const reader = r.body.getReader();
+    let total = 0, bad = null, nextPause = 262144;
+    for (;;) {{
+      const {{ done, value }} = await reader.read();
+      if (done) break;
+      for (let k = 0; k < value.length && bad === null; k++) {{
+        const i = total + k;
+        if (value[k] !== (((i % 251) ^ (Math.floor(i / 65536) % 256)) & 255)) bad = i;
+      }}
+      total += value.length;
+      if (total >= nextPause) {{
+        nextPause += 262144;
+        await new Promise((res) => setTimeout(res, 15));
+      }}
+    }}
+    post({{ tag: 'bulk-done', total, bad }});
+  }} catch (e) {{
+    post({{ tag: 'bulk-done', error: String(e) }});
+  }}
+}})()"#
+    )
+}
 
 /// The page reads `url` chunk by chunk and posts each read (`<tag>-head`,
 /// `<tag>-chunk` with the text and the time, `<tag>-done` with the whole text).
@@ -148,6 +188,62 @@ fn a_chunk_reaches_the_page_while_the_response_is_open() {
     let done = done.expect("the page read to the end");
     assert_eq!(done["text"], "first;second;third;", "every byte, in order: {done}");
     assert_eq!(acked, vec![true, true, true], "each chunk reached the page within {BOUND:?}, before the next and before the end");
+
+    eprintln!("-- a fast writer on another thread, a slow reader: the backlog stays bounded, nothing lost or reordered");
+    let held = hold_request(&view, "/bulk");
+    view.eval(&bulk_reader_js("/bulk"));
+    assert!(ctx.pump(Some(&view), Duration::from_secs(10), || held.get().is_some()), "the request reached the handler");
+    let id = held.get().unwrap();
+    let writer = {
+        let responder = responder.clone();
+        thread::spawn(move || {
+            assert_eq!(responder.begin(id, 200, Some(r#"{"Content-Type":"application/octet-stream"}"#)), ErrorCode::Ok);
+            let (mut sent, mut max_backlog, mut held_back) = (0usize, 0usize, 0u32);
+            while sent < BULK_BYTES {
+                let n = (BULK_BYTES - sent).min(BULK_CHUNK);
+                let chunk: Vec<u8> = (sent..sent + n).map(pattern).collect();
+                let start = Instant::now();
+                assert_eq!(responder.write_chunk(id, &chunk), ErrorCode::Ok);
+                if start.elapsed() > Duration::from_millis(5) {
+                    held_back += 1;
+                }
+                max_backlog = max_backlog.max(responder.backlog(id));
+                sent += n;
+            }
+            assert_eq!(responder.end(id), ErrorCode::Ok);
+            (sent, max_backlog, held_back)
+        })
+    };
+    let done = ctx.wait_for(&view, "bulk-done", Duration::from_secs(120));
+    let (sent, max_backlog, held_back) = writer.join().expect("the writer thread");
+    eprintln!("   wrote {sent} bytes; most unread at once {max_backlog}; writes held back {held_back}; the page: {done}");
+    assert_eq!(done["error"], Value::Null, "{done}");
+    assert_eq!(done["total"].as_u64(), Some(sent as u64), "every byte reached the page: {done}");
+    assert_eq!(done["bad"], Value::Null, "no byte lost or out of order: {done}");
+    assert!(max_backlog <= BACKLOG_LIMIT + BULK_CHUNK, "never more than the limit and one chunk unread: {max_backlog}");
+
+    eprintln!("-- the UI thread is never held back: it writes past the limit while the page does not read");
+    let held = hold_request(&view, "/stalled");
+    view.eval(
+        r#"(async () => {
+  const r = await fetch('/stalled');
+  window.__stalled = r.body.getReader();
+  post({ tag: 'stalled-head', status: r.status });
+})()"#,
+    );
+    assert!(ctx.pump(Some(&view), Duration::from_secs(10), || held.get().is_some()), "the request reached the handler");
+    let id = held.get().unwrap();
+    assert_eq!(responder.begin(id, 200, None), ErrorCode::Ok);
+    let start = Instant::now();
+    let chunk = vec![0u8; BULK_CHUNK];
+    let mut written = 0;
+    while written < 4 * BACKLOG_LIMIT {
+        assert_eq!(responder.write_chunk(id, &chunk), ErrorCode::Ok);
+        written += chunk.len();
+    }
+    eprintln!("   wrote {written} bytes in {:?}; unread {}; backlogged {}", start.elapsed(), responder.backlog(id), responder.backlogged(id));
+    assert!(start.elapsed() < Duration::from_secs(5), "the UI thread's writes do not wait for the page");
+    // Released at teardown, below.
 
     drop(view);
     ctx.settle(None, Duration::from_millis(200));

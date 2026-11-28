@@ -5,7 +5,7 @@
 //! WebView2; when the last one goes, its `Drop` tells the [`StreamState`] its
 //! reader is gone. Objects made with `#[implement]` are agile (they report
 //! `IAgileObject` and aggregate the free-threaded marshaler), so COM never
-//! marshals `Read` back to the UI thread, which would deadlock the blocking
+//! marshals `Read` back to the UI thread, which would deadlock a waiting
 //! read against the thread that feeds it.
 
 use std::ffi::c_void;
@@ -56,10 +56,11 @@ impl StreamingIStream {
             // most `cb`, so it fits.
             unsafe { pcbread.write(n as u32) };
         }
-        if end == ReadEnd::Filled {
-            S_OK
-        } else {
+        // A short read of a stream still open is S_OK: S_FALSE tells WebView2 the body has ended.
+        if end == ReadEnd::Ended {
             S_FALSE
+        } else {
+            S_OK
         }
     }
 }
@@ -84,10 +85,12 @@ impl Drop for StreamingIStream {
 }
 
 impl ISequentialStream_Impl for StreamingIStream_Impl {
-    /// Fills `pv` with exactly `cb` bytes (`S_OK`), waiting for them as needed,
-    /// unless the stream ends first: then what was left (`S_FALSE`, possibly 0
-    /// bytes). `E_ABORT`, nothing read, once the stream is aborted. A zero-byte
-    /// read never waits.
+    /// Waits only while nothing is unread and the stream is open, then copies
+    /// what there is into `pv`, up to `cb` bytes: `S_OK` while the stream is
+    /// open (fewer than `cb` bytes is a short read, and more may follow), and
+    /// `S_FALSE` once it has ended and `cb` was not filled (possibly 0 bytes).
+    /// `E_ABORT`, nothing read, once the stream is aborted. A zero-byte read
+    /// never waits.
     fn Read(&self, pv: *mut c_void, cb: u32, pcbread: *mut u32) -> HRESULT {
         catch_unwind(AssertUnwindSafe(|| self.read(pv, cb, pcbread))).unwrap_or(E_UNEXPECTED)
     }
