@@ -933,22 +933,12 @@ fn post_ticks(ticks: &Ticks, poster: &Poster, stop: &AtomicBool) {
   }
 }
 
-/// True when keyboard or mouse-button input waits in this thread's queue. `GetInputState` only
-/// reads the queue's state; it does not mark anything in the queue as seen.
+/// True when keyboard or mouse-button input waits in this thread's queue (`GetInputState`). Paint
+/// is not asked about: under the pumped loop `tao` keeps a paint request pending nearly always, and
+/// deferring behind it halved a busy interval's ticks there (measured for D38).
 fn input_waiting() -> bool {
-  // MEASURE: 0 = gap only, 1 = gap + input, 2 = gap + input + paint.
-  let mode: u8 = std::env::var("SWEETVIEW_TICK_MODE").ok().and_then(|v| v.parse().ok()).unwrap_or(1);
-  if mode == 0 {
-    return false;
-  }
   // SAFETY: `GetInputState` takes nothing and reads the calling thread's queue state.
-  let input = unsafe { GetInputState() }.as_bool();
-  if mode == 2 {
-    // SAFETY: measurement only.
-    let paint = (unsafe { windows::Win32::UI::WindowsAndMessaging::GetQueueStatus(windows::Win32::UI::WindowsAndMessaging::QS_PAINT) } >> 16) != 0;
-    return input || paint;
-  }
-  input
+  unsafe { GetInputState() }.as_bool()
 }
 
 /// The tick thread, with its own stop flag and the flag it sets as the last thing it does.
