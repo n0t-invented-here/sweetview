@@ -1,6 +1,6 @@
 # What is and is not ported to Rust on Windows
 
-Tree: `bf5881d` (the main branch with the first part of `rust-rewrite-api-gaps` merged). macOS and Linux are other goals and are not covered.
+Tree: `bf5881d` (the main branch with the first part of `rust-rewrite-api-gaps` merged). Updated on 2026-11-28 to the main branch at `e35f80f` with `rust-rewrite-no-win32-subpaths` merged, by reading the tree for each row that had changed; no new run of the checks was taken, so the run below is the one at `bf5881d`. macOS and Linux are other goals and are not covered.
 
 ## How this was established
 
@@ -14,14 +14,14 @@ Tree: `bf5881d` (the main branch with the first part of `rust-rewrite-api-gaps` 
 | What | State | Where |
 |---|---|---|
 | A streamed response reaching the page as it is written | **The same as before the rewrite, so nothing was lost.** The page receives the body when the response ends. The old C++ library's own page (`sweetview/request-handler.md`, citing WebView2Feedback issue 3519) and the old bindings' test say the same of Windows; two independent reviewers read those sources and confirmed it. It is a property of WebView2. | `packages/sweetview-native/src/webview.ts:177-181` |
-| WebView2's own download interface | **Lost.** `wry` marks every download handled, which hides WebView2's download dialog; the old library never did. A download now saves with nothing shown. Found in review; fix in progress on `rust-rewrite-fix-webview-behaviour`. | `wry` 0.58.2 `src/webview2/mod.rs:976` |
-| The page behaviour WebView2 has by default (zoom, pinch zoom, swipe navigation, status bar) and CSS `app-region` off | No project code sets any of them; whatever `wry` sets applies. No test. A fix sits on the unmerged branch `rust-rewrite-fix-webview-behaviour`. | `crates/sweetview-runtime/src/engine.rs:225-246` |
+| WebView2's own download interface | **Lost.** `wry` marks every download handled, which hides WebView2's download dialog; the old library never did. A download now saves with nothing shown. Found in review; fixed on `rust-rewrite-fix-webview-behaviour`, not merged. | `wry` 0.58.2 `src/webview2/mod.rs:976` |
+| The page behaviour WebView2 has by default (zoom, pinch zoom, swipe navigation, status bar) and CSS `app-region` off | No project code sets any of them; whatever `wry` sets applies. No test on the main branch; fixed on `rust-rewrite-fix-webview-behaviour`, not merged. | `crates/sweetview-runtime/src/engine.rs:225-246` |
 | A display-scale change on an ordinary window | No handling of its own; left to `tao`. No test. Only the tabbed frame applies the rectangle Windows suggests. | `crates/sweetview-platform-window/src/windows.rs:925-990` |
 | Keyboard access to the tab strip's own buttons and tabs | Not implemented: every control is `tabindex="-1"` and the strip marks every key handled. | `packages/sweetview/src/tabs/win-strip-assets.ts:8-12` |
 | A binding for Windows ARM64 or 32-bit | None: the loader throws for any target but `win32-x64`. | `packages/sweetview-native/src/binding.ts:68-71` |
-| A public call for: the navigation-failed event, the new-window (popup) handler, a child webview at given bounds, native timeouts and deferred jobs, the DevTools protocol, removing an `init` script | Implemented in Rust, reachable only through `@n1h/sweetview-native/internal`, or not at all. | `packages/sweetview-native/src/internal.ts` |
-| `buildMenu`, `destroyMenu`, `windowMenu` | Implemented, reachable only through the `/win32/menu` and `/win32/tab-window` subpaths, which the docs tell applications to import. | `docs/native/menus-and-tray.md:114-135` |
-| `Window#close()` | Does not exist. | `packages/sweetview-native/src/window.ts` |
+| A public call for: the navigation-failed event, the new-window (popup) handler, a child webview at given bounds, native timeouts and deferred jobs, the DevTools protocol, removing an `init` script | Implemented in Rust, reachable only through `@n1h/sweetview-native/internal`, or not at all. The upgrade guide's rows for them say `no public call in 1.0`, and no document tells an application to import the internal entry (D45). | `packages/sweetview-native/src/internal.ts` |
+| `buildMenu`, `destroyMenu` | Implemented, reachable only through the `/win32/menu` subpath, which is still exported. No document tells an application to import it: the guide's rows say `no public call in 1.0` (D45). `windowMenu` of `/win32/tab-window` has a public call now: `Window#showSystemMenu()`, for any window of the thread through `Window.fromHandle(hwnd)`. | `docs/upgrading.md`, `docs/native/menus-and-tray.md` |
+| `Window#close()` | Still does not exist: no public call asks a window to close as its X does (`close()` is a tab's, on `TabHandle`). | `packages/sweetview-native/src/window.ts` |
 | `setAppMenu`, `setAppIcon`, `setActivationPolicy`, `permissions`, a native URL event | Do nothing or return constants on Windows, as before the rewrite: they are macOS features. | `crates/sweetview-runtime/src/app.rs:23-35` |
 
 ## 2. Ported, and behaves differently from before
@@ -33,11 +33,11 @@ Found by reading the new code against the reference inventory, or stated by the 
 | `pumpEvents()` called from inside a running loop | Does nothing and returns true (`crates/sweetview-runtime/src/runtime.rs:214`). |
 | `startDrag` on a window Sweetview made | Returns before the drag ends. |
 | `singleInstance`, second instance | Sleeps the UI thread between its ten lookups, where the old code let Bun's loop run (`crates/sweetview-platform-shell/src/single_instance.rs:131-135`). |
-| `tab.webview.window` | Names the frame the tab opened in. After a tear-off or merge it can name a destroyed window (`packages/sweetview/src/tabs/win-tabs.ts:704`). |
+| `tab.webview.window` | Names the frame the tab opened in. After a tear-off or merge it can name a destroyed window (`packages/sweetview/src/tabs/win-tabs.ts`). Fixed on `rust-rewrite-fix-webview-behaviour`, not merged. |
 | The page context menu | On even with `debug: false`; the docs say `debug` enables it (`crates/sweetview-runtime/src/engine.rs:214-215`). |
-| Keyboard focus when a webview is created | `wry` moves focus into every webview it builds, a child webview and a background tab included; the old library focused only a window it owned. Found in review; fix in progress. |
-| A page calling `window.close()` in an embedded webview | `wry` destroys the webview's container window while the host window stays; the old library did not handle the event. Found in review; fix in progress. |
-| Autofill on a profile where it was turned off | `wry` turns general autofill on for the whole profile each time a webview is created; the old library left the preference alone. Found in review; fix in progress. |
+| Keyboard focus when a webview is created | `wry` moves focus into every webview it builds, a child webview and a background tab included; the old library focused only a window it owned. Found in review; fixed on `rust-rewrite-fix-webview-behaviour`, not merged. |
+| A page calling `window.close()` in an embedded webview | `wry` destroys the webview's container window while the host window stays; the old library did not handle the event. Found in review; fixed on `rust-rewrite-fix-webview-behaviour`, not merged. |
+| Autofill on a profile where it was turned off | `wry` turns general autofill on for the whole profile each time a webview is created; the old library left the preference alone. Found in review; fixed on `rust-rewrite-fix-webview-behaviour`, not merged. |
 | A popup from a plain (untabbed) window | Allowed, so WebView2 opens a window of its own. Inferred, not run. |
 | `pickFolder` on a COM failure | Returns `null`, where the docs say it throws. Inferred. |
 | `Screen.of` | Largest overlap of the outer rectangle, not `MonitorFromWindow`. What that answers for a minimised window was not checked. |
@@ -95,4 +95,4 @@ The Rust exists. The proof is a simulated message, a test hook, a test that did 
 - No `todo!` or `unimplemented!` on a Windows path.
 - `unsafe` appears only in the six `sweetview-platform-*` crates that call the OS (220 occurrences in source by word count).
 - `sweetview-runtime` is 5,582 lines in one crate.
-- Nineteen binding exports have no caller outside tests, most of them `debug*` test hooks that ship in the binding.
+- Seventeen binding exports have no caller in `packages/*/src` outside tests, by a search of the tree at the update for each exported name of `prebuilt/binding.d.ts` (a name used anywhere counts as called, so this is the least number): the functions `debugLiveToastHandlers`, `decodeIcon`, `isLoopBlocking`, `isUiThread`, `probeRoundTrip` and `scheduleInterval`, and the methods `Engine.movesTold`, `TabFrame.stripHeight` and nine `Notifier.debug*`. Most are test hooks that ship in the binding. The figure at `bf5881d` was nineteen.
