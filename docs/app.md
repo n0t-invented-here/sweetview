@@ -689,8 +689,10 @@ streaming symbols), Sweetview forwards each chunk through the shared
 ring without collecting the whole body in the worker or UI thread. A macOS
 library with request interception but without streaming symbols buffers on
 the UI thread and completes the request once. WKWebView can deliver bytes
-incrementally. WebView2 buffers intercepted responses until EOF, as observed
-in the live Windows test. For real-time SSE-style updates and other desktop
+incrementally. WebView2 takes each chunk as it is written but buffers an
+intercepted response until EOF and only then gives it to the page, as the
+live Windows tests measure; the UI thread pauses the worker's stream while
+the native response has 1 MiB that WebView2 has not taken. For real-time SSE-style updates and other desktop
 push, use Sweetview IPC events (`emit` and `onEvent`, or `bridge.on` in the
 page). [WebView2 Feedback #3519](https://github.com/MicrosoftEdge/WebView2Feedback/issues/3519).
 

@@ -174,10 +174,11 @@ export function completeWebviewRequest(handle: WebviewHandle, id: bigint, respon
  * {@link completeWebviewRequest}, never both for one request. Safe to call
  * from any thread.
  *
- * Windows: the body is a stream WebView2 reads on its own thread, but
- * WebView2 hands the page the response only once the whole body is read (a
- * WebView2 limitation for intercepted requests), so an `EventSource` there
- * gets every event at {@link endWebviewResponse}, not one by one. macOS: the
+ * Windows: the body is a stream WebView2 reads on its own thread, each
+ * chunk as it is written, but WebView2 hands the page the response only once
+ * the whole body is read (a WebView2 limitation for intercepted requests), so
+ * an `EventSource` there gets every event at {@link endWebviewResponse}, not
+ * one by one, and WebView2 holds the body until then. macOS: the
  * page reads the body as it arrives.
  *
  * @throws {WebviewError} Bad headers, a status outside 100-599, a response
@@ -194,7 +195,9 @@ export function beginWebviewResponse(handle: WebviewHandle, id: bigint, head: We
 /**
  * Appends a piece of the body to a response started with
  * {@link beginWebviewResponse}. Safe to call from any thread; the bytes are
- * copied before this returns. A chunk for a response that has ended, was
+ * copied before this returns. Windows: while the response has 1 MiB that
+ * WebView2 has not taken yet (until it is down to 512 KiB), a call on any
+ * thread but the UI thread waits for room; on the UI thread it never waits. A chunk for a response that has ended, was
  * never begun, or that the page abandoned is dropped; an empty chunk writes
  * nothing, but is still checked like any other (a destroyed webview throws).
  *

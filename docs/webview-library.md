@@ -228,10 +228,24 @@ webview_error_t webview_end_response(webview_t w, uint64_t request_id);
   `didReceiveData:` calls and `didFinish`, so the page receives bytes as
   they arrive. Frames for a stopped task are discarded.
 - Windows hands WebView2 an `IStream` that holds unread bytes in the
-  binding, whose `Read` waits for the next chunk. WebView2 reads that stream to its end before giving the response
-  to the page, so a streamed response arrives all at once. Use IPC events
+  binding. Its `Read` waits only while nothing is unread and returns what
+  there is at once (a short read), so WebView2 takes each chunk as it is
+  written. WebView2 then keeps the whole body itself and gives the response
+  to the page only once the stream has ended: the page's `fetch()` does not
+  even resolve before that, and an `EventSource` gets every event at the end
+  (measured on WebView2 Runtime 158; the tests fail if a later runtime hands
+  the page bytes sooner). So a streamed response arrives all at once, and a
+  large or endless one grows WebView2's memory until it ends. Use IPC events
   for real-time desktop push.
   [WebView2 Feedback #3519](https://github.com/MicrosoftEdge/WebView2Feedback/issues/3519).
+- Windows bounds what the binding holds: a response with 1 MiB unread is
+  backlogged until it is read down to 512 KiB. While it is, a
+  `webview_write_response_chunk` (`writeResponseChunk`) on any thread but
+  the UI thread waits for room, so that writer never has more than 1 MiB and
+  one chunk unread, and nothing is dropped or reordered; one on the UI thread
+  never waits. For a worker's `ReadableStream` body, Sweetview pauses
+  reading that one body while the response is backlogged. With WebView2
+  reading every chunk at once, the limit is seldom reached.
 
 ### External drops
 
