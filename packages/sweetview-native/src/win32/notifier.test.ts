@@ -118,7 +118,8 @@ describe.if(process.platform === "win32")("Windows notifier", () => {
       expect(String(errors[0]?.[0])).toBe("sweetview: notifier icon:");
       setNotifierTrayIcon(undefined);
       expect(backend.notify({ title: "Stock icon", silent: true })).toBe(true);
-      expect(native.debugPendingBalloons()).toBe(2);
+      // How many balloons are pending is proven in Rust (sweetview-platform-notify, windows.rs):
+      // without_winrt_every_notification_is_a_balloon_with_or_without_an_icon.
     } finally {
       console.error = originalError;
       setNotifierTrayIcon(undefined);

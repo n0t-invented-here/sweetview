@@ -1240,6 +1240,10 @@ mod tests {
     assert!(!notifier.toasts_available(), "WinRT was never tried");
     assert_eq!(notifier.pending_balloons(), 3);
     assert!(notifier.set_icon_ico(Some(b"not an icon".to_vec())).is_err());
+    // `notifier.test.ts` "bytes it refuses are logged and the stock icon is used": refused, the
+    // icon is unchanged and the next notification is still a balloon.
+    assert!(matches!(notifier.show(&note("after a refused icon")), Some(Shown::Balloon(_))));
+    assert_eq!(notifier.pending_balloons(), 4);
     assert!(Notifier::new(NotifierOptions { icon_ico: Some(vec![1, 2, 3]), ..Default::default() }, |_, _| {}).is_err());
   }
 
