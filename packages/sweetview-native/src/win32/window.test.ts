@@ -430,6 +430,22 @@ describe.if(onWindows)("win32 Window", () => {
     }
   });
 
+  test("a window minimised and then hidden is still minimised (IsIconic), and show() restores it", async () => {
+    // Review N8: docs/native/windows.md said a hidden window reads false.
+    const { user32 } = await import("../../test/win32-os");
+    const win = new Window({ title: "minimised then hidden", noActivate: true, bounds: { x: 160, y: 160, width: 320, height: 240 } });
+    try {
+      win.show();
+      win.minimize();
+      win.hide();
+      expect({ visible: win.isVisible(), minimized: win.isMinimized(), iconic: user32.IsIconic(BigInt(win.handle!)) !== 0 }).toEqual({ visible: false, minimized: true, iconic: true });
+      win.show();
+      expect({ visible: win.isVisible(), minimized: win.isMinimized() }).toEqual({ visible: true, minimized: false });
+    } finally {
+      win.dispose();
+    }
+  });
+
   test("the probe's screenPixel throws for a point no screen shows, rather than reading it as white", async () => {
     // Review N10: GetPixel's CLR_INVALID became "#ffffff".
     const { screenPixel } = await import("../../test/win32-os");

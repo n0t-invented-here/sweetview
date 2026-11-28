@@ -568,10 +568,11 @@ export class Window {
   }
   /**
    * Called with `true` when the window becomes maximized and `false` when it
-   * is restored, by any means: the frame's button, a snap gesture, a double
-   * click on the title bar, `toggleMaximize()` (a frameless window: filling
-   * its work area). Minimizing and restoring to the same state reports
-   * nothing. Returns the function that removes this listener.
+   * is restored, by any means: a framed window's button, snap gesture, title
+   * bar double click and system menu; a frameless window's `toggleMaximize()`
+   * (filling its work area), system menu, and a move or resize off that work
+   * area; `toggleMaximize()` for both. Minimizing and restoring to the same
+   * state reports nothing. Returns the function that removes this listener.
    */
   onMaximizeChange(handler: (maximized: boolean) => void): () => void {
     return this.#inner.onMaximizeChange(handler);

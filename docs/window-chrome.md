@@ -102,7 +102,7 @@ const toggleMaximize = () => chrome.toggleMaximize();
 
 const info = await chrome.info();
 if (info.chrome === "page") {
-  chrome.onMaximizeChange(showMaximized); // the button, a double click, a snap gesture, the system menu
+  chrome.onMaximizeChange(showMaximized); // the button, a double click, the system menu, a drag off the work area
   titleBar.addEventListener("pointerdown", chrome.onTitlePointerDown);
   titleBar.addEventListener("dblclick", toggleMaximize);
   titleBar.addEventListener("contextmenu", (e) => {
@@ -164,7 +164,7 @@ Builds the `window.*` handlers for one window; pass the result as `uiMethods` (o
 
 `windowChromeEvents(window, view): () => void`
 
-Sends `window.maximized` with `{ maximized }` to the page each time `window` becomes maximised or is restored, by any means: the page's maximise button or a double click on its title bar, a snap gesture, the system menu, `toggleMaximize()` from anywhere ([`Window#onMaximizeChange`](native/windows.md#window-members)). `view` is the `WebView` (or `App`) the page runs in, whose event map includes `WindowChromeEvents`. Call it once the webview is attached; it returns the function that stops it. An event sent before the page subscribed is not kept, which is why the page asks `info()` once when it loads.
+Sends `window.maximized` with `{ maximized }` to the page each time `window` becomes maximised or is restored, by any means: the page's maximise button or a double click on its title bar, the window's system menu (`window.systemMenu`), a drag that takes the maximised window off the work area, `toggleMaximize()` from anywhere ([`Window#onMaximizeChange`](native/windows.md#window-members)). `view` is the `WebView` (or `App`) the page runs in, whose event map includes `WindowChromeEvents`. Call it once the webview is attached; it returns the function that stops it. An event sent before the page subscribed is not kept, which is why the page asks `info()` once when it loads.
 
 `windowChromeMethods`, `windowChromeEvents`, `WindowChromeEvents`, `WindowChromeInfo`, `WindowChromeKind`, `WindowChromeMethods`, `WindowChromeMethodTable` and `WindowChromeOptions` are also exported from the root `@n1h/sweetview`. The page half (`windowChromeControls`, `resizeHandles`) is only in `@n1h/sweetview/window-chrome`.
 

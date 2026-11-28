@@ -78,8 +78,9 @@ export function windowChromeMethods(
 
 /**
  * The UI-thread half of the maximise state: sends `window.maximized` to the
- * page each time `window` becomes maximised or is restored (by its frame, a
- * snap gesture, a double click on the page's title bar, `toggleMaximize()`).
+ * page each time `window` becomes maximised or is restored (the page's button
+ * or a double click on its title bar, the system menu, a drag off the work
+ * area, `toggleMaximize()` from anywhere).
  * Call it once the webview is attached; returns the function that stops it.
  */
 export function windowChromeEvents(
