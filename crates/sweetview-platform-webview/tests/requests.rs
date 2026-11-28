@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use common::{fetch_js, Ctx, View};
 use serde_json::{json, Value};
-use sweetview_platform_webview::{set_background_color, ErrorCode, NavigationFailure, RawRequest};
+use sweetview_platform_webview::{ErrorCode, NavigationFailure, RawRequest};
 
 fn scenario(name: &str) {
     eprintln!("-- {name}");
@@ -208,10 +208,10 @@ fn request_path_on_a_real_webview() {
     }
 
     scenario("background colour: alpha 0 and 255 accepted, any other alpha refused");
-    assert_eq!(set_background_color(view.webview(), 10, 20, 30, 128), ErrorCode::Unspecified);
-    assert_eq!(set_background_color(view.webview(), 10, 20, 30, 1), ErrorCode::Unspecified);
-    assert_eq!(set_background_color(view.webview(), 255, 255, 255, 255), ErrorCode::Ok);
-    assert_eq!(set_background_color(view.webview(), 0, 0, 0, 0), ErrorCode::Ok);
+    assert_eq!(view.webview().set_background_color(10, 20, 30, 128), ErrorCode::Unspecified);
+    assert_eq!(view.webview().set_background_color(10, 20, 30, 1), ErrorCode::Unspecified);
+    assert_eq!(view.webview().set_background_color(255, 255, 255, 255), ErrorCode::Ok);
+    assert_eq!(view.webview().set_background_color(0, 0, 0, 0), ErrorCode::Ok);
 
     scenario("a user script added, then removed");
     let us1 = extras.add_user_script("window.__us1 = 1;").expect("add_user_script");
@@ -286,11 +286,11 @@ fn request_path_on_a_real_webview() {
     }
     extras.set_request_handler(None);
     extras.note_host_navigation();
-    view.webview().load_url("http://webview.localhost/no-such-page").unwrap();
+    view.navigate("http://webview.localhost/no-such-page");
     ctx.settle(Some(&view), Duration::from_millis(800));
     assert!(failures.borrow().is_empty(), "a 404 response shows the server's page and is not a failure");
     extras.note_host_navigation();
-    view.webview().load_url("http://sweetview-test.invalid/").unwrap();
+    view.navigate("http://sweetview-test.invalid/");
     let reported = ctx.pump(Some(&view), Duration::from_secs(15), || !failures.borrow().is_empty());
     assert!(reported, "the failed navigation was reported");
     {
@@ -305,8 +305,8 @@ fn request_path_on_a_real_webview() {
     }
 
     scenario("focus and popup position calls");
-    // Focus is `wry`'s own `WebView::focus` (`MoveFocus`, programmatic).
-    let _ = view.webview().focus();
+    // Focus is `MoveFocus`, programmatic, as the fork's `focus_webview`.
+    view.webview().move_focus();
     extras.notify_parent_window_position_changed();
     assert_eq!(extras.call_devtools_protocol_method("Runtime.enable", "{}"), ErrorCode::Ok);
 
