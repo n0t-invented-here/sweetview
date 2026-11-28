@@ -441,31 +441,7 @@ fn test_ico() -> Vec<u8> {
   out
 }
 
-/// A file drop as the shell hands one to a window: a movable global block
-/// holding a `DROPFILES` header followed by the NUL-separated wide paths and a
-/// final NUL. The window that receives it owns it and frees it with `DragFinish`.
-fn shell_drop(paths: &[&str]) -> windows::Win32::Foundation::HGLOBAL {
-  use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE, GMEM_ZEROINIT};
-  use windows::Win32::UI::Shell::DROPFILES;
-  let text: Vec<u16> = paths.iter().flat_map(|path| path.encode_utf16().chain([0])).chain([0]).collect();
-  let header = DROPFILES { pFiles: size_of::<DROPFILES>() as u32, fWide: true.into(), ..Default::default() };
-  let bytes = size_of::<DROPFILES>() + text.len() * 2;
-  // SAFETY: GlobalAlloc takes its flags and size by value and reads no memory of ours.
-  let memory = unsafe { GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, bytes) }.expect("GlobalAlloc");
-  // SAFETY: `memory` is the block just allocated, owned by this function until it is handed over.
-  let base = unsafe { GlobalLock(memory) }.cast::<u8>();
-  assert!(!base.is_null(), "GlobalLock");
-  // SAFETY: the locked block is `bytes` long, at least a DROPFILES, which the `windows` crate lays
-  // out; the write is unaligned-safe.
-  unsafe { base.cast::<DROPFILES>().write_unaligned(header) };
-  let after_header = base.wrapping_add(size_of::<DROPFILES>());
-  // SAFETY: the block has exactly `text.len() * 2` bytes after the header (its size above), and
-  // `text` is a separate Rust buffer, so the ranges do not overlap.
-  unsafe { std::ptr::copy_nonoverlapping(text.as_ptr().cast::<u8>(), after_header, text.len() * 2) };
-  // SAFETY: balances the GlobalLock above on the same, still allocated block.
-  let _unlocked = unsafe { GlobalUnlock(memory) };
-  memory
-}
+use crate::test_support::shell_drop;
 
 /// The drop a window receives is read and then finished exactly once, and
 /// finishing it frees it: the owning type of `WM_DROPFILES`.

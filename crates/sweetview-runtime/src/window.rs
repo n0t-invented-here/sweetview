@@ -664,7 +664,7 @@ fn on_event(weak: &Weak<Core>, event: &WindowEvent) -> bool {
 /// One wrapper of a native window.
 pub struct Window {
   core: Rc<Core>,
-  id: u64,
+  pub(crate) id: u64,
   /// The wrapper `create` returned: disposing it destroys the window.
   owner: bool,
   detected: Option<Chrome>,

@@ -1394,6 +1394,18 @@ describe.if(onWindows)("onCallbackError's sink in the binding", () => {
     ]);
   });
 
+  test("the binding's guard holds Reflect.apply, Object.create and String as they were when the binding loaded, not as the application patched them before its first callback", async () => {
+    const { r, exitCode, stderr } = await spawnSink("patched-globals");
+    expect({ exitCode, ran: r.ran, told: r.told }).toEqual({ exitCode: 0, ran: 2, told: ["a native timeout: second"] });
+    expect(stderr.split(/\r?\n/).filter(Boolean)).toEqual(["sweetview: a native timeout threw: Error: first"]);
+  });
+
+  test("a listener registered while the binding reads a value thrown with none set hears nothing of that fault, and its line is printed", async () => {
+    const { r, exitCode, stderr } = await spawnSink("late-listener");
+    expect({ exitCode, told: r.told }).toEqual({ exitCode: 0, told: [] });
+    expect(stderr.split(/\r?\n/).filter(Boolean)).toEqual(["sweetview: a native timeout threw: registers a listener"]);
+  });
+
   test("a Worker that calls onCallbackError first is refused, loads nothing, and the main thread stays the UI thread", async () => {
     const { r, exitCode } = await spawnSink("worker-first");
     expect({ exitCode, worker: r.worker, windowOnThisThread: r.windowOnThisThread }).toEqual({ exitCode: 0, worker: UI_THREAD, windowOnThisThread: null });
@@ -1429,6 +1441,22 @@ describe.if(onWindows)("onCallbackError's sink in the binding", () => {
 // The raw webview class's callback boundaries with a listener set (review F6, N3), from
 // test/fixtures/webview-errors.ts. The drop is the DevTools protocol's; no input is injected.
 describe.if(onWindows)("onCallbackError and the raw webview class", () => {
+  // With no listener, each boundary prints what it printed on the main branch, as often (review 4,
+  // C1): a value whose reading threw left the TypeScript catch for the binding's own there.
+  test("with no listener, the raw webview's faults print the main branch's lines, once each", async () => {
+    const { r, exitCode, stderr } = await runFixture("webview-errors.ts", ["none"]);
+    expect({ exitCode, proxy: r.page?.proxy, promiseThenGetter: r.page?.promiseThenGetter, bindProxy: r.page?.bindProxy }).toEqual({ exitCode: 0, proxy: 500, promiseThenGetter: 500, bindProxy: "rejected" });
+    expect(stderr.split(/\r?\n/).filter((line) => line.startsWith("sweetview:"))).toEqual([
+      "sweetview: a binding threw: Error: getPrototypeOf trap",
+      "sweetview: a binding threw: Error: raw throws",
+      "sweetview: a binding threw: Error: shared",
+      "sweetview: a binding threw: Error: shared",
+      "sweetview: a request handler threw: Error: returned getPrototypeOf trap",
+      "sweetview: a request handler threw: Error: request then getter",
+      "sweetview: a request handler threw: Error: request then throws",
+    ]);
+  }, 90_000);
+
   test("a bound function, a raw binding, a request handler and a file drop handler: each fault arrives once with its kind, and the page still gets its failure", async () => {
     const { r, exitCode } = await runFixture("webview-errors.ts");
     expect({ exitCode, timedOut: r.timedOut }).toEqual({ exitCode: 0, timedOut: undefined });

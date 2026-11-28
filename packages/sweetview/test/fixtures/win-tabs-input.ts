@@ -19,8 +19,8 @@ import { FFIType, dlopen, ptr } from "bun:ffi";
 import { writeSync } from "node:fs";
 import { WebView, type Tab } from "../../src/index";
 import { Screen, Window, quitEventLoop, runEventLoop } from "@n1h/sweetview-native";
-import { scheduleNativeTimeout } from "@n1h/sweetview-native/internal";
-import { CAPTION_WIDTH, NEW_TAB_WIDTH, STRIP_HEIGHT, TABS_LEFT, dropIndex, tabWidth, tabsViewport } from "@n1h/sweetview-native/win32/strip-shared";
+import { scheduleNativeTimeout } from "../../../sweetview-native/src/internal";
+import { CAPTION_WIDTH, NEW_TAB_WIDTH, STRIP_HEIGHT, TABS_LEFT, dropIndex, tabWidth, tabsViewport } from "../../../sweetview-native/src/win32/strip-shared";
 import { buttonsDown, inMoveSize, injectCursorMove, injectLeftButton, moveLoopControl, windowAt as windowAtXY } from "../../../sweetview-native/test/win32-os";
 import { _debugWinTabs } from "../../src/tabs/win-tabs";
 
