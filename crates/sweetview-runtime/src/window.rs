@@ -311,22 +311,6 @@ impl Core {
     }
   }
 
-  /// A frameless window is maximised while it fills the work area its toggle
-  /// gave it: moved or sized off it (dragged by `startDrag`, say), it is not,
-  /// and the bounds kept to go back to are forgotten (review N8).
-  fn leave_frameless_maximize_if_moved(&self) {
-    if self.chrome.frame || self.restore.get().is_none() {
-      return;
-    }
-    if self.with_native(|window| platform::is_minimized(window)).unwrap_or(true) {
-      return;
-    }
-    let filled = screen::of_window(self.handle).map(|s| s.work_area == self.bounds()).unwrap_or(true);
-    if !filled {
-      self.restore.set(None);
-    }
-  }
-
   /// A frameless window's maximise: between its bounds and the work area of
   /// the screen it is on, the bounds kept to go back to.
   fn toggle_frameless_maximize(&self) -> Result<()> {
@@ -630,7 +614,6 @@ fn on_event(weak: &Weak<Core>, event: &WindowEvent) -> bool {
     WindowEvent::Resized(bounds) => {
       // The maximised state is looked at before a resize listener can change it (restore the
       // window, say), so the change this resize made is told, and then the one the listener made.
-      core.leave_frameless_maximize_if_moved();
       core.note_maximized();
       // As at the tag: the bounds of this resize, to every listener there was when it came; one a
       // listener raises is delivered in full from inside that call, and this one then goes on.
@@ -639,8 +622,6 @@ fn on_event(weak: &Weak<Core>, event: &WindowEvent) -> bool {
       false
     }
     WindowEvent::Moved(bounds) => {
-      core.leave_frameless_maximize_if_moved();
-      core.note_maximized();
       let listeners: Vec<RectListener> = core.listeners.borrow().moved.iter().map(|(_, l)| l.clone()).collect();
       listeners.iter().for_each(|l| l(*bounds));
       false

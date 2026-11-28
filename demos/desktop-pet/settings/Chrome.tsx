@@ -22,7 +22,7 @@ export function Chrome({ children }: { children: ReactNode }) {
   const [info, setInfo] = useState<WindowChromeInfo>({ chrome: "os", maximized: false });
   useEffect(() => {
     void chrome.info().then(setInfo);
-    // Every change, by the title bar's double click, the button, the system menu or a drag off the work area, arrives here.
+    // Every change, by the title bar's double click, the button or the system menu, arrives here.
     return chrome.onMaximizeChange((maximized) => setInfo((current) => ({ ...current, maximized })));
   }, []);
 

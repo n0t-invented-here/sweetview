@@ -453,6 +453,30 @@ describe.if(onWindows)("win32 Window", () => {
     expect(() => screenPixel(far.x - 10_000, far.y - 10_000)).toThrow("GetPixel");
   });
 
+  test("a frameless window maximised by toggleMaximize stays maximised when it is moved or sized, and its next toggle gives back the bounds it had before, as at the tag", async () => {
+    // Review round 3, measure A. At tag pre-rust-rewrite (win32/window.ts, toggleMaximize and
+    // isMaximized, lines 813 to 830) the saved rectangle stayed until the next toggle, whatever
+    // setBounds, moveTo, resize or startDrag did in between.
+    const start = { x: 150, y: 150, width: 320, height: 240 };
+    for (const [name, change] of [
+      ["setBounds", (w: Window) => w.setBounds({ x: 10, y: 20, width: 500, height: 400 })],
+      ["moveTo", (w: Window) => w.moveTo(30, 40)],
+      ["resize", (w: Window) => w.resize(600, 450)],
+    ] as const) {
+      const win = new Window({ title: `frameless ${name}`, frame: false, noActivate: true, bounds: start });
+      try {
+        win.toggleMaximize();
+        expect({ name, maximized: win.isMaximized() }).toEqual({ name, maximized: true });
+        change(win);
+        expect({ name, maximized: win.isMaximized() }).toEqual({ name, maximized: true });
+        win.toggleMaximize();
+        expect({ name, maximized: win.isMaximized(), bounds: win.bounds() }).toEqual({ name, maximized: false, bounds: start });
+      } finally {
+        win.dispose();
+      }
+    }
+  });
+
   test("a resize or move raised inside a listener is delivered as at the tag: at once to every listener, then the outer delivery goes on with its bounds, for two listeners of one Window and for two wrappers", async () => {
     // Review round 3, measure A. At tag pre-rust-rewrite (win32/window.ts, fireResize and fireMove,
     // lines 173 to 197) a resize or move read its bounds once and went to a snapshot of the window's

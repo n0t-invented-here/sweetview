@@ -445,8 +445,9 @@ describe.if(onWindows)("Window on the binding: click-through, hit regions, the r
 });
 
 describe.if(onWindows)("startDrag on a maximised frameless window", () => {
-  test.skipIf(moveLoop?.ok === false)("a frameless window maximised by toggleMaximize and dragged by startDrag is no longer maximised, says so once, and maximises again on the next toggle", async () => {
-    // Review N8: the drag left the saved restore rectangle set, so isMaximized() stayed true.
+  test.skipIf(moveLoop?.ok === false)("a frameless window maximised by toggleMaximize and dragged by startDrag stays maximised, and its next toggle gives back the bounds it had, as at the tag", async () => {
+    // Review round 3, measure A: at tag pre-rust-rewrite the saved rectangle stayed until the next
+    // toggle (win32/window.ts, lines 813 to 830); round 1's N8 rule (c9e91fd) that cleared it is undone.
     const native = binding();
     const original = await cursorNow();
     const start = { x: 320, y: 320, width: 300, height: 200 };
@@ -485,9 +486,9 @@ describe.if(onWindows)("startDrag on a maximised frameless window", () => {
       await settle(8000, () => !pressed);
       await settle(60);
       expect(win.bounds()).toEqual({ ...maximised, x: maximised.x + 60, y: maximised.y + 45 });
-      expect({ maximized: win.isMaximized(), seen }).toEqual({ maximized: false, seen: [true, false] });
+      expect({ maximized: win.isMaximized(), seen }).toEqual({ maximized: true, seen: [true] });
       win.toggleMaximize();
-      expect({ maximized: win.isMaximized(), bounds: win.bounds(), seen }).toEqual({ maximized: true, bounds: Screen.of(win).workArea, seen: [true, false, true] });
+      expect({ maximized: win.isMaximized(), bounds: win.bounds(), seen }).toEqual({ maximized: false, bounds: start, seen: [true, false] });
     } finally {
       if (pressed) leftButton(false);
       probe!.SetCursorPos(original.x, original.y);
