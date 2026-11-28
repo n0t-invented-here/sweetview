@@ -181,7 +181,7 @@ Items name today's API members to say which behaviour is meant. The API may chan
 
 - [x] W1.8 A handler run on the UI thread opens a modal loop of its own (a message box, a popup menu) and, while it is open, the page's calls are still answered and worker replies still drain, as `scheduleDeferred` in `packages/sweetview/src/app.ts` relies on today. Proven under both loop modes.
 
-    `rust-rewrite/evidence/w1-boundary.txt`, "a modal loop opened by a handler (W1.8)" (`modal-loop.test.ts`), both loop modes: inside the application's own `MessageBoxW` and then inside its own `TrackPopupMenu`, the page's calls are answered and the page reports the answers back while the loop is open, a worker's frame drains and a native timeout fires.
+    `rust-rewrite/evidence/w1-boundary.txt`, "a modal loop opened by a handler (W1.8)" (`modal-loop.test.ts`), both loop modes: inside the application's own `MessageBoxW` and then inside its own `TrackPopupMenu`, the page's calls are answered and the page reports the answers back while the loop is open, a worker's frame drains and a native timeout fires. That run was recorded before decision D38, and the timeout firing then held only when the menu's loop did not first look at the queue with every timer of the thread already due: in that case it waited with them due until something else woke the thread (the second review's G1). Since D38 native timers are posted messages, and `modal-loop.test.ts`, "native timers inside a tray menu opened from a deferred job (D38)", tests that case in both loop modes; its run is under the answer to G1 in `rust-rewrite/evidence/review-windows-2.md`.
 
 
 ## W2. The webview
