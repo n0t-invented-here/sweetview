@@ -31,7 +31,11 @@ export const binding = (): WebviewBinding => (loaded ??= load());
 
 // Windows only hands the binding over: on macOS, until its goal, the webview is the library of
 // @n1h/sweetview-webview-bun.
-const connection = connectWebview(process.platform === "win32" ? (binding as unknown as () => NativeBinding) : undefined);
+const onWindows = process.platform === "win32";
+const connection = connectWebview(
+  onWindows ? (binding as unknown as () => NativeBinding) : undefined,
+  onWindows ? require.resolve("../prebuilt/sweetview-webview.win32-x64-msvc.node") : undefined,
+);
 
 /** Reports an exception of the webview's callbacks as the native package reports its own. */
 export const reportCallbackError = connection.reportCallbackError;

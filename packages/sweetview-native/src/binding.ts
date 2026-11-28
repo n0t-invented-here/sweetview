@@ -74,9 +74,26 @@ function load(): NativeBinding {
   }
 }
 
+/**
+ * The file of the binding `@n1h/sweetview` handed over in this process, for its other threads: a
+ * `Worker` that imports only this package must load the same library as the UI thread, or it would
+ * have a runtime of its own (D48). Set by `provideBinding`; inherited by each `Worker` made after.
+ */
+const PROCESS_BINDING = "SWEETVIEW_PROCESS_BINDING";
+
+function loadProcessBinding(): NativeBinding | undefined {
+  const file = process.env[PROCESS_BINDING];
+  if (customPath !== undefined || !file) return undefined;
+  try {
+    return require(file) as NativeBinding;
+  } catch (err) {
+    fail(`${file} (the binding @n1h/sweetview loaded in this process)`, err);
+  }
+}
+
 /** The binding, loaded on first use. Throws with the name of the file it looked for when it cannot be loaded. */
 export function binding(): NativeBinding {
-  return (loaded ??= customPath === undefined && provided !== undefined ? provided() : load());
+  return (loaded ??= customPath === undefined && provided !== undefined ? provided() : (loadProcessBinding() ?? load()));
 }
 
 /**
@@ -86,11 +103,12 @@ export function binding(): NativeBinding {
  * @throws {Error} When this package's binding was loaded already, by a call made before
  * `@n1h/sweetview` was imported.
  */
-export function provideBinding(load: () => NativeBinding): void {
-  if (loaded !== undefined && provided !== load) {
+export function provideBinding(load: () => NativeBinding, file?: string): void {
+  if (loaded !== undefined && provided !== load && (file === undefined || process.env[PROCESS_BINDING] !== file)) {
     throw new Error("sweetview: @n1h/sweetview-native loaded its own binding before @n1h/sweetview was imported; import @n1h/sweetview before the first native call, so that one binding, the one with the webview, is loaded");
   }
   provided = load;
+  if (file !== undefined) process.env[PROCESS_BINDING] = file;
 }
 
 /** Loads the binding from a given file, bypassing the cache. For the loader's own tests. */
