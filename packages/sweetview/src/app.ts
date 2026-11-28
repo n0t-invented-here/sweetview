@@ -288,6 +288,9 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
     dispose: () => void;
   }) {
     this.raw = parts.raw;
+    // Until the macOS goal (D42) macOS keeps the tag's own enumerable `window` (`Object.keys`, a
+    // spread); on Windows the accessor below follows a tab's window through tear-off and merge.
+    if (macosKeepsTagPath()) Object.defineProperty(this, "window", { value: parts.window(), enumerable: true, writable: true, configurable: true });
     this.#window = parts.window;
     this.#emit = parts.emit;
     this.#notify = parts.notify;

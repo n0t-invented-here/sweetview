@@ -69,7 +69,9 @@ after them give every export its row.
     Windows; macOS ignores it);
     `Window#isMinimized()`, `Window#onMaximizeChange(fn)` and
     `Window#showSystemMenu()` replace an application's own `IsIconic`, a
-    polling timer and the system menu's internal call.
+    polling timer and the system menu's internal call (on macOS, until its
+    goal, `onMaximizeChange` registers nothing and `showSystemMenu` does
+    nothing).
 11. **Threads and handles.** On Windows, `Clipboard`, `singleInstance` and
     the other UI-thread calls throw from a `Worker`, and `Window.fromHandle`
     throws for a handle that names no window (on macOS only nil is refused).

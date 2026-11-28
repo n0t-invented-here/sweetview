@@ -33,3 +33,8 @@ rfd.workspace = true
 [dev-dependencies]
 sweetview-platform-window = { workspace = true, features = ["test-support"] }
 sweetview-platform-webview = { workspace = true, features = ["test-support"] }
+
+# Runs itself as a child process whose main thread is the UI thread, as an application's is.
+[[test]]
+name = "exit_with_timer"
+harness = false

@@ -195,7 +195,7 @@ the menu bar. See [`setActivationPolicy`](menus-and-tray.md#setactivationpolicy)
 |---|---|
 | `handle` | `HWND` on Windows, `NSWindow*` on macOS, `null` for a macOS tabbed window. |
 | `Window.visibleWindows()` | Visible windows this process created with `new Window`, minimized ones included. Wrappers from `fromHandle` are not listed. |
-| `isVisible()`, `show()`, `hide()`, `toggle()` | Visibility. `isVisible()` is true for a minimized window too; see `isMinimized()`. `show()` restores a minimized Windows window and activates the app on macOS, unless `noActivate`. |
+| `isVisible()`, `show()`, `hide()`, `toggle()` | Visibility. `isVisible()` is true for a minimized window too; see `isMinimized()`. `show()` restores a minimized Windows window and activates the app on macOS, unless `noActivate`; a minimized `noActivate` tabbed window is restored without being activated, as before 1.0. |
 | `bounds()`, `setBounds(rect)` | Outer frame rectangle. |
 | `moveTo(x, y)`, `resize(width, height)` | Moves the outer top-left corner keeping the size; resizes keeping the top-left corner. |
 | `scale()` | Window units per CSS pixel; see [Coordinates](#coordinates). |

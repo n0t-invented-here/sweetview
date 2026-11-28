@@ -812,8 +812,13 @@ impl Window {
       return Err(Error::state("sweetview: window handle is NULL"));
     }
     if let Some(core) = core_of(handle) {
-      let detected = Some(core.chrome);
-      return Ok(Self::wrap(core, false, detected));
+      // A window Sweetview did not make has no subclass while it has no listener, so nothing
+      // saw it destroyed: its record is reused only while the handle still names a window.
+      if core.owned || BorrowedWindow::with_handle_value(handle, |_| ()).is_some() {
+        let detected = Some(core.chrome);
+        return Ok(Self::wrap(core, false, detected));
+      }
+      core.destroy();
     }
     let chrome = BorrowedWindow::with_handle_value(handle, |window| platform::chrome(window))
       .ok_or_else(|| Error::state(format!("sweetview: not a window: {handle:#x}")))?;
@@ -855,7 +860,7 @@ impl Window {
     }
     let core = &self.core;
     // Shown the way `show()` always has: `tao`'s own show activates the window (D9).
-    core.with_native(|window| platform::show(window, core.no_activate, core.topmost.get()));
+    core.with_native(|window| platform::show(window, core.no_activate, core.topmost.get(), core.tab.is_some()));
     core.with_tao(|tao| {
       // `tao` learns the window is visible and not minimised, so its later
       // style rewrites agree; the subclass keeps those from touching `WS_VISIBLE`.
