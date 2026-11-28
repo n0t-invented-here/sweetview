@@ -400,6 +400,35 @@ describe.if(onWindows)("Menu.popup (binding: muda)", () => {
     }
   });
 
+  test("Menu.popup with { above: true } puts the menu's bottom-left corner at the point; without the option (or with above: false), its top-left", () => {
+    const owner = ownWindow();
+    const area = Screen.primary().workArea;
+    // The middle of the primary screen's work area: room above and below, so the OS moves neither menu.
+    const point = { x: area.x + (area.width >> 1), y: area.y + (area.height >> 1) };
+    const items: MenuTemplate = [{ label: "One" }, { label: "Two" }, { label: "Three" }];
+    const placed = (open: () => boolean) => {
+      let rect = { left: 0, top: 0, right: 0, bottom: 0 };
+      whenMenuOpens((menuWindow) => {
+        rect = windowRect(menuWindow);
+        pressKeys(menuWindow, VK.ESCAPE);
+      });
+      expect(open()).toBe(false);
+      return rect;
+    };
+    try {
+      const above = placed(() => Menu.popup(owner.hwnd, items, point, { above: true }));
+      expect({ left: above.left, bottom: above.bottom }).toEqual({ left: point.x, bottom: point.y });
+      expect(above.top).toBeLessThan(point.y);
+      for (const options of [undefined, {}, { above: false }]) {
+        const below = placed(() => Menu.popup(owner.hwnd, items, point, options));
+        expect({ options, left: below.left, top: below.top }).toEqual({ options, left: point.x, top: point.y });
+        expect(below.bottom).toBeGreaterThan(point.y);
+      }
+    } finally {
+      owner.destroy();
+    }
+  });
+
   test("buildMenu hands the application a menu for its own TrackPopupMenu: ids count from 1 in template order, a key chooses, destroyMenu frees it", () => {
     const owner = ownWindow();
     const icon = { windows: { ico: dotIco(RED) } };

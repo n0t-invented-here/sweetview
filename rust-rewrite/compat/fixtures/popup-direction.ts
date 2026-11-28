@@ -2,7 +2,8 @@
 // applications reach through Part A's file-path rows), run for real: where each menu opens.
 // `popupMenuAtCursor(owner, template)` opens the menu above the cursor, its bottom-left corner
 // there, as a tray menu does; `Menu.popup(owner, menu, at)` and `popupMenu(owner, template, at)`
-// open it below the point, its top-left corner there, and take no alignment. What each call asks
+// open it below the point, its top-left corner there, and `Menu.popup(owner, menu, at, { above: true })`,
+// the public form of the upward menu, opens it above the point or the cursor. What each call asks
 // the binding for is read by wrapping the binding's `popupMenu` (point and `above` flag); where the
 // OS puts each kind of menu is read from the open menu's window at a fixed point in the middle of
 // the work area, so the cursor (which other sessions may be moving) plays no part. Each menu is
@@ -68,12 +69,20 @@ report.menuPopupAtPointAsks = asked[0]?.above === false && asked[0]?.at?.x === p
 asked.length = 0;
 measure(() => popupMenu(hwnd, MENU, point));
 report.popupMenuAtPointAsks = asked[0]?.above === false && asked[0]?.at?.x === point.x && asked[0]?.at?.y === point.y;
+asked.length = 0;
+measure(() => Menu.popup(owner, MENU, undefined, { above: true }));
+report.menuPopupAboveAtCursorAsks = asked[0];
+asked.length = 0;
+measure(() => Menu.popup(owner, MENU, point, { above: true }));
+report.menuPopupAboveAtPointAsks = asked[0]?.above === true && asked[0]?.at?.x === point.x && asked[0]?.at?.y === point.y;
 
 // Where the OS puts each kind at the same point.
 const above = measure(() => realPopup.call(native, hwnd, MENU.map((m, i) => ({ kind: "item", id: i + 1, label: m.label })), point, true));
 const below = measure(() => Menu.popup(owner, MENU, point));
 report.aboveOpensUpward = above !== null && above.left === point.x && above.bottom === point.y && above.top < point.y;
 report.menuPopupOpensDownward = below !== null && below.left === point.x && below.top === point.y && below.bottom > point.y;
+const publicAbove = measure(() => Menu.popup(owner, MENU, point, { above: true }));
+report.menuPopupAboveOpensUpward = publicAbove !== null && publicAbove.left === point.x && publicAbove.bottom === point.y && publicAbove.top < point.y;
 
 native.popupMenu = realPopup;
 owner.dispose();

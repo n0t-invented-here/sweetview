@@ -147,17 +147,23 @@ const onAssetPage = async (ctx: DesktopCtx, view: import("@n1h/sweetview-native"
   view.navigate(`${view.assetOrigin}/rows-page.html`);
   for (let i = 0; i < 40 && (await ctx.ask(view, "document.title").catch(() => "")) !== "rows page"; i++) await Bun.sleep(100);
 };
-/** Opens a popup menu with `open` and ends it from inside its loop once it is on the screen; what open returned and whether the menu was seen. */
+/**
+ * Opens a popup menu with `open` and ends it from inside its loop once it is on the screen; what open returned,
+ * whether the menu was seen, and the menu window's rectangle on the screen.
+ */
 const popupRun = async (ctx: DesktopCtx, open: () => unknown) => {
   let seen = false;
+  let rect = { left: 0, top: 0, right: 0, bottom: 0 };
   await inModal(() => {
-    if (ctx.os.openPopupMenu() === 0n) return false;
+    const menu = ctx.os.openPopupMenu();
+    if (menu === 0n) return false;
     seen = true;
+    rect = ctx.os.windowRect(menu);
     ctx.os.endMenu();
     return true;
   });
   const result = open();
-  return { result, seen };
+  return { result, seen, rect };
 };
 /** The window the native layer made for the tray made last (the Windows backend's own handle). */
 const trayWindow = (): bigint => require("../../../packages/sweetview-native/src/win32/tray").currentTray()?.windowHandle() ?? 0n;
@@ -395,6 +401,12 @@ export const RUNNERS: Record<string, Runner> = {
     const owner = ctx.window();
     const { result, seen } = await popupRun(ctx, () => value.popup(owner, MENU, { x: 40, y: 40 }));
     must(seen && result === false, "the menu opened and, dismissed, chose nothing", { seen, result });
+    // `{ above: true }` (the popupMenuAtCursor row's public form): the menu's bottom-left corner at the point.
+    // The middle of the primary work area, so the OS moves the menu neither way.
+    const area = (await import("@n1h/sweetview-native")).Screen.primary().workArea;
+    const at = { x: area.x + (area.width >> 1), y: area.y + (area.height >> 1) };
+    const above = await popupRun(ctx, () => value.popup(owner, MENU, at, { above: true }));
+    must(above.seen && above.result === false && above.rect.left === at.x && above.rect.bottom === at.y && above.rect.top < at.y, "with { above: true } the menu opens above the point", { at, ...above });
   }),
   "new Notifier": desktop((value) =>
     withTestAppId((appId) => {
