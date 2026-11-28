@@ -9,7 +9,8 @@
 //
 //   SWEETVIEW_LOOP_MODE=blocking|pumped bun timers-in-tray-menu.ts [rounds]
 //
-// Prints one line `RESULT {"mode", "rounds", "ticked": [...], "rescued", "timedOut"?}`.
+// Prints one line `RESULT {"mode", "rounds", "ticked": [...], "firstTickMs": [...], "rescued", "timedOut"?}`:
+// per menu, its ticks and the time from its opening to its first tick (-1 for none).
 
 import { binding } from "../../src/binding";
 import { createTray } from "../../src/win32/tray";
@@ -26,10 +27,18 @@ const rescue = new Worker(new URL("./menu-rescue-worker.ts", import.meta.url).hr
 rescue.postMessage(shared);
 const now30 = () => Date.now() & 0x3fffffff;
 
-const report: { mode: string; rounds: number; ticked: number[]; rescued: number; timedOut?: boolean } = { mode, rounds, ticked: [], rescued: 0 };
+const report: { mode: string; rounds: number; ticked: number[]; firstTickMs: number[]; rescued: number; timedOut?: boolean } = {
+  mode,
+  rounds,
+  ticked: [],
+  firstTickMs: [],
+  rescued: 0,
+};
 let done = false;
 let ticks = 0;
 let opening = false;
+let openedAt = 0;
+let firstTick = -1;
 
 const tray = createTray({
   tooltip: `sweetview timers-in-tray-menu fixture ${process.pid}`,
@@ -37,6 +46,7 @@ const tray = createTray({
     // Longer than the interval's 10 ms and the pump guard's 15 ms.
     Bun.sleepSync(40);
     opening = true;
+    openedAt = performance.now();
     Atomics.store(flag, 0, now30());
     return [{ label: "One", click: () => {} }];
   },
@@ -53,10 +63,12 @@ function round() {
   if (report.ticked.length === rounds) return finish();
   ticks = 0;
   opening = false;
+  firstTick = -1;
   const started = Date.now();
   const rescuedBefore = Atomics.load(flag, 1);
   const interval = native.scheduleInterval(10, () => {
     if (!opening || openPopupMenu() === 0n) return;
+    if (ticks === 0) firstTick = performance.now() - openedAt;
     if (++ticks === 3) endMenu();
   });
   postTrayMouse(tray.windowHandle(), TRAY.RBUTTONDOWN, TRAY.RBUTTONUP);
@@ -68,6 +80,7 @@ function round() {
     native.cancelTimeout(interval);
     Atomics.store(flag, 0, 0);
     report.ticked.push(ticks);
+    report.firstTickMs.push(Math.round(firstTick));
     if (Atomics.load(flag, 1) > rescuedBefore) report.rescued++;
     native.scheduleTimeout(100, round);
   });

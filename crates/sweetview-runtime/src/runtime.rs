@@ -633,7 +633,14 @@ mod tests {
     ticks: Rc<Cell<u32>>,
     closed: Rc<Cell<bool>>,
     interval: TimeoutId,
+    /// When the menu was about to open, and when the interval first ticked inside it.
+    opened: Rc<Cell<Option<Instant>>>,
+    first_tick: Rc<Cell<Option<Instant>>>,
   }
+
+  /// The longest a menu's first tick may take: the interval's period is 10 ms. A menu whose loop
+  /// waits with the timers due delivers its first tick only when something else wakes the thread.
+  const FIRST_TICK_LIMIT: Duration = Duration::from_millis(250);
 
   fn open_menu_round(
     runtime: &Rc<Runtime>,
@@ -646,16 +653,24 @@ mod tests {
     use sweetview_platform_window::{end_menu_for_tests, BorrowedWindow, PopupAt, PopupCorner};
     let ticks = Rc::new(Cell::new(0u32));
     let closed = Rc::new(Cell::new(false));
-    let counted = ticks.clone();
+    let opened: Rc<Cell<Option<Instant>>> = Rc::default();
+    let first_tick: Rc<Cell<Option<Instant>>> = Rc::default();
+    let (counted, menu_open, first) = (ticks.clone(), opened.clone(), first_tick.clone());
     let interval = runtime
       .set_interval(10, move || {
+        if menu_open.get().is_none() {
+          return;
+        }
+        if first.get().is_none() {
+          first.set(Some(Instant::now()));
+        }
         counted.set(counted.get() + 1);
         if counted.get() == 3 {
           end_menu_for_tests();
         }
       })
       .expect("interval");
-    let (menu, owner, opened_at, done) = (menu.clone(), owner.clone(), opened_at.clone(), closed.clone());
+    let (menu, owner, opened_at, done, opening) = (menu.clone(), owner.clone(), opened_at.clone(), closed.clone(), opened.clone());
     runtime.defer(move || {
       // Longer than the interval's period and the pump guard's: every timer of the thread is due
       // when the menu's loop first looks at the queue.
@@ -666,18 +681,20 @@ mod tests {
         corner: PopupCorner::BottomLeft,
       });
       opened_at.store(start.elapsed().as_millis() as i64, Ordering::SeqCst);
+      opening.set(Some(Instant::now()));
       let _chosen = crate::menu::show(&menu, &BorrowedWindow::of(&owner), at);
       opened_at.store(-1, Ordering::SeqCst);
       done.set(true);
     });
-    MenuRound { ticks, closed, interval }
+    MenuRound { ticks, closed, interval, opened, first_tick }
   }
 
   /// D38: native timers keep firing inside a popup menu's loop in both loop modes. The menu opens
   /// from a deferred job, its owner is a hidden `tao` window as the tray menu's is, and every
-  /// timer is due when the menu's loop first looks at the queue. With timers on `WM_TIMER`, which
-  /// the OS makes only when no paint request is pending, the loop waited with them due and
-  /// delivered none, and only the watchdog's Escape closed the menu.
+  /// timer is due when the menu's loop first looks at the queue. With timers on `WM_TIMER` the
+  /// loop took `tao`'s paint request for idle and waited with them due, until something else
+  /// woke the thread or the watchdog's Escape closed the menu; so each menu's first tick must
+  /// come within `FIRST_TICK_LIMIT` of its opening.
   #[test]
   fn an_interval_ticks_inside_a_popup_menu_opened_from_a_deferred_job_in_both_loop_modes() {
     use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
@@ -712,8 +729,12 @@ mod tests {
       };
       let mut stuck: Vec<String> = Vec::new();
       let mut judge = |mode: &str, round: u32, played: &MenuRound, rescued: bool| {
-        if rescued || played.ticks.get() < 3 || !played.closed.get() {
-          stuck.push(format!("{mode} round {round}: {} ticks, rescued {rescued}", played.ticks.get()));
+        let first = match (played.opened.get(), played.first_tick.get()) {
+          (Some(opened), Some(first)) => Some(first.saturating_duration_since(opened)),
+          _ => None,
+        };
+        if rescued || played.ticks.get() < 3 || !played.closed.get() || first.is_none_or(|delay| delay > FIRST_TICK_LIMIT) {
+          stuck.push(format!("{mode} round {round}: {} ticks, first after {first:?}, rescued {rescued}", played.ticks.get()));
         }
       };
 
@@ -786,7 +807,7 @@ mod tests {
 
       stop.store(true, Ordering::SeqCst);
       watchdog.join().expect("watchdog");
-      assert!(stuck.is_empty(), "menus in which the interval did not tick three times: {stuck:#?}");
+      assert!(stuck.is_empty(), "menus whose interval did not tick three times, or not within FIRST_TICK_LIMIT of the opening: {stuck:#?}");
     });
   }
 

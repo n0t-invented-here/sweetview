@@ -18,7 +18,8 @@ use std::marker::PhantomData;
 use std::num::NonZeroIsize;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::rc::Rc;
-use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, PoisonError};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, PoisonError, TryLockError};
 use std::time::{Duration, Instant};
 
 use raw_window_handle::{HandleError, HasWindowHandle, RawWindowHandle, Win32WindowHandle, WindowHandle};
@@ -775,7 +776,7 @@ pub struct SignalWindow {
   next_timer: Cell<usize>,
   ticks: Arc<Ticks>,
   /// The thread that posts the ticks, started with the first timer and joined in `Drop`.
-  ticker: RefCell<Option<std::thread::JoinHandle<()>>>,
+  ticker: RefCell<Option<Ticker>>,
   window: MessageWindow,
 }
 
@@ -825,12 +826,18 @@ impl SignalWindow {
   fn start_ticker(&self) -> Result<(), SignalError> {
     let mut ticker = self.ticker.borrow_mut();
     if ticker.is_none() {
+      self.ticks.lock().stop = false;
       let (ticks, poster) = (self.ticks.clone(), self.window.poster());
+      let returned = Arc::new(AtomicBool::new(false));
+      let said = returned.clone();
       let thread = std::thread::Builder::new()
         .name("sweetview-timers".into())
-        .spawn(move || post_ticks(&ticks, &poster))
+        .spawn(move || {
+          post_ticks(&ticks, &poster);
+          said.store(true, Ordering::Release);
+        })
         .map_err(|e| SignalError(format!("a timer could not be set: its thread did not start: {e}")))?;
-      *ticker = Some(thread);
+      *ticker = Some(Ticker { thread, returned });
     }
     Ok(())
   }
@@ -873,19 +880,51 @@ impl SignalWindow {
     self.stop_ticker();
   }
 
+  /// Tells the tick thread to end and joins it once it says it returned.
+  ///
+  /// When the process exits, Windows ends every other thread before it runs the
+  /// exiting thread's thread-local destructors, which is where a runtime kept in
+  /// thread-local storage drops this value. `std`'s `join` panics on a thread the
+  /// OS ended, and a panic there aborts the process; that thread may also have
+  /// been ended while it held the lock. So the lock is only tried, for a moment,
+  /// and the thread is joined only when it said it returned; one the OS ended is
+  /// left to the process's end.
   fn stop_ticker(&self) {
-    let Some(thread) = self.ticker.borrow_mut().take() else { return };
-    self.ticks.lock().stop = true;
+    let Some(ticker) = self.ticker.borrow_mut().take() else { return };
+    let deadline = Instant::now() + Duration::from_millis(500);
+    loop {
+      match self.ticks.state.try_lock() {
+        Ok(mut state) => break state.stop = true,
+        Err(TryLockError::Poisoned(poisoned)) => break poisoned.into_inner().stop = true,
+        Err(TryLockError::WouldBlock) if Instant::now() < deadline => std::thread::yield_now(),
+        Err(TryLockError::WouldBlock) => return,
+      }
+    }
     self.ticks.changed.notify_all();
-    // The thread only posts and waits on the lock; it ends at once.
-    let _ = thread.join();
-    self.ticks.lock().stop = false;
+    loop {
+      let finished = ticker.thread.is_finished();
+      if ticker.returned.load(Ordering::Acquire) {
+        let _ = ticker.thread.join();
+        return;
+      }
+      if finished || Instant::now() >= deadline {
+        return;
+      }
+      std::thread::yield_now();
+    }
   }
+}
+
+/// The tick thread, with the flag it sets as the last thing it does.
+struct Ticker {
+  thread: std::thread::JoinHandle<()>,
+  returned: Arc<AtomicBool>,
 }
 
 impl Drop for SignalWindow {
   fn drop(&mut self) {
-    self.ticks.lock().timers.clear();
+    // Ends the thread without clearing the timers first: their lock may be held by a thread
+    // the OS ended (see `stop_ticker`). A tick posted meanwhile goes with the window.
     self.stop_ticker();
     // `self.window` is dropped next: it disarms the wakers and destroys the window.
   }
