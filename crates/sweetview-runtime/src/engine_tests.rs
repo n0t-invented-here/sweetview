@@ -229,6 +229,9 @@ fn a_download_is_left_to_webview2_which_keeps_an_existing_file_and_shows_its_int
       assert!(pump_until(&runtime, Duration::from_secs(10), || !watch.handled().is_empty()), "{host}: the download started");
       let saved = pump_until(&runtime, Duration::from_secs(10), || std::fs::read_dir(&folder).map(|d| d.count()).unwrap_or(0) >= 2);
       let opened = pump_until(&runtime, Duration::from_secs(5), || webview_of(&engine, test_support::download_dialog_open) == Some(true));
+      // WebView2 opens its dialog for a webview in front only, and closes it when the webview
+      // loses the focus: on a desktop where another window is in front, it cannot be judged.
+      let away = if opened { None } else { webview_of(&engine, test_support::not_in_front) };
       webview_of(&engine, test_support::close_download_dialog);
       let names: Vec<String> = std::fs::read_dir(&folder).unwrap().filter_map(|e| e.ok()).map(|e| e.file_name().to_string_lossy().into_owned()).collect();
       let kept = std::fs::read_to_string(&existing).unwrap_or_default();
@@ -237,7 +240,10 @@ fn a_download_is_left_to_webview2_which_keeps_an_existing_file_and_shows_its_int
       assert_eq!(watch.handled(), vec![false], "{host}: nothing marked the download handled");
       assert!(saved, "{host}: WebView2 saved the download beside the existing file");
       assert_eq!(kept, "already here", "{host}: the existing file was kept");
-      assert!(opened, "{host}: WebView2's own download interface opened");
+      match &away {
+        Some(reason) => eprintln!("-- {host}: WebView2's own download interface: not run: {reason}"),
+        None => assert!(opened, "{host}: WebView2's own download interface opened"),
+      }
       drop(watch);
       engine.destroy();
       settle(&runtime, Duration::from_millis(200));
