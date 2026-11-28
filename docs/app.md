@@ -56,7 +56,7 @@ One process has one OS event loop, on the UI thread, the main thread of the Bun 
 
 ### `run()`: the blocking loop
 
-`webview.run()` (and `app.run()` on a non-tabbed app) runs the platform's own blocking loop: on Windows the Rust runtime's loop (`tao`'s, with Sweetview's signal window for wakes and timers); on macOS, until the macOS goal of the Rust rewrite, the webview library's `webview_run`, which is `[NSApp run]`. It returns when `quit()` is called, or when the window the webview is attached to is disposed (closing a window with no `onClose` listener disposes it). When `run()` returns, it tears the webview down (the worker is terminated, the drain callback released, and the webview destroyed, in that order) and then releases everything else Sweetview made for the application: the application has quit ([the end of the application](#the-end-of-the-application)). How `createApp` decides when to quit is under [Closing and quitting](#closing-and-quitting).
+`webview.run()` (and `app.run()` on a non-tabbed app) runs the platform's own blocking loop: on Windows the Rust runtime's loop (`tao`'s, with Sweetview's signal window for wakes and timers); on macOS, until the macOS goal of the Rust rewrite, the webview library's `webview_run`, which is `[NSApp run]`. It returns when `quit()` is called, or when the window the webview is attached to is disposed (closing a window with no `onClose` listener disposes it). When `run()` returns, it tears its own webview down: the worker is terminated, the drain callback released, and the webview destroyed, in that order. Everything else the application made (its window, trays, notifiers, other windows) stays until the application's process ends, so code after `run()` and a second `run()` can still use it ([the end of the application](#the-end-of-the-application)). How `createApp` decides when to quit is under [Closing and quitting](#closing-and-quitting).
 
 Calling `app.dispose()`, `view.dispose()` or `win.dispose()` while `run()` is active (from a `uiMethods` handler, a tray or menu click, or a window callback) never tears the native window or webview down re-entrantly inside the running loop. It stops the worker and the watchdogs and requests loop exit with `quit()`; the webview is destroyed and the native window released as `run()` unwinds.
 
@@ -130,20 +130,21 @@ or clear it.
 
 An application's last line is `app.run()` (or `webview.run()`), or under
 `runEventLoop` the end of its script. Nothing after it is required: no
-`dispose()`, no `process.exit()`. When the application ends, Sweetview
-releases everything it made for it that is still alive, and the process ends
-by itself with the exit code the application set (0 unless it set another).
+`dispose()`, no `process.exit()`. When the application's process ends,
+Sweetview releases everything it made that is still alive, and nothing of
+Sweetview keeps the process from ending: after Quit the script's last line
+runs, and the process ends by itself, a few milliseconds later, with the exit
+code the application set (0 unless it set another).
 
-It does that at each of these ends:
-
-- a blocking `run()` returns: after `quit()`, or because the window its
-  webview is attached to was disposed (a close request on a window with no
-  `onClose` listener disposes it, so closing the main window of a
-  `createApp` app without `onClose` ends here; see [Closing and quitting](#closing-and-quitting));
-- the process exits for any other reason Bun reports to JavaScript, through
-  its `exit` event: the script ends (the pumped loop), `process.exit(code)`
-  is called, or an exception is not caught. The exit code is the one the
-  application or Bun set; the release never changes it.
+The release happens once, when the process ends for any reason Bun reports to
+JavaScript through its `exit` event: the script ends, `process.exit(code)` is
+called, or an exception is not caught. The exit code is the one the
+application or Bun set; the release never changes it. Nothing is released
+while the process runs: code after `run()`, a second `run()` (a sign-in
+window first, the main window after it), or a blocking `run()` inside
+`runEventLoop` keeps every tray, notifier, window, hook and single-instance
+lock the application made, and the lock keeps turning a second launch away.
+`run()` returning tears down only its own webview, as it always has.
 
 What is released, in this order:
 
@@ -152,12 +153,30 @@ What is released, in this order:
 2. webviews: each one's worker is terminated and its drain released, then
    the webview is destroyed, before the window it lives in;
 3. tray icons;
-4. notifiers: as `dispose()` does, the notifications still showing are
-   withdrawn (see below) and their hidden notification icons removed;
+4. notifiers: their click handlers end and their hidden notification icons
+   go, but the notifications they showed are left for the user to read (see
+   below);
 5. single-instance locks, so the next launch becomes the primary;
-6. windows, a tabbed window with its tabs;
+6. windows, a tabbed window with its tabs, a torn-off window too;
 7. on Windows, whatever the binding still holds (menus handed out by
-   `buildMenu`, native timeouts, callbacks), in the same order.
+   `buildMenu`, native timeouts, callbacks), in the same order. A step that
+   fails is reported on stderr and the others still run.
+
+**Notifications shown before the end stay.** A notification the application
+showed just before quitting ("export finished") is the user's to read: on
+Windows a toast stays on the screen and in the notification centre after the
+process ends, and on macOS a delivered notification stays in Notification
+Center. On Windows a click on one after the process is gone does not reach
+the application; on macOS it launches the application again, and the click
+goes to the notifier it makes first
+([notifications on macOS](native/notifications.md#macos)). A Windows
+balloon (the fallback when toasts are not available) is the exception: it
+lives on its notifier's hidden notification icon, which goes with the process.
+To take a notification back before the end, call `notifier.dispose()`: on
+Windows that withdraws the toasts still showing (on the screen, or not yet
+reported) and the balloons; on macOS it only stops routing clicks to the
+notifier and leaves delivered notifications where they are
+([notifications](native/notifications.md)).
 
 A webview's worker never keeps the process alive by itself: while the loop
 runs, the loop does, and once the application has quit the worker goes with
@@ -167,33 +186,16 @@ or close those.
 
 `dispose()` stays on every object, idempotent, for what an application wants
 gone before it ends: a second window it closes, a tray it removes, a lock it
-gives up early. Disposing by hand and then quitting releases nothing twice
-and logs nothing. An object made after an end (a second `createApp` after
-`run()` returned, say) works as usual and is released at the next end. When
-the process exits from inside a callback, a webview whose own callback is on
-the stack is left to the OS, which reclaims it with the process.
+gives up early, a notification it takes back. Disposing by hand and then
+quitting releases nothing twice and logs nothing. When the process exits from
+inside a callback, a webview whose own callback is on the stack is left to the
+OS, which reclaims it with the process.
 
-Two consequences of these defaults:
-
-- **A second blocking `run()` starts from nothing.** Everything made before
-  a blocking `run()` (trays, notifiers, windows, webviews, hooks, the
-  single-instance lock) is released when that `run()` returns, because its
-  return is the end of the application. An application that runs the loop a
-  second time, a sign-in window first and the main window after it, say,
-  makes its objects again after the first `run()` returns: a new
-  `createApp`, a new `Tray`, a new `Notifier`, and `singleInstance` again.
-  To keep objects across both phases instead, run one loop for both: hide
-  the first window and show the second from a handler inside the same
-  `run()`, or use `runEventLoop`, whose loop can be run again and whose
-  objects are released only when the process exits.
-- **Notifications still showing at the end are withdrawn.** On Windows a
-  toast whose banner is still on the screen, or that has reported nothing
-  yet, is hidden, and a balloon goes with its notifier's hidden icon, exactly
-  as `notifier.dispose()` does. A toast whose banner has already gone to the
-  notification centre stays there. An application whose last notification
-  must be seen (an export finished just before Quit, say) keeps running
-  until it has been: quit from the notifier's `onClick`, or wait a few
-  seconds after `notify()` before calling `quit()`.
+On macOS, until the macOS goal of the Rust rewrite, a raw `Webview` an
+application makes itself with `new RawWebview(...)` is not released at the end
+(the webview library's own `destroy` is not known to be safe to call twice);
+the webviews of `WebView.attach`, `createApp` and tabs are. Destroy a raw one
+yourself before the process ends.
 
 ## Reference
 
@@ -221,7 +223,7 @@ view.run();
 | `emit(name, payload)` | Delivers an event to the page by evaluating `__sweetview_emit(name, payload)`. A `payload` of `undefined` is sent as `null`. Listeners registered with `onEvent` do not see it. |
 | `notify(method, ...params)` | Posts a fire-and-forget call (`seq: null`) to the worker, with `params` sent as `null` when omitted. `uiMethods` are not consulted. Without a worker, logs `sweetview: <method>: this window has no worker` with `console.error` and sends nothing. |
 | `onEvent(fn)` | Registers `fn` for every event the worker sends, called before the page receives it. Returns an unsubscribe function. |
-| `run()` | Runs the blocking OS loop until `quit()` is called, then terminates the worker, closes the drain callback, and destroys the webview, and releases everything else Sweetview made ([the end of the application](#the-end-of-the-application)). |
+| `run()` | Runs the blocking OS loop until `quit()` is called, then terminates the worker, closes the drain callback, and destroys the webview. Everything else stays until the process ends ([the end of the application](#the-end-of-the-application)). |
 | `quit()` | Ends the running loop (on macOS, `webview_terminate`), causing `run()` to return. |
 | `dispose()` | Tears down the worker, drain callback, and webview without running `run()`, for apps hosted under `runEventLoop`. It takes back any pending quit request the teardown leaves (`discardQuit`), so other windows keep running. Under `runEventLoop`, call it from a Bun turn (timer or after `await`), not from inside a `uiMethods` handler or window procedure. While `run()` is active it is safe from any callback: it stops the worker and watchdogs and calls `quit()`, and the webview is destroyed as `run()` unwinds (see [`run()`](#run-the-blocking-loop)). Idempotent. Disposing the `Window` does the same for its webview, see [Lifecycle](#lifecycle). Every webview still alive is disposed when the application ends; call it for one that should go before that. |
 
@@ -423,7 +425,7 @@ call `WebView.openTab(origin, ...)` to open the tab there
 | `mergeAllWindows()` | Nothing to merge. | Merges torn-off windows back into `app.window`. |
 | `emit(name, payload)`, `notify(method, ...params)` | `webview.emit` and `webview.notify`. | Send nothing; they log `sweetview: app.emit() is unavailable on a tabbed app; emit on a specific tab.webview instead` (or the `app.notify()` equivalent) with `console.error`. |
 | `onEvent(fn)` | `webview.onEvent(fn)`. | Registers nothing and returns an inert unsubscribe function; subscribe on each `tab.webview` instead. |
-| `run()` | Blocks in `webview.run()`; returns `void`, once everything Sweetview made has been released ([the end of the application](#the-end-of-the-application)). After a `dispose()` made inside the loop, it disposes the window once the loop unwinds. | Returns the promise of `runEventLoop()`; `await` it. The tabs and windows are released when the script ends. |
+| `run()` | Blocks in `webview.run()`; returns `void`. After a `dispose()` made inside the loop, it disposes the window once the loop unwinds. The window and everything else are released when the process ends ([the end of the application](#the-end-of-the-application)). | Returns the promise of `runEventLoop()`; `await` it. The tabs and windows are released when the process ends. |
 | `quit()` | `webview.quit()`. | `quitEventLoop()`. |
 | `dispose()` | Disposes the webview, then the window (inside `run()`, the window waits for `run()` to return). Not needed at the end of the application. Idempotent. | Closes `app.window` and the tabs in it. Torn-off windows created by `moveToNewWindow()` or tab tear-off have their own lifetime; dispose them (or their tabs) separately, or merge them back first with `mergeAllWindows()`. At the end of the application every window is released, torn-off ones included. Idempotent. |
 

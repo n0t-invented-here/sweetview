@@ -159,7 +159,7 @@ view = await WebView.attach<Methods, Events>(win, {
 // The overlay has no close button: Quit ends run().
 new Tray({ tooltip: "Pet", menu: [{ label: "Quit", click: () => view?.quit() }] });
 win.show();
-view.run(); // blocks until quit(); then the webview, the tray and the window are released
+view.run(); // blocks until quit(); the tray and the window go when the script ends
 ```
 
 The page, `pet.html`, is minimal: a `#pet` element and the script.

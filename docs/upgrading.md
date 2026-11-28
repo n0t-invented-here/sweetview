@@ -39,20 +39,19 @@ this page: it imports each new form and checks that it is what the row says.
 
 ## What changed for every application
 
-- **The end of the application.** An application's last line is its loop:
-  `app.run()` (or `webview.run()`), or under `runEventLoop` the end of its
-  script. When it ends (`run()` returns, the script ends, `process.exit`, an
-  uncaught exception), Sweetview releases everything it made that is still
-  alive: input hooks first, then webviews and their workers, trays,
-  notifiers, single-instance locks and windows. A webview's worker no longer
-  keeps the process alive, so the process ends by itself with the exit code
-  the application set. The teardown lines an older application has after its
-  loop (`notifier.dispose()`, `tray.dispose()`, `app.dispose()`,
-  `win.dispose()`, `lock.dispose()`, `process.exit(0)`) are no longer needed
-  and are harmless if left: `dispose()` is idempotent and nothing is released
-  twice. Keep `dispose()` for what should go before the end. A timer or
-  server of the application's own still keeps the process running after
-  Quit: `unref()` or clear it ([the end of the application](app.md#the-end-of-the-application)).
+- **The end of the application.** The teardown lines an older application
+  has after its loop (`notifier.dispose()`, `tray.dispose()`,
+  `app.dispose()`, `win.dispose()`, `lock.dispose()`, `process.exit(0)`)
+  are no longer needed, and are harmless
+  if left: `dispose()` is idempotent and nothing is released twice. When the
+  process ends (the script ends, `process.exit`, an uncaught exception),
+  Sweetview releases what it made that is still alive, and a webview's worker
+  no longer keeps the process alive, so it ends by itself with the exit code
+  the application set. Nothing an application made is taken from it while it
+  runs: code after `run()` and a second `run()` keep every tray, notifier,
+  window and lock, and notifications it showed stay for the user to read. A
+  timer or server of the application's own still keeps the process running
+  after Quit: `unref()` or clear it ([the end of the application](app.md#the-end-of-the-application)).
 - **The engine on Windows.** The webview is WebView2 driven by Rust (`wry`
   and Sweetview's own additions), and windows, the tray, menus, dialogs,
   notifications, input hooks and the event loop are Rust too. The native
@@ -69,8 +68,10 @@ this page: it imports each new form and checks that it is what the row says.
   its native library out, and `--target=bun-darwin-arm64` keeps them. No
   build flag is needed.
 - **Closing a window.** A close request (the frame's X, Alt+F4) on a
-  `Window` with no `onClose` listener disposes the window, and `createApp`
-  then ends `run()` when no other window is visible. In 0.x the window of
+  `Window` with no `onClose` listener disposes the window. When that window is
+  a single-window `createApp` app's, disposing it ends `run()`, even while
+  another window of the application is visible; a tabbed app's loop
+  (`runEventLoop`) ends only when no other window is visible. In 0.x the window of
   `createOverlayWindow` hid itself instead. A listener keeps the window open
   and decides; to hide it as before, pass
   `createApp({ …, onClose: () => app.window.hide() })` or
