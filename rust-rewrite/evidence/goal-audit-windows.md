@@ -244,10 +244,6 @@ Real input (`crates/sweetview-platform-webview/tests/real_input.rs`, run with `-
 
 The same steps on a webview `wry` built on its own: the press on the `app-region` area moved the window by (82, 2) and the page got no `mousedown`; Ctrl+wheel left `ZoomFactor` at 1 and the page unchanged. That is the behaviour change the fix removes.
 
-### 13, the Explorer drop (this branch's part)
-
-Driven for real: an Explorer window opened on a scratch folder with one file, its item found through UI Automation, the left button pressed on the icon, the cursor moved in 40 steps onto the Sweetview webview in another process, the button released, all with `SendInput`. OLE drag and drop ran between the two processes: the file drop handler received exactly the file's real path (`...\sweetview-real-drop-<pid>\sweetview real drop.txt`), once. The Explorer window was closed afterwards. Not driven: a drop onto a part of a native window that the webview does not cover (`Window.onFileDrop` through `WM_DROPFILES`): in this test the webview fills the window.
-
 ### 7
 
 Measured, then changed, on WebView2 Runtime 158.0.4370.45 (`crates/sweetview-platform-webview/tests/streaming.rs`, `packages/sweetview/src/request-handler.test.ts` "pace"):
@@ -259,6 +255,10 @@ Measured, then changed, on WebView2 Runtime 158.0.4370.45 (`crates/sweetview-pla
 - The old contract kept: `writeResponseChunk` still copies and returns `0` for a live chunk, never drops or reorders one; it now may wait off the UI thread.
 
 What streaming guarantees is in D45 and `docs/webview-library.md` "Streaming responses". Real-time push on Windows stays IPC events. A writer on the UI thread, Sweetview's own worker path included, has no way to pace itself: listed for the owner.
+
+### 13, the Explorer drop (this branch's part)
+
+Driven for real: an Explorer window opened on a scratch folder with one file, its item found through UI Automation, the left button pressed on the icon, the cursor moved in 40 steps onto the Sweetview webview in another process, the button released, all with `SendInput`. OLE drag and drop ran between the two processes: the file drop handler received exactly the file's real path (`...\sweetview-real-drop-<pid>\sweetview real drop.txt`), once. The Explorer window was closed afterwards. Not driven: a drop onto a part of a native window that the webview does not cover (`Window.onFileDrop` through `WM_DROPFILES`): in this test the webview fills the window.
 
 ### 11
 
