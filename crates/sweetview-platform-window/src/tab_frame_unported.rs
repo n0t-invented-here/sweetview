@@ -10,26 +10,7 @@ pub fn is_foreground(_window: &impl NativeWindow) -> bool {
 }
 pub fn show_system_menu(_window: &impl NativeWindow, _at: Point) {}
 
-/// See the Windows implementation for the contract.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SystemMenuState {
-  pub maximized: bool,
-  pub minimized: bool,
-  pub can_size: bool,
-  pub can_maximize: bool,
-}
-
-/// See the Windows implementation for the contract.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SystemCommand {
-  Restore,
-  Move,
-  Size,
-  Minimize,
-  Maximize,
-  Close,
-  Other(u32),
-}
+pub use sweetview_window_logic::system_menu::{SystemCommand, SystemMenuState};
 
 pub fn track_system_menu(_window: &impl NativeWindow, _at: Point, _state: SystemMenuState) -> Option<SystemCommand> {
   None

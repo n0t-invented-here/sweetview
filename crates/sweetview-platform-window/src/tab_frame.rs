@@ -21,7 +21,7 @@ use windows::Win32::Graphics::Gdi::{CreateSolidBrush, DeleteObject, FillRect, In
 use windows::Win32::UI::Shell::{RemoveWindowSubclass, SetWindowSubclass};
 use windows::Win32::UI::WindowsAndMessaging::{
   AppendMenuW, CreatePopupMenu, DestroyMenu, EnableMenuItem, GetForegroundWindow, GetSystemMenu, SendMessageW, SetMenuDefaultItem, TrackPopupMenu, HMENU, MENU_ITEM_FLAGS, MF_ENABLED,
-  MF_GRAYED, MF_SEPARATOR, MF_STRING, SC_CLOSE, SC_MAXIMIZE, SC_MINIMIZE, SC_MOVE, SC_RESTORE, SC_SIZE, SWP_NOACTIVATE, SWP_NOZORDER,
+  MF_GRAYED, MF_SEPARATOR, MF_STRING, SC_CLOSE, SWP_NOACTIVATE, SWP_NOZORDER,
   TPM_RETURNCMD, TPM_RIGHTBUTTON, WM_CLOSE, WM_DPICHANGED, WM_ERASEBKGND, WM_NCDESTROY, WM_SYSCOMMAND, WS_CLIPCHILDREN,
 };
 
@@ -92,70 +92,9 @@ fn track(menu: &impl TrackedMenu, window: &impl NativeWindow, at: Point) -> u32 
   u32::try_from(chosen.0).unwrap_or(0)
 }
 
-/// What a window's system menu offers, from the window's state as whoever
-/// owns it knows it: a frameless Sweetview window is maximised by its own
-/// work-area toggle, which the OS knows nothing of.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SystemMenuState {
-  pub maximized: bool,
-  pub minimized: bool,
-  /// The window can be sized: Size is offered while it is neither maximised nor minimised.
-  pub can_size: bool,
-  /// The window can be maximised: Maximize is offered while it is not maximised.
-  pub can_maximize: bool,
-}
-
-/// A command chosen from a system menu.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SystemCommand {
-  Restore,
-  Move,
-  Size,
-  Minimize,
-  Maximize,
-  Close,
-  /// A command another program added to the menu, by its id.
-  Other(u32),
-}
-
-impl SystemCommand {
-  fn from_id(id: u32) -> Self {
-    match id {
-      id if id == SC_RESTORE => Self::Restore,
-      id if id == SC_MOVE => Self::Move,
-      id if id == SC_SIZE => Self::Size,
-      id if id == SC_MINIMIZE => Self::Minimize,
-      id if id == SC_MAXIMIZE => Self::Maximize,
-      id if id == SC_CLOSE => Self::Close,
-      other => Self::Other(other),
-    }
-  }
-
-  fn id(self) -> u32 {
-    match self {
-      Self::Restore => SC_RESTORE,
-      Self::Move => SC_MOVE,
-      Self::Size => SC_SIZE,
-      Self::Minimize => SC_MINIMIZE,
-      Self::Maximize => SC_MAXIMIZE,
-      Self::Close => SC_CLOSE,
-      Self::Other(id) => id,
-    }
-  }
-}
-
-/// Which of the system menu's commands `state` offers, by command. Close is
-/// not among them: it is left as the window's owner set it.
-pub fn system_menu_items(state: SystemMenuState) -> [(SystemCommand, bool); 5] {
-  let normal = !state.maximized && !state.minimized;
-  [
-    (SystemCommand::Restore, state.maximized || state.minimized),
-    (SystemCommand::Move, normal),
-    (SystemCommand::Size, normal && state.can_size),
-    (SystemCommand::Minimize, !state.minimized),
-    (SystemCommand::Maximize, !state.maximized && state.can_maximize),
-  ]
-}
+// What the system menu offers and the ids of its commands, decided without an OS call, in
+// `sweetview-window-logic`.
+pub use sweetview_window_logic::system_menu::{system_menu_items, SystemCommand, SystemMenuState};
 
 /// Shows the window's system menu (Restore, Move, Size, Minimize, Maximize,
 /// Close) at `at`, its items enabled for `state`, and returns the command
