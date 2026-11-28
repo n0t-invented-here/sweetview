@@ -13,12 +13,11 @@
 //
 // Inputs are messages posted or sent to this process's own windows (the tray icon's window, the
 // open menu's window, a window of its own, the single-instance window) and the toast events the
-// notifier's test hooks deliver. Nothing is injected: the hook and refiner kinds are called
-// through the function Sweetview hands the binding, as the binding would call it.
+// notifier's test hooks deliver. Nothing is injected: the hook and refiner kinds need real input
+// and are tested in callbacks.test.ts, through the real binding.
 
 import { onCallbackError, type CallbackErrorSource } from "../../src/callback-errors";
 import { scheduleNativeTimeout } from "../../src/event-loop";
-import { installKeyboardHook, installMouseHook } from "../../src/input-hooks";
 import { onOpenUrl, signalReady, singleInstance } from "../../src/activation";
 import { Tray } from "../../src/tray";
 import { deferNative, openNativeDrain, runNativeLoop, quitNativeLoop, wakeNative } from "../../src/ui-thread";
@@ -194,39 +193,8 @@ win.toggleMaximize();
 await pumpFor(100);
 onWindowDispose(win, boom("dispose hook"));
 
-// The refiner and the hooks, through the function Sweetview hands the binding.
-const windowProto = (native.Window as unknown as { prototype: Record<string, unknown> }).prototype;
-const realSetHitRegions = windowProto.setHitRegions;
-const realInstallMouse = native.installMouseHook;
-const realInstallKeyboard = native.installKeyboardHook;
-const realRemoveMouse = native.removeMouseHook;
-const realRemoveKeyboard = native.removeKeyboardHook;
-let ask: ((x: number, y: number, seq: number) => void) | null = null;
-let mouse: ((...args: number[]) => boolean) | null = null;
-let keyboard: ((event: number, key: string, raw: number, modifiers: number) => boolean) | null = null;
-const n = native as unknown as Record<string, unknown>;
-windowProto.setHitRegions = (_packed: unknown, fn: typeof ask) => void (ask = fn);
-n.installMouseHook = (fn: typeof mouse) => ((mouse = fn), 0);
-n.installKeyboardHook = (fn: typeof keyboard) => ((keyboard = fn), 0);
-n.removeMouseHook = () => 0;
-n.removeKeyboardHook = () => 0;
-try {
-  win.setHitRegions([[{ x: 0, y: 0 }, { x: 50, y: 0 }, { x: 0, y: 50 }]], boom("refine"));
-  ask!(1, 1, 1);
-  const mouseHook = installMouseHook(boom("mouse hook"));
-  const keyboardHook = installKeyboardHook(boom("keyboard hook"));
-  steps.mouseHookNotSwallowed = mouse!(0, 10, 10, 0, 0) === false;
-  steps.keyboardHookNotSwallowed = keyboard!(0, "F24", 0x87, 0) === false;
-  mouseHook.dispose();
-  keyboardHook.dispose();
-} finally {
-  windowProto.setHitRegions = realSetHitRegions;
-  n.installMouseHook = realInstallMouse;
-  n.installKeyboardHook = realInstallKeyboard;
-  n.removeMouseHook = realRemoveMouse;
-  n.removeKeyboardHook = realRemoveKeyboard;
-}
-win.setHitRegions(null);
+// The refiner and the hooks need the pointer and the keyboard: their tests are in callbacks.test.ts,
+// through the real binding with real input (review N8).
 win.dispose();
 
 // The tray: a click, a double click, a menu function that throws (no menu opens), a menu item.

@@ -118,8 +118,7 @@ exception leaves the bindings package as it always did.
 | `webview.setRequestHandler` | the raw webview class's request handler, which throws or whose promise rejects | nothing | the request is answered `500` |
 | `webview.setFileDropHandler` | the raw webview class's file drop handler | nothing | none |
 | `worker` | the delivery of the worker's replies and events on the UI thread, the application's `onEvent` listeners included | `sweetview: UI dispatch failed:` | the next delivery still runs |
-| `timeout`, `interval`, `deferred` | a native timeout, interval or deferred job | `sweetview: message window handler threw:`, the binding's line, `sweetview: UI dispatch failed:` | an interval keeps its schedule |
-| `internal` | the native module's own code at a callback boundary (the tab frame's callbacks, a window's dispose hooks); a fault here is a defect of Sweetview's | its own line | that boundary's |
+| `internal` | the native module's own code at a callback boundary (the tab frame's callbacks, a window's dispose hooks, its own native timeouts, intervals and deferred jobs, which no public call makes); a fault here is a defect of Sweetview's | its own line | that boundary's |
 
 What a listener is not told about: the faults `@n1h/sweetview` catches (a
 page's UI-thread method, a request handler, the ready hooks, the worker's

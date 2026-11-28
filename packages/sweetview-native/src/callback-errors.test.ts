@@ -40,7 +40,7 @@ describe("reportCallbackError", () => {
     const original = new TypeError("original");
     try {
       reportCallbackError("window.onClose", original, "sweetview: onClose handler threw:");
-      reportCallbackError("deferred", "a string", null, "a deferred job");
+      reportCallbackError("internal", "a string", null, "a deferred job");
     } finally {
       log.restore();
     }
@@ -50,7 +50,7 @@ describe("reportCallbackError", () => {
     expect(told[1]!.error).toBeInstanceOf(Error);
     expect(told[1]!.error.message).toBe("a string");
     expect(told[1]!.error.cause).toBe("a string");
-    expect(told[1]!.source).toEqual({ kind: "deferred", name: "a deferred job" });
+    expect(told[1]!.source).toEqual({ kind: "internal", name: "a deferred job" });
   });
 
   test("a listener that throws is caught: Sweetview prints its own line and the listener's error, and the next listener still hears", () => {
@@ -62,12 +62,12 @@ describe("reportCallbackError", () => {
     const log = captureErrors();
     const original = new Error("handler boom");
     try {
-      expect(() => reportCallbackError("timeout", original, "sweetview: message window handler threw:")).not.toThrow();
+      expect(() => reportCallbackError("tray.onClick", original, "sweetview: message window handler threw:")).not.toThrow();
       expect(() => reportCallbackError("internal", new Error("silent one"), null)).not.toThrow();
     } finally {
       log.restore();
     }
-    expect(next).toEqual(["timeout: handler boom", "internal: silent one"]);
+    expect(next).toEqual(["tray.onClick: handler boom", "internal: silent one"]);
     expect(log.calls.map((args) => args.map((a) => (a instanceof Error ? a.message : a)))).toEqual([
       ["sweetview: message window handler threw:", "handler boom"],
       ["sweetview: an onCallbackError handler threw:", "listener boom"],
@@ -81,12 +81,12 @@ describe("reportCallbackError", () => {
     const handler = () => void calls++;
     const offA = onCallbackError(handler);
     const offB = onCallbackError(handler);
-    reportCallbackError("deferred", new Error("one"), "sweetview: UI dispatch failed:");
+    reportCallbackError("internal", new Error("one"), "sweetview: UI dispatch failed:");
     offA();
     offB();
     const log = captureErrors();
     try {
-      reportCallbackError("deferred", new Error("two"), "sweetview: UI dispatch failed:");
+      reportCallbackError("internal", new Error("two"), "sweetview: UI dispatch failed:");
     } finally {
       log.restore();
     }
@@ -95,7 +95,7 @@ describe("reportCallbackError", () => {
   });
 
   test("the binding's names for its callbacks are the public kinds; one with no public counterpart is internal", () => {
-    expect(kindOfBindingCallback("a native interval")).toBe("interval");
+    expect(kindOfBindingCallback("a native interval")).toBe("internal");
     expect(kindOfBindingCallback("a tray menu handler")).toBe("menu.click");
     expect(kindOfBindingCallback("a drain function")).toBe("worker");
     expect(kindOfBindingCallback("a tab frame's activation listener")).toBe("internal");
@@ -157,5 +157,22 @@ describe("reporting never throws (review F2, N1)", () => {
       _resetActivationForTest();
     }
     expect(seen).toEqual(["svtest://after"]);
+  });
+});
+
+describe("listeners changed during a dispatch (review N8)", () => {
+  test("a listener that removes itself and another: every listener set when the fault came hears it; the next fault only the one left", () => {
+    const heard: string[] = [];
+    let offB: () => void = () => {};
+    const offA = onCallbackError((error) => {
+      heard.push(`a: ${error.message}`);
+      offA();
+      offB();
+    });
+    offB = onCallbackError((error) => void heard.push(`b: ${error.message}`));
+    listen((error) => void heard.push(`c: ${error.message}`));
+    reportCallbackError("internal", new Error("first"), "sweetview: UI dispatch failed:");
+    reportCallbackError("internal", new Error("second"), "sweetview: UI dispatch failed:");
+    expect(heard).toEqual(["a: first", "b: first", "c: first", "c: second"]);
   });
 });

@@ -43,9 +43,6 @@ export type CallbackKind =
   | "webview.bindRaw"
   | "webview.setRequestHandler"
   | "webview.setFileDropHandler"
-  | "timeout"
-  | "interval"
-  | "deferred"
   | "worker"
   | "internal";
 
@@ -187,9 +184,6 @@ const BINDING_KINDS: Record<string, CallbackKind> = {
   "a mouse hook handler": "mouseHook",
   "a keyboard hook handler": "keyboardHook",
   "a singleInstance onSecondInstance": "singleInstance.onSecondInstance",
-  "a native timeout": "timeout",
-  "a native interval": "interval",
-  "a deferred job": "deferred",
   "a drain function": "worker",
 };
 

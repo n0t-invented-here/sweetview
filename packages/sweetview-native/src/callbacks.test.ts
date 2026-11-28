@@ -28,6 +28,7 @@ import { untilDesktopIsOurs } from "../test/desktop";
 import { runFixture } from "../test/run-fixture";
 import { _resetActivationForTest, onOpenUrl, signalReady, singleInstance, type SecondInstanceEvent } from "./activation";
 import { binding } from "./binding";
+import { onCallbackError } from "./callback-errors";
 import { installKeyboardHook, installMouseHook, type KeyboardHook, type MouseHook } from "./input-hooks";
 import { deferNative, openNativeDrain, quitNativeLoop, runNativeLoop, wakeNative } from "./ui-thread";
 import { isWindowDisposed, onWindowDispose, Window } from "./window";
@@ -373,6 +374,30 @@ describe.if(onWindows)("W1.3 / W1.4 the hooks' fallback: a handler that throws d
     expect(log.lines()).toEqual(["sweetview: keyboard hook handler threw: keyboard boom", "sweetview: keyboard hook handler threw: keyboard boom"]);
   });
 
+  test("onCallbackError: a keyboard hook handler's exception reaches the listener through the binding, once per call, with nothing printed, and the key still reaches the system (review N8)", async () => {
+    const told: string[] = [];
+    const off = onCallbackError((error, source) => void told.push(`${source.kind}: ${error.message}`));
+    let thrown = 0;
+    let downAfterThrow = false;
+    const log = captureErrors();
+    try {
+      keys = installKeyboardHook((m) => {
+        if (m.code !== "F24") return false;
+        thrown++;
+        throw new Error("keyboard boom");
+      });
+      sendKey(VK_F24, false);
+      await pumpUntil(() => thrown >= 1 && keyDown(VK_F24), 3000);
+      downAfterThrow = keyDown(VK_F24);
+      sendKey(VK_F24, true);
+      await pumpUntil(() => thrown >= 2 && !keyDown(VK_F24), 3000);
+    } finally {
+      off();
+      log.restore();
+    }
+    expect({ thrown, downAfterThrow, told, printed: log.lines() }).toEqual({ thrown: 2, downAfterThrow: true, told: ["keyboardHook: keyboard boom", "keyboardHook: keyboard boom"], printed: [] });
+  });
+
   test("W1.4 a keyboard hook disposes itself from inside its handler and is not called again", async () => {
     let calls = 0;
     keys = installKeyboardHook((m) => {
@@ -388,6 +413,37 @@ describe.if(onWindows)("W1.3 / W1.4 the hooks' fallback: a handler that throws d
     expect(calls).toBe(1);
     // The hook is gone: another installs.
     keys = installKeyboardHook(() => false);
+  });
+
+  test("onCallbackError: a mouse hook handler's exception reaches the listener through the binding, once per call, with nothing printed, and the pointer still moves (review N8)", async () => {
+    const original = cursorNow();
+    const told: string[] = [];
+    const off = onCallbackError((error, source) => void told.push(`${source.kind}: ${error.message}`));
+    const log = captureErrors();
+    let thrown = 0;
+    let moved = false;
+    try {
+      await untilDesktopIsOurs("a mouse button is held", () => !buttonsDown());
+      mouse = installMouseHook(() => {
+        thrown++;
+        throw new Error("mouse boom");
+      });
+      const start = cursorNow();
+      sendMouseMove(start.x > 100 ? -8 : 8, 0);
+      await pumpUntil(() => thrown > 0 && cursorNow().x !== start.x, 3000);
+      moved = cursorNow().x !== start.x;
+      mouse.dispose();
+      mouse = undefined;
+    } finally {
+      off();
+      log.restore();
+      user32!.SetCursorPos(original.x, original.y);
+    }
+    expect(moved).toBe(true);
+    expect(thrown).toBeGreaterThan(0);
+    // Every call that threw, and only those: another session's pointer may add calls of its own.
+    expect(told).toEqual(Array.from({ length: thrown }, () => "mouseHook: mouse boom"));
+    expect(log.lines()).toEqual([]);
   });
 
   test("W1.3 a mouse hook handler that throws lets the pointer move; a swallowing one holds it", async () => {
@@ -749,6 +805,34 @@ describe.if(onWindows)("W1.3 / W1.4 the hit-region refiner", () => {
       expect(asked.slice(0, 2)).toEqual(["40,40", "60,70"]);
       expect(passing(hwnd)).toBe(false); // no answer: the polygon's own answer, solid, stands
       expect(log.lines().slice(0, 2)).toEqual(["sweetview: hit region poll threw: refine boom", "sweetview: hit region poll threw: refine boom"]);
+    });
+  });
+
+  test("onCallbackError: a refiner's exception reaches the listener through the binding, once per ask, with nothing printed, and the window stays solid (review N8)", async () => {
+    await withRefinerWindow("refiner reports", async (win, hwnd, at) => {
+      const asked: string[] = [];
+      const told: string[] = [];
+      const off = onCallbackError((error, source) => void told.push(`${source.kind}: ${error.message}`));
+      const log = captureErrors();
+      try {
+        at(250, 50); // outside the polygon first, so the next point inside asks
+        await pumpFor(60);
+        win.setHitRegions(leftHalf, (local) => {
+          asked.push(`${local.x},${local.y}`);
+          throw new Error("refine boom");
+        });
+        at(40, 40);
+        await pumpUntil(() => asked.length >= 1, 2000);
+        at(60, 70);
+        await pumpUntil(() => asked.length >= 2, 2000);
+      } finally {
+        off();
+        log.restore();
+      }
+      expect(asked.slice(0, 2)).toEqual(["40,40", "60,70"]);
+      expect(told).toEqual(asked.map(() => "hitRegions.refine: refine boom"));
+      expect(passing(hwnd)).toBe(false);
+      expect(log.lines()).toEqual([]);
     });
   });
 
@@ -1164,10 +1248,10 @@ describe.if(onWindows)("onCallbackError", () => {
     const arrived = (r.arrivals as { kind: string; name?: string; message: string; isError: boolean }[]).map((a) => `${a.kind}${a.name ? ` (${a.name})` : ""}: ${a.message}${a.isError ? "" : " (not an Error)"}`);
     expect([...arrived].sort()).toEqual(
       [
-        "deferred: deferred boom",
-        "timeout: timeout boom",
+        "internal: deferred boom",
+        "internal: timeout boom",
         // The binding caught this one itself: its reason, the exception as a string, is the message.
-        "interval (a native interval): Error: interval boom",
+        "internal (a native interval): Error: interval boom",
         "worker: drain boom",
         "window.onMove: onMove boom",
         "window.onResize: onResize boom",
@@ -1178,9 +1262,6 @@ describe.if(onWindows)("onCallbackError", () => {
         "window.onNewTab: onNewTab boom",
         "window.onTabSelect: onTabSelect boom",
         "window.onTabClose: onTabClose boom",
-        "hitRegions.refine: refine boom",
-        "mouseHook: mouse hook boom",
-        "keyboardHook: keyboard hook boom",
         "internal: dispose hook boom",
         "tray.onClick: tray click boom",
         "tray.onDoubleClick: tray double click boom",
@@ -1195,17 +1276,15 @@ describe.if(onWindows)("onCallbackError", () => {
     expect(r.steps).toEqual({
       intervalKeptItsSchedule: true,
       closeRequestStillTaken: true,
-      mouseHookNotSwallowed: true,
-      keyboardHookNotSwallowed: true,
       throwingMenuOpensNoMenu: true,
       handedOff: 1,
     });
     expect(r.throwingListener).toEqual({
       printed: ["sweetview: UI dispatch failed: deferred again boom", "sweetview: an onCallbackError handler threw: listener boom"],
-      nextListener: ["deferred: deferred again boom"],
-      recorded: ["deferred: deferred again boom"],
+      nextListener: ["internal: deferred again boom"],
+      recorded: ["internal: deferred again boom"],
     });
-    expect(r.nonError).toEqual([{ kind: "deferred", message: "a string", isError: true, cause: "a string" }]);
+    expect(r.nonError).toEqual([{ kind: "internal", message: "a string", isError: true, cause: "a string" }]);
     expect(r.printedWithoutListener).toEqual(["sweetview: UI dispatch failed: deferred without listener boom"]);
     expect(r.arrivalsWithoutListener).toBe(0);
     // The binding's own lines: none while Sweetview's sink was set; both when a raw sink threw; today's line once nothing is set.
@@ -1229,7 +1308,7 @@ describe.if(onWindows)("onCallbackError", () => {
       "windowChromeEvents: chrome primitive (not the thrown value)",
       "windowChromeEvents: frozen with listener",
       "windowChromeEvents: thrown twice",
-      "deferred: thrown twice",
+      "internal: thrown twice",
     ]);
     expect(r.printedWithListener).toEqual([]);
   }, 60_000);
@@ -1279,7 +1358,7 @@ describe.if(onWindows)("onCallbackError's sink in the binding", () => {
 
   test("after releaseAll() a listener still hears of the binding's own catches", async () => {
     const { r, exitCode } = await spawnSink("after-release");
-    expect({ exitCode, told: r.told }).toEqual({ exitCode: 0, told: ["interval (a native interval): Error: interval after release"] });
+    expect({ exitCode, told: r.told }).toEqual({ exitCode: 0, told: ["internal (a native interval): Error: interval after release"] });
   });
 
   test("a sink set by an application that makes nothing else is released when its environment ends, and nothing is printed", async () => {

@@ -35,7 +35,7 @@ export function scheduleNativeTimeout(ms: number, fn: () => void): () => void {
     try {
       fn();
     } catch (err) {
-      reportCallbackError("timeout", err, "sweetview: message window handler threw:");
+      reportCallbackError("internal", err, "sweetview: message window handler threw:"); // no public call schedules one: Sweetview's own
     }
   });
   return () => {

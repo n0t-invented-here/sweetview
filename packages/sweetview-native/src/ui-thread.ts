@@ -26,7 +26,7 @@ export function deferNative(job: () => void): () => void {
     try {
       job();
     } catch (err) {
-      reportCallbackError("deferred", err, "sweetview: UI dispatch failed:");
+      reportCallbackError("internal", err, "sweetview: UI dispatch failed:"); // no public call defers a job: Sweetview's own
     }
   });
   return () => {
