@@ -1,6 +1,6 @@
 # Unsafe ledger
 
-Rewritten by `bun rust-rewrite/verify.ts <platform> --ledger`. 450 uses in 24 files.
+Rewritten by `bun rust-rewrite/verify.ts <platform> --ledger`. 451 uses in 24 files.
 
 | File | Uses of `unsafe` |
 |---|---|
@@ -15,7 +15,7 @@ Rewritten by `bun rust-rewrite/verify.ts <platform> --ledger`. 450 uses in 24 fi
 | `crates/sweetview-platform-shell/src/win.rs` | 2 |
 | `crates/sweetview-platform-webview/src/windows/environment.rs` | 2 |
 | `crates/sweetview-platform-webview/src/windows/handlers.rs` | 22 |
-| `crates/sweetview-platform-webview/src/windows/host.rs` | 33 |
+| `crates/sweetview-platform-webview/src/windows/host.rs` | 34 |
 | `crates/sweetview-platform-webview/src/windows/istream.rs` | 13 |
 | `crates/sweetview-platform-webview/src/windows/mod.rs` | 45 |
 | `crates/sweetview-platform-webview/src/windows/test_support.rs` | 60 |
@@ -109,7 +109,7 @@ The registry is `windows-registry` 0.6.1, and the message-only windows are `Mess
 
 On Windows this crate makes the webview itself (DECISIONS D48): `wry` 0.58.2, which the proposal chose for it, is not used, because its Windows creation path (`wry-0.58.2/src/webview2/mod.rs`, `new_in_hwnd`, `create_controller`, `init_webview`, `set_webview_settings`, `attach_handlers`) sets and registers what the C++ library never did and gives no way to leave it out (`WebViewAttributes`, where its handlers and settings live, is private: `src/lib.rs:538`). Everything reaches WebView2 through the typed interfaces of `webview2-com` 0.39.1 (https://docs.rs/webview2-com/0.39.1/webview2_com/), policy level 3, on the objects this crate's own `Webview` holds. Each COM object is held by a COM reference (a field, a frame's `cast`, the event args WebView2 holds for the handler's call); on a closed webview a call returns an error.
 
-### `crates/sweetview-platform-webview/src/windows/host.rs` (33)
+### `crates/sweetview-platform-webview/src/windows/host.rs` (34)
 
 What `wry::WebViewBuilder::build` and `wry::WebView`'s methods did, done as `win32_edge.hh` does it; each call replaces the `wry` call named.
 
@@ -121,6 +121,7 @@ What `wry::WebViewBuilder::build` and `wry::WebView`'s methods did, done as `win
 - **Bounds, focus, moving, colour, the end** (6: `SetBounds` in the widget's `WM_SIZE`, `MoveFocus`, `SetParent`, `NotifyParentWindowPositionChanged`, `SetDefaultBackgroundColor`, `Close`); replace `wry`'s parent subclass and `focus`, `reparent` (which re-attached its subclass), `set_background_color` and its drop.
 - **Telling WebView2 its window moved** (5: `GetCurrentThreadId`, `SetWinEventHook`, `UnhookWinEvent`, `IsChild`, `NotifyParentWindowPositionChanged`): an out-of-context WinEvent hook on this thread's windows' location changes, held by `MoveWatch` (unhooked in `Drop`, kept from the thread's first widget on, since hooking again with each webview cost a kernel handle each time); on a move of a window holding a widget, that widget's controller is told. Replaces `wry`'s subclass of the parent, which told WebView2 from the parent's moves; nothing is attached to a window the application gave. The procedure runs inside `catch_unwind` and calls no controller while the widget table is borrowed.
 - **A filling widget follows its window** (2: `GetParent` in `window_moved`, one `MoveWindow` in `fill`): on each location change of a window, a widget filling it is sized to its client area again, whoever resized it, so a page filling a window an application made, an adopted one, a Sweetview one or its own follows it; nothing is attached to the window.
+- **Tests only: the widget of a failed creation** (1: `FindWindowExW` in `a_creation_that_fails_after_the_controller_exists_closes_it`), which looks for the widget under the test's window. `Close` on the controller is in `Controller::drop`, the owning type the controller has from the moment WebView2 hands it over (it was in `Webview::drop`).
 - **Tests only: the colour at first show** (1: `DefaultBackgroundColor` in `note_first_shown`), compiled only for tests and the `test-support` feature: the widget's `WM_SHOWWINDOW` reads the controller's default background the first time it is shown, so a test proves a window's start colour is set before anything is shown. The out-value is a local for the call to fill.
 
 ### `crates/sweetview-platform-webview/src/windows/mod.rs` (45)

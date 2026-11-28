@@ -953,3 +953,16 @@ fn a_page_filling_a_window_follows_its_client_area_whoever_made_the_window() {
   });
 }
 
+#[test]
+fn a_webview_whose_setup_fails_leaves_no_listener_of_its_own_window() {
+  on_ui_thread(|runtime| {
+    let _finish = Finish(&runtime);
+    // X3: when WebView2 refuses the webview's request handling after the engine has made its own
+    // window and registered that window's listener, the listener goes with the failed webview.
+    let before = runtime.listener_count();
+    test_support::fail_next_attach();
+    assert!(Engine::create(false, Host::Own, None).is_err(), "the forced failure");
+    settle(&runtime, Duration::from_millis(100));
+    assert_eq!(runtime.listener_count(), before, "no listener left behind");
+  });
+}

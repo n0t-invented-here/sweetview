@@ -520,3 +520,13 @@ pub fn fill_sizes(webview: &Webview) -> FillSizes {
     let _ = unsafe { webview.controller().Bounds(&mut bounds) };
     FillSizes { container: size(inner), parent: size(outer), controller: size(bounds) }
 }
+
+thread_local! {
+    pub(super) static FAIL_NEXT_ATTACH: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Makes this thread's next `WebviewExtras::attach` fail, as a webview whose
+/// request handling WebView2 refuses to set up.
+pub fn fail_next_attach() {
+    FAIL_NEXT_ATTACH.with(|fail| fail.set(true));
+}

@@ -156,6 +156,10 @@ impl WebviewExtras {
     /// and navigation handlers to `webview`. Call it before the webview's first
     /// navigation, so the first document is served and gets the drop script.
     pub fn attach(webview: &Webview, options: ExtrasOptions) -> Result<Self, ErrorCode> {
+        #[cfg(any(test, feature = "test-support"))]
+        if test_support::FAIL_NEXT_ATTACH.with(|fail| fail.replace(false)) {
+            return Err(ErrorCode::Unspecified);
+        }
         let inner = Rc::new(Inner {
             shared: Shared::new(options.wake_ui),
             controller: webview.controller().clone(),

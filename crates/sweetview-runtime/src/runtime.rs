@@ -278,6 +278,12 @@ impl Runtime {
     self.listeners.borrow_mut().retain(|(t, _)| *t != token);
   }
 
+  /// Tests only: how many listeners the loop has.
+  #[cfg(test)]
+  pub(crate) fn listener_count(&self) -> usize {
+    self.listeners.borrow().len()
+  }
+
   fn dispatch(&self, event: &Event<'_, ()>, target: &EventLoopWindowTarget<()>) {
     // Cloned out first: a listener may add or remove listeners.
     let listeners: Vec<EventListener> = self.listeners.borrow().iter().map(|(_, l)| l.clone()).collect();
