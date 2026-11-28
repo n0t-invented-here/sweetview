@@ -8,6 +8,7 @@
 // the macOS goal of the rewrite replaces it; `./darwin/webview` is that seam.
 
 import { binding } from "./binding";
+import { reportCallbackError } from "./callback-errors";
 import type { Engine } from "../prebuilt/binding";
 import { releaseAtEnd } from "./lifetime";
 import type { WindowHandle } from "./types";
@@ -502,8 +503,9 @@ export class Webview {
         let result: ReturnType<RequestHandler>;
         try {
           result = handler(request);
-        } catch {
+        } catch (err) {
           this.#completeQuietly(request.id, { status: 500 });
+          reportCallbackError("webview.setRequestHandler", err, null);
           return;
         }
         if (result instanceof Promise) {
@@ -511,7 +513,10 @@ export class Webview {
             (response) => {
               if (response) this.#completeQuietly(request.id, response);
             },
-            () => this.#completeQuietly(request.id, { status: 500 }),
+            (err: unknown) => {
+              this.#completeQuietly(request.id, { status: 500 });
+              reportCallbackError("webview.setRequestHandler", err, null);
+            },
           );
         } else if (result) {
           this.#completeQuietly(request.id, result);
@@ -591,8 +596,9 @@ export class Webview {
         if (!this.#engine) return;
         try {
           handler(paths);
-        } catch {
-          // A drop handler's exception goes nowhere, as before.
+        } catch (err) {
+          // Printed nowhere, as before; told to an onCallbackError listener.
+          reportCallbackError("webview.setFileDropHandler", err, null);
         }
       }),
     );
@@ -726,16 +732,34 @@ export class Webview {
         // "" is the page's undefined; JSON.stringify gives undefined for a function or a symbol.
         reply(0, json ?? "");
       };
+      // The bound function's own failure (it throws, or its promise rejects) rejects the page's
+      // call and is told to an onCallbackError listener; an unreadable request only rejects.
+      const failed = (err: unknown) => {
+        reject(err);
+        reportCallbackError("webview.bind", err, null, name);
+      };
+      let args: unknown[];
       try {
-        const args = JSON.parse(req);
-        const result = callback(...args);
+        args = JSON.parse(req);
+      } catch (err) {
+        reject(err);
+        return;
+      }
+      let result: unknown;
+      try {
+        result = callback(...args);
+      } catch (err) {
+        failed(err);
+        return;
+      }
+      try {
         if (result !== null && (typeof result === "object" || typeof result === "function") && typeof (result as PromiseLike<unknown>).then === "function") {
-          Promise.resolve(result as PromiseLike<unknown>).then(fulfill, reject);
+          Promise.resolve(result as PromiseLike<unknown>).then(fulfill, failed);
         } else {
           fulfill(result);
         }
       } catch (err) {
-        reject(err);
+        failed(err);
       }
     });
   }

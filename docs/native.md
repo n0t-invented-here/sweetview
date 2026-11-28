@@ -110,6 +110,10 @@ exception leaves the bindings package as it always did.
 | `hitRegions.refine` | the refiner of `setHitRegions(polygons, refine)` | `sweetview: hit region poll threw:` | the polygon's answer stands |
 | `mouseHook`, `keyboardHook` | `installMouseHook`, `installKeyboardHook` handlers | `sweetview: mouse hook handler threw:` (`keyboard hook`) | the event is not swallowed |
 | `singleInstance.onSecondInstance`, `onOpenUrl` | those listeners | `sweetview: onSecondInstance handler threw:`, `sweetview: onOpenUrl handler threw:` | the other listeners still run |
+| `webview.bind` | a function bound with the raw webview class's `bind` (`name` is its name), which throws or whose promise rejects | nothing | the page's call is rejected |
+| `webview.bindRaw` | a function bound with `bindRaw` (caught by the binding itself: `name` is its name for it) | `sweetview: a binding threw:` | the page's call is left unanswered |
+| `webview.setRequestHandler` | the raw webview class's request handler, which throws or whose promise rejects | nothing | the request is answered `500` |
+| `webview.setFileDropHandler` | the raw webview class's file drop handler | nothing | none |
 | `worker` | the delivery of the worker's replies and events on the UI thread, the application's `onEvent` listeners included | `sweetview: UI dispatch failed:` | the next delivery still runs |
 | `timeout`, `interval`, `deferred` | a native timeout, interval or deferred job | `sweetview: message window handler threw:`, the binding's line, `sweetview: UI dispatch failed:` | an interval keeps its schedule |
 | `internal` | the native module's own code at a callback boundary (the tab frame's callbacks, a window's dispose hooks); a fault here is a defect of Sweetview's | its own line | that boundary's |

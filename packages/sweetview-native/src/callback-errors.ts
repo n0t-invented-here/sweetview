@@ -39,6 +39,10 @@ export type CallbackKind =
   | "keyboardHook"
   | "singleInstance.onSecondInstance"
   | "onOpenUrl"
+  | "webview.bind"
+  | "webview.bindRaw"
+  | "webview.setRequestHandler"
+  | "webview.setFileDropHandler"
   | "timeout"
   | "interval"
   | "deferred"
@@ -154,7 +158,9 @@ const BINDING_KINDS: Record<string, CallbackKind> = {
   "an onMove handler": "window.onMove",
   "an onMaximizeChange handler": "window.onMaximizeChange",
   "an onFileDrop handler": "window.onFileDrop",
-  "a file drop handler": "window.onFileDrop",
+  "a file drop handler": "webview.setFileDropHandler",
+  "a binding": "webview.bindRaw",
+  "a request handler": "webview.setRequestHandler",
   "a hit-region refiner": "hitRegions.refine",
   "a mouse hook handler": "mouseHook",
   "a keyboard hook handler": "keyboardHook",

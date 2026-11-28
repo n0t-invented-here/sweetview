@@ -1282,3 +1282,23 @@ describe.if(onWindows)("onCallbackError's sink in the binding", () => {
     expect({ exitCode, stderr: stderr.trim() }).toEqual({ exitCode: 0, stderr: "" });
   });
 });
+
+// The raw webview class's callback boundaries with a listener set (review F6, N3), from
+// test/fixtures/webview-errors.ts. The drop is the DevTools protocol's; no input is injected.
+describe.if(onWindows)("onCallbackError and the raw webview class", () => {
+  test("a bound function, a raw binding, a request handler and a file drop handler: each fault arrives once with its kind, and the page still gets its failure", async () => {
+    const { r, exitCode } = await runFixture("webview-errors.ts");
+    expect({ exitCode, timedOut: r.timedOut }).toEqual({ exitCode: 0, timedOut: undefined });
+    expect(r.page).toEqual({ bindThrows: "rejected", bindRejects: "rejected", throws: 500, rejects: 500 });
+    expect(r.told).toEqual(
+      [
+        "webview.bind (bindThrows): bind throws",
+        "webview.bind (bindRejects): bind rejects",
+        "webview.bindRaw (a binding): Error: raw throws",
+        "webview.setRequestHandler: request throws",
+        "webview.setRequestHandler: request rejects",
+        "webview.setFileDropHandler: drop throws",
+      ].sort(),
+    );
+  }, 90_000);
+});
