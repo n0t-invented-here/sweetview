@@ -153,6 +153,11 @@ export declare class Engine {
   setVisible(visible: boolean): void
   /** Gives the page the keyboard focus. */
   moveFocus(): void
+  /**
+   * From now on, each activation of the window this webview fills gives the page the
+   * keyboard focus (what `createApp` asks for the window it makes itself).
+   */
+  followWindowActivation(): void
   /** Tells the webview its host window moved, so its popups follow. */
   notifyMoved(): void
   /** Test hook: how many times `notifyMoved` reached the live webview. */
@@ -330,6 +335,13 @@ export declare class Window {
   /** Restores a minimised window; brings any other to the front unless it is `noActivate` or topmost. */
   show(): void
   hide(): void
+  /**
+   * Shows a hidden window off the screen until `uncloak`: the webviews in it draw first (D49).
+   * True when it is cloaked; false when it was shown at once or was already visible.
+   */
+  showCloaked(): boolean
+  /** Puts a window `showCloaked` cloaked on the screen. */
+  uncloak(): void
   /** The outer frame. */
   bounds(): Rect
   setBounds(rect: Rect): void

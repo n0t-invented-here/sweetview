@@ -167,7 +167,15 @@ impl WebviewExtras {
     pub fn note_host_navigation(&self) {}
 
     /// Records that a navigation of the host's is sent (or was refused).
-    pub fn note_host_navigation_sent(&self, started: bool) {}
+    pub fn note_host_navigation_sent(&self, within: bool) {}
+
+    /// Records that the navigation just sent was refused.
+    pub fn note_host_navigation_refused(&self) {}
+
+    /// Whether navigating to `url` stays in the document shown now.
+    pub fn stays_in_document(&self, url: &str) -> bool {
+        false
+    }
 
     /// True from a navigation the host sent until it starts.
     pub fn navigation_starting(&self) -> bool {

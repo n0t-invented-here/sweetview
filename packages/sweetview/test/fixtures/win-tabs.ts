@@ -565,6 +565,26 @@ try {
   await until(() => user32.IsWindow(BigInt(last.handle!)) === 0, 2000);
   check("last tab: with no listener the window closes with it", user32.IsWindow(BigInt(last.handle!)) === 0 && only.webview.raw.unsafeHandle === null);
 
+  // ---- forcing the last tab closed with no listener: the window goes from the screen first (D49, R2) -----
+  for (const how of ["tab.dispose()", "tab.webview.dispose()"] as const) {
+    const forced = make({ tabs: true });
+    const tab = await WebView.openTab(forced, page("forced"));
+    forced.show();
+    await until(() => forced.isVisible(), 2000);
+    // Whether the window is on the screen at the moment the tab's webview is destroyed.
+    let visibleAsItGoes: boolean | undefined;
+    const raw = tab.webview.raw;
+    const destroy = raw.destroy.bind(raw);
+    raw.destroy = () => {
+      visibleAsItGoes = forced.isVisible();
+      destroy();
+    };
+    if (how === "tab.dispose()") tab.dispose();
+    else tab.webview.dispose();
+    await until(() => user32.IsWindow(BigInt(forced.handle!)) === 0, 2000);
+    check(`forcing the last tab closed with no onClose listener (${how}): the window leaves the screen before the page goes`, visibleAsItGoes === false && user32.IsWindow(BigInt(forced.handle!)) === 0, { visibleAsItGoes });
+  }
+
   // ---- Alt+F4 closes every tab, then the window -------------------------------------------------
   const altWin = make({ tabs: true });
   const a1 = await WebView.openTab(altWin, page("a1"));
@@ -898,7 +918,9 @@ try {
   await WebView.openTab(sys, page("system"));
   const sysStrip = _debugWinTabs.strip(sys)!;
   const sysFrame = getTabFrame(BigInt(sys.handle!))!;
-  // The strip reported the system's theme when it loaded; report the other one.
+  // The strip reports the system's theme once it has loaded (its theme is set when the host
+  // answers): wait for that report, so the one sent here is the newest, then report the other.
+  await askUntil(sysStrip, "String(Boolean(document.documentElement.dataset.theme))", "true");
   const flipped = !sysFrame.isDark();
   const reply = await ask(sysStrip, `window.__sweetview_rpc("strip.dark", ${flipped})`);
   await until(() => sysFrame.isDark() === flipped, 1000);

@@ -119,6 +119,8 @@ pub fn show_system_menu(window: &impl NativeWindow, at: Point) {
 /// dark mode get a light foreground colour. `false` when it cannot be read.
 pub fn system_is_dark() -> bool {
   use windows::UI::ViewManagement::{UIColorType, UISettings};
+  // The factory the `windows` crate caches for `UISettings` must not outlive its DLL (D49).
+  sweetview_platform_loop::hold_com_for_the_process();
   let foreground = UISettings::new().and_then(|settings| settings.GetColorValue(UIColorType::Foreground));
   match foreground {
     // The weighting Microsoft gives for telling a light colour from a dark one.
