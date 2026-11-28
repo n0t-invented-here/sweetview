@@ -3,8 +3,11 @@
 set shell := ["pwsh", "-NoProfile", "-Command", "$ErrorActionPreference = 'Stop'; $PSNativeCommandUseErrorActionPreference = $true; trap { if ($_.Exception -is [System.Management.Automation.NativeCommandExitException]) { exit $_.Exception.ExitCode }; break };"]
 
 exe := "desktop-pet"
-# Bun embeds the exe file icon only when the build host is Windows; a Mac-built Windows exe gets Bun's stock icon (README, "Platforms").
-win_icon := if os() == "windows" { "--windows-icon=build/app.ico" } else { "" }
+name := "Pet"
+app_id := "dev.mrowr.pet"
+# The demo's app id and name, as identity.ts has them: the macOS bundle's id and name, and the Windows exe's product name and description.
+# Bun writes the exe's icon and version information only when the build host is Windows; a Mac-built Windows exe gets Bun's stock icon and is named "Bun" (README, "Platforms").
+win_meta := if os() == "windows" { "--windows-icon=build/app.ico --windows-title=\"" + name + "\" --windows-description=\"" + name + "\"" } else { "" }
 
 @_default:
     just --justfile "{{module_file()}}" --list
@@ -31,14 +34,14 @@ icons: install
     bun scripts/write-icons.ts
 
 compile-win: frontend icons _build-native
-    bun build --compile --target=bun-windows-x64 --windows-hide-console {{win_icon}} --minify --sourcemap app.ts app-worker.ts --outfile dist/{{exe}}-windows-x64.exe
+    bun build --compile --target=bun-windows-x64 --windows-hide-console {{win_meta}} --minify --sourcemap app.ts app-worker.ts --outfile dist/{{exe}}-windows-x64.exe
     bun ../../packages/sweetview-build/src/refresh-icons.ts
 
 compile-mac: frontend
     bun build --compile --target=bun-darwin-arm64 --minify --sourcemap app.ts app-worker.ts --outfile dist/{{exe}}-macos-arm64
 
 mac-app: compile-mac icons
-    bun ../../packages/sweetview-build/src/make-app.ts --name Pet --bundle-id dev.mrowr.pet --binary dist/{{exe}}-macos-arm64 --icns build/AppIcon.icns --out dist
+    bun ../../packages/sweetview-build/src/make-app.ts --name "{{name}}" --bundle-id {{app_id}} --binary dist/{{exe}}-macos-arm64 --icns build/AppIcon.icns --out dist
 
 # A missing path makes ri fail the recipe
 clean:

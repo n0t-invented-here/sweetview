@@ -61,17 +61,13 @@ this page: it imports each new form and checks that it is what the row says.
   `bun build --compile` embeds it in the executable. On Windows the package
   `@n1h/sweetview-webview-bun` is not needed and never loaded. On macOS it is
   still the engine until the macOS goal of the rewrite.
-- **The macOS engine in a Windows executable.** When
-  `@n1h/sweetview-webview-bun` is installed, as an application that also
-  builds for macOS keeps it, `bun build --compile --target=bun-windows-x64`
-  still embeds it, because the native package's macOS loader imports it: its
-  sources and its `build/libwebview.dll` go into the Windows executable and
-  never run there. For `demos/menubar-only` that is 136,704 bytes and 8
-  bundled files (118,432,768 bytes with the package installed, 118,296,064
-  without). To leave it out, add `--external @n1h/sweetview-webview-bun` to
-  the Windows build only: the import is then left for run time, which only
-  macOS reaches, and the executable is the size of one built without the
-  package. The macOS build must not have the flag.
+- **The macOS engine and the Windows executable.** An application that also
+  builds for macOS keeps `@n1h/sweetview-webview-bun` installed. Its Windows
+  executable does not contain it: the native package imports it only when
+  `process.platform` is `"darwin"`, which `bun build --compile` decides from
+  `--target`, so `--target=bun-windows-x64` leaves the package's sources and
+  its native library out, and `--target=bun-darwin-arm64` keeps them. No
+  build flag is needed.
 - **Closing a window.** A close request (the frame's X, Alt+F4) on a
   `Window` with no `onClose` listener disposes the window, and `createApp`
   then ends `run()` when no other window is visible. In 0.x the window of
@@ -159,9 +155,8 @@ this page: it imports each new form and checks that it is what the row says.
 ### A. Published 0.1.x or 0.2.x
 
 1. In `package.json`, move `@n1h/sweetview` to this version. On Windows,
-   drop `@n1h/sweetview-webview-bun`; keep it (`^2.7.0`) for macOS, and
-   build the Windows executable with `--external @n1h/sweetview-webview-bun`
-   so that it is not embedded there. Add, as dependencies of the application
+   drop `@n1h/sweetview-webview-bun`; keep it (`^2.7.0`) for macOS (a Windows
+   executable leaves it out by itself). Add, as dependencies of the application
    itself, `@n1h/sweetview-build` when a build recipe runs `make-app.ts` (or
    `refresh-icons.ts`) by path, and `@n1h/sweetview-native` when the
    application imports one of its subpaths (`@n1h/sweetview-native/win32/menu`,
@@ -219,9 +214,8 @@ this page: it imports each new form and checks that it is what the row says.
 ### B. The `v1-drafting` API
 
 1. In `package.json`, move the Sweetview packages to this version. On
-   Windows, drop `@n1h/sweetview-webview-bun`; keep it (`^2.7.0`) for macOS,
-   and build the Windows executable with
-   `--external @n1h/sweetview-webview-bun` so that it is not embedded there.
+   Windows, drop `@n1h/sweetview-webview-bun`; keep it (`^2.7.0`) for macOS
+   (a Windows executable leaves it out by itself).
    `@n1h/sweetview-build` now depends on `@n1h/sweetview-native`, which the
    package manager installs with it; an application that imports
    `@n1h/sweetview-native` itself names it in its own dependencies.
@@ -247,9 +241,8 @@ this page: it imports each new form and checks that it is what the row says.
 1. In `package.json`, replace `@n1h/sweetview-webview-bun` with
    `@n1h/sweetview-native` (or with `@n1h/sweetview`, and import from
    `@n1h/sweetview/native`). On macOS keep `@n1h/sweetview-webview-bun`
-   installed as well: `@n1h/sweetview-native` loads it there. Build the
-   Windows executable with `--external @n1h/sweetview-webview-bun`, or it is
-   embedded there too ([What changed for every
+   installed as well: `@n1h/sweetview-native` loads it there, and a Windows
+   executable leaves it out ([What changed for every
    application](#what-changed-for-every-application)).
 2. Change the module name in each import; every name is the same:
    `import { Webview, installMouseHook, permissions } from "@n1h/sweetview-native"`.

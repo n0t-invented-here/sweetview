@@ -16,9 +16,10 @@ import { createApp, indexHtml, type App } from "@n1h/sweetview";
 import pageCss from "./build/frontend/main.css" with { type: "file" };
 import pageJs from "./build/frontend/main.js" with { type: "file" };
 import { TRAY_ICON } from "./icon";
+import { IDENTITY } from "./identity";
 import type { Events, LogEntry, Methods } from "./service";
 
-const APP_NAME = "Menubar Notify";
+const APP_NAME = IDENTITY.appName;
 const DELAY_SECONDS = 5;
 const WINDOW_SIZE = { width: 480, height: 400 };
 
@@ -62,6 +63,7 @@ const bounds = {
 };
 
 const app: App<Methods, Events> = await createApp<Methods, Events>({
+  identity: IDENTITY,
   title: APP_NAME,
   bounds,
   icon: TRAY_ICON,
@@ -88,7 +90,9 @@ const app: App<Methods, Events> = await createApp<Methods, Events>({
 });
 
 createTray({ tooltip: APP_NAME, icon: TRAY_ICON, menu: () => menu() });
+// The toasts carry the demo's name, not Sweetview's.
 const notifier = createNotifier({
+  identity: IDENTITY,
   onClick: ({ id, data }) => {
     const sentAt = (data as { sentAt?: string } | undefined)?.sentAt;
     app.window.show();
