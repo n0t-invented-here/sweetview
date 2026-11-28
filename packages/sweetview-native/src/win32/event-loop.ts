@@ -14,8 +14,9 @@ export function pumpEvents(): boolean {
 /**
  * Takes back a `PostQuitMessage`: dispatches what is waiting until the quit
  * request comes out, and drops it. Returns at once when none was made and
- * nothing waits. The C++ webview library posts one when a webview is
- * destroyed; with the webview on the binding, nothing posts one.
+ * nothing waits. The C++ webview library Sweetview used on Windows before the
+ * Rust rewrite posted one when a webview was destroyed; with the webview on
+ * the binding, nothing posts one.
  */
 export function discardQuit(): void {
   binding().discardQuit();

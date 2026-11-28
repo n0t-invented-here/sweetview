@@ -14,7 +14,11 @@ win_icon := if os() == "windows" { "--windows-icon=build/app.ico" } else { "" }
 install:
     bun install --cwd ../..
 
-app: install
+# On Windows the app loads the Rust binding: `just native build` builds it first (cargo's no-op when it is current)
+_build-native:
+    @& "{{just_executable()}}" --justfile "{{justfile()}}" native _build-if-windows
+
+app: install _build-native
     bun run app.ts
 
 compile: compile-win compile-mac mac-app
@@ -22,7 +26,7 @@ compile: compile-win compile-mac mac-app
 icons: install
     bun scripts/write-icons.ts
 
-compile-win: icons
+compile-win: icons _build-native
     bun build --compile --target=bun-windows-x64 --windows-hide-console {{win_icon}} --minify --sourcemap app.ts --outfile dist/{{exe}}-windows-x64.exe
     bun ../../packages/sweetview-build/src/refresh-icons.ts
 

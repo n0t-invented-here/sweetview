@@ -33,7 +33,7 @@ jobs:
         run: bun install
 
       - name: Build the binding
-        run: just native
+        run: just native build
 
       # Each check below runs whether or not an earlier one failed, so one run reports them all.
       - name: cargo test
