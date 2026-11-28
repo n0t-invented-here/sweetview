@@ -898,7 +898,9 @@ try {
   await WebView.openTab(sys, page("system"));
   const sysStrip = _debugWinTabs.strip(sys)!;
   const sysFrame = getTabFrame(BigInt(sys.handle!))!;
-  // The strip reported the system's theme when it loaded; report the other one.
+  // The strip reports the system's theme once it has loaded (its theme is set when the host
+  // answers): wait for that report, so the one sent here is the newest, then report the other.
+  await askUntil(sysStrip, "String(Boolean(document.documentElement.dataset.theme))", "true");
   const flipped = !sysFrame.isDark();
   const reply = await ask(sysStrip, `window.__sweetview_rpc("strip.dark", ${flipped})`);
   await until(() => sysFrame.isDark() === flipped, 1000);
