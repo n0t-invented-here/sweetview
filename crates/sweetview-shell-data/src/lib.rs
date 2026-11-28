@@ -5,6 +5,7 @@
 //! everything around them.
 #![forbid(unsafe_code)]
 
+pub mod clipboard;
 pub mod error;
 pub mod single_instance;
 pub mod text;
