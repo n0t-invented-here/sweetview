@@ -1260,6 +1260,26 @@ describe.if(onWindows)("a fault in one callback of createApp stays in that callb
     expect(stderr.match(/^sweetview: the worker failed:/gm)?.length).toBe(1);
   }, LIVE_TEST_MS * 3);
 
+  // The rest of what docs/app.md and docs/native.md say a listener is not told about, each printed
+  // or answered as with no listener: an onReadyTimeout hook, a worker route handler, a method
+  // called with notify (in the worker). The listener's whole list is the test above's.
+  test("with an onCallbackError listener, onReadyTimeout, a worker route handler and a notified worker method that throw are not told: printed, answered 500, printed by the worker", async () => {
+    const { seen, told, stderr } = await faults("listen");
+    expect(told.filter((t) => !t.startsWith("worker: "))).toEqual([]);
+    expect(seen?.route).toBe(500);
+    expect(stderr).toMatch(/^sweetview: onReadyTimeout handler threw:/m);
+    expect(stderr).toContain("notify.throws failed: notified method throws");
+  }, LIVE_TEST_MS * 3);
+
+  // The tab machinery's three Windows callbacks print their error to the console and are not
+  // reported (D44: @n1h/sweetview has no way to the reporter that is no entry point).
+  test("the three Windows tab callbacks that end in .catch(console.error) are as the pages list them", async () => {
+    const source = await Bun.file(new URL("./tabs/win-tabs.ts", import.meta.url)).text();
+    const callers = [...source.matchAll(/^.*\.catch\(console\.error\).*$/gm)].map((m) => (/moveRecordToNewWindow|detachTab|openTab/.exec(m[0]) ?? ["?"])[0]);
+    expect(callers).toEqual(["moveRecordToNewWindow", "detachTab", "openTab"]);
+    expect(source).not.toContain("reportCallbackError");
+  });
+
   // What docs/app.md and docs/native.md say of an onEvent listener's throw during the cleanup after
   // the worker failed (review 3, item 4): the cleanup is @n1h/sweetview's own catch, which prints
   // its line as on the main branch, with a listener set too; the listener is not told.
