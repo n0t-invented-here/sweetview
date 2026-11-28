@@ -5,6 +5,8 @@
 //   bun callback-sink.ts worker-first    a Worker calls onCallbackError before this thread loads
 //                                        the binding; then this thread makes a Window
 //   bun callback-sink.ts worker-raw      a Worker calls the binding's setCallbackErrorSink itself
+//   bun callback-sink.ts worker-raw-first  a Worker loads the binding first, sets a sink straight
+//                                        through it and ends; the environment hook releases it
 //   bun callback-sink.ts missing-export  the binding has no setCallbackErrorSink (an older build)
 //   bun callback-sink.ts after-release   a listener set, then releaseAll(); the binding's own catch
 //   bun callback-sink.ts at-end          a listener set, and nothing else made; the process ends
@@ -21,6 +23,25 @@ const errorOf = async (run: () => unknown): Promise<string | null> => {
     return err instanceof Error ? err.message : String(err);
   }
 };
+
+if (mode === "worker-raw-first") {
+  // A Worker loads the raw binding before this thread does, so it is the binding's UI thread, sets
+  // a sink straight through the binding (no TypeScript of the package's), and ends. The sink is
+  // released by the environment's cleanup hook when the worker's environment ends; nothing else
+  // releases it on that path (review 2, item 6).
+  const source = `const { binding } = await import(${JSON.stringify(new URL("../../src/binding.ts", import.meta.url).href)});
+    try { binding().setCallbackErrorSink(() => {}); postMessage("set"); } catch (err) { postMessage(String(err && err.message)); }`;
+  const worker = new Worker(URL.createObjectURL(new Blob([source], { type: "application/typescript" })));
+  result.worker = await new Promise<string>((resolve) => {
+    worker.onmessage = (event) => resolve(String(event.data));
+    worker.onerror = (event) => resolve(`worker error: ${event.message}`);
+  });
+  await new Promise<void>((resolve) => {
+    worker.addEventListener("close", () => resolve());
+    worker.terminate();
+  });
+  await Bun.sleep(200);
+}
 
 if (mode === "worker-first" || mode === "worker-raw") {
   const source =

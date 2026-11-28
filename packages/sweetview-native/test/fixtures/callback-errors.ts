@@ -17,7 +17,7 @@
 // and are tested in callbacks.test.ts, through the real binding.
 
 import { onCallbackError, type CallbackErrorSource } from "../../src/callback-errors";
-import { scheduleNativeTimeout } from "../../src/event-loop";
+import { quitEventLoop, runEventLoop, scheduleNativeTimeout } from "../../src/event-loop";
 import { onOpenUrl, signalReady, singleInstance } from "../../src/activation";
 import { Tray } from "../../src/tray";
 import { deferNative, openNativeDrain, runNativeLoop, quitNativeLoop, wakeNative } from "../../src/ui-thread";
@@ -55,7 +55,7 @@ const boom = (what: string) => () => {
   throw new Error(`${what} boom`);
 };
 
-if (mode === "exit-blocking" || mode === "exit-pumped") {
+if (mode === "exit-blocking" || mode === "exit-pumped" || mode === "exit-run-event-loop") {
   // Things the end of the application releases (D36), alive when the listener exits.
   const win = new Window({ title: "callback-errors exit", noActivate: true });
   const tray = new Tray({ tooltip: `callback-errors exit ${process.pid}` });
@@ -69,6 +69,10 @@ if (mode === "exit-blocking" || mode === "exit-pumped") {
   if (mode === "exit-blocking") {
     native.scheduleTimeout(10_000, () => quitNativeLoop());
     runNativeLoop();
+  } else if (mode === "exit-run-event-loop") {
+    // The public loop on a Bun timer, as an application without a webview runs it.
+    setTimeout(() => quitEventLoop(), 10_000);
+    await runEventLoop();
   } else {
     await pumpFor(10_000);
   }

@@ -1318,8 +1318,8 @@ describe.if(onWindows)("onCallbackError", () => {
     expect(r.printedWithListener).toEqual([]);
   }, 60_000);
 
-  for (const mode of ["exit-blocking", "exit-pumped"]) {
-    test(`a listener that calls process.exit(3) from inside a native callback ends the process with 3 (${mode === "exit-blocking" ? "the blocking loop" : "the loop pumped from a Bun timer"}), and the end of the application releases cleanly`, async () => {
+  for (const mode of ["exit-blocking", "exit-pumped", "exit-run-event-loop"]) {
+    test(`a listener that calls process.exit(3) from inside a native callback ends the process with 3 (${mode === "exit-blocking" ? "the blocking loop" : mode === "exit-pumped" ? "the loop pumped by hand" : "runEventLoop"}), and the end of the application releases cleanly`, async () => {
       // Spawned here, not through runFixture: a process the listener ends prints no RESULT line.
       const profile = mkdtempSync(join(tmpdir(), "sweetview-callback-exit-"));
       const child = Bun.spawn([process.execPath, fileURLToPath(new URL("../test/fixtures/callback-errors.ts", import.meta.url)), mode], {
@@ -1364,6 +1364,11 @@ describe.if(onWindows)("onCallbackError's sink in the binding", () => {
   test("after releaseAll() a listener still hears of the binding's own catches", async () => {
     const { r, exitCode } = await spawnSink("after-release");
     expect({ exitCode, told: r.told }).toEqual({ exitCode: 0, told: ["internal (a native interval): interval after release"] });
+  });
+
+  test("a sink a Worker set straight through the binding, having loaded it first, is released when the worker's environment ends: the environment's cleanup hook (review 2, item 6)", async () => {
+    const { r, exitCode, stderr } = await spawnSink("worker-raw-first");
+    expect({ exitCode, worker: r.worker, stderr: stderr.trim() }).toEqual({ exitCode: 0, worker: "set", stderr: "" });
   });
 
   test("a sink set by an application that makes nothing else is released when its environment ends, and nothing is printed", async () => {
