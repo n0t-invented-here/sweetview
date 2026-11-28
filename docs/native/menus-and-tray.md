@@ -141,9 +141,10 @@ The wrapper is kept until `win.dispose()` or the end of the application, so
 wrapping the window again on each click keeps one more each time. Two things
 differ from the tag's `windowMenu(hwnd)`, which only borrowed the handle for
 the call: `Window.fromHandle` throws for a null handle and for a value that
-names no window, where `windowMenu` did nothing; and a window Sweetview did
-not make is watched through a subclass, for the wrapper's events, until the
-wrapper is disposed.
+names no window, where `windowMenu` did nothing. A wrapper used only for the
+menu changes nothing of the window: a window Sweetview did not make is
+subclassed only while a wrapper of it has a listener (`onResize`, `onMove`,
+`onMaximizeChange`, `onClose`, `onFileDrop`), as before 1.0.
 
 ## Tray
 

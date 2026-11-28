@@ -805,25 +805,11 @@ impl Window {
       let detected = Some(core.chrome);
       return Ok(Self::wrap(core, false, detected));
     }
-    let (chrome, on_this_thread) = BorrowedWindow::with_handle_value(handle, |window| (platform::chrome(window), platform::is_on_this_thread(window)))
+    let chrome = BorrowedWindow::with_handle_value(handle, |window| platform::chrome(window))
       .ok_or_else(|| Error::state(format!("sweetview: not a window: {handle:#x}")))?;
     let core = Core::new(handle, None, chrome, false, logic::DEFAULT_MIN_SIZE, false, None);
-    // The state a window Sweetview did not make is in when it is wrapped, kept from then on by its
-    // resizes. A framed one's is the OS's: a minimised one's is the state it is restored to, which
-    // its placement keeps. A frameless one's is Sweetview's own toggle, which a wrapper starts
-    // without, as at the tag (its isMaximized read the saved rectangle).
-    let minimized = core.with_native(|window| platform::is_minimized(window)).unwrap_or(false);
-    let maximized = if !core.chrome.frame {
-      false
-    } else if minimized {
-      core.with_native(|window| platform::restores_maximized(window)).unwrap_or(false)
-    } else {
-      core.maximized_now()
-    };
-    core.maximized.set(maximized);
-    if on_this_thread {
-      core.subclass()?;
-    }
+    // No subclass until a listener needs one, as at the tag: wrapping a window to read its
+    // bounds changes nothing of it. Another thread's window is refused when a listener is added.
     WINDOWS.with(|w| w.borrow_mut().insert(handle, core.clone()));
     Ok(Self::wrap(core, false, Some(chrome)))
   }
@@ -1084,11 +1070,42 @@ impl Window {
     }
   }
 
+  /// The subclass the window's listeners need: a window Sweetview did not make
+  /// gets it with its first listener, as at the tag. Another thread's window
+  /// cannot have one.
   fn require_subclass(&self) -> Result<()> {
-    if self.core.subclass.borrow().is_none() {
+    let core = &self.core;
+    if core.subclass.borrow().is_some() {
+      return Ok(());
+    }
+    if core.owned {
       return Err(Error::state("sweetview: a window of another thread cannot be observed"));
     }
+    core.subclass()?;
+    // The state the window is in now, kept from then on by its resizes. A framed one's is the
+    // OS's: a minimised one's is the state it is restored to, which its placement keeps. A
+    // frameless one's is Sweetview's own toggle.
+    let minimized = core.with_native(|window| platform::is_minimized(window)).unwrap_or(false);
+    let maximized = if !core.chrome.frame {
+      core.maximized_now()
+    } else if minimized {
+      core.with_native(|window| platform::restores_maximized(window)).unwrap_or(false)
+    } else {
+      core.maximized_now()
+    };
+    core.maximized.set(maximized);
     Ok(())
+  }
+
+  /// A window Sweetview did not make loses its subclass with its last
+  /// listener, as at the tag.
+  fn release_subclass_if_unlistened(&self) {
+    let core = &self.core;
+    if core.owned || core.listeners.borrow().len() > 0 {
+      return;
+    }
+    let subclass = core.subclass.borrow_mut().take();
+    drop(subclass);
   }
 
   /// A resize listener of the window, with the outer bounds, under `key`
@@ -1100,7 +1117,11 @@ impl Window {
     if listener.is_some() {
       self.require_subclass()?;
     }
+    let removed = listener.is_none();
     subscribe(&mut self.core.listeners.borrow_mut().resize, self.id, key, listener);
+    if removed {
+      self.release_subclass_if_unlistened();
+    }
     Ok(())
   }
 
@@ -1118,7 +1139,11 @@ impl Window {
       // it is: read again now, a minimised window would read as not maximised (review N5).
       self.require_subclass()?;
     }
+    let removed = listener.is_none();
     subscribe(&mut self.core.listeners.borrow_mut().maximize, self.id, key, listener);
+    if removed {
+      self.release_subclass_if_unlistened();
+    }
     Ok(())
   }
 
@@ -1132,7 +1157,11 @@ impl Window {
     if listener.is_some() {
       self.require_subclass()?;
     }
+    let removed = listener.is_none();
     subscribe(&mut self.core.listeners.borrow_mut().moved, self.id, key, listener);
+    if removed {
+      self.release_subclass_if_unlistened();
+    }
     Ok(())
   }
 
@@ -1145,7 +1174,11 @@ impl Window {
     if listener.is_some() {
       self.require_subclass()?;
     }
+    let removed = listener.is_none();
     set_listener(&mut self.core.listeners.borrow_mut().close, self.id, listener);
+    if removed {
+      self.release_subclass_if_unlistened();
+    }
     Ok(())
   }
 
@@ -1174,6 +1207,9 @@ impl Window {
     // An adopted window's own setting is left alone until Sweetview first takes drops.
     if any || self.core.policy.get().accept_files.is_some() {
       self.core.update_policy(|p| p.accept_files = Some(any));
+    }
+    if !any {
+      self.release_subclass_if_unlistened();
     }
     Ok(())
   }
@@ -1212,6 +1248,7 @@ impl Window {
     if owns_hit {
       core.clear_hit();
     }
+    self.release_subclass_if_unlistened();
     core.release_if_unused();
   }
 }

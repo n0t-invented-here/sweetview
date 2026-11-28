@@ -368,6 +368,35 @@ fn a_tab_frames_move_is_told_while_it_is_minimised() {
   });
 }
 
+/// Round 4, P6: a window Sweetview did not make is subclassed with its first listener and let go
+/// with its last, as at the tag: wrapping it to read its bounds gives it no subclass. Whether
+/// Sweetview's subclass is on it is read by installing another, which the platform refuses then.
+#[test]
+fn a_wrapped_window_is_subclassed_only_while_it_has_a_listener() {
+  on_ui_thread(|runtime| {
+    let own = runtime
+      .with_target(|target| tao::window::WindowBuilder::new().with_visible(false).with_title("rt lazy subclass").build(target))
+      .expect("target")
+      .expect("window");
+    let handle = platform::handle_value(&own);
+    let subclassed = || BorrowedWindow::with_handle_value(handle, |w| platform::WindowSubclass::install(w, |_| false).is_err()).expect("a window");
+    let wrapped = Window::adopt(handle).expect("adopt");
+    assert!(wrapped.bounds().width > 0 && !subclassed(), "wrapped to read its bounds: no subclass");
+    wrapped.on_resize(1, Some(Rc::new(|_| {}))).expect("listen");
+    wrapped.on_close_request(Some(Rc::new(|| {}))).expect("listen");
+    assert!(subclassed(), "subclassed with its first listener");
+    wrapped.on_resize(1, None).expect("stop");
+    assert!(subclassed(), "a listener is left");
+    wrapped.on_close_request(None).expect("stop");
+    assert!(!subclassed(), "let go with its last listener");
+    wrapped.on_maximize_change(2, Some(Rc::new(|_| {}))).expect("listen again");
+    assert!(subclassed());
+    wrapped.dispose();
+    assert!(!subclassed(), "let go when its wrapper is disposed");
+    drop(own);
+  });
+}
+
 #[test]
 fn is_minimized_follows_the_os_for_an_owned_and_an_adopted_window() {
   on_ui_thread(|runtime| {

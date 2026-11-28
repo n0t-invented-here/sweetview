@@ -256,8 +256,11 @@ a foreign window without breaking that window's owner:
   intercepted.
 - `onFileDrop` throws `sweetview: file drops require a Sweetview-managed NSWindow`.
 
-On Windows a wrapper subclasses the `HWND`, so `onClose` and `onFileDrop`
-work as they do on an owned window.
+On Windows a wrapper subclasses the `HWND` with its first listener (`onResize`,
+`onMove`, `onMaximizeChange`, `onClose`, `onFileDrop`) and takes the subclass
+out with its last, or when it is disposed, as before 1.0, so those listeners
+work as they do on an owned window and a wrapper that only reads or moves the
+window changes nothing of it.
 
 ## Moving and resizing from the page
 
