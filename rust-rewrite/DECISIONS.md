@@ -138,6 +138,8 @@ The proposal names the C++ library's method: a script posts the dropped `File` o
 
 R2 runs the upgrade against each application listed in `rust-rewrite/local/dependents.txt` when that file exists. The file did not exist on this machine. Making one would mean searching the owner's private repositories for applications and deciding which count, which R6 keeps out of this work; so the file was not created, the `dependents` check reports that there was nothing to run, and `OWNER-ACTIONS.md` asks the owner to list them and run the check. The upgrade path itself is exercised by `rust-rewrite/compat/`: every row of `docs/upgrading.md` is imported in its new form, every class, constant, function and member row is run once on Windows through a runner (a row with no runner fails the test), type rows are checked by the compiler, and rows of a macOS-only module are not run on Windows (D32; `OWNER-ACTIONS.md`, section 3).
 
+Note, 2026-11-28: the owner has ruled since that no copy of an application is made: each is upgraded in place, on a branch of its own repository (`STATUS.md`, "The owner's rulings that bind all remaining work"). The copy in the temp directory that R2 describes is therefore not made. This decision's account of why no list was made stands as written.
+
 ## D20. Tests corrected because they measured the machine
 
 Changed to correct a false result, each named here with its reason:
