@@ -88,10 +88,13 @@ impl Drop for MtaUsage {
 }
 
 /// Keeps COM loaded in this process until it ends, once, so no factory the `windows` crate has
-/// cached outlives the DLL it lives in (see the module's header). A failure leaves COM as it was:
-/// the process then depends, as before, on an apartment staying entered.
+/// cached outlives the DLL it lives in (see the module's header): the one owner of the hold, for
+/// every crate of the project, called before each WinRT use (`ComApartment::enter`, the system
+/// theme and double-click time of `sweetview-platform-window`, the toasts of
+/// `sweetview-platform-notify`). A failure leaves COM as it was: the process then depends, as
+/// before, on an apartment staying entered.
 #[cfg(windows)]
-fn hold_com_for_the_process() {
+pub fn hold_com_for_the_process() {
   static HELD: std::sync::OnceLock<Option<MtaUsage>> = std::sync::OnceLock::new();
   HELD.get_or_init(|| {
     // SAFETY: one call with no arguments; the cookie it returns is owned by the `MtaUsage` made
@@ -109,6 +112,10 @@ impl Drop for ComApartment {
     unsafe { windows::Win32::System::Com::CoUninitialize() };
   }
 }
+
+/// No COM on this platform: there is nothing to hold.
+#[cfg(not(windows))]
+pub fn hold_com_for_the_process() {}
 
 #[cfg(not(windows))]
 impl ComApartment {

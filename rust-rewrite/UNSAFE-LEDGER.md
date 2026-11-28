@@ -1,6 +1,6 @@
 # Unsafe ledger
 
-Rewritten by `bun rust-rewrite/verify.ts <platform> --ledger`. 262 uses in 21 files.
+Rewritten by `bun rust-rewrite/verify.ts <platform> --ledger`. 261 uses in 21 files.
 
 | File | Uses of `unsafe` |
 |---|---|
@@ -8,7 +8,7 @@ Rewritten by `bun rust-rewrite/verify.ts <platform> --ledger`. 262 uses in 21 fi
 | `crates/sweetview-platform-input/tests/windows_hooks.rs` | 7 |
 | `crates/sweetview-platform-loop/src/com.rs` | 7 |
 | `crates/sweetview-platform-loop/src/windows.rs` | 36 |
-| `crates/sweetview-platform-notify/src/windows.rs` | 11 |
+| `crates/sweetview-platform-notify/src/windows.rs` | 10 |
 | `crates/sweetview-platform-shell/src/clipboard.rs` | 13 |
 | `crates/sweetview-platform-shell/src/icons.rs` | 1 |
 | `crates/sweetview-platform-shell/src/single_instance.rs` | 9 |
@@ -68,11 +68,11 @@ Drives the hooks with real input: `SetProcessDpiAwarenessContext` (physical pixe
 
 ## sweetview-platform-notify
 
-### `crates/sweetview-platform-notify/src/windows.rs` (11: 9 source, 2 test)
+### `crates/sweetview-platform-notify/src/windows.rs` (10: 8 source, 2 test)
 
 - **The balloon's icon** (4: `GetSystemMetrics`, `CreateIconFromResourceEx`, `LoadIconW`, `DestroyIcon`). Looked for: `tray-icon` 0.27.0 `Icon` (https://docs.rs/tray-icon/0.27.0/tray_icon/struct.Icon.html) and `muda` 0.22.0 `Icon` keep their `HICON` private, and `Shell_NotifyIconW` needs one. Contained by `OwnedIcon` (an icon made from `.ico` bytes, destroyed in `Drop` after the shell's icon is deleted); the stock icon is `BalloonIcon::Stock`, which stores no handle (it is shared by the system and never destroyed, and `stock_icon` asks for it when a struct is built).
 - **The hidden notification-area icon** (2: `Shell_NotifyIconW` add and delete). Looked for: `tray-icon` 0.27.0 `TrayIcon` (https://docs.rs/tray-icon/0.27.0/tray_icon/struct.TrayIcon.html) has no balloon (`NIF_INFO`) call, and the fallback must not need the application's tray. Contained by `NotifyWindow`: every icon is deleted in `Drop` before its `MessageWindow` goes; `NOTIFYICONDATAW` is the `windows` crate's struct, built in the frame.
-- **WinRT on this thread** (3: `RoInitialize`, `RoUninitialize`, `CoIncrementMTAUsage`). Looked for: `windows` 0.62.2 activates WinRT types safely but has no safe initialisation. Contained by `RoInit` (not `Send`, balanced in `Drop` on the same thread) and `keep_com_loaded` (once per process, through a `OnceLock`).
+- **WinRT on this thread** (2: `RoInitialize`, `RoUninitialize`). Looked for: `windows` 0.62.2 activates WinRT types safely but has no safe initialisation. Contained by `RoInit` (not `Send`, balanced in `Drop` on the same thread). The process's hold on COM, which keeps the toast classes' cached factories valid, is `sweetview-platform-loop`'s one owner (`hold_com_for_the_process`, see `com.rs`; D46), no longer a copy here.
 
 - Tests (2: `Shell_NotifyIconW(NIM_MODIFY)` and `Shell_NotifyIconGetRect`): read back from the shell that the fallback's icon exists and is hidden, with the same icon shown for one reading as the control. No safe API reads a notification-area icon's state.
 
@@ -108,8 +108,9 @@ The registry is `windows-registry` 0.6.1, and the message-only windows are `Mess
 
 All of it reaches WebView2 through the objects `wry` 0.58.2 hands out (`WebViewExtWindows::controller`, `webview`, `environment`; https://docs.rs/wry/0.58.2/wry/trait.WebViewExtWindows.html) and the typed interfaces of `webview2-com` 0.39.1 (https://docs.rs/webview2-com/0.39.1/webview2_com/), policy level 3. Each COM object is held by a COM reference (`Inner`'s fields, a frame's `cast`, the event args WebView2 holds for the handler's call); on a closed webview a call returns an error. `wry` 0.58.2 was read for each behaviour (`wry-0.58.2/src/lib.rs`, `src/webview2/mod.rs`): what it offers is used (`WebView::focus` for focus, `webview_version` for the runtime check); the rest is in "What `wry` lacks" in `SWEETVIEW-RESTART-PROPOSAL.md`.
 
-### `crates/sweetview-platform-webview/src/windows/mod.rs` (40)
+### `crates/sweetview-platform-webview/src/windows/mod.rs` (43)
 
+- **The container a webview that fills its window leaves** (3: `GetParent` before the drop, `GetParent` after it, `DestroyWindow`; D46, `drop_filling`). `wry` 0.58.2 destroys the container window (`WRY_WEBVIEW`) of a webview made with `build_as_child` only; one made with `build` left its container in the window until the window was destroyed, one USER object per webview the window ever had (`wry-0.58.2/src/webview2/mod.rs`, `impl Drop for InnerWebView`: `DestroyWindow(self.hwnd)` only `if self.is_child`). Looked for: `wry` 0.58.2 has no call that destroys the container (`WebViewExtWindows` gives its handle, `hwnd()`, and nothing more); `tao` 0.38.0 destroys only its own windows. Contained by `drop_filling`, which takes the `wry::WebView` by value: the container's parent is read while the webview owns the container, and after the drop the container is destroyed only while it is still a child of that same parent (a handle value is reused only after its window is destroyed, and the parent's destruction would have destroyed the child). Test `tests/drop_filling.rs`: 5 USER objects left over 5 lives by a plain drop, 0 by `drop_filling`.
 - **Keys held** (1: `GetKeyState`). Looked for: `tao` 0.38.0 `ModifiersState` (https://docs.rs/tao/0.38.0/tao/keyboard/struct.ModifiersState.html) is delivered only to `tao`'s own event handler, which a WebView2 accelerator handler is not; `windows` 0.62.2 declares `GetKeyState` `unsafe` (`windows-0.62.2/src/Windows/Win32/UI/Input/KeyboardAndMouse/mod.rs`) and no other crate in the policy reads a key's state. Takes an integer and reads no memory of ours.
 - **Controller and webview settings** (6: `Stop`, `SetAllowExternalDrop`, `AllowExternalDrop`, `NotifyParentWindowPositionChanged`, `CallDevToolsProtocolMethod`, `Close`). Looked for in `wry` 0.58.2 `WebView` (https://docs.rs/wry/0.58.2/wry/struct.WebView.html) and `WebViewExtWindows` (https://docs.rs/wry/0.58.2/wry/trait.WebViewExtWindows.html): no stop, external-drop, devtools-protocol or parent-moved call; its own drop closes the controller after this crate's teardown needs it closed (`requests.md` order). The background colour goes through `wry`'s safe `WebView::set_background_color` (https://docs.rs/wry/0.58.2/wry/struct.WebView.html#method.set_background_color), with an alpha other than 0 and 255 refused by a comparison before the call.
 - **Scripts** (3: one `AddScriptToExecuteOnDocumentCreated` in `add_script`, `ExecuteScript`, `RemoveScriptToExecuteOnDocumentCreated`). `wry`'s `with_initialization_script` (https://docs.rs/wry/0.58.2/wry/struct.WebViewBuilder.html#method.with_initialization_script) cannot remove a script; `evaluate_script` is on the `wry::WebView`, which `WebviewExtras` does not hold. The request filters are in `handlers.rs`.

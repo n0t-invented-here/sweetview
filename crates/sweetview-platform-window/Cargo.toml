@@ -34,4 +34,4 @@ windows = { workspace = true, features = [
 ] }
 
 [target.'cfg(windows)'.dev-dependencies]
-windows = { workspace = true, features = ["Win32_System_LibraryLoader", "Win32_System_Memory"] }
+windows = { workspace = true, features = ["Win32_System_Com", "Win32_System_LibraryLoader", "Win32_System_Memory"] }
