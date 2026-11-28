@@ -165,6 +165,9 @@ const uiMethods: { [K in keyof UiMethods]: (params: UiMethods[K][0]) => UiMethod
 const petView: WebView<Methods, Events> = await WebView.attach<Methods, Events>(overlay, {
   title: APP_NAME,
   assets: petAssets,
+  // The pet appears once its page has drawn its first frame (it calls signalReady).
+  showOnReady: true,
+  readyTimeoutMs: 15_000,
   worker: new URL("./app-worker.ts", import.meta.url),
   debug: DEBUG,
   uiMethods,
@@ -176,11 +179,13 @@ const settingsView: WebView<Methods, Events> = await WebView.attach<Methods, Eve
   index: "settings/index.html",
   debug: DEBUG,
   uiMethods,
+  // Opened at start only with PET_SETTINGS=1, and then once its page has rendered; the tray
+  // shows it later with its page long painted.
+  showOnReady: process.env.PET_SETTINGS === "1",
+  readyTimeoutMs: process.env.PET_SETTINGS === "1" ? 15_000 : undefined,
 });
 
-overlay.show();
 hits.apply();
-if (process.env.PET_SETTINGS === "1") settingsWindow.show();
 
 // ---- tray ------------------------------------------------------------------------------
 

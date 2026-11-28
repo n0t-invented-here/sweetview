@@ -6,7 +6,7 @@
 import "./main.css";
 
 import { createBridge } from "@n1h/sweetview/ipc";
-import { webviewTransport } from "@n1h/sweetview/page";
+import { signalReady, webviewTransport } from "@n1h/sweetview/page";
 import { tabHue, type Events, type Methods } from "../shared";
 
 const bridge = createBridge<Methods, Events>(webviewTransport());
@@ -69,3 +69,6 @@ element<HTMLFormElement>("open").addEventListener("submit", async (event) => {
   }
 });
 address.addEventListener("input", () => (error.hidden = true));
+
+// The first screen is rendered: a tab opened to show its window does so now (showOnReady).
+void signalReady().catch(() => {});

@@ -29,8 +29,11 @@ const PAGE_BODY = tabPageBody({
 export type DemoTabsController = {
   readonly app: App<Methods, Events>;
   readonly openTabs: ReadonlyMap<number, Tab<Methods, Events>>;
-  /** Opens in `after`'s window when given, else in `into`, else in the app window. */
-  openTab(address?: string, after?: Tab<Methods, Events>, into?: Window): Promise<Tab<Methods, Events>>;
+  /**
+   * Opens in `after`'s window when given, else in `into`, else in the app window. With `reveal`,
+   * a hidden window is shown once the tab's page is ready (showOnReady), never before it has painted.
+   */
+  openTab(address?: string, after?: Tab<Methods, Events>, into?: Window, reveal?: boolean): Promise<Tab<Methods, Events>>;
 };
 
 export async function startDemoTabs(): Promise<DemoTabsController> {
@@ -64,7 +67,7 @@ export async function startDemoTabs(): Promise<DemoTabsController> {
     onClose: () => app.quit(),
   });
 
-  async function openTab(address?: string, after?: Tab<Methods, Events>, into?: Window): Promise<Tab<Methods, Events>> {
+  async function openTab(address?: string, after?: Tab<Methods, Events>, into?: Window, reveal = false): Promise<Tab<Methods, Events>> {
     const number = ++nextNum;
     const title = address ? displayHost(address) : `Tab ${number}`;
     const target = after?.window ?? into ?? app.window;
@@ -83,6 +86,8 @@ export async function startDemoTabs(): Promise<DemoTabsController> {
       after,
       debug: process.env.WEBVIEW_DEBUG === "1",
       assets: { "index.html": indexHtml({ title, body: PAGE_BODY }), "main.js": pageJs, "main.css": pageCss },
+      showOnReady: reveal,
+      readyTimeoutMs: reveal ? 15_000 : undefined,
       uiMethods: {
         "tab.info": (): TabInfo => ({ number, title: created?.title ?? title, tabs: openTabs.size }),
         "tab.open": (to) => {
@@ -109,11 +114,11 @@ if (import.meta.main) {
   const demo = await startDemoTabs();
   const loop = demo.app.run();
   try {
-    const first = await demo.openTab();
+    // The window shows itself once the first tab's page is ready.
+    const first = await demo.openTab(undefined, undefined, undefined, true);
     await demo.openTab();
     await demo.openTab("https://bun.sh");
     first.select();
-    demo.app.window.show();
   } catch (err) {
     // Without a window to close, the loop would never end.
     console.error("native-tabs:", err);

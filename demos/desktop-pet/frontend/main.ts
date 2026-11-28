@@ -17,7 +17,7 @@ import { TransformNode } from "@babylonjs/core/Meshes/transformNode";
 import { Scene } from "@babylonjs/core/scene";
 import type { AssetContainer } from "@babylonjs/core/assetContainer";
 import { createBridge } from "@n1h/sweetview/ipc";
-import { webviewTransport } from "@n1h/sweetview/page";
+import { signalReady, webviewTransport } from "@n1h/sweetview/page";
 import { convexHull, flattenRegions, hitRegions, packRegions, unpackRegions, type HitPolygon } from "@n1h/sweetview/native/hit-regions";
 // (hitRegions and packRegions are only used by the debug self-check below.)
 import { petModelPath, type Pet, type PetAnimation } from "../pets";
@@ -404,6 +404,11 @@ function step() {
   root.rotation.y = yaw;
 
   scene.render();
+  if (!firstFrameDrawn) {
+    // The first frame is drawn: the window shows now (showOnReady), never before.
+    firstFrameDrawn = true;
+    void signalReady().catch(() => {});
+  }
 
   if (now - lastHitAt >= HIT_INTERVAL_MS) {
     lastHitAt = now;
@@ -427,6 +432,8 @@ function step() {
 }
 
 // ---- start ----------------------------------------------------------------
+
+let firstFrameDrawn = false;
 
 Promise.all([bridge.rpc("screen.area"), bridge.rpc("pet.current"), bridge.rpc("settings.get")])
   .then(([screen, pet, saved]) => {

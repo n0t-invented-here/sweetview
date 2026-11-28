@@ -1,6 +1,6 @@
 import { Group, NumberInput, Select, Slider, Stack, Switch, Text, Title } from "@mantine/core";
 import { createBridge } from "@n1h/sweetview/ipc";
-import { webviewTransport } from "@n1h/sweetview/page";
+import { signalReady, webviewTransport } from "@n1h/sweetview/page";
 import { useEffect, useState } from "react";
 import { PETS, petLabel, type Pet } from "../pets";
 import type { Events, Methods } from "../service";
@@ -18,6 +18,8 @@ export function App() {
     // The tray can change both too; follow it.
     const offSettings = bridge.on("settings.changed", setSettings);
     const offPet = bridge.on("pet.select", setPet);
+    // The first screen is rendered: with PET_SETTINGS=1 the window shows now (showOnReady).
+    void signalReady().catch(() => {});
     return () => {
       offSettings();
       offPet();

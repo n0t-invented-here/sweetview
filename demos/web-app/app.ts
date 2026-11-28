@@ -60,6 +60,12 @@ const app: App<Methods, Events> = await createApp<Methods, Events>({
   title: APP_NAME,
   bounds,
   icon: APP_ICON,
+  // The page is dark: so are the title bar and what the window paints where no page is drawn.
+  appearance: "dark",
+  // Shown once the page has rendered (it calls signalReady), never before it has painted;
+  // the watchdog shows an error page in it if the page never says so.
+  showOnReady: true,
+  readyTimeoutMs: 15_000,
   assets: { "index.html": indexHtml({ title: APP_NAME }), "main.js": appJs, "main.css": appCss },
   worker: new URL("./app-worker.ts", import.meta.url),
   debug: process.env.WEBVIEW_DEBUG === "1",
@@ -144,5 +150,4 @@ setAppMenu({
   ].join("\n"),
 });
 
-app.window.show();
-app.run(); // blocks until Quit
+app.run(); // blocks until Quit; the window shows itself once its page is ready

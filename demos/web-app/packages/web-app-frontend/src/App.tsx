@@ -18,6 +18,7 @@ import {
 } from "@mantine/core";
 import type { ColorScheme, Info, Note } from "web-app-backend/protocol";
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { signalReady } from "@n1h/sweetview/page";
 import { bridge, inApp, notify, on, onDisconnect, rpc, transportLabel } from "./bridge";
 import { NotificationsCard } from "./NotificationsCard";
 import { WatchCard } from "./WatchCard";
@@ -55,6 +56,8 @@ export function App() {
   }, [colorScheme]);
   useEffect(() => on("ui.theme", ({ scheme }) => setColorScheme(scheme)), [setColorScheme]);
   useEffect(() => onDisconnect(() => setDisconnected(true)), []);
+  // The first screen is rendered: the desktop app shows its window now (showOnReady). Elsewhere it does nothing.
+  useEffect(() => void signalReady().catch(() => {}), []);
 
   return (
     <AppShell header={{ height: 60 }} padding="lg">
