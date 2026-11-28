@@ -12,13 +12,14 @@
 //! behind [`QueuedMessage`], so a message is dispatched only as the OS queued it.
 
 use std::cell::{Cell, RefCell};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::fmt;
 use std::marker::PhantomData;
 use std::num::NonZeroIsize;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::rc::Rc;
-use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, PoisonError};
+use std::time::{Duration, Instant};
 
 use raw_window_handle::{HandleError, HasWindowHandle, RawWindowHandle, Win32WindowHandle, WindowHandle};
 use windows::core::{HSTRING, PCWSTR};
@@ -26,10 +27,10 @@ use windows::Win32::Foundation::{ERROR_CLASS_ALREADY_EXISTS, HINSTANCE, HMODULE,
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Threading::{GetCurrentProcess, GetGuiResources, GetProcessHandleCount, GR_GDIOBJECTS, GR_USEROBJECTS};
 use windows::Win32::UI::WindowsAndMessaging::{
-  CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetClassInfoExW, GetMessageW, KillTimer, PeekMessageW,
-  PostMessageW, PostQuitMessage, RegisterClassExW, SetTimer, TranslateMessage, UnregisterClassW, HWND_MESSAGE, MSG,
-  PEEK_MESSAGE_REMOVE_TYPE, PM_NOREMOVE, PM_QS_INPUT, PM_QS_POSTMESSAGE, PM_QS_SENDMESSAGE, PM_REMOVE, WINDOW_EX_STYLE,
-  WINDOW_STYLE, WM_APP, WM_CLOSE, WM_NCDESTROY, WM_QUIT, WM_TIMER, WNDCLASSEXW, WNDPROC,
+  CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetClassInfoExW, GetMessageW, InSendMessageEx, IsWindow, PeekMessageW,
+  PostMessageW, PostQuitMessage, RegisterClassExW, TranslateMessage, UnregisterClassW, HWND_MESSAGE, ISMEX_SEND, MSG,
+  PEEK_MESSAGE_REMOVE_TYPE, PM_NOREMOVE, PM_NOYIELD, PM_QS_INPUT, PM_QS_POSTMESSAGE, PM_QS_SENDMESSAGE, PM_REMOVE, WINDOW_EX_STYLE,
+  WINDOW_STYLE, WM_APP, WM_CLOSE, WM_NCDESTROY, WM_QUIT, WNDCLASSEXW, WNDPROC,
 };
 
 use crate::signal::{Signal, SignalError, TimerId};
@@ -113,17 +114,100 @@ impl fmt::Display for WindowError {
 
 impl std::error::Error for WindowError {}
 
-/// The handle value posts go to. Zero once the window is destroyed, by this
-/// value's owner or by anyone: the window procedure zeroes it on `WM_NCDESTROY`.
+/// The last message number a [`Poster`] posts: the application's range ends
+/// at `0xBFFF`, which this crate keeps for [`WM_STILL_ALIVE`].
+const LAST_POSTED: u32 = 0xBFFE;
+
+/// The message a window procedure posts its own window on a `WM_NCDESTROY` it
+/// cannot tell from the destruction (see [`PostTarget`]).
+const WM_STILL_ALIVE: u32 = 0xBFFF;
+
+/// How many posts a [`PostTarget`] holds while it waits to learn whether its
+/// window is alive. Further posts report failure.
+const HELD_POSTS: usize = 1024;
+
+/// Where posts to one [`MessageWindow`] go.
 ///
-/// The lock is held across both the post and the zeroing, so a post from
-/// another thread never reaches a handle that has been destroyed and reused.
-struct PostTarget(Mutex<isize>);
+/// `hwnd` is zero once the window is gone: `MessageWindow::drop` zeroes it
+/// before destroying the window, and so does the window procedure when it
+/// learns that other code destroyed it.
+///
+/// A window procedure cannot tell the `WM_NCDESTROY` that `DestroyWindow` sends
+/// from one posted to a live window (this process or another can post one; the
+/// window reads the same in both, `IsWindow` included). So on a `WM_NCDESTROY`
+/// of this thread the procedure marks the target `ending` and posts the window
+/// [`WM_STILL_ALIVE`]. A window that is alive receives it, and any message it
+/// receives, and is armed again; a destroyed window takes its queued messages
+/// with it. While `ending`, posts are held, never sent, so none reaches a handle
+/// value a destroyed window gave up; they are sent when the window is armed
+/// again, and dropped once `IsWindow` shows it gone.
+///
+/// The lock is held across every post and every change of state, so a post
+/// from another thread never reaches a handle that has been destroyed and reused.
+struct PostTarget(Mutex<Target>);
+
+struct Target {
+  hwnd: isize,
+  ending: bool,
+  held: Vec<(u32, usize, isize)>,
+}
+
+impl Target {
+  fn disarm(&mut self) {
+    self.hwnd = 0;
+    self.ending = false;
+    self.held = Vec::new();
+  }
+
+  fn window(&self) -> HWND {
+    HWND(self.hwnd as *mut core::ffi::c_void)
+  }
+}
 
 impl PostTarget {
-  fn lock(&self) -> MutexGuard<'_, isize> {
+  fn new(hwnd: HWND) -> Self {
+    Self(Mutex::new(Target { hwnd: hwnd.0 as isize, ending: false, held: Vec::new() }))
+  }
+
+  fn lock(&self) -> MutexGuard<'_, Target> {
     self.0.lock().unwrap_or_else(PoisonError::into_inner)
   }
+
+  /// The window procedure got a `WM_NCDESTROY` of this thread for `hwnd`: hold
+  /// posts until the window shows it is alive.
+  fn begin_ending(&self, hwnd: HWND) {
+    let mut target = self.lock();
+    if target.hwnd != hwnd.0 as isize {
+      return;
+    }
+    target.ending = true;
+    // SAFETY: `hwnd` is the window whose procedure is running this call, so it names a window
+    // for the whole call; the parameters are integers. A window being destroyed loses the message.
+    let posted = unsafe { PostMessageW(Some(hwnd), WM_STILL_ALIVE, WPARAM(0), LPARAM(0)) };
+    // Not queued: the window stays `ending` and its owner treats it as gone (`live_hwnd`).
+    let _ = posted;
+  }
+
+  /// The window procedure got a message for `hwnd` after a `WM_NCDESTROY`, so
+  /// the window is alive: arm it again and send what was held.
+  fn still_alive(&self, hwnd: HWND) {
+    let mut target = self.lock();
+    if !target.ending || target.hwnd != hwnd.0 as isize {
+      return;
+    }
+    target.ending = false;
+    for (message, wparam, lparam) in std::mem::take(&mut target.held) {
+      // SAFETY: as in `begin_ending`: `hwnd` is the window whose procedure is running this call.
+      let posted = unsafe { PostMessageW(Some(hwnd), message, WPARAM(wparam), LPARAM(lparam)) };
+      let _ = posted;
+    }
+  }
+}
+
+/// True when `hwnd` names a window now. Any value is accepted.
+fn names_a_window(hwnd: HWND) -> bool {
+  // SAFETY: `IsWindow` accepts any value and only reports whether it names a window.
+  unsafe { IsWindow(Some(hwnd)) }.as_bool()
 }
 
 /// Posts messages to a [`MessageWindow`] from any thread. Cheap to clone.
@@ -132,21 +216,37 @@ impl PostTarget {
 pub struct Poster(Arc<PostTarget>);
 
 impl Poster {
-  /// Posts `message` with plain integer parameters. Returns false when the
-  /// window is gone or the message could not be queued. A `WM_CLOSE` posted
-  /// here (or by anyone) is answered by the window procedure and does not
-  /// destroy the window.
+  /// Posts `message`, a number of the application's range (`WM_APP` to
+  /// `0xBFFE`), with plain integer parameters. Returns false for any other
+  /// number, when the window is gone, or when the message could not be queued.
+  /// A system message is refused because the window would act on it as if the
+  /// OS had sent it. A `WM_CLOSE` or `WM_NCDESTROY` posted to the window by
+  /// anyone else leaves it working (see [`MessageWindow`]).
   pub fn post(&self, message: u32, wparam: usize, lparam: isize) -> bool {
-    let target = self.0.lock();
-    if *target == 0 {
+    if !(WM_APP..=LAST_POSTED).contains(&message) {
       return false;
     }
-    let hwnd = HWND(*target as *mut core::ffi::c_void);
-    // SAFETY: `*target` is non-zero only while the window exists: `MessageWindow::drop`
-    // zeroes it before destroying the window, and the window procedure zeroes it on
-    // `WM_NCDESTROY` whoever destroys it, both under this lock, which is held for the
-    // whole call. The parameters are integers the receiving procedure reads as integers.
-    let posted = unsafe { PostMessageW(Some(hwnd), message, WPARAM(wparam), LPARAM(lparam)) };
+    let mut target = self.0.lock();
+    if target.hwnd == 0 {
+      return false;
+    }
+    if target.ending {
+      if !names_a_window(target.window()) {
+        target.disarm();
+        return false;
+      }
+      if target.held.len() >= HELD_POSTS {
+        return false;
+      }
+      target.held.push((message, wparam, lparam));
+      return true;
+    }
+    // SAFETY: `target.hwnd` is non-zero and not `ending` only while the window exists: it is
+    // zeroed before the owner destroys the window, and marked `ending` by the window procedure
+    // on any `WM_NCDESTROY` of the window's thread, which `DestroyWindow` sends before the handle
+    // is given up, all under this lock, which is held for the whole call. The parameters are
+    // integers the receiving procedure reads as integers.
+    let posted = unsafe { PostMessageW(Some(target.window()), message, WPARAM(wparam), LPARAM(lparam)) };
     posted.is_ok()
   }
 }
@@ -159,7 +259,11 @@ impl Poster {
 /// another thread or process does not destroy the window. Should other code
 /// of this thread destroy it anyway (`DestroyWindow` on the handle it lends),
 /// `WM_NCDESTROY` disarms this value: posts fail, timers and handles are
-/// refused, and `Drop` destroys nothing.
+/// refused, and `Drop` destroys nothing. A `WM_NCDESTROY` that another thread
+/// sends is refused (`DestroyWindow` destroys only windows of the calling
+/// thread), and one posted to the live window disarms it only until the window
+/// receives its next message, in the same turn of the loop; posts made
+/// meanwhile are held and then delivered (see `PostTarget`).
 ///
 /// Not `Send`: the window and its closure belong to the thread that made them.
 pub struct MessageWindow {
@@ -238,7 +342,7 @@ impl MessageWindow {
     };
     *classes.entry(class_name.to_owned()).or_insert(0) += 1;
     drop(classes);
-    let target = Arc::new(PostTarget(Mutex::new(hwnd.0 as isize)));
+    let target = Arc::new(PostTarget::new(hwnd));
     let entry = Entry { procedure: Rc::new(procedure), target: target.clone() };
     PROCEDURES.with(|procedures| procedures.borrow_mut().insert(hwnd.0 as isize, entry));
     Ok(Self { hwnd, class: class_name.to_owned(), target, _not_send: PhantomData })
@@ -250,10 +354,42 @@ impl MessageWindow {
   }
 
   /// The window's handle while the window exists, for the calls of this crate
-  /// that name the window; `None` once something destroyed it.
+  /// that name the window; `None` once something destroyed it, and while a
+  /// `WM_NCDESTROY` is waiting to be confirmed (see `PostTarget`).
   pub(crate) fn live_hwnd(&self) -> Option<HWND> {
-    (*self.target.lock() != 0).then_some(self.hwnd)
+    let mut target = self.target.lock();
+    if target.ending && !names_a_window(self.hwnd) {
+      // Destroyed by other code: forget it now, as the window procedure no longer can.
+      target.disarm();
+      drop(target);
+      self.forget();
+      return None;
+    }
+    (target.hwnd != 0 && !target.ending).then_some(self.hwnd)
   }
+
+  /// Removes this value's own entry from the table. Only its own: a window destroyed
+  /// earlier may have left its handle value to a later window of this thread.
+  fn forget(&self) {
+    // `try_with`: a window kept in thread-local storage is dropped while the
+    // thread's storage is being torn down, when the table may already be gone.
+    let _ = PROCEDURES.try_with(|procedures| {
+      let mut procedures = procedures.borrow_mut();
+      if procedures.get(&(self.hwnd.0 as isize)).is_some_and(|entry| Arc::ptr_eq(&entry.target, &self.target)) {
+        procedures.remove(&(self.hwnd.0 as isize));
+      }
+    });
+  }
+}
+
+/// True when this thread's queue holds a [`WM_STILL_ALIVE`] for `hwnd`, which it takes out.
+/// A window that `DestroyWindow` destroyed took its queued messages with it.
+fn still_alive_queued(hwnd: HWND) -> bool {
+  let mut message = MSG::default();
+  // SAFETY: `message` is a MSG owned by this frame for the call to fill; the window filter is
+  // a handle value the OS validates, and a value that names no window of this thread matches nothing.
+  let found = unsafe { PeekMessageW(&mut message, Some(hwnd), WM_STILL_ALIVE, WM_STILL_ALIVE, PM_REMOVE | PM_NOYIELD) };
+  found.as_bool()
 }
 
 /// Unregisters the class `name` of `module`; a failure (a window of it still
@@ -286,24 +422,25 @@ impl HasWindowHandle for MessageWindow {
 impl Drop for MessageWindow {
   fn drop(&mut self) {
     // Disarm the posters first, under the lock a post holds. Zero already when
-    // something else destroyed the window (`WM_NCDESTROY`).
-    let live = std::mem::replace(&mut *self.target.lock(), 0) != 0;
-    // `try_with`: a window kept in thread-local storage is dropped while the
-    // thread's storage is being torn down, when the table may already be gone.
-    // Only this value's own entry: a window destroyed earlier may have left its
-    // handle value to a later window of this thread.
-    let _ = PROCEDURES.try_with(|procedures| {
-      let mut procedures = procedures.borrow_mut();
-      if procedures.get(&(self.hwnd.0 as isize)).is_some_and(|entry| Arc::ptr_eq(&entry.target, &self.target)) {
-        procedures.remove(&(self.hwnd.0 as isize));
-      }
-    });
+    // something else destroyed the window and this value has seen it.
+    let (armed, ending) = {
+      let mut target = self.target.lock();
+      let state = (target.hwnd != 0, target.ending);
+      target.disarm();
+      state
+    };
+    self.forget();
+    // A `WM_NCDESTROY` not yet confirmed either way: the window is alive only if the message
+    // it posted itself then is still queued (a destroyed window took it with it).
+    let live = armed && (!ending || still_alive_queued(self.hwnd));
     let mut classes = classes();
     if live {
       // SAFETY: `self.hwnd` was created by `new` on this thread (the type is not `Send`)
-      // and still exists: `live` was read from the post target, which the window
-      // procedure zeroes on `WM_NCDESTROY` whoever destroys the window, so its handle
-      // value has not been given to another window. It is not used again after this call.
+      // and still exists: `live` was read from the post target, which the window procedure
+      // marks on any `WM_NCDESTROY` of this thread before `DestroyWindow` gives the handle
+      // value up, and a marked one counts only when the window's own `WM_STILL_ALIVE` is
+      // still queued for it, so its handle value has not been given to another window. It
+      // is not used again after this call.
       let destroyed = unsafe { DestroyWindow(self.hwnd) };
       // Nothing useful can be done with a failure while dropping.
       let _ = destroyed;
@@ -335,11 +472,22 @@ fn answer(hwnd: HWND, message: u32, wparam: usize, lparam: isize) -> Option<isiz
     .flatten();
   let (procedure, target) = found?;
   if message == WM_NCDESTROY {
-    // Destroyed by someone other than the owner's `Drop` (which removes the entry
-    // first): disarm the owner, so nothing acts on the handle value again.
-    *target.lock() = 0;
-    let _ = PROCEDURES.try_with(|procedures| procedures.borrow_mut().remove(&(hwnd.0 as isize)));
+    // SAFETY: `InSendMessageEx` takes a reserved pointer that must be null and reads nothing.
+    let how = unsafe { InSendMessageEx(None) };
+    if how & ISMEX_SEND != 0 {
+      // Sent from another thread, so not the destruction: `DestroyWindow` destroys only
+      // windows of the thread that calls it, and sends this message on that thread.
+      return Some(0);
+    }
+    // Destroyed by someone other than the owner's `Drop` (which removes the entry first), or
+    // posted to the live window: posts are held until the window shows which.
+    target.begin_ending(hwnd);
     return None;
+  }
+  // Any later message proves the window alive.
+  target.still_alive(hwnd);
+  if message == WM_STILL_ALIVE {
+    return Some(0);
   }
   match procedure(message, wparam, lparam) {
     // `DefWindowProcW` destroys a window on `WM_CLOSE`; only the owner destroys this one.
@@ -396,9 +544,12 @@ impl QueuedMessage {
 
   /// Hands the message to its window's procedure, once: the message is consumed.
   pub fn dispatch(self) {
-    // SAFETY: `self.0` was filled by the OS from this thread's queue (see the
-    // type), so its window, parameters and any timer procedure are the OS's own;
-    // `self` is consumed, so this message is not dispatched again.
+    // The parameters are whatever the poster chose, and any process of the session may post:
+    // the window procedure reads them as the message defines, and the OS calls a `WM_TIMER`'s
+    // timer procedure only when this thread registered it with `SetTimer` (measured, D35).
+    // SAFETY: `self.0` was filled by the OS from this thread's queue (see the type), so its
+    // window is one the OS queued it for and validates again here (parameters: above); `self`
+    // is consumed, so this message is not dispatched again.
     unsafe { DispatchMessageW(&self.0) };
   }
 }
@@ -534,12 +685,97 @@ impl Waker {
   }
 }
 
-/// A message-only window owned by the UI thread. Dropping it destroys the
-/// window, cancels its timers and disarms every [`Waker`] made from it.
+/// The message a timer's tick posts. `wParam` carries the timer's id.
+const WM_SWEETVIEW_TICK: u32 = WM_APP + 0x54;
+
+/// The shortest period a timer gets, as `SetTimer` gives (`USER_TIMER_MINIMUM`).
+const SHORTEST_PERIOD_MS: u32 = 10;
+/// The longest period a timer gets, as `SetTimer` gives (`USER_TIMER_MAXIMUM`).
+const LONGEST_PERIOD_MS: u32 = 0x7FFF_FFFF;
+
+/// One timer of a [`SignalWindow`], as its tick thread keeps it.
+struct Schedule {
+  period: Duration,
+  /// When the next tick is due.
+  next: Instant,
+  /// A tick was posted and the UI thread has not taken it yet: no second one is posted, so a
+  /// timer that comes due while the thread is busy delivers once, as a `WM_TIMER` does.
+  outstanding: bool,
+}
+
+/// The timers of one [`SignalWindow`], shared between the UI thread and the tick thread.
+#[derive(Default)]
+struct Ticks {
+  state: Mutex<TickState>,
+  changed: Condvar,
+}
+
+#[derive(Default)]
+struct TickState {
+  timers: HashMap<usize, Schedule>,
+  stop: bool,
+}
+
+impl Ticks {
+  fn lock(&self) -> MutexGuard<'_, TickState> {
+    self.state.lock().unwrap_or_else(PoisonError::into_inner)
+  }
+
+  /// The UI thread took the tick of timer `id`. True while that timer is set: a tick posted
+  /// before the timer was cancelled finds none and is dropped.
+  fn take_tick(&self, id: usize) -> bool {
+    match self.lock().timers.get_mut(&id) {
+      Some(timer) => {
+        timer.outstanding = false;
+        true
+      }
+      None => false,
+    }
+  }
+}
+
+/// The tick thread's body: posts each timer's tick to the signal window when it comes due, until
+/// told to stop. Posting never blocks, so the lock is held only for moments.
+fn post_ticks(ticks: &Ticks, poster: &Poster) {
+  let mut state = ticks.lock();
+  while !state.stop {
+    let now = Instant::now();
+    let mut earliest: Option<Instant> = None;
+    for (id, timer) in &mut state.timers {
+      if timer.next <= now {
+        if !timer.outstanding && poster.post(WM_SWEETVIEW_TICK, *id, 0) {
+          timer.outstanding = true;
+        }
+        // As a native timer counts: the next period starts when this one ended, and one that
+        // was missed altogether is not made up.
+        timer.next += timer.period;
+        if timer.next <= now {
+          timer.next = now + timer.period;
+        }
+      }
+      earliest = Some(earliest.map_or(timer.next, |at| at.min(timer.next)));
+    }
+    state = match earliest {
+      Some(at) => ticks.changed.wait_timeout(state, at.saturating_duration_since(now)).unwrap_or_else(PoisonError::into_inner).0,
+      None => ticks.changed.wait(state).unwrap_or_else(PoisonError::into_inner),
+    };
+  }
+}
+
+/// A message-only window owned by the UI thread. Dropping it stops its tick
+/// thread, destroys the window and disarms every [`Waker`] made from it.
+///
+/// Its timers do not use `SetTimer`. A `WM_TIMER` is made only when the
+/// thread's queue holds nothing else, after every paint request, and a modal
+/// loop such as a popup menu's can wait with one already due and never take it
+/// (D34). Each tick is instead a message posted to the window by a thread of
+/// this value's own; posted messages come before input, paint and `WM_TIMER`,
+/// and wake any loop that waits for new messages.
 pub struct SignalWindow {
   next_timer: Cell<usize>,
-  timers: RefCell<HashSet<usize>>,
-  /// Declared last, so the timers are killed (in `Drop`) while the window exists.
+  ticks: Arc<Ticks>,
+  /// The thread that posts the ticks, started with the first timer and joined in `Drop`.
+  ticker: RefCell<Option<std::thread::JoinHandle<()>>>,
   window: MessageWindow,
 }
 
@@ -548,17 +784,20 @@ impl SignalWindow {
   /// inside whichever message loop dispatched it. A handler that panics is
   /// caught; the signal is dropped.
   pub fn new(handler: impl Fn(Signal) + 'static) -> Result<Self, SignalError> {
+    let ticks = Arc::new(Ticks::default());
+    let taken = ticks.clone();
     let window = MessageWindow::new("SweetviewSignalWindow", "sweetview.signal", move |message, wparam, _lparam| {
       let signal = match message {
         WM_SWEETVIEW_WAKE => Signal::Wake(wparam as u64),
-        WM_TIMER => Signal::Timer(TimerId(wparam)),
+        WM_SWEETVIEW_TICK if taken.take_tick(wparam) => Signal::Timer(TimerId(wparam)),
+        WM_SWEETVIEW_TICK => return Some(0),
         _ => return None,
       };
       handler(signal);
       Some(0)
     })
     .map_err(|e| SignalError(e.to_string()))?;
-    Ok(Self { next_timer: Cell::new(1), timers: RefCell::new(HashSet::new()), window })
+    Ok(Self { next_timer: Cell::new(1), ticks, ticker: RefCell::new(None), window })
   }
 
   /// A handle other threads use to wake this one.
@@ -567,58 +806,70 @@ impl SignalWindow {
   }
 
   /// Starts a timer that delivers `Signal::Timer` every `interval_ms`
-  /// milliseconds until it is cancelled.
+  /// milliseconds until it is cancelled. The period is held to 10 ms and
+  /// above, as `SetTimer` holds it.
   pub fn set_timer(&self, interval_ms: u32) -> Result<TimerId, SignalError> {
-    let hwnd = self.window.live_hwnd().ok_or_else(|| SignalError("SetTimer: the signal window is gone".into()))?;
+    if self.window.live_hwnd().is_none() {
+      return Err(SignalError("a timer could not be set: the signal window is gone".into()));
+    }
+    self.start_ticker()?;
     let id = self.next_timer.get();
     self.next_timer.set(id.wrapping_add(1).max(1));
-    // SAFETY: `hwnd` is the live window of `self.window` (`live_hwnd`), which this value
-    // owns; no timer procedure is passed, so the timer arrives as a WM_TIMER message.
-    let set = unsafe { SetTimer(Some(hwnd), id, interval_ms, None) };
-    if set == 0 {
-      return Err(SignalError(format!("SetTimer: {}", windows::core::Error::from_thread())));
-    }
-    self.timers.borrow_mut().insert(id);
+    let period = Duration::from_millis(u64::from(interval_ms.clamp(SHORTEST_PERIOD_MS, LONGEST_PERIOD_MS)));
+    let schedule = Schedule { period, next: Instant::now() + period, outstanding: false };
+    self.ticks.lock().timers.insert(id, schedule);
+    self.ticks.changed.notify_all();
     Ok(TimerId(id))
   }
 
-  /// Cancels a timer. Cancelling one that is not set does nothing.
-  pub fn cancel_timer(&self, timer: TimerId) {
-    if self.timers.borrow_mut().remove(&timer.0) {
-      self.kill(timer.0);
+  fn start_ticker(&self) -> Result<(), SignalError> {
+    let mut ticker = self.ticker.borrow_mut();
+    if ticker.is_none() {
+      let (ticks, poster) = (self.ticks.clone(), self.window.poster());
+      let thread = std::thread::Builder::new()
+        .name("sweetview-timers".into())
+        .spawn(move || post_ticks(&ticks, &poster))
+        .map_err(|e| SignalError(format!("a timer could not be set: its thread did not start: {e}")))?;
+      *ticker = Some(thread);
     }
+    Ok(())
   }
 
-  /// Delivers the timers that are due now, without waiting for the thread's
-  /// queue to empty.
-  ///
-  /// The OS hands out a timer message only when nothing else is queued, and a
-  /// loop that is pumped in short bursts always has something else queued (its
-  /// own repaint request), so its timers would never arrive. A pump calls this
-  /// after each burst.
+  /// Cancels a timer. Cancelling one that is not set does nothing. A
+  /// cancelled timer delivers nothing more, a tick already posted included.
+  pub fn cancel_timer(&self, timer: TimerId) {
+    self.ticks.lock().timers.remove(&timer.0);
+  }
+
+  /// Delivers the ticks that are waiting now, ahead of anything else in the
+  /// thread's queue. A pump calls this after each burst, so a tick posted while
+  /// the burst was ending is not left for the next one.
   pub fn dispatch_due_timers(&self) {
     // Bounded: a handler that keeps timers due cannot hold the caller here.
     for _ in 0..64 {
-      let Some(message) = peek(Some(&self.window), WM_TIMER, WM_TIMER, PM_REMOVE) else { break };
+      let Some(message) = peek(Some(&self.window), WM_SWEETVIEW_TICK, WM_SWEETVIEW_TICK, PM_REMOVE) else { break };
       message.dispatch();
     }
   }
 
-  fn kill(&self, id: usize) {
-    // A window destroyed by someone else took its timers with it.
-    let Some(hwnd) = self.window.live_hwnd() else { return };
-    // SAFETY: `hwnd` is the live window of `self.window` (`live_hwnd`), which this value
-    // owns and which is destroyed only after this value's own `Drop` has killed the timers.
-    let killed = unsafe { KillTimer(Some(hwnd), id) };
-    // A timer that is already gone is the state wanted.
-    let _ = killed;
+  /// How many timers are set. For tests that check nothing is left running.
+  #[doc(hidden)]
+  pub fn timers_set_for_tests(&self) -> usize {
+    self.ticks.lock().timers.len()
   }
 }
 
 impl Drop for SignalWindow {
   fn drop(&mut self) {
-    for id in self.timers.take() {
-      self.kill(id);
+    {
+      let mut state = self.ticks.lock();
+      state.timers.clear();
+      state.stop = true;
+    }
+    self.ticks.changed.notify_all();
+    if let Some(thread) = self.ticker.take() {
+      // The thread only posts and waits on the lock taken above; it ends at once.
+      let _ = thread.join();
     }
     // `self.window` is dropped next: it disarms the wakers and destroys the window.
   }
@@ -799,8 +1050,14 @@ mod tests {
     })
     .expect("message window");
     let poster = window.poster();
-    let remote = poster.clone();
-    assert!(std::thread::spawn(move || remote.post(WM_CLOSE, 0, 0)).join().expect("poster thread"));
+    assert!(!poster.post(WM_CLOSE, 0, 0), "a Poster refuses a system message");
+    // Posted from another thread with `PostMessageW` itself, as another process can.
+    let value = lent_hwnd(&window).0 as isize;
+    let remote = std::thread::spawn(move || {
+      // SAFETY: `PostMessageW` validates the handle value; the parameters are integers.
+      unsafe { PostMessageW(Some(HWND(value as *mut core::ffi::c_void)), WM_CLOSE, WPARAM(0), LPARAM(0)) }.is_ok()
+    });
+    assert!(remote.join().expect("poster thread"));
     pump_until(|| closes.get() == 1);
     assert_eq!(closes.get(), 1, "the closure saw the close");
     let hwnd = lent_hwnd(&window);
@@ -826,6 +1083,7 @@ mod tests {
     // SAFETY: the test destroys the window of its own `SignalWindow` on this thread, as code
     // of this thread holding the lent handle could.
     unsafe { DestroyWindow(hwnd) }.expect("DestroyWindow");
+    assert!(peek(None, WM_STILL_ALIVE, WM_STILL_ALIVE, PM_NOREMOVE).is_none(), "the destroyed window took its own confirmation with it");
     assert!(window.window.live_hwnd().is_none());
     assert!(matches!(window.window.window_handle(), Err(HandleError::Unavailable)), "no handle is lent");
     assert!(!waker.wake(1), "posts fail");
@@ -841,6 +1099,75 @@ mod tests {
     assert!(again.waker().wake(2));
     pump_until(|| fired.get());
     assert!(fired.get());
+  }
+
+  /// Posts `message` to `window` with `PostMessageW` itself, as other code of the
+  /// session can, past the range a `Poster` keeps to.
+  fn post_directly(window: &MessageWindow, message: u32) {
+    let hwnd = lent_hwnd(window);
+    // SAFETY: `hwnd` is the live window `window` lends; the parameters are integers.
+    unsafe { PostMessageW(Some(hwnd), message, WPARAM(0), LPARAM(0)) }.expect("PostMessageW");
+  }
+
+  /// A `WM_NCDESTROY` posted to a live window disarms its owner only until the
+  /// window's next message; what was posted meanwhile arrives, and the owner,
+  /// its timers and its `Drop` work as before (the review's G3).
+  #[test]
+  fn a_posted_ncdestroy_leaves_the_window_and_its_owner_working() {
+    let _serial = serial();
+    let signals: Rc<RefCell<Vec<Signal>>> = Rc::new(RefCell::new(Vec::new()));
+    let sink = signals.clone();
+    let window = SignalWindow::new(move |signal| sink.borrow_mut().push(signal)).expect("signal window");
+    let waker = window.waker();
+    let poster = window.window.poster();
+    assert!(!poster.post(WM_NCDESTROY, 0, 0), "a Poster refuses a system message");
+    assert!(!poster.post(0x0113, 0, 0), "and a WM_TIMER");
+    let hwnd = lent_hwnd(&window.window);
+    post_directly(&window.window, WM_NCDESTROY);
+    let message = next_message().expect("the posted WM_NCDESTROY");
+    assert_eq!(message.0.message, WM_NCDESTROY);
+    message.dispatch();
+    // Not yet confirmed: refused for now, a post is held, not lost.
+    assert!(window.window.live_hwnd().is_none());
+    assert!(waker.wake(11), "a wake made meanwhile is held");
+    pump_until(|| signals.borrow().contains(&Signal::Wake(11)));
+    assert!(signals.borrow().contains(&Signal::Wake(11)), "and delivered once the window showed it is alive: {:?}", signals.borrow());
+    assert!(window.window.live_hwnd().is_some(), "armed again");
+    assert!(waker.wake(12));
+    let timer = window.set_timer(10).expect("timers work");
+    pump_until(|| signals.borrow().contains(&Signal::Wake(12)) && signals.borrow().contains(&Signal::Timer(timer)));
+    assert!(signals.borrow().contains(&Signal::Timer(timer)), "{:?}", signals.borrow());
+    drop(window);
+    assert!(!names_a_window(hwnd), "Drop destroyed the window");
+    assert!(!waker.wake(13));
+  }
+
+  /// Dropped before a posted `WM_NCDESTROY` is confirmed, the owner still destroys
+  /// its live window; a `WM_NCDESTROY` sent from another thread is refused outright.
+  #[test]
+  fn an_unconfirmed_ncdestroy_still_lets_drop_destroy_and_a_sent_one_is_refused() {
+    let _serial = serial();
+    let window = MessageWindow::new("SweetviewLoopNcTest", "sweetview.nc-test", |_, _, _| None).expect("message window");
+    let hwnd = lent_hwnd(&window);
+    post_directly(&window, WM_NCDESTROY);
+    next_message().expect("the posted WM_NCDESTROY").dispatch();
+    assert!(window.live_hwnd().is_none(), "waiting for the confirmation");
+    drop(window);
+    assert!(!names_a_window(hwnd), "Drop destroyed the live window");
+    assert!(!registered("SweetviewLoopNcTest"));
+
+    let window = MessageWindow::new("SweetviewLoopNcTest", "sweetview.nc-test", |_, _, _| None).expect("message window");
+    let value = lent_hwnd(&window).0 as isize;
+    let sender = std::thread::spawn(move || {
+      // SAFETY: `SendMessageW` validates the handle value; the parameters are integers.
+      unsafe { windows::Win32::UI::WindowsAndMessaging::SendMessageW(HWND(value as *mut core::ffi::c_void), WM_NCDESTROY, None, None) }
+    });
+    while !sender.is_finished() {
+      // A message sent from another thread is answered inside a look at the queue.
+      let _ = peek_without_removing_for_tests();
+    }
+    sender.join().expect("sender thread");
+    assert!(window.live_hwnd().is_some(), "a WM_NCDESTROY from another thread changed nothing");
   }
 
   /// A class of the same name that other code registered with its own

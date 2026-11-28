@@ -209,6 +209,11 @@ impl Runtime {
   /// thread's own quit request (`PostQuitMessage`). Either is consumed, and the
   /// caller should stop pumping, as `pumpEvents` has always reported. True otherwise.
   pub fn pump(&self) -> bool {
+    // From a callback of either loop mode: nothing is posted and no guard is set, so a nested
+    // call costs nothing and leaves the guard of the pump in progress as it is.
+    if self.host.is_running() {
+      return true;
+    }
     // `tao` clears its events after each message it takes in this mode, so a
     // pump goes round until nothing posted is waiting, as `pumpEvents` always
     // dispatched everything that was. Bounded, so a timer that is always due
@@ -223,7 +228,7 @@ impl Runtime {
     // loop with it. So each pump posts `tao` a message of its own first, and a native timer
     // posts another while the pump is still running; each makes `tao` renew its request.
     let _ = self.proxy.send_event(());
-    self.pump_guard.set(self.signals.set_timer(PUMP_GUARD_MS).ok());
+    let guard = PumpGuard::set(self);
     let ran = self.host.run(|event, target, control_flow| {
       *control_flow = ControlFlow::Poll;
       self.dispatch(&event, target);
@@ -234,9 +239,7 @@ impl Runtime {
         }
       }
     });
-    if let Some(guard) = self.pump_guard.take() {
-      self.signals.cancel_timer(guard);
-    }
+    drop(guard);
     let Ok(code) = ran else { return true };
     // A pumped loop always has its own repaint request queued, which the OS
     // serves before any timer; the timers are taken explicitly.
@@ -380,6 +383,30 @@ impl Runtime {
   }
 }
 
+/// The native timer of the one pump in progress (D30), set when the pump starts. Dropping it
+/// cancels the timer and empties the runtime's cell, on every way out of the pump: a return, and
+/// the unwind `tao` raises again when a handler panicked.
+struct PumpGuard<'a> {
+  runtime: &'a Runtime,
+}
+
+impl<'a> PumpGuard<'a> {
+  fn set(runtime: &'a Runtime) -> Self {
+    // `pump` makes a guard only when no loop is running, so no other guard is set.
+    debug_assert!(runtime.pump_guard.get().is_none());
+    runtime.pump_guard.set(runtime.signals.set_timer(PUMP_GUARD_MS).ok());
+    Self { runtime }
+  }
+}
+
+impl Drop for PumpGuard<'_> {
+  fn drop(&mut self) {
+    if let Some(guard) = self.runtime.pump_guard.take() {
+      self.runtime.signals.cancel_timer(guard);
+    }
+  }
+}
+
 #[cfg(windows)]
 fn build_event_loop() -> EventLoop<()> {
   use tao::platform::windows::EventLoopBuilderExtWindows;
@@ -387,7 +414,8 @@ fn build_event_loop() -> EventLoop<()> {
   // checks; `tao`'s own idea of the main thread is not the one that matters
   // inside a host process.
   let event_loop = EventLoopBuilder::new().with_any_thread(true).build();
-  // `tao` registers each of its windows for raw keyboard and mouse input, for its device
+  // `tao` registers the process for raw keyboard and mouse input, once, with the loop's own
+  // hidden window as the target (raw-input registration is per process), for its device
   // events. Sweetview reports no device events, and the registration has a cost: while a
   // process that takes raw keyboard input holds the foreground, Windows does not call that
   // process's own low-level keyboard hook, so `installKeyboardHook` would see nothing typed
@@ -519,6 +547,224 @@ mod tests {
       runtime.set_drain(77, None);
       assert_eq!(looks.get(), 300);
       assert!(!rescued.load(Ordering::SeqCst), "a pump waited for a message instead of returning");
+    });
+  }
+
+  /// A pump called from inside a pump does nothing, as `pump` and `pumpEvents` say: it sets no
+  /// second guard and leaves the outer pump's guard set, which still gives `tao` its event. A pump
+  /// that a handler's panic unwinds out of leaves no timer set (the review's G2).
+  #[test]
+  fn a_nested_pump_does_nothing_and_every_way_out_of_a_pump_cancels_its_guard() {
+    on_ui_thread(|runtime| {
+      let user_events = Rc::new(Cell::new(0u32));
+      let counted = user_events.clone();
+      let listener = runtime.add_event_listener(Rc::new(move |event, _| {
+        if matches!(event, Event::UserEvent(())) {
+          counted.set(counted.get() + 1);
+        }
+      }));
+      type Seen = (Option<TimerId>, Option<TimerId>, usize);
+      let seen: Rc<Cell<Option<Seen>>> = Rc::default();
+      let (inner, record) = (runtime.clone(), seen.clone());
+      runtime.set_drain(
+        31,
+        Some(Rc::new(move || {
+          let guard = inner.pump_guard.get();
+          for _ in 0..100 {
+            assert!(inner.pump(), "a nested pump reports nothing ended");
+          }
+          record.set(Some((guard, inner.pump_guard.get(), inner.signals.timers_set_for_tests())));
+          // Long enough for the outer pump's guard to come due while that pump still runs.
+          std::thread::sleep(Duration::from_millis(u64::from(PUMP_GUARD_MS) * 4));
+        })),
+      );
+      let before = user_events.get();
+      assert!(wake(31));
+      assert!(runtime.pump());
+      runtime.set_drain(31, None);
+      let (guard, after_nested, set_inside) = seen.get().expect("the drain ran inside the pump");
+      assert!(guard.is_some(), "the outer pump had its guard");
+      assert_eq!(after_nested, guard, "the nested pumps left the outer pump's guard as it was");
+      assert_eq!(set_inside, 1, "the nested pumps set no timer of their own");
+      assert!(user_events.get() - before >= 2, "the pump's own event and the guard's: {}", user_events.get() - before);
+      assert_eq!(runtime.pump_guard.get(), None);
+      assert_eq!(runtime.signals.timers_set_for_tests(), 0, "no timer is left set after the pump");
+
+      let panicking = runtime.add_event_listener(Rc::new(|event, _| {
+        if matches!(event, Event::UserEvent(())) {
+          panic!("a handler panics inside a pump (expected by this test)");
+        }
+      }));
+      let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| runtime.pump()));
+      runtime.remove_event_listener(panicking);
+      assert!(unwound.is_err(), "tao raised the handler's panic again out of the pump");
+      assert_eq!(runtime.pump_guard.get(), None);
+      assert_eq!(runtime.signals.timers_set_for_tests(), 0, "the guard went with the unwind");
+      assert!(runtime.pump(), "and the loop pumps again");
+      runtime.remove_event_listener(listener);
+    });
+  }
+
+  /// One round of the test below: an interval set a moment before a popup menu opens from a
+  /// deferred job, which closes the menu from inside it after three ticks.
+  struct MenuRound {
+    ticks: Rc<Cell<u32>>,
+    closed: Rc<Cell<bool>>,
+    interval: TimeoutId,
+  }
+
+  fn open_menu_round(
+    runtime: &Rc<Runtime>,
+    menu: &Rc<crate::menu::BuiltMenu>,
+    owner: &Rc<tao::window::Window>,
+    opened_at: &std::sync::Arc<std::sync::atomic::AtomicI64>,
+    start: Instant,
+  ) -> MenuRound {
+    use std::sync::atomic::Ordering;
+    use sweetview_platform_window::{end_menu_for_tests, BorrowedWindow, PopupAt, PopupCorner};
+    let ticks = Rc::new(Cell::new(0u32));
+    let closed = Rc::new(Cell::new(false));
+    let counted = ticks.clone();
+    let interval = runtime
+      .set_interval(10, move || {
+        counted.set(counted.get() + 1);
+        if counted.get() == 3 {
+          end_menu_for_tests();
+        }
+      })
+      .expect("interval");
+    let (menu, owner, opened_at, done) = (menu.clone(), owner.clone(), opened_at.clone(), closed.clone());
+    runtime.defer(move || {
+      // Longer than the interval's period and the pump guard's: every timer of the thread is due
+      // when the menu's loop first looks at the queue.
+      std::thread::sleep(Duration::from_millis(40));
+      let at = crate::screen::cursor().map_or(PopupAt { x: 0, y: 0, corner: PopupCorner::BottomLeft }, |c| PopupAt {
+        x: c.x,
+        y: c.y,
+        corner: PopupCorner::BottomLeft,
+      });
+      opened_at.store(start.elapsed().as_millis() as i64, Ordering::SeqCst);
+      let _chosen = crate::menu::show(&menu, &BorrowedWindow::of(&owner), at);
+      opened_at.store(-1, Ordering::SeqCst);
+      done.set(true);
+    });
+    MenuRound { ticks, closed, interval }
+  }
+
+  /// D34: native timers keep firing inside a popup menu's loop in both loop modes. The menu opens
+  /// from a deferred job, its owner is a hidden `tao` window as the tray menu's is, and every
+  /// timer is due when the menu's loop first looks at the queue. With timers on `WM_TIMER`, which
+  /// the OS makes only when no paint request is pending, the loop waited with them due and
+  /// delivered none, and only the watchdog's Escape closed the menu.
+  #[test]
+  fn an_interval_ticks_inside_a_popup_menu_opened_from_a_deferred_job_in_both_loop_modes() {
+    use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
+    use std::sync::Arc;
+    const ROUNDS: u32 = 8;
+    on_ui_thread(|runtime| {
+      let owner = runtime
+        .with_target(|target| tao::window::WindowBuilder::new().with_visible(false).with_title("sweetview.timer-menu-test").build(target))
+        .expect("target")
+        .expect("the menu's owner");
+      let owner = Rc::new(owner);
+      let item = crate::menu::MenuItem::Item { id: 1, label: "One".into(), enabled: true, checked: false, icon: None };
+      let menu = Rc::new(crate::menu::build(&[item]).expect("menu"));
+      // A menu still open 1.5 s after it opened is closed with Escape and counted, so a menu whose
+      // loop delivers no tick fails the test instead of holding it.
+      let start = Instant::now();
+      let opened_at = Arc::new(AtomicI64::new(-1));
+      let rescues = Arc::new(AtomicUsize::new(0));
+      let stop = Arc::new(AtomicBool::new(false));
+      let watchdog = {
+        let (opened_at, rescues, stop) = (opened_at.clone(), rescues.clone(), stop.clone());
+        std::thread::spawn(move || {
+          while !stop.load(Ordering::SeqCst) {
+            std::thread::sleep(Duration::from_millis(20));
+            let at = opened_at.load(Ordering::SeqCst);
+            if at >= 0 && start.elapsed().as_millis() as i64 - at > 1500 && sweetview_platform_window::escape_menus_of_this_process_for_tests() > 0 {
+              rescues.fetch_add(1, Ordering::SeqCst);
+              opened_at.store(-1, Ordering::SeqCst);
+            }
+          }
+        })
+      };
+      let mut stuck: Vec<String> = Vec::new();
+      let mut judge = |mode: &str, round: u32, played: &MenuRound, rescued: bool| {
+        if rescued || played.ticks.get() < 3 || !played.closed.get() {
+          stuck.push(format!("{mode} round {round}: {} ticks, rescued {rescued}", played.ticks.get()));
+        }
+      };
+
+      // The loop pumped in short bursts, as `pumpEvents` from a Bun timer.
+      for round in 0..ROUNDS {
+        let before = rescues.load(Ordering::SeqCst);
+        let played = open_menu_round(&runtime, &menu, &owner, &opened_at, start);
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !played.closed.get() && Instant::now() < deadline {
+          runtime.pump();
+          std::thread::sleep(Duration::from_millis(5));
+        }
+        runtime.clear_timeout(played.interval);
+        judge("pumped", round, &played, rescues.load(Ordering::SeqCst) > before);
+      }
+
+      // The blocking loop: each round opens from a deferred job and the next starts once it closed.
+      let results: Rc<RefCell<Vec<(MenuRound, bool)>>> = Rc::default();
+      fn next_round(
+        runtime: Rc<Runtime>,
+        menu: Rc<crate::menu::BuiltMenu>,
+        owner: Rc<tao::window::Window>,
+        opened_at: Arc<AtomicI64>,
+        rescues: Arc<AtomicUsize>,
+        results: Rc<RefCell<Vec<(MenuRound, bool)>>>,
+        start: Instant,
+      ) {
+        if results.borrow().len() as u32 == ROUNDS {
+          runtime.request_exit();
+          return;
+        }
+        let before = rescues.load(Ordering::SeqCst);
+        let played = open_menu_round(&runtime, &menu, &owner, &opened_at, start);
+        let closed = played.closed.clone();
+        results.borrow_mut().push((played, false));
+        let poll = Rc::new(Cell::new(None::<TimeoutId>));
+        let (inner, slot) = (runtime.clone(), poll.clone());
+        let id = runtime
+          .set_interval(20, move || {
+            if !closed.get() {
+              return;
+            }
+            if let Some(id) = slot.take() {
+              inner.clear_timeout(id);
+            }
+            if let Some((played, rescued)) = results.borrow_mut().last_mut() {
+              inner.clear_timeout(played.interval);
+              *rescued = rescues.load(Ordering::SeqCst) > before;
+            }
+            let (runtime, menu, owner, opened_at, rescues, results) =
+              (inner.clone(), menu.clone(), owner.clone(), opened_at.clone(), rescues.clone(), results.clone());
+            inner.defer(move || next_round(runtime, menu, owner, opened_at, rescues, results, start));
+          })
+          .expect("poll");
+        poll.set(Some(id));
+      }
+      {
+        let (inner, menu, owner, opened_at, rescues, results) =
+          (runtime.clone(), menu.clone(), owner.clone(), opened_at.clone(), rescues.clone(), results.clone());
+        runtime.defer(move || next_round(inner, menu, owner, opened_at, rescues, results, start));
+      }
+      let quitter = runtime.clone();
+      let limit = runtime.set_timeout(60_000, move || quitter.request_exit()).expect("limit");
+      runtime.run_blocking().expect("blocking run");
+      runtime.clear_timeout(limit);
+      for (round, (played, rescued)) in results.borrow().iter().enumerate() {
+        judge("blocking", round as u32, played, *rescued);
+      }
+      assert_eq!(results.borrow().len() as u32, ROUNDS, "every blocking round ran");
+
+      stop.store(true, Ordering::SeqCst);
+      watchdog.join().expect("watchdog");
+      assert!(stuck.is_empty(), "menus in which the interval did not tick three times: {stuck:#?}");
     });
   }
 

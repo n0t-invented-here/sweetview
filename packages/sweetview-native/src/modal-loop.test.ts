@@ -50,6 +50,38 @@ async function runFixture(mode: "blocking" | "pumped") {
   }
 }
 
+/** Runs `test/fixtures/timers-in-tray-menu.ts` in a process of its own, in `mode`. */
+async function runTrayMenuTimers(mode: "blocking" | "pumped", rounds: number) {
+  const fixture = fileURLToPath(new URL("../test/fixtures/timers-in-tray-menu.ts", import.meta.url));
+  const proc = Bun.spawn([process.execPath, fixture, String(rounds)], {
+    timeout: 120_000,
+    env: { ...process.env, SWEETVIEW_LOOP_MODE: mode },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [code, stdout, stderr] = await Promise.all([proc.exited, new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
+  const line = stdout.split(/\r?\n/).find((l) => l.startsWith("RESULT "));
+  if (code !== 0 || !line) throw new Error(`tray-menu timer fixture exit ${code}\n${stdout}\n${stderr}`);
+  return JSON.parse(line.slice("RESULT ".length)) as { mode: string; rounds: number; ticked: number[]; rescued: number; timedOut?: boolean };
+}
+
+// Decision D34 (the second review's G1): with the loop's native timers on WM_TIMER, a tray menu
+// opened from a deferred job, with every timer already due when its loop first looked at the
+// queue, delivered no timer at all, and only a watchdog's Escape closed it.
+describe.if(onWindows)("native timers inside a tray menu opened from a deferred job (D34)", () => {
+  for (const mode of ["blocking", "pumped"] as const) {
+    test(`${mode} loop: an interval set just before the right click ticks inside every menu`, async () => {
+      const rounds = 8;
+      const report = await runTrayMenuTimers(mode, rounds);
+      expect(report.timedOut).toBeUndefined();
+      expect(report.mode).toBe(mode);
+      expect(report.ticked.length).toBe(rounds);
+      expect(report.rescued).toBe(0);
+      for (const ticks of report.ticked) expect(ticks).toBeGreaterThanOrEqual(3);
+    }, 150_000);
+  }
+});
+
 describe.if(onWindows)("a modal loop opened by a handler (W1.8)", () => {
   for (const mode of ["blocking", "pumped"] as const) {
     test(`${mode} loop: page calls are answered, a worker's wake drains and a native timeout fires while the dialog is open`, async () => {
