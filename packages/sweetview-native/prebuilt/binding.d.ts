@@ -153,6 +153,11 @@ export declare class Engine {
   setVisible(visible: boolean): void
   /** Gives the page the keyboard focus. */
   moveFocus(): void
+  /**
+   * From now on, each activation of the window this webview fills gives the page the
+   * keyboard focus (what `createApp` asks for the window it makes itself).
+   */
+  followWindowActivation(): void
   /** Tells the webview its host window moved, so its popups follow. */
   notifyMoved(): void
   /** Test hook: how many times `notifyMoved` reached the live webview. */
