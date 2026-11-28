@@ -179,3 +179,41 @@ fn a_transparent_window_shows_its_pages_opaque_shape_and_the_window_behind_every
     sweetview_platform_webview::test_support::release_environment();
   });
 }
+
+/// Section 3 row "No click-through flip while a mouse button is down": the real left button
+/// pressed over a hit region's solid part and held while the cursor crosses its edge: the window
+/// stays solid while the button is down, and lets clicks through once it is let go, as the poll's
+/// rule says.
+#[test]
+fn a_held_button_freezes_click_through_across_a_hit_regions_edge_until_it_is_let_go() {
+  on_ui_thread(|runtime| {
+    let _back = InputBack::here();
+    let bounds = Rect::new(360, 300, 300, 200);
+    let window = Window::create(WindowInit { frame: false, topmost: true, no_activate: true, bounds: Some(bounds), ..init("rt person held button") }).expect("window");
+    let handle = window.handle();
+    let passing = || BorrowedWindow::with_handle_value(handle, |w| sweetview_platform_window::ex_style(w)).unwrap_or(0) & 0x20 != 0; // WS_EX_TRANSPARENT
+    window.show().expect("show");
+    // The left half takes clicks, packed as `packRegions` packs it: count, bounds, then the points.
+    window.set_hit_regions(Some(vec![4, 0, 0, 150, 200, 0, 0, 150, 0, 150, 200, 0, 200]), None).expect("regions");
+    let (inside, outside) = ((bounds.x + 60, bounds.y + 100), (bounds.x + 240, bounds.y + 100));
+    os::set_cursor(inside.0, inside.1);
+    if !pump_until(runtime.as_ref(), 3000, || !os::buttons_down() && os::window_at(inside.0, inside.1) == handle && !passing()) {
+      panic!("not run: a button is held, or another window ({:#x}) is over the test's at {inside:?}", os::window_at(inside.0, inside.1));
+    }
+    os::send_left_button(true);
+    pump_until(runtime.as_ref(), 100, || false);
+    assert!(os::buttons_down() && !passing(), "pressed over the solid part");
+    // Across the edge, the button still down: no flip.
+    for x in (inside.0..=outside.0).step_by(20) {
+      os::set_cursor(x, inside.1);
+      pump_until(runtime.as_ref(), 30, || false);
+      assert!(!passing(), "the button is down at x {x}: the window stays solid");
+    }
+    pump_until(runtime.as_ref(), 200, || false);
+    assert!(!passing(), "held outside the region: still solid");
+    // Let go: the next poll lets clicks through where there is no region.
+    os::send_left_button(false);
+    assert!(pump_until(runtime.as_ref(), 1000, || passing()), "let go outside the region: clicks fall through");
+    window.dispose();
+  });
+}

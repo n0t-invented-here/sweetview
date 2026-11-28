@@ -62,7 +62,6 @@ The Rust exists. The proof is a simulated message, a test hook, a test that did 
 | A real change of display scale; a second monitor | The tab frame is sent the message with the scale unchanged. Nothing else. |
 | Tab keyboard shortcuts | Only Ctrl+T and Ctrl+W are typed for real; the other eleven go through a test hook. |
 | Snap and shadow of the tabbed frame | No test. |
-| "No click-through flip while a mouse button is down" | Pure logic only; never with a held button. |
 | An external drop being refused (`allowExternalDrop: false`) | The setting is read back from WebView2 (`allows_external_drop`, in `sweetview-platform-webview`'s `tests/requests.rs`); no real drag from outside the application is made: that needs an OLE drag driven by real input, from another application or a COM drag source in the test, which is not built. |
 | The name a toast shows with no identity | Pure logic; the toast is not read. |
 
@@ -89,6 +88,7 @@ The Rust exists. The proof is a simulated message, a test hook, a test that did 
 | UI-thread calls from a `Worker` | `new Window`, `Window.fromHandle`, `Screen.all`, `Screen.primary`, `Screen.at`, `Screen.cursor`, `createTray` and `Menu.popup`, called from a `Worker`, throw `sweetview: this call must be made on the UI thread`: `binding.test.ts` "the public window, screen, tray and menu calls made from a Worker throw that they must be made on the UI thread" |
 | Requests from a shared worker | A shared worker's own script and a `fetch` it makes are both answered by the request handler: `sweetview-platform-webview` `tests/shared_worker.rs` `requests_from_a_shared_worker_reach_the_request_handler` |
 | A whole application compiled to one executable | The web-app demo built by its own recipe (`just demos web-app compile-win`), its executable copied alone into a new empty folder under the system temp directory and started there, shows its window: `compiled-app.test.ts` "the web-app demo's compile recipe gives one executable that, copied alone into an empty folder and started there, shows its window" |
+| "No click-through flip while a mouse button is down" | The real left button pressed over a hit region's solid part and held while the cursor crosses its edge: the window stays solid while the button is down and lets clicks through once it is let go: `person_tests::a_held_button_freezes_click_through_across_a_hit_regions_edge_until_it_is_let_go` |
 
 ## The Rust itself
 
