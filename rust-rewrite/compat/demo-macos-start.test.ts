@@ -31,6 +31,18 @@ test("the tray demos run the 1.0 start off macOS only, and the tag's start and c
   expect(seen).toEqual({ "demos/web-app/app.ts": all, "demos/menubar-notify/app.ts": all });
 });
 
+test("menubar-notify keeps its own protocol as at the tag on every platform: the page's history call is still page.ready", () => {
+  const app = read("demos/menubar-notify/app.ts");
+  const service = read("demos/menubar-notify/service.ts");
+  const page = read("demos/menubar-notify/frontend/main.ts");
+  expect({
+    app: app.includes('"page.ready": () => {'),
+    service: service.includes('"page.ready": [void, LogEntry[]];') && service.includes('"page.ready": () => {'),
+    page: page.includes('await bridge.rpc("page.ready")'),
+    renamed: /log\.history/.test(app + service + page),
+  }).toEqual({ app: true, service: true, page: true, renamed: false });
+});
+
 test("the desktop pet appears when its page has drawn it, off macOS; on macOS it is shown at once, as at the tag", () => {
   const a = read("demos/desktop-pet/app.ts");
   const p = read("demos/desktop-pet/frontend/main.ts");

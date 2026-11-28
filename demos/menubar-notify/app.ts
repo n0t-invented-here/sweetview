@@ -83,8 +83,8 @@ const app: App<Methods, Events> = await createApp<Methods, Events>({
   debug: process.env.WEBVIEW_DEBUG === "1",
   uiMethods: {
     "notify.now": () => send(`Sent from the window at ${now()}`),
-    "log.history": () => {
-      logLine("page loaded");
+    "page.ready": () => {
+      logLine("page ready");
       return history;
     },
   },
