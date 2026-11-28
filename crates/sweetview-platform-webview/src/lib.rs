@@ -8,10 +8,10 @@
 //!   handler, on `http://webview.localhost` and `http://frames.webview.localhost`,
 //!   with deferred requests answered later from any thread through
 //!   [`Responder`], streamed bodies included;
-//! * the page behaviour WebView2 has by default and `wry` changes (zoom,
-//!   pinch zoom, swipe navigation, the status bar, CSS `app-region`): half of
-//!   it through `wry`'s own builder options ([`with_page_behaviour`], which
-//!   the caller applies), the rest in `attach`;
+//! * the page behaviour the C++ fork had and `wry` changes (zoom, pinch zoom,
+//!   swipe navigation, CSS `app-region`): through `wry`'s own builder options
+//!   ([`with_page_behaviour`], which the caller applies), and `app-region` in
+//!   `attach`;
 //! * file drop paths, external drop control and the default background colour;
 //! * accelerator keys, navigation failures, focus and popup position for tabs.
 //!

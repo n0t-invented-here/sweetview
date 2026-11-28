@@ -243,7 +243,7 @@ fn real_input_reaches_the_page_as_webview2_would_have_it() {
     drop(view);
     ctx.settle(None, Duration::from_millis(300));
 
-    eprintln!("-- for comparison, wry on its own (zoom and swipe off, app-region on, status bar off)");
+    eprintln!("-- for comparison, wry on its own (zoom and swipe off, app-region on)");
     let alone = ctx.view_built(|b| b.with_hotkeys_zoom(false).with_back_forward_navigation_gestures(false).with_devtools(false), false);
     let window = alone.window.as_ref().unwrap();
     if let Some(monitor) = window.primary_monitor() {

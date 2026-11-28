@@ -10,7 +10,7 @@ what happens underneath, choosing a build, and working on it.
   creates it, and this project's `sweetview-platform-webview` crate adds what
   `wry` has no API for (the request handler with streamed bodies, file drops,
   external drop control, the transparent background, removable user scripts,
-  and WebView2's own page behaviour where `wry` changes it: see
+  and the C++ library's page behaviour where `wry` changes it: see
   [Page behaviour](#page-behaviour)),
   with the request rules in `sweetview-http`. Both are compiled into the
   N-API binding that ships inside `@n1h/sweetview-native`. Nothing else is
@@ -307,18 +307,18 @@ one `onFileDrop` listener ([file drops](native/windows.md#file-drops)).
 ### Page behaviour
 
 Not a C function: what the page does for the person using it. The C++
-library changed none of WebView2's settings except the developer tools, which
-follow `debug`; `wry` changes five, so on Windows the binding puts them back
-(`with_page_behaviour` and `WebviewExtras::attach` in
-`crates/sweetview-platform-webview`), and its tests read each one back from
-WebView2. The result is WebView2's defaults:
+library set two of WebView2's settings (`win32_edge.hh`): the developer tools
+from `debug`, and the status bar off. `wry` changes four others, so on
+Windows the binding puts them back (`with_page_behaviour` and
+`WebviewExtras::attach` in `crates/sweetview-platform-webview`), and its
+tests read each one back from WebView2. The result is the C++ library's:
 
-| Setting | WebView2 and the C++ library | `wry` 0.58.2 alone | Sweetview 1.0 on Windows |
+| Setting | The C++ library | `wry` 0.58.2 alone | Sweetview 1.0 on Windows |
 |---|---|---|---|
 | Zoom with Ctrl+wheel, Ctrl+plus, Ctrl+minus, Ctrl+0 (`IsZoomControlEnabled`) | on | off | on |
 | Pinch zoom (`IsPinchZoomEnabled`) | on | off | on |
 | Back and forward by a horizontal swipe (`IsSwipeNavigationEnabled`) | on | off | on |
-| The status bar: a link's address while the pointer is over it (`IsStatusBarEnabled`) | on | off | on |
+| The status bar: a link's address while the pointer is over it (`IsStatusBarEnabled`; WebView2's default is on) | off | off | off |
 | CSS `app-region` (`IsNonClientRegionSupportEnabled`) | off | on | off |
 | The browser's context menu, its keys (Ctrl+F, Ctrl+P, F5), autofill, script dialogs, the built-in error page, host objects, web messages, SmartScreen (`IsReputationCheckingRequired`) | on | on | on |
 | Saving passwords (`IsPasswordAutosaveEnabled`) | off | off | off |

@@ -209,14 +209,14 @@ Twenty-eight places.
 
 ### 6
 
-Done, on branch `rust-rewrite-fix-webview-behaviour` (DECISIONS D45). The table, read back from WebView2 by `crates/sweetview-platform-webview/tests/settings.rs` on WebView2 Runtime 158.0.4370.45. "Old" is what the C++ library had: it set only the developer tools, so the rest is WebView2's default (the tree records no other setting; the reference's tab strip had to swallow the browser's zoom keys itself).
+Done, on branch `rust-rewrite-fix-webview-behaviour` (DECISIONS D45). The table, read back from WebView2 by `crates/sweetview-platform-webview/tests/settings.rs` on WebView2 Runtime 158.0.4370.45. "Old" is what the C++ library had: it set the developer tools from `debug` and the status bar off (`win32_edge.hh` of `sweetview-webview`, branch `v1-drafting`, lines 1909-1923), and left the rest at WebView2's defaults.
 
 | Setting | Old (C++ library) | Before this change (`wry` 0.58.2) | Now |
 |---|---|---|---|
 | Zoom: Ctrl+wheel, Ctrl+plus/minus/0 (`IsZoomControlEnabled`) | on | **off** | on |
 | Pinch zoom (`IsPinchZoomEnabled`) | on | **off** | on |
 | Swipe back and forward (`IsSwipeNavigationEnabled`) | on | **off** | on |
-| Status bar on link hover (`IsStatusBarEnabled`) | on | **off** | on |
+| Status bar on link hover (`IsStatusBarEnabled`) | off | off | off |
 | CSS `app-region` (`IsNonClientRegionSupportEnabled`) | off | **on** | off |
 | Default context menus | on | on | on |
 | Developer tools | `debug` | `debug` | `debug` |
@@ -227,9 +227,9 @@ Done, on branch `rust-rewrite-fix-webview-behaviour` (DECISIONS D45). The table,
 | User agent | WebView2's | WebView2's | WebView2's |
 | Environment options | none | none (the project creates the environment, D15) | none |
 
-Zoom, pinch and swipe go back through `wry`'s own builder options (`with_page_behaviour`); the status bar and `app-region` through `ICoreWebView2Settings` and `Settings9` in `WebviewExtras::attach` (3 new `unsafe` blocks, in the ledger). `app-region` on can bite: a page with `-webkit-app-region: drag` in a stylesheet shared with another shell (Electron reads the same property) would drag the window and lose that area's mouse events, and a page that never uses it gains nothing; so it is off, as it was.
+Zoom, pinch and swipe go back through `wry`'s own builder options (`with_page_behaviour`); `app-region` through `ICoreWebView2Settings9` in `WebviewExtras::attach` (2 new `unsafe` blocks, in the ledger). The status bar stays off, as the C++ library set it. `app-region` on can bite, and the real-input run below shows it: a page with `-webkit-app-region: drag` in a stylesheet shared with another shell (Electron reads the same property) drags the window and loses that area's mouse events, and a page that never uses it gains nothing; so it is off, as it was.
 
-What an application cannot choose today (no public option): zoom on or off (an application-like page usually wants it off), pinch zoom, swipe navigation, the status bar, the browser's context menu, the browser's keys, `app-region` on, autofill and password saving, the user agent. The developer tools follow `debug`.
+What an application cannot choose today (no public option): zoom on or off (an application-like page usually wants it off), pinch zoom, swipe navigation, the status bar on, the browser's context menu, the browser's keys, `app-region` on, autofill and password saving, the user agent. The developer tools follow `debug`.
 
 `docs/upgrading.md` ("The page behaves as it did") and `docs/webview-library.md` ("Page behaviour") say this.
 

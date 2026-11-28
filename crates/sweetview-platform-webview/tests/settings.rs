@@ -1,9 +1,9 @@
 //! The page behaviour of a real WebView2, read back from WebView2's own
 //! settings objects: what `wry` 0.58.2 sets on its own, and what a webview
 //! built as the runtime builds it (`with_page_behaviour`, then
-//! `WebviewExtras::attach`) has. The C++ fork changed none of these settings,
-//! so the second must be WebView2's defaults, the developer tools apart (they
-//! follow `debug`, as they did).
+//! `WebviewExtras::attach`) has. The C++ fork set only the developer tools
+//! (from `debug`) and the status bar (off) in `win32_edge.hh`, so the second
+//! must be WebView2's defaults with those two as the fork set them.
 #![cfg(windows)]
 #![deny(clippy::undocumented_unsafe_blocks)]
 #![deny(clippy::multiple_unsafe_ops_per_block)]
@@ -90,15 +90,16 @@ fn read(view: &View) -> Settings {
     }
 }
 
-/// WebView2's documented defaults (the `ICoreWebView2Settings` to
-/// `ICoreWebView2Settings9` reference pages), with the developer tools as
-/// given: what an application on the C++ fork had.
-fn webview2_defaults(devtools: bool) -> Settings {
+/// What an application on the C++ fork had: WebView2's documented defaults
+/// (the `ICoreWebView2Settings` to `ICoreWebView2Settings9` reference pages)
+/// with the two the fork set, the developer tools as given and the status bar
+/// off.
+fn cpp_fork(devtools: bool) -> Settings {
     Settings {
         script: true,
         web_messages: true,
         script_dialogs: true,
-        status_bar: true,
+        status_bar: false,
         devtools,
         context_menus: true,
         host_objects: true,
@@ -115,7 +116,7 @@ fn webview2_defaults(devtools: bool) -> Settings {
 }
 
 #[test]
-fn the_page_behaves_as_webview2_does_by_default() {
+fn the_page_behaves_as_it_did_under_the_cpp_fork() {
     let mut ctx = Ctx::new();
 
     // `wry` on its own: its builder defaults for zoom and swipe, no extras.
@@ -123,12 +124,11 @@ fn the_page_behaves_as_webview2_does_by_default() {
     let seen = read(&wry_alone);
     eprintln!("-- wry 0.58.2 on its own: {seen:?}");
     let expected = Settings {
-        status_bar: false,
         zoom_control: false,
         pinch_zoom: Some(false),
         swipe_navigation: Some(false),
         non_client_region: Some(true),
-        ..webview2_defaults(false)
+        ..cpp_fork(false)
     };
     assert_eq!(seen, expected, "what wry changes (a wry upgrade that changes this list needs this file and D45 revisited)");
     drop(wry_alone);
@@ -139,7 +139,7 @@ fn the_page_behaves_as_webview2_does_by_default() {
         ctx.load_index(&view);
         let seen = read(&view);
         eprintln!("-- as the runtime builds it, debug {debug}: {seen:?}");
-        assert_eq!(seen, webview2_defaults(debug), "WebView2's defaults, as the C++ fork left them");
+        assert_eq!(seen, cpp_fork(debug), "the C++ fork's settings");
         drop(view);
     }
     ctx.settle(None, std::time::Duration::from_millis(200));

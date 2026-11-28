@@ -143,12 +143,12 @@ this page: it imports each new form and checks that it is what the row says.
   `%APPDATA%\<exe file name>` (for example `%APPDATA%\bun.exe` under `bun`,
   or `%APPDATA%\my-app.exe` for a compiled executable), so cookies, storage
   and caches carry over. `WEBVIEW2_USER_DATA_FOLDER` still overrides it.
-- **The page behaves as it did.** A webview on Windows has WebView2's own
-  defaults, as the C++ library left them: Ctrl+wheel, Ctrl+plus, Ctrl+minus,
-  Ctrl+0 and a touch pinch zoom the page; a horizontal swipe on a touch screen
-  goes back and forward; the address of a link shows at the bottom while the
-  pointer is over it; the right-click menu is the browser's; the browser's
-  keys (Ctrl+F, Ctrl+P, F5) work; the developer tools follow `debug`. CSS
+- **The page behaves as it did.** A webview on Windows has the settings the
+  C++ library gave it: Ctrl+wheel, Ctrl+plus, Ctrl+minus, Ctrl+0 and a touch
+  pinch zoom the page; a horizontal swipe on a touch screen goes back and
+  forward; no status bar shows a link's address while the pointer is over it;
+  the right-click menu is the browser's; the browser's keys (Ctrl+F, Ctrl+P,
+  F5) work; the developer tools follow `debug`. CSS
   `app-region` (`-webkit-app-region: drag`, from a stylesheet written for
   another shell) does nothing, so such an area gets its mouse events and does
   not drag the window: drag a frameless window with `Window.startDrag`

@@ -111,7 +111,7 @@ impl Ctx {
         let mut context = WebContext::new(Some(
             std::env::temp_dir().join(format!("sweetview-platform-webview-test-{}", std::process::id())),
         ));
-        // Built as the runtime builds its webviews: WebView2's own page behaviour.
+        // Built as the runtime builds its webviews: the C++ library's page behaviour.
         let webview = sweetview_platform_webview::with_page_behaviour(WebViewBuilder::new_with_web_context(&mut context))
             .with_ipc_handler(move |request| sink.borrow_mut().push(request.into_body()));
         let webview = customize(webview).build(&window).expect("webview");

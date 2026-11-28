@@ -135,16 +135,18 @@ pub fn set_background_color(webview: &wry::WebView, r: u8, g: u8, b: u8, a: u8) 
 }
 
 /// The page behaviour the C++ fork's webview had, as far as `wry` has a builder
-/// option for it. The fork changed none of these WebView2 settings, so an
-/// application had WebView2's defaults; `wry` turns them off unless asked:
+/// option for it. The fork left these WebView2 settings at their defaults (it
+/// set only the developer tools and the status bar, off, in `win32_edge.hh`);
+/// `wry` turns them off unless asked:
 ///
 /// * `with_hotkeys_zoom(true)`: `IsZoomControlEnabled` and `IsPinchZoomEnabled`
 ///   on (Ctrl+wheel, Ctrl+plus, Ctrl+minus, Ctrl+0 and touch pinch zoom the page);
 /// * `with_back_forward_navigation_gestures(true)`: `IsSwipeNavigationEnabled`
 ///   on (a horizontal swipe on a touch screen goes back and forward).
 ///
-/// The two settings `wry` sets with no option (the status bar off, CSS
-/// `app-region` support on) are put back by [`WebviewExtras::attach`].
+/// CSS `app-region` support, which `wry` turns on with no option, is turned
+/// off again by [`WebviewExtras::attach`]. The status bar `wry` turns off with
+/// no option was off under the fork too.
 pub fn with_page_behaviour(builder: wry::WebViewBuilder<'_>) -> wry::WebViewBuilder<'_> {
     builder.with_hotkeys_zoom(true).with_back_forward_navigation_gestures(true)
 }
@@ -158,13 +160,13 @@ fn key_down(key: VIRTUAL_KEY) -> bool {
 }
 
 impl WebviewExtras {
-    /// Puts back the status bar and turns CSS `app-region` support off (the
-    /// WebView2 defaults `wry` changes), and adds the request handler (with its
+    /// Turns CSS `app-region` support off (WebView2's default and the fork's,
+    /// which `wry` changes), and adds the request handler (with its
     /// filters on both origins), the file drop script and its message handler,
     /// and the accelerator key and navigation handlers to `webview`. Call it
     /// before the webview's first navigation, so the first document is served,
-    /// gets the drop script and has those settings. Build the webview with
-    /// [`with_page_behaviour`] for the rest of WebView2's defaults.
+    /// gets the drop script and has that setting. Build the webview with
+    /// [`with_page_behaviour`] for the rest of the fork's page behaviour.
     pub fn attach(webview: &wry::WebView, options: ExtrasOptions) -> Result<Self, ErrorCode> {
         let inner = Rc::new(Inner {
             shared: Shared::new(options.wake_ui),
@@ -410,21 +412,19 @@ impl Drop for WebviewExtras {
 }
 
 impl Inner {
-    /// Puts back the two WebView2 defaults `wry` changes with no builder option
-    /// (the rest is [`with_page_behaviour`]): the status bar that shows a link's
-    /// address while the pointer is over it, and CSS `app-region` support off,
-    /// so a page whose stylesheet marks a `-webkit-app-region: drag` area (for
-    /// another shell) does not drag the window here and still gets its mouse
-    /// events. `attach` comes before the first navigation, so the first
-    /// document already has both. A runtime without `ICoreWebView2Settings9` (before
-    /// 1.0.2420) has no `app-region` support to turn off.
+    /// Turns CSS `app-region` support off again, the one WebView2 default `wry`
+    /// changes with no builder option that the fork had (the rest is
+    /// [`with_page_behaviour`]; the status bar `wry` turns off was off under the
+    /// fork too): a page whose stylesheet marks a `-webkit-app-region: drag`
+    /// area (for another shell) does not drag the window here and still gets
+    /// its mouse events. `attach` comes before the first navigation, so the
+    /// first document already has it. A runtime without
+    /// `ICoreWebView2Settings9` (before 1.0.2420) has no `app-region` support
+    /// to turn off.
     fn restore_page_settings(&self) -> windows::core::Result<()> {
         // SAFETY: `self.webview` is a COM reference `Inner` holds to the live ICoreWebView2
         // taken from `wry`; `Settings` takes no arguments and returns an owned reference.
         let settings = unsafe { self.webview.Settings() }?;
-        // SAFETY: `settings` is the COM reference just returned, owned by this frame; the flag
-        // is passed by value.
-        unsafe { settings.SetIsStatusBarEnabled(true) }?;
         if let Ok(settings9) = settings.cast::<ICoreWebView2Settings9>() {
             // SAFETY: `settings9` is a COM reference this frame holds (from `cast`) to the same
             // settings object; the flag is passed by value.
