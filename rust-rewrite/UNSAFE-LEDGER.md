@@ -1,12 +1,12 @@
 # Unsafe ledger
 
-Rewritten by `bun rust-rewrite/verify.ts <platform> --ledger`. 256 uses in 21 files.
+Rewritten by `bun rust-rewrite/verify.ts <platform> --ledger`. 262 uses in 21 files.
 
 | File | Uses of `unsafe` |
 |---|---|
 | `crates/sweetview-platform-input/src/windows.rs` | 8 |
 | `crates/sweetview-platform-input/tests/windows_hooks.rs` | 7 |
-| `crates/sweetview-platform-loop/src/com.rs` | 5 |
+| `crates/sweetview-platform-loop/src/com.rs` | 7 |
 | `crates/sweetview-platform-loop/src/windows.rs` | 36 |
 | `crates/sweetview-platform-notify/src/windows.rs` | 11 |
 | `crates/sweetview-platform-shell/src/clipboard.rs` | 13 |
@@ -22,7 +22,7 @@ Rewritten by `bun rust-rewrite/verify.ts <platform> --ledger`. 256 uses in 21 fi
 | `crates/sweetview-platform-window/src/size_hint.rs` | 1 |
 | `crates/sweetview-platform-window/src/tab_frame.rs` | 16 |
 | `crates/sweetview-platform-window/src/tab_frame_tests.rs` | 12 |
-| `crates/sweetview-platform-window/src/test_support.rs` | 2 |
+| `crates/sweetview-platform-window/src/test_support.rs` | 6 |
 | `crates/sweetview-platform-window/src/windows.rs` | 38 |
 | `crates/sweetview-platform-window/src/windows_tests.rs` | 14 |
 
@@ -45,10 +45,12 @@ Shared types every platform crate uses, all in `sweetview-platform-loop`: `Messa
 - **Handle counts** (4: `GetCurrentProcess`, `GetGuiResources` twice, `GetProcessHandleCount`). Looked for: `std::process` (https://doc.rust-lang.org/std/process/index.html) has no handle count, and the `windows` 0.62.2 declarations of all three (`windows-0.62.2/src/Windows/Win32/System/Threading/mod.rs`) are `unsafe fn` with no safe wrapper; `sysinfo` and the other process-statistics crates are not in the policy's list. The pseudo-handle is a constant that needs no closing; the out-parameter is a local.
 - Tests (12): `IsWindow` (the window still exists after a posted `WM_CLOSE`), `DestroyWindow` (destroys a window out from under its owner), `RegisterClassExW` with a `DefWindowProcW` procedure (a class of the same name registered by other code), `PostMessageW` twice (a `WM_CLOSE` and a `WM_NCDESTROY` posted past the `Poster`'s range, as another process can) and `SendMessageW` (a `WM_NCDESTROY` sent from another thread), `SetWindowsHookExW`, `CallNextHookEx`, `UnhookWindowsHookEx` and `GetCurrentThreadId` for the `WH_CBT` hook that plants a stale entry under a new window's handle value, and one `PostMessageW` that fills the thread's queue to its limit.
 
-### `crates/sweetview-platform-loop/src/com.rs` (4: 2 source, 2 test)
+### `crates/sweetview-platform-loop/src/com.rs` (7: 4 source, 3 test)
 
 - **The UI thread's STA** (2: `CoInitializeEx`, `CoUninitialize`). Looked for: `windows` 0.62.2 / `windows-core` 0.62.2 have no safe COM initialisation (`windows-core-0.62.2/src`: none); `wry` initialises COM inside `build` only (`wry-0.58.2/src/webview2/mod.rs`). Contained by `ComApartment`: made only after a successful initialise, not `Send`, balanced once in `Drop`.
+- **The process's MTA usage** (2: `CoIncrementMTAUsage`, `CoDecrementMTAUsage`; D46). Keeps COM loaded while no thread is in an apartment, so the agile WinRT factories `windows-core` caches for the process (`windows-core-0.62.2/src/imp/factory_cache.rs`, `FactoryCache`) never outlive their DLLs. Looked for: no safe wrapper in `windows` 0.62.2 (`windows-0.62.2/src/Windows/Win32/System/Com/mod.rs`, `pub unsafe fn CoIncrementMTAUsage`); `windows-core` calls the same function itself when COM is not initialised (`load_factory`). Contained by `MtaUsage`, which owns the cookie (an opaque number, never dereferenced) and gives it back in `Drop`; its one value lives in a static, taken once, for the life of the process.
 - Test `entering_twice_and_leaving_is_balanced` (2): makes a thread multi-threaded with `CoInitializeEx` and leaves it with `CoUninitialize`, to prove an STA is then refused.
+- Test `once_an_apartment_is_entered_a_thread_with_no_com_of_its_own_is_in_the_implicit_mta` (1): `CoGetApartmentType` on a thread that never initialised COM, to read what the process's MTA usage changes for it.
 
 `loop_host.rs` has none: `LoopHost` keeps a clone of `tao`'s `EventLoopWindowTarget`, which is `Clone` in 0.38.0 (`tao-0.38.0/src/event_loop.rs`, `#[derive(Clone)] pub struct EventLoopWindowTarget`).
 
@@ -167,9 +169,9 @@ The double-click time is the safe WinRT `UISettings::DoubleClickTime` of `window
 
 `TestWindow`, a plain `STATIC` window an application would hand over (`CreateWindowExW`, `DestroyWindow`, `SendMessageW`), a second `DestroyWindow` that destroys a lent window from inside the call it is lent to, and a shell file drop built as the shell builds one (`GlobalAlloc`, `GlobalLock`, the `DROPFILES` write, the path copy, `GlobalUnlock`, and `GlobalSize` to see that `DragFinish` freed it), and a thread of the test's own that pumps its window and then stops answering (`PeekMessageW`, `DispatchMessageW`), for the parked icons' limit (D41), and a second such thread with six windows, for the sweep's budget (D41).
 
-### `crates/sweetview-platform-window/src/test_support.rs` (2, test)
+### `crates/sweetview-platform-window/src/test_support.rs` (6, test)
 
-Compiled only for tests (this crate's, and the runtime's through the `test-support` feature of a dev-dependency). `shows_valid_icons` reads a window's icons with `WM_GETICON` and asks `GetIconInfo` whether each is an icon (`GetIconInfo`, and `DeleteObject` for the bitmaps it hands back), to prove a released window still shows icons that exist.
+Compiled only for tests (this crate's, and the runtime's through the `test-support` feature of a dev-dependency). `shows_valid_icons` reads a window's icons with `WM_GETICON` and asks `GetIconInfo` whether each is an icon (`GetIconInfo`, and `DeleteObject` for the bitmaps it hands back), to prove a released window still shows icons that exist. `watch_destroy` (3: `SetWindowSubclass`, and `RemoveWindowSubclass` in `Drop` and on `WM_NCDESTROY`) runs a test's closure inside a window's `WM_DESTROY`, to read the order a teardown runs in (D46: a standalone webview's window hidden before its webview goes, a webview going before the window it fills); `first_child` (1: `GetWindow` with `GW_CHILD`) finds WebView2's own window under a webview's container; `post_close` posts `WM_CLOSE` through the crate's own `post_message`. No safe API reports or orders these, and they are tests' readers of OS state.
 
 ### `crates/sweetview-platform-window/src/tab_frame.rs` (16)
 
