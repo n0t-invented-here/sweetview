@@ -119,6 +119,17 @@ describe("rows and paragraphs say what the code does, no more", () => {
   });
 });
 
+describe("what the guide says its test does", () => {
+  test("the guide says a row with a new form is run, and what is checked of a row that says no public call in 1.0", () => {
+    const text = guideLines.join(" ").replace(/\s+/g, " ");
+    expect({
+      everyRowIsRun: /Every row is run by/.test(text),
+      newFormRun: /A row with a new form is run by `rust-rewrite\/compat\/upgrade-guide\.test\.ts`/.test(text),
+      noPublicChecked: /A row that says `no public call in 1\.0` is checked by name/.test(text),
+    }).toEqual({ everyRowIsRun: false, newFormRun: true, noPublicChecked: true });
+  });
+});
+
 describe("internals named in passing", () => {
   test("docs/app.md's list of what the end of the application releases names no internal call", () => {
     const list = read("docs/app.md").replace(/\s+/g, " ");

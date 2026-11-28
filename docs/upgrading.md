@@ -343,8 +343,12 @@ Each row has three columns:
 - **Change**: what is different, in a few words. `unchanged` means the
   import and the call stay as they are.
 
-Every row is run by `rust-rewrite/compat/upgrade-guide.test.ts`, which reads
-this page: it imports each new form and checks that it is what the row says.
+A row with a new form is run by `rust-rewrite/compat/upgrade-guide.test.ts`,
+which reads this page: it imports each new form, checks that it is what the
+row says, and runs it. A row that says `no public call in 1.0` is checked by
+name: the test pins the list of those rows, checks that no public entry point
+exports what each names, and that each public call its Change column names
+exists.
 
 ## Part A: published 0.x packages
 
