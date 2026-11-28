@@ -13,6 +13,7 @@
 // dropped, never misrouted as a cold-launch click.
 
 import { FFIType } from "bun:ffi";
+import { reportCallbackError } from "../callback-errors";
 import { type NotificationClick, type NotifierBackend, type NotifierOptions, notificationId } from "../notifications";
 import {
   NIL,
@@ -96,7 +97,7 @@ function deliverClick({ fromThisProcess, ...click }: NotificationClick & { fromT
       try {
         owner.onClick(click);
       } catch (err) {
-        console.error("sweetview: notification onClick threw:", err); // never unwind into AppKit
+        reportCallbackError("notifier.onClick", err, "sweetview: notification onClick threw:"); // never unwind into AppKit
       }
     }
     return;
@@ -110,7 +111,7 @@ function deliverClick({ fromThisProcess, ...click }: NotificationClick & { fromT
       try {
         entry.onClick(click);
       } catch (err) {
-        console.error("sweetview: notification onClick threw:", err);
+        reportCallbackError("notifier.onClick", err, "sweetview: notification onClick threw:");
       }
       return;
     }
@@ -132,7 +133,7 @@ function ensureSharedDelegate(): Id {
         try {
           deliverClick(readClick(response));
         } catch (err) {
-          console.error("sweetview: notification click handling threw:", err);
+          reportCallbackError("internal", err, "sweetview: notification click handling threw:");
         }
         invokeBlock(handler, []);
       },

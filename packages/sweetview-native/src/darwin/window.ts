@@ -13,6 +13,7 @@
 //   replacing NSWindow.delegate.
 
 import { FFIType, JSCallback } from "bun:ffi";
+import { reportCallbackError } from "../callback-errors";
 import { hitRegions, packRegions } from "../hit-regions";
 import type { HitRefiner, Point, Rect, ResizeEdge, WindowBackend, WindowHandle, WindowOptions } from "../window";
 import {
@@ -107,7 +108,7 @@ function deliverFileDrop(listeners: Set<(paths: string[]) => void>, paths: strin
     try {
       handler(paths);
     } catch (err) {
-      console.error("sweetview: onFileDrop handler threw:", err);
+      reportCallbackError("window.onFileDrop", err, "sweetview: onFileDrop handler threw:");
     }
   }
 }
@@ -158,7 +159,7 @@ function fireResize(win: Id): void {
     try {
       fn(r);
     } catch (err) {
-      console.error("sweetview: onResize handler threw:", err);
+      reportCallbackError("window.onResize", err, "sweetview: onResize handler threw:");
     }
   }
 }
@@ -171,7 +172,7 @@ function fireMove(win: Id): void {
     try {
       fn(r);
     } catch (err) {
-      console.error("sweetview: onMove handler threw:", err);
+      reportCallbackError("window.onMove", err, "sweetview: onMove handler threw:");
     }
   }
 }
@@ -183,7 +184,7 @@ function fireClose(win: Id): boolean {
     try {
       fn();
     } catch (err) {
-      console.error("sweetview: onClose handler threw:", err);
+      reportCallbackError("window.onClose", err, "sweetview: onClose handler threw:");
     }
   }
   return true;
@@ -266,7 +267,7 @@ function ensureWindowSubclass(className: string, allowKeyWhenBorderless: boolean
           else send(selfWin, sel("close"));
         }
       } catch (err) {
-        console.error("sweetview: performClose: threw:", err);
+        reportCallbackError("internal", err, "sweetview: performClose: threw:");
       }
     },
     { args: [ID, ID, ID], returns: FFIType.void },
@@ -285,7 +286,7 @@ function ensureWindowSubclass(className: string, allowKeyWhenBorderless: boolean
       try {
         return performFileDrop(win, sender);
       } catch (err) {
-        console.error("sweetview: could not read dropped files:", err);
+        reportCallbackError("internal", err, "sweetview: could not read dropped files:");
         return false;
       }
     },
@@ -385,7 +386,7 @@ function refineHit(win: Id, state: HitState, inPolygon: boolean, x: number, y: n
 function ensureHitTimer() {
   if (hitTimer !== NIL) return;
   if (hitTickTarget === NIL) {
-    hitTickTarget = makeTarget("SweetviewHitTimer", { "tick:": () => pollHits() });
+    hitTickTarget = makeTarget("SweetviewHitTimer", { "tick:": () => pollHits() }, "NSObject", { "tick:": "hitRegions.refine" });
   }
   hitTimer = retain(
     asId(sendF64PtrSelPtrBool(cls("NSTimer"), sel("scheduledTimerWithTimeInterval:target:selector:userInfo:repeats:"), 0.01, hitTickTarget, sel("tick:"), NIL, true)),
@@ -422,7 +423,7 @@ function ensureResizeTimer() {
           try {
             fn();
           } catch (err) {
-            console.error("sweetview: resize gesture threw:", err);
+            reportCallbackError("internal", err, "sweetview: resize gesture threw:");
           }
         }
         stopResizeTimerIfIdle();
@@ -642,7 +643,7 @@ export function bindDarwinTabGroup(backend: WindowBackend, controller: DarwinTab
         if (state.boundsChanged) controller.setBounds(state.bounds);
         if (visible === true) controller.show();
       } catch (err) {
-        console.error("sweetview: replaying tabbed window state threw:", err);
+        reportCallbackError("internal", err, "sweetview: replaying tabbed window state threw:");
       }
     },
     fireResize(bounds) {
@@ -652,7 +653,7 @@ export function bindDarwinTabGroup(backend: WindowBackend, controller: DarwinTab
         try {
           fn(bounds);
         } catch (err) {
-          console.error("sweetview: onResize handler threw:", err);
+          reportCallbackError("window.onResize", err, "sweetview: onResize handler threw:");
         }
       }
     },
@@ -663,7 +664,7 @@ export function bindDarwinTabGroup(backend: WindowBackend, controller: DarwinTab
         try {
           fn(bounds);
         } catch (err) {
-          console.error("sweetview: onMove handler threw:", err);
+          reportCallbackError("window.onMove", err, "sweetview: onMove handler threw:");
         }
       }
     },
@@ -674,7 +675,7 @@ export function bindDarwinTabGroup(backend: WindowBackend, controller: DarwinTab
         try {
           fn();
         } catch (err) {
-          console.error("sweetview: onClose handler threw:", err);
+          reportCallbackError("window.onClose", err, "sweetview: onClose handler threw:");
         }
       }
       return true;

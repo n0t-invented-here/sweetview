@@ -3,6 +3,7 @@
 // leaks Objective-C classes or callbacks.
 
 import { resolveMenu, type MenuSource } from "../menu";
+import type { CallbackKind } from "../callback-errors";
 import type { TrayBackend, TrayIcon, TrayOptions } from "../tray";
 import { applyImage, makeImage } from "./image";
 import { type BuiltMenu, buildMenu } from "./menu";
@@ -43,13 +44,20 @@ type TrayDispatch = {
 };
 
 const traysByButton = new Map<Id, TrayDispatch>();
+/** What `trayAction:` was running when it threw: the menu function, or the double-click handler. */
+let trayActionKind: CallbackKind = "tray.menu";
 let sharedTarget: Id | undefined;
 
 function trayTarget(): Id {
-  sharedTarget ??= makeTarget("SweetviewTrayTarget", {
-    "trayAction:": (sender) => traysByButton.get(sender)?.onAction(),
-    "traySingleClick:": (sender) => traysByButton.get(sender)?.onSingleClick(),
-  });
+  sharedTarget ??= makeTarget(
+    "SweetviewTrayTarget",
+    {
+      "trayAction:": (sender) => traysByButton.get(sender)?.onAction(),
+      "traySingleClick:": (sender) => traysByButton.get(sender)?.onSingleClick(),
+    },
+    "NSObject",
+    { "trayAction:": () => trayActionKind, "traySingleClick:": "tray.onClick" },
+  );
   return sharedTarget;
 }
 
@@ -92,6 +100,7 @@ export function createTray(options: TrayOptions): TrayBackend {
       const control = (BigInt(sendInt(event, sel("modifierFlags")) ?? 0) & NSEventModifierFlagControl) !== 0n;
       // macOS convention: a menu bar item's menu opens on any click.
       if (menu !== undefined || type === NSEventTypeRightMouseUp || (type === NSEventTypeLeftMouseUp && control)) {
+        trayActionKind = "tray.menu";
         showMenu();
         return;
       }
@@ -99,6 +108,7 @@ export function createTray(options: TrayOptions): TrayBackend {
       const clicks = BigInt(sendInt(event, sel("clickCount")) ?? 1);
       if (clicks >= 2n) {
         sendPtrSelPtrVoid(cls("NSObject"), sel("cancelPreviousPerformRequestsWithTarget:selector:object:"), target, sel("traySingleClick:"), button);
+        trayActionKind = "tray.onDoubleClick";
         options.onDoubleClick?.();
       } else if (options.onClick) {
         const delay = Number(sendRetF64(cls("NSEvent"), sel("doubleClickInterval")) ?? 0.3);

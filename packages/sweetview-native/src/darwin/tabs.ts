@@ -3,6 +3,7 @@
 // never leak Objective-C runtime classes. Zero WKWebView imports here.
 
 import type { Appearance, Rect } from "../window";
+import { reportCallbackError } from "../callback-errors";
 import {
   NIL,
   type Id,
@@ -204,7 +205,7 @@ export function createWindowTabs(options: WindowTabsOptions): WindowTabs {
       try {
         options.onWillClose?.(window);
       } catch (err) {
-        console.error("sweetview: a tab window's onWillClose threw:", err);
+        reportCallbackError("internal", err, "sweetview: a tab window's onWillClose threw:");
       }
       if (lastSelected === window) {
         // Advance to another live tab in the same group (or none; current() falls back).

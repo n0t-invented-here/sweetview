@@ -29,7 +29,7 @@ import {
 } from "@n1h/sweetview-native/darwin/objc";
 import { pooled } from "@n1h/sweetview-native/darwin/tabs";
 import { pumpEvents } from "@n1h/sweetview-native";
-import { scheduleNativeTimeout } from "@n1h/sweetview-native/internal";
+import { reportCallbackError, scheduleNativeTimeout } from "@n1h/sweetview-native/internal";
 
 /**
  * Finds the WKWebView subview hosted inside an NSWindow's contentView.
@@ -188,7 +188,7 @@ function tabUIDelegate(): Id {
             page.timers.add(cancel);
           }
         } catch (err) {
-          console.error("sweetview: the new-window handler threw:", err);
+          reportCallbackError("internal", err, "sweetview: the new-window handler threw:");
         }
         return NIL;
       },
@@ -205,7 +205,7 @@ function tabUIDelegate(): Id {
             invokeBlock(asId(completion), [FFIType.u64], 0n);
           }
         } catch (err) {
-          console.error("sweetview: the open panel forwarder threw:", err);
+          reportCallbackError("internal", err, "sweetview: the open panel forwarder threw:");
         }
       },
       { args: [ID, ID, ID, ID, ID, ID], returns: FFIType.void },

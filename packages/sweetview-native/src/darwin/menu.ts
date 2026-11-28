@@ -39,7 +39,7 @@ const NSMenuItemImageVisibilityVisible = 1n;
 const handlers = new Map<Id, () => void>();
 
 let target: Id | undefined;
-const menuTarget = () => (target ??= makeTarget("SweetviewMenuTarget", { "menuAction:": (sender) => handlers.get(sender)?.() }));
+const menuTarget = () => (target ??= makeTarget("SweetviewMenuTarget", { "menuAction:": (sender) => handlers.get(sender)?.() }, "NSObject", { "menuAction:": "menu.click" }));
 
 export type BuiltMenu = { readonly menu: Id; readonly dispose: () => void };
 

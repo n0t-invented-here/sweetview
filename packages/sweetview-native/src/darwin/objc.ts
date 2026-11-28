@@ -8,6 +8,7 @@
 // objc_msgSend dereferences garbage.
 
 import { CFunction, CString, FFIType, JSCallback, dlopen, ptr, read, type Pointer } from "bun:ffi";
+import { reportCallbackError, type CallbackKind } from "../callback-errors";
 
 // Make sure AppKit classes exist even if nothing else has loaded the framework.
 dlopen("/System/Library/Frameworks/AppKit.framework/AppKit", {
@@ -97,9 +98,17 @@ let targetClasses = 0;
 /**
  * Registers a fresh subclass whose selectors call into JavaScript; the name is made unique, so the same base name can be used again.
  * `superclass` is NSObject unless the instance has to be something more: an NSResponder can be a window's
- * `nextResponder`, which puts its methods in that window's responder chain.
+ * `nextResponder`, which puts its methods in that window's responder chain. `kinds` says, per selector, which
+ * application callback an exception thrown there came from (`reportCallbackError`); a selector it does not name
+ * runs only Sweetview's own code, and its exception is `internal`. The line printed with no `onCallbackError`
+ * listener is the same either way.
  */
-export function makeTarget(baseName: string, methods: Record<string, TargetMethod>, superclass = "NSObject"): Id {
+export function makeTarget(
+  baseName: string,
+  methods: Record<string, TargetMethod>,
+  superclass = "NSObject",
+  kinds: Record<string, CallbackKind | (() => CallbackKind)> = {},
+): Id {
   const className = `${baseName}_${++targetClasses}`;
   const klass = asId(objc.symbols.objc_allocateClassPair(cls(superclass), cstr(className), 0n));
   if (klass === NIL) throw new Error(`objc_allocateClassPair(${className}) failed (already registered?)`);
@@ -111,7 +120,8 @@ export function makeTarget(baseName: string, methods: Record<string, TargetMetho
         try {
           impl(...args.map((a) => BigInt(a ?? 0)));
         } catch (err) {
-          console.error(`sweetview: ${className} ${selector} threw:`, err);
+          const kind = kinds[selector];
+          reportCallbackError(typeof kind === "function" ? kind() : (kind ?? "internal"), err, `sweetview: ${className} ${selector} threw:`);
         }
       },
       { args: [ID, ID, ...Array<FFIType>(argc).fill(ID)], returns: FFIType.void },
