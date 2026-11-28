@@ -5,7 +5,8 @@
 // and the checked calls throw code -3. Run with WEBVIEW_PATH set to a file that does not exist: it has
 // no effect on Windows. Prints one JSON line.
 
-import { SizeHint, Webview, WebviewError, Window, completeWebviewRequest, endWebviewResponse, pumpEvents } from "@n1h/sweetview-native";
+import { Window, pumpEvents } from "@n1h/sweetview-native";
+import { RawWebview as Webview, SizeHint, WebviewError, completeWebviewRequest, endWebviewResponse } from "@n1h/sweetview";
 
 const report: Record<string, unknown> = { webviewPath: process.env.WEBVIEW_PATH };
 const errorOf = (fn: () => unknown): string => {

@@ -11,7 +11,8 @@ import { join } from "node:path";
 import { SizeHint as RootSizeHint, windowChromeMethods } from "@n1h/sweetview";
 import { wsHost } from "@n1h/sweetview/ipc-ws";
 import { defineService } from "@n1h/sweetview/ipc";
-import { Feature, KeyEvent, Modifier, MouseEvent, Permission, SizeHint, Window, dotIco, setAppMenu, unload } from "@n1h/sweetview-native";
+import { Feature, KeyEvent, Modifier, MouseEvent, Permission, Window, dotIco, setAppMenu, unload } from "@n1h/sweetview-native";
+import { SizeHint } from "@n1h/sweetview";
 
 const root = join(import.meta.dir, "..", "..");
 const fixture = (name: string) => join(import.meta.dir, "fixtures", name);
