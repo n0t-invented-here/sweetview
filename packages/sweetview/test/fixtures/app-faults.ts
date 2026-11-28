@@ -7,9 +7,12 @@
 //     the next, and the reply behind them is still delivered.
 //   - A worker that crashes: its failure is printed once.
 //
+//   bun app-faults.ts           no onCallbackError listener: what stderr shows
+//   bun app-faults.ts listen    one listener: what it is told, and what stderr still shows
+//
 // Prints `RESULT <json>`. No input is injected.
 
-import { pumpEvents } from "@n1h/sweetview-native";
+import { onCallbackError, pumpEvents } from "@n1h/sweetview-native";
 import { createApp } from "../../src/index";
 
 // Values that cannot be turned into text the usual way: `instanceof` throws for the first, and
@@ -48,6 +51,8 @@ const page = `<!doctype html><title>app faults</title><script>
 
 let seen: unknown;
 const tapped: string[] = [];
+const told: string[] = [];
+if (process.argv[2] === "listen") onCallbackError((error, source) => void told.push(`${source.kind}: ${error.message}`));
 const app = await createApp({
   title: `sweetview app faults ${process.pid}`,
   noActivate: true,
@@ -69,8 +74,9 @@ const app = await createApp({
     },
   },
 });
-app.onEvent(() => {
-  throw new Error("onEvent listener");
+// Throws for the first event only, so what is printed or told is the same however the events are drained.
+app.onEvent((event) => {
+  if (event.payload === 1) throw new Error("onEvent listener");
 });
 app.onEvent((event) => void tapped.push(`${event.name} ${String(event.payload)}`));
 
@@ -85,5 +91,5 @@ async function pumpUntil(done: () => boolean, ms: number) {
 await pumpUntil(() => seen !== undefined, 30_000);
 await pumpUntil(() => false, 1500);
 app.dispose();
-console.log("RESULT " + JSON.stringify({ seen: seen ?? null, tapped }));
+console.log("RESULT " + JSON.stringify({ seen: seen ?? null, tapped, told }));
 process.exit(0);

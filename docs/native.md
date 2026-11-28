@@ -64,8 +64,10 @@ listener:
 import { onCallbackError } from "@n1h/sweetview/native";
 
 onCallbackError((error, { kind, name }) => {
-  // error: the Error the handler threw (a thrown non-error is wrapped, with the value as its cause)
-  // kind: where it came from, such as "tray.onClick"; name: the binding's own name, when it caught it
+  // error: the Error the handler threw, that object itself (a thrown non-error is wrapped, with the value as its cause)
+  // kind: where it came from, such as "tray.onClick"
+  // name: for webview.bind and webview.bindRaw, the name the function was bound under; for a fault the
+  //   binding caught itself, the binding's name for the callback; otherwise absent
 });
 ```
 
@@ -113,10 +115,10 @@ exception leaves the bindings package as it always did.
 | `mouseHook`, `keyboardHook` | `installMouseHook`, `installKeyboardHook` handlers | `sweetview: mouse hook handler threw:` (`keyboard hook`) | the event is not swallowed |
 | `singleInstance.onSecondInstance`, `onOpenUrl` | those listeners | `sweetview: onSecondInstance handler threw:`, `sweetview: onOpenUrl handler threw:` | the other listeners still run |
 | `webview.bind` | a function bound with the raw webview class's `bind` (`name` is its name), which throws or whose promise rejects | nothing | the page's call is rejected |
-| `webview.bindRaw` | a function bound with `bindRaw` (caught by the binding itself: `name` is its name for it) | `sweetview: a binding threw:` | the page's call is left unanswered |
+| `webview.bindRaw` | a function bound with `bindRaw` (caught by the binding itself; `name` is the name it was bound under) | `sweetview: a binding threw:` | the page's call is left unanswered |
 | `webview.setRequestHandler` | the raw webview class's request handler, which throws or whose promise rejects | nothing | the request is answered `500` |
 | `webview.setFileDropHandler` | the raw webview class's file drop handler | nothing | none |
-| `worker` | the delivery of the worker's replies and events on the UI thread, the application's `onEvent` listeners included | `sweetview: UI dispatch failed:` | the next delivery still runs |
+| `worker` | an `onEvent` listener of a `createApp` application or a `WebView`, called as the worker's events are delivered on the UI thread | `sweetview: UI dispatch failed:` (several in one delivery: one `AggregateError`) | the other listeners and the page still get the event, and the delivery goes on |
 | `internal` | the native module's own code at a callback boundary (the tab frame's callbacks, a window's dispose hooks, its own native timeouts, intervals and deferred jobs, which no public call makes); a fault here is a defect of Sweetview's | its own line | that boundary's |
 
 What a listener is not told about: the faults `@n1h/sweetview` catches (a
@@ -127,9 +129,9 @@ a fault inside the worker; and a `Menu.popup` item's `click` on Windows,
 which runs after the menu has closed, inside `Menu.popup`, so its exception
 comes out of `Menu.popup` to the code that called it. On Windows, a fault
 the binding itself catches past these (its `sweetview: <kind> threw:` line
-on stderr) reaches the listener too, with the binding's name for the
-callback as `name` and the binding's text of the exception (such as
-`Error: boom`) as the message.
+on stderr) reaches the listener too: the error is the value the callback
+threw, and `name` is the binding's name for the callback, or for a function
+bound with `bindRaw` the name it was bound under.
 
 A shipped application has no console: an executable compiled with
 `--windows-hide-console` has no stderr, so without a listener these lines

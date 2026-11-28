@@ -39,8 +39,10 @@ pub fn is_loop_blocking() -> napi::Result<bool> {
 }
 
 /// Makes `sink` where an exception a JavaScript callback threw goes on this thread, as
-/// `(kind, message)`, in place of the `sweetview: <kind> threw:` line on stderr; `null` puts the
-/// line back. `onCallbackError` sets it while it has a listener.
+/// `(kind, name, reason, thrown)`: the binding's name for the callback, the name a raw binding was
+/// bound under (else null), the exception's text, and the value thrown. It is called in place of
+/// the `sweetview: <kind> threw:` line on stderr; `null` puts the line back. `onCallbackError` sets
+/// it while it has a listener.
 #[napi(catch_unwind)]
 pub fn set_callback_error_sink(env: Env, sink: Option<Function<'_, FnArgs<(String, Option<String>, String, napi::Error)>, ()>>) -> napi::Result<()> {
   imp::set_callback_error_sink(env, sink)

@@ -706,20 +706,38 @@ page). [WebView2 Feedback #3519](https://github.com/MicrosoftEdge/WebView2Feedba
 
 An exception thrown by one of these handlers never reaches
 `process.on("uncaughtException")`, and most of them print nothing: the page
-or the request gets the failure instead. They are not reported to an
-[`onCallbackError`](native.md#exceptions-thrown-by-your-callbacks)
-listener, which hears of the native module's callbacks only.
+or the request gets the failure instead. Each fault stays in its own call: the
+other calls, requests and events go on.
 
-| Handler | What the page or the request gets | Printed |
-|---|---|---|
-| A `uiMethods` method | the call is rejected with the error's message | nothing |
-| A `deferredUiMethods` method | the call is rejected with the error's message, on the later tick the method ran in | nothing |
-| An `onRequest` function | `500 Internal Server Error` | nothing |
-| `onReady`, `onReadyTimeout` | (no effect on the page) | `sweetview: onReady handler threw:` (`onReadyTimeout`) |
-| A method of the worker's service (`hostService`) | the call is rejected with the error's message | nothing |
-| The worker's own uncaught exception | the worker ends, and every call waiting on it is rejected | `sweetview: the worker failed:` |
-| A worker method called with `notify` (no reply) | nothing | `<method> failed:`, in the worker |
-| A worker route handler (`onRequest: "worker"`) | `500` ([worker](worker.md)) | nothing |
+| Handler | What the page or the request gets | Printed with no listener | Told to an `onCallbackError` listener |
+|---|---|---|---|
+| A `uiMethods` method | the call is rejected with the error's message | nothing | no |
+| A `deferredUiMethods` method | the call is rejected with the error's message, on the later tick the method ran in; the other calls of that tick are still answered | nothing | no |
+| An `onRequest` function | `500 Internal Server Error` | nothing | no |
+| `onReady`, `onReadyTimeout` | (no effect on the page) | `sweetview: onReady handler threw:` (`onReadyTimeout`) | no: the line is printed with a listener too |
+| An `onEvent` listener | the other listeners and the page still get the event, and the worker's later replies and events are still delivered | `sweetview: UI dispatch failed:` (one error as it was thrown; several thrown in one delivery as one `AggregateError`) | yes, as `worker`, in place of the line |
+| A method of the worker's service (`hostService`) | the call is rejected with the error's message | nothing | no |
+| The worker's own uncaught exception | the worker ends, and every call waiting on it is rejected | `sweetview: the worker failed:`, once | no: the line is printed with a listener too |
+| A worker method called with `notify` (no reply) | nothing | `<method> failed:`, in the worker | no |
+| A worker route handler (`onRequest: "worker"`) | `500` ([worker](worker.md)) | nothing | no |
+
+The error's message is the page's text: an `Error`'s `message`, else the
+value's `String()` form. A thrown value neither can be read from (a `Proxy`
+whose traps throw, an object with no prototype) still rejects its call, with
+its `Object.prototype.toString` tag, such as `[object Object]`.
+
+In an application made with `createApp`, on Windows, an
+[`onCallbackError`](native.md#exceptions-thrown-by-your-callbacks) listener
+is told about the exceptions of the native module's callbacks the application
+sets, on `app.window` and elsewhere (a `Window` listener such as `onClose` or
+`onFileDrop`, which a file dropped on the page reaches; a tray, a menu, a
+notification, a hook, a single-instance or open-URL listener), and about an
+`onEvent` listener's, as `worker`. It is not told about the handlers above
+marked "no", a fault inside the worker, a fault in the tab machinery of
+`@n1h/sweetview` (moving a tab to a new window, detaching a tab from the
+strip, opening a page's new-window request as a tab: those print their error
+to the console), or a `Menu.popup` item's `click` (its exception comes out of
+`Menu.popup`). On macOS no listener is called.
 
 In the page, `await` each call (or attach a `catch`): a call the page never
 awaits is rejected unseen there.

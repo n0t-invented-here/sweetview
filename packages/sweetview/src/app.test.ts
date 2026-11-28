@@ -712,16 +712,18 @@ describe.if(process.platform === "darwin")("WebView, createApp & tabs (darwin)",
 // of its own. No input is injected.
 describe.if(onWindows)("a fault in one callback of createApp stays in that callback", () => {
   type Seen = Record<string, unknown> & { events: string[] };
-  let run: Promise<{ exitCode: number; seen: Seen | null; tapped: string[]; stderr: string }> | undefined;
-  const faults = () =>
-    (run ??= (async () => {
+  type Run = { exitCode: number; seen: Seen | null; tapped: string[]; told: string[]; stderr: string };
+  const runs = new Map<string, Promise<Run>>();
+  const faults = (mode: "" | "listen" = ""): Promise<Run> => {
+    let run = runs.get(mode);
+    if (!run) runs.set(mode, (run = (async () => {
       const { mkdtempSync, rmSync } = await import("node:fs");
       const { tmpdir } = await import("node:os");
       const { join } = await import("node:path");
       const { fileURLToPath } = await import("node:url");
       const profile = mkdtempSync(join(tmpdir(), "sweetview-app-faults-"));
       try {
-        const proc = Bun.spawn([process.execPath, fileURLToPath(new URL("../test/fixtures/app-faults.ts", import.meta.url))], {
+        const proc = Bun.spawn([process.execPath, fileURLToPath(new URL("../test/fixtures/app-faults.ts", import.meta.url)), ...(mode ? [mode] : [])], {
           env: { ...process.env, WEBVIEW2_USER_DATA_FOLDER: profile },
           stdout: "pipe",
           stderr: "pipe",
@@ -730,7 +732,7 @@ describe.if(onWindows)("a fault in one callback of createApp stays in that callb
         const [stdout, stderr, exitCode] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
         clearTimeout(limit);
         const line = stdout.split(/\r?\n/).find((l) => l.startsWith("RESULT "));
-        const result = line ? (JSON.parse(line.slice("RESULT ".length)) as { seen: Seen | null; tapped: string[] }) : { seen: null, tapped: [] };
+        const result = line ? (JSON.parse(line.slice("RESULT ".length)) as { seen: Seen | null; tapped: string[]; told: string[] }) : { seen: null, tapped: [], told: [] };
         return { exitCode, stderr, ...result };
       } finally {
         // WebView2's processes can hold the profile for a moment after the fixture's exit.
@@ -743,7 +745,9 @@ describe.if(onWindows)("a fault in one callback of createApp stays in that callb
           }
         }
       }
-    })());
+    })()));
+    return run;
+  };
 
   test("a UI-thread method that throws a value that cannot be turned into text has its call rejected, and the rest of its deferred batch is answered", async () => {
     const { exitCode, seen } = await faults();
@@ -774,5 +778,17 @@ describe.if(onWindows)("a fault in one callback of createApp stays in that callb
     const { stderr } = await faults();
     expect(stderr.match(/^sweetview: the worker failed:/gm)?.length).toBe(1);
     expect(stderr).toContain("worker crash");
+  }, LIVE_TEST_MS * 3);
+
+  // What docs/native.md and docs/app.md say an onCallbackError listener hears of in a createApp
+  // application, and what it does not (review 2, item 4).
+  test("with an onCallbackError listener, an onEvent listener's throw is told as the worker kind and not printed; a UI-thread method's throw and the worker's crash are not told", async () => {
+    const { exitCode, seen, tapped, told, stderr } = await faults("listen");
+    expect(exitCode).toBe(0);
+    expect(told).toEqual(["worker: onEvent listener"]);
+    expect(stderr).not.toMatch(/^sweetview: UI dispatch failed:/m);
+    expect(tapped).toEqual(["tick 1", "tick 2"]);
+    expect(seen?.deferredUnreadable).toBe("rejected: [object Object]");
+    expect(stderr.match(/^sweetview: the worker failed:/gm)?.length).toBe(1);
   }, LIVE_TEST_MS * 3);
 });

@@ -7,8 +7,10 @@
 // instead, and the callback's own fallback (the event let through, no menu opened) still applies.
 //
 // The catches of `@n1h/sweetview` (a page's UI-thread methods, a request handler, the ready hooks,
-// the worker's faults) do not reach this module: it is no entry point of the package, and an
-// application must not be able to call it to fabricate a fault (D44).
+// the worker's crash and rejected calls, the tab machinery) do not reach this module: it is no
+// entry point of the package, and an application must not be able to call it to fabricate a fault
+// (D44). What does reach it from that package is what leaves its code into this one's catches: an
+// `onEvent` listener's exception, which leaves the worker's drain (`ui-thread.ts`, kind `worker`).
 
 import { isMainThread } from "node:worker_threads";
 import { binding } from "./binding";
@@ -17,8 +19,9 @@ import { asError } from "./thrown";
 
 /**
  * Where an exception came from: the public API the application wrote the handler for. `internal` is
- * Sweetview's own code at a callback boundary (the tab machinery, a webview handler of its own); a
- * fault there is a defect of Sweetview's.
+ * the native module's own code at a callback boundary (the tab frame's callbacks, a window's
+ * dispose hooks, its own native timeouts, intervals and deferred jobs); a fault there is a defect
+ * of Sweetview's.
  */
 export type CallbackKind =
   | "tray.onClick"
@@ -50,7 +53,11 @@ export type CallbackKind =
 export type CallbackErrorSource = {
   /** The kind of callback that threw. */
   readonly kind: CallbackKind;
-  /** The binding's own name for the callback, when the binding caught the exception itself. */
+  /**
+   * For `webview.bind` and `webview.bindRaw`, the name the function was bound under. For any other
+   * exception the binding caught itself, the binding's name for the callback (such as
+   * `a tray click handler`). Absent otherwise.
+   */
   readonly name?: string;
 };
 
@@ -199,20 +206,29 @@ function setBindingSink(on: boolean): void {
 }
 
 /**
- * Tells `handler` about every exception Sweetview catches at a callback boundary on the UI thread:
- * one thrown by a tray or menu click, a window listener, a notification click, a hit-region
- * refiner, an input hook, a single-instance or open-URL listener, a page's UI-thread method, a
- * request handler, the ready hooks, a native timeout, interval or deferred job, and what the UI
- * thread learns of the worker's faults (its crash, a call it rejected). The handler gets the error
- * (an `Error`; a thrown non-error is wrapped, with the value as its `cause`) and where it came from.
+ * Tells `handler` about an exception the native module catches at a callback boundary on the UI
+ * thread, on Windows: one thrown by a tray click, double-click or menu function, a tray menu item,
+ * a notification click, a `Window` listener (`onClose`, `onResize`, `onMove`, `onMaximizeChange`,
+ * `onFileDrop`, `onNewTab`, `onTabSelect`, `onTabClose`), a hit-region refiner, an input hook, a
+ * single-instance or open-URL listener, a function bound on the raw webview class (`bind`,
+ * `bindRaw`), its request or file drop handler, an `onEvent` listener (kind `worker`), and the
+ * native module's own code at such a boundary (kind `internal`). On macOS no handler is called.
  *
- * While at least one handler is set, the `console.error` line Sweetview prints for such an
- * exception is not printed; the callback's fallback still applies (the page's call is rejected, a
- * request answers 500, a hook lets the event through, a menu function that throws opens no menu, a
- * close request is still taken). A handler that throws is caught; Sweetview then prints its own
- * line for both errors. Handlers run on the UI thread, in the order they were added.
+ * Not told: the faults `@n1h/sweetview` catches itself (a page's UI-thread method, a request
+ * handler, the ready hooks, the worker's crash and its rejected calls, the tab machinery), a fault
+ * inside a Worker, and on Windows a `Menu.popup` item's `click`, whose exception comes out of
+ * `Menu.popup`.
  *
- * Returns a function that removes this handler. With none left, Sweetview prints its lines again.
+ * The handler gets the error, the thrown object itself when it is an `Error` (a thrown non-error is
+ * wrapped, with the value as its `cause`), and where it came from. While at least one handler is
+ * set, the `console.error` line the native module prints for such an exception is not printed; the
+ * callback's fallback still applies (a raw webview's page call is rejected, its request answers
+ * 500, a hook lets the event through, a menu function that throws opens no menu, a close request is
+ * still taken). A handler that throws is caught; the line for the original error and one for the
+ * handler's are printed. Handlers run on the UI thread, in the order they were added.
+ *
+ * Returns a function that removes this registration, once. With none left, the lines are printed
+ * again. Throws when called from a Worker.
  */
 export function onCallbackError(handler: CallbackErrorHandler): () => void {
   // The callbacks it hears of run on the UI thread, Bun's main thread; a Worker would hear of

@@ -119,8 +119,8 @@ this page: it imports each new form and checks that it is what the row says.
   (`sweetview: message window handler threw: …`,
   `sweetview: onClose handler threw: …`), and a page's UI-thread method or a
   request handler that throws only rejects the call or answers `500`. One
-  listener, set once, is told about the native module's, with the kind of
-  callback each came from:
+  listener, set once, is told about the native module's and an `onEvent`
+  listener's, with the kind of callback each came from:
   [`onCallbackError`](native.md#exceptions-thrown-by-your-callbacks). One kind
   changed from 0.x on Windows: the input hooks. 0.x's were the bindings
   package's (`@n1h/sweetview-webview-bun` 2.x), which does not catch a
