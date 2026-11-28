@@ -205,6 +205,53 @@ describe.if(onWindows)("win32 Window", () => {
     }
   });
 
+  test("two wrappers of one window share one list of resize, move and maximise listeners: in the order added, the same function once, either unsubscribe takes it out, a dispose takes out what its wrapper added", () => {
+    // Review round 5, R5-8: the function keys of win32/listener-keys.ts are what make the list one.
+    const w = new Window({ frame: false, noActivate: true, bounds: { x: -2000, y: -2000, width: 300, height: 200 } });
+    const b = Window.fromHandle(w.handle!);
+    try {
+      let n = 0;
+      const kinds = [
+        { name: "onResize", fire: () => w.setBounds({ ...w.bounds(), width: 300 + (++n % 2) * 10 }) },
+        { name: "onMove", fire: () => w.setBounds({ ...w.bounds(), x: -2000 + (++n % 2) * 10 }) },
+        { name: "onMaximizeChange", fire: () => w.toggleMaximize() },
+      ] as const;
+      for (const { name, fire } of kinds) {
+        const heard: string[] = [];
+        const told = (label: string) => () => heard.push(label);
+        const [a1, b1, a2, both] = [told("A1"), told("B1"), told("A2"), told("both")];
+        const on = (win: Window, fn: () => void) => (win[name] as (fn: () => void) => () => void).call(win, fn);
+        on(w, a1);
+        const offB1 = on(b, b1);
+        on(w, a2);
+        on(w, both);
+        const offBothThroughB = on(b, both);
+        const round = () => {
+          heard.length = 0;
+          fire();
+          return [...heard];
+        };
+        expect({ name, heard: round() }).toEqual({ name, heard: ["A1", "B1", "A2", "both"] });
+        offBothThroughB();
+        expect({ name, heard: round() }).toEqual({ name, heard: ["A1", "B1", "A2"] });
+        offB1();
+        expect({ name, heard: round() }).toEqual({ name, heard: ["A1", "A2"] });
+        on(b, b1);
+        expect({ name, heard: round() }).toEqual({ name, heard: ["A1", "A2", "B1"] });
+      }
+      // b's dispose takes out what b added; w's stay.
+      const heard: string[] = [];
+      w.onResize(() => heard.push("w"));
+      b.onResize(() => heard.push("b"));
+      b.dispose();
+      w.setBounds({ ...w.bounds(), width: 333 });
+      expect(heard).toEqual(["w"]);
+    } finally {
+      b.dispose();
+      w.dispose();
+    }
+  });
+
   test("Window.fromHandle reports the wrapped window's frame and resizability", () => {
     const frameless = new Window({ frame: false });
     const fixed = new Window({ resizable: false });
@@ -244,6 +291,14 @@ describe.if(onWindows)("win32 Window", () => {
     } finally {
       owner.dispose();
     }
+  });
+
+  test("the probe's screenPixel throws for a point no screen shows, rather than reading it as white", async () => {
+    // Review N10: GetPixel's CLR_INVALID became "#ffffff". app.test.ts and its fixtures read the screen with it.
+    const { screenPixel } = await import("../../test/win32-os");
+    const { Screen } = await import("../screen");
+    const far = Screen.bounds();
+    expect(() => screenPixel(far.x - 10_000, far.y - 10_000)).toThrow("GetPixel");
   });
 
   test("bounds with contentSize throws; a malformed backgroundColor throws; a transparent window keeps no backgroundColor", () => {

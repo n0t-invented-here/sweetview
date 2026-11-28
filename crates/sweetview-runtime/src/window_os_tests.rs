@@ -491,6 +491,54 @@ fn an_applications_own_popup_window_wrapped_after_maximise_and_minimise_reads_as
   });
 }
 
+/// `window-native.test.ts` "a window the application made, maximised and minimised before
+/// Window.fromHandle wraps it, reports nothing when restored to maximised": a framed window of the
+/// application's own (`WS_OVERLAPPEDWINDOW`), driven with the system's own `WM_SYSCOMMAND`s.
+#[test]
+fn an_applications_own_framed_window_wrapped_while_minimised_from_maximised_reports_only_the_real_change() {
+  on_ui_thread(|_runtime| {
+    let own = os::OwnWindow::framed("rt os own framed wrapped minimised", (60, 60, 300, 200), |_| {}).expect("the application's own framed window");
+    let command = |sc: usize| os::send(own.handle_value(), WM_SYSCOMMAND, sc, 0);
+    command(SC_MAXIMIZE);
+    command(SC_MINIMIZE);
+    let wrapped = Window::adopt(own.handle_value()).expect("adopt");
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    let sink = seen.clone();
+    wrapped.on_maximize_change(wrapped.id, Some(Rc::new(move |m| sink.borrow_mut().push(m)))).expect("listener");
+    command(SC_RESTORE); // back to maximised
+    assert_eq!((wrapped.is_maximized(), seen.borrow().clone()), (true, vec![]), "restored to maximised: no change");
+    command(SC_RESTORE);
+    assert_eq!((wrapped.is_maximized(), seen.borrow().clone()), (false, vec![false]), "restored: one change");
+    wrapped.dispose();
+  });
+}
+
+/// `window-native.test.ts` "onMaximizeChange arrives for a window the application made:
+/// maximised, minimised and restored to maximised (nothing), restored", and nothing after the
+/// listener is removed.
+#[test]
+fn an_applications_own_framed_window_reports_each_maximise_change_of_the_systems_commands_until_unsubscribed() {
+  on_ui_thread(|_runtime| {
+    let own = os::OwnWindow::framed("rt os own framed maximise", (60, 60, 300, 200), |_| {}).expect("the application's own framed window");
+    let wrapped = Window::adopt(own.handle_value()).expect("adopt");
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    let sink = seen.clone();
+    wrapped.on_maximize_change(wrapped.id, Some(Rc::new(move |m| sink.borrow_mut().push(m)))).expect("listener");
+    let command = |sc: usize| os::send(own.handle_value(), WM_SYSCOMMAND, sc, 0);
+    command(SC_MAXIMIZE);
+    assert_eq!((wrapped.is_maximized(), seen.borrow().clone()), (true, vec![true]));
+    command(SC_MINIMIZE);
+    command(SC_RESTORE); // back to maximised
+    assert_eq!((wrapped.is_maximized(), seen.borrow().clone()), (true, vec![true]), "minimised and restored to maximised: nothing");
+    command(SC_RESTORE);
+    assert_eq!((wrapped.is_maximized(), seen.borrow().clone()), (false, vec![true, false]));
+    wrapped.on_maximize_change(wrapped.id, None).expect("removed");
+    command(SC_MAXIMIZE);
+    assert_eq!(*seen.borrow(), [true, false], "nothing after the listener is removed");
+    wrapped.dispose();
+  });
+}
+
 /// `window-native.test.ts` "onResize, onMove, onClose and onFileDrop arrive; dispose leaves the
 /// window alive", and `window.test.ts` "Window.fromHandle intercepts events non-mutatingly and
 /// dispose does not destroy the external HWND".
@@ -875,14 +923,22 @@ fn a_tab_frame_with_no_tab_paints_its_strip_and_page_in_the_appearances_colours(
       let (_, height) = os::client_size(handle);
       let strip_at = os::client_to_screen(handle, 30, ((f64::from(STRIP_HEIGHT) - 4.0) * scale).round() as i32);
       let page_at = os::client_to_screen(handle, 30, height - 10);
-      let read = || (os::screen_pixel(strip_at.0, strip_at.1), os::screen_pixel(page_at.0, page_at.1));
+      // One reading: whether both points are the frame's, and the colours there, taken together.
+      let read = || {
+        let ours = os::window_at(strip_at.0, strip_at.1) == handle && os::window_at(page_at.0, page_at.1) == handle;
+        (ours, (os::screen_pixel(strip_at.0, strip_at.1), os::screen_pixel(page_at.0, page_at.1)))
+      };
       let want = (Some(strip_colour), Some(page_colour));
-      pump_until(runtime.as_ref(), 2000, || read() == want);
-      let ours = os::window_at(strip_at.0, strip_at.1) == handle && os::window_at(page_at.0, page_at.1) == handle;
-      if read() != want && !ours {
+      let last = Cell::new(read());
+      pump_until(runtime.as_ref(), 2000, || {
+        last.set(read());
+        last.get() == (true, want)
+      });
+      let (ours, seen) = last.get();
+      if !ours {
         panic!("refused to judge: another window covers the frame on the shared desktop; run again");
       }
-      assert_eq!(read(), want, "{appearance:?}: the strip and the page in their own colours");
+      assert_eq!(seen, want, "{appearance:?}: the strip and the page in their own colours, read where the frame is the window");
       frame.dispose();
     }
   });
@@ -1039,12 +1095,13 @@ fn a_topmost_overlay_as_the_first_window_of_a_process_started_hidden_is_shown_ab
   for _ in 0..3 {
     let out = std::env::temp_dir().join(format!("sweetview-overlay-{}.txt", std::process::id()));
     let command = format!(
-      "Start-Process -FilePath '{}' -ArgumentList '{name} --exact --nocapture --test-threads=1' -WindowStyle Hidden -Wait -RedirectStandardOutput '{}'",
+      "$child = Start-Process -FilePath '{}' -ArgumentList '{name} --exact --nocapture --test-threads=1' -WindowStyle Hidden -Wait -PassThru -RedirectStandardOutput '{}'; exit $child.ExitCode",
       exe.display(),
       out.display()
     );
     let status = std::process::Command::new("pwsh").args(["-NoProfile", "-NonInteractive", "-Command", &command]).env(OVERLAY_CHILD, "1").status().expect("pwsh");
-    assert!(status.success(), "the hidden child ran");
+    // `exit $child.ExitCode`: pwsh's own code is the child's.
+    assert_eq!(status.code(), Some(0), "the hidden child's exit code");
     let text = std::fs::read_to_string(&out).unwrap_or_default();
     let _ = std::fs::remove_file(&out);
     let line = text.split("RESULT ").nth(1).and_then(|rest| rest.lines().next()).unwrap_or("null");

@@ -118,6 +118,9 @@ if (native && internal) {
   const { windowChromeMethods } = await import("../../../sweetview/src/window-chrome");
   const stub = { hide() {}, isMaximized: () => false, startDrag() {}, startResize() {}, minimize() {}, toggleMaximize() {} };
   result.chromeMethods = Object.keys(windowChromeMethods(stub)).sort();
+  // A WebView's `window`: an own enumerable property after `raw`, as at the tag (review round 5, R5-6).
+  const { webviewWindowShape } = await import("../webview-window-shape");
+  result.webviewWindowProperty = webviewWindowShape(await import("../../../sweetview/src/app"));
   // The demos' windows: the outer frame each passed at the tag.
   const { demoWindowSize } = await import("../../../../demos/window-size");
   result.demoWindowSize = demoWindowSize({ width: 1100, height: 800 }, () => ({ x: 410, y: 140, width: 1100, height: 800 }));

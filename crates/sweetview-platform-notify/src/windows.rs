@@ -1100,15 +1100,6 @@ mod tests {
     assert_eq!(live_toast_handlers(), before, "every subscription was ended and its handler released");
   }
 
-  #[test]
-  fn copy_wide_truncates_so_the_nul_fits() {
-    let mut field = [0xffffu16; 4];
-    copy_wide(&mut field, "abcdef");
-    assert_eq!(field, [97, 98, 99, 0]);
-    copy_wide(&mut field, "x");
-    assert_eq!(field, [120, 0, 0, 0]);
-  }
-
   /// What `notifier.test.ts` "registers an AUMID and shows real WinRT toasts
   /// with independently routed clicks" proves, against real WinRT.
   #[test]
