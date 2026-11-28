@@ -1266,18 +1266,34 @@ describe.if(onWindows)("onCallbackError and the raw webview class", () => {
   test("with a listener that throws, each raw webview fault is told once with its kind, and its line and the listener's are both printed", async () => {
     const { r, exitCode, stderr } = await runFixture("webview-errors.ts", ["throwing"]);
     expect({ exitCode, bindThrows: r.page?.bindThrows, bindProxy: r.page?.bindProxy, promiseThenGetter: r.page?.promiseThenGetter }).toEqual({ exitCode: 0, bindThrows: "rejected", bindProxy: "rejected", promiseThenGetter: 500 });
-    const told = r.told as string[];
+    // Every fault, each once and with its kind: none told again under another (the proxy as webview.bindRaw).
+    expect(r.told).toEqual([
+      "webview.bind (bindAddsListener): adds a listener",
+      "webview.bind (bindBadMessage): (its message throws)",
+      "webview.bind (bindProxy): [object Object]",
+      "webview.bind (bindRejects): bind rejects",
+      "webview.bind (bindThenGetter): then getter",
+      "webview.bind (bindThenThrows): then throws",
+      "webview.bind (bindThrows): bind throws",
+      "webview.bindRaw (load): shared [the thrown object]",
+      "webview.bindRaw (rawThrows): raw throws",
+      "webview.bindRaw (save): shared [the thrown object]",
+      "webview.setFileDropHandler: drop throws",
+      "webview.setRequestHandler: request rejects",
+      "webview.setRequestHandler: request then getter",
+      "webview.setRequestHandler: request then throws",
+      "webview.setRequestHandler: request throws",
+      "webview.setRequestHandler: returned getPrototypeOf trap",
+    ]);
+    // For each of the 16, the listener's line and the fault's own (the binding's, for a raw binding).
     const count = (pattern: RegExp) => stderr.match(pattern)?.length ?? 0;
-    const toldOf = (prefix: string) => told.filter((t) => t.startsWith(prefix)).length;
-    expect(told.filter((t) => t.includes("(bindProxy)"))).toEqual(["webview.bind (bindProxy): [object Object]"]);
-    expect(told.filter((t) => t.includes("request then getter"))).toEqual(["webview.setRequestHandler: request then getter"]);
-    expect(told.filter((t) => t.includes("bind throws"))).toEqual(["webview.bind (bindThrows): bind throws"]);
     expect({
       listener: count(/^sweetview: an onCallbackError handler threw:/gm),
       bind: count(/^sweetview: webview[.]bind threw:/gm),
       request: count(/^sweetview: webview[.]setRequestHandler threw:/gm),
+      drop: count(/^sweetview: webview[.]setFileDropHandler threw:/gm),
       raw: count(/^sweetview: a binding threw:/gm),
-    }).toEqual({ listener: told.length, bind: toldOf("webview.bind "), request: toldOf("webview.setRequestHandler"), raw: toldOf("webview.bindRaw") });
+    }).toEqual({ listener: 16, bind: 7, request: 5, drop: 1, raw: 3 });
   }, 90_000);
 
   // With no listener, each boundary prints what it printed on the main branch, as often (review 4,

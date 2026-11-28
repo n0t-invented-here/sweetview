@@ -116,17 +116,29 @@ mod tests {
   /// twice, tap F24 (down and up, as real input, from another thread so the hook's thread is free),
   /// record what the hook saw; give the foreground to the taskbar, tap again, record; end the loop.
   /// Prints `RESULT <json>`.
-  fn child(mode: &str) {
+  /// A webview of its own, shown: the `webview` mode's window (D50: the engine is the webview
+  /// feature's).
+  #[cfg(feature = "webview")]
+  fn own_webview() -> (isize, Step) {
     use crate::engine::{Engine, Host, SizeHint};
+    let engine = Engine::create(false, Host::Own, None).expect("webview");
+    engine.set_title("rt hook own foreground webview");
+    engine.set_html("<!doctype html><p>hook own foreground</p>");
+    engine.set_size(420, 300, SizeHint::None);
+    (engine.window_handle(), Box::new(move || engine.destroy()))
+  }
+
+  #[cfg(not(feature = "webview"))]
+  fn own_webview() -> (isize, Step) {
+    panic!("the webview mode needs the webview feature");
+  }
+
+  fn child(mode: &str) {
     use crate::window::{Window, WindowInit};
     crate::loop_tests::use_test_webview_profile();
     on_ui_thread(|runtime| {
       let (handle, keep): (isize, Step) = if mode == "webview" {
-        let engine = Engine::create(false, Host::Own, None).expect("webview");
-        engine.set_title("rt hook own foreground webview");
-        engine.set_html("<!doctype html><p>hook own foreground</p>");
-        engine.set_size(420, 300, SizeHint::None);
-        (engine.window_handle(), Box::new(move || engine.destroy()))
+        own_webview()
       } else {
         let init = WindowInit { title: "rt hook own foreground".into(), bounds: Some(crate::Rect::new(220, 220, 420, 300)), frame: true, resizable: true, ..Default::default() };
         let window = Window::create(init).expect("window");
@@ -247,6 +259,7 @@ mod tests {
   /// The same, with the window of a webview of its own in front: WebView2's own windows inside
   /// it must not keep the key from the hook either.
   #[test]
+  #[cfg(feature = "webview")]
   fn a_key_typed_while_the_applications_own_webview_window_is_in_front_reaches_the_keyboard_hook() {
     typed_in_front_and_behind("webview", "input::tests::a_key_typed_while_the_applications_own_webview_window_is_in_front_reaches_the_keyboard_hook");
   }

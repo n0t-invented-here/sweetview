@@ -277,7 +277,15 @@ pub fn own_top_level_windows() -> Vec<isize> {
   found
 }
 
-/// A layered window's colour key (a COLORREF, `0x00bbggrr`), alpha and `LWA_*` flags, as
+/// Minimises the window with handle value `window` (`ShowWindow(SW_MINIMIZE)`), as its minimise
+/// button does.
+pub fn minimise(window: isize) {
+  use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_MINIMIZE};
+  // SAFETY: takes the handle value and a command by value; the OS validates the handle.
+  let _was_visible = unsafe { ShowWindow(hwnd_of(window), SW_MINIMIZE) };
+}
+
+/// The class name of the window with handle value `window`; empty when it names none.
 /// `GetLayeredWindowAttributes` reads them; `None` for a window that is not layered.
 pub fn layered_attributes(window: isize) -> Option<(u32, u8, u32)> {
   use windows::Win32::Foundation::COLORREF;

@@ -10,7 +10,7 @@
 // application sees: the handle is gone, the engine is released, and
 // `unload()` finds nothing left to destroy.
 
-import { engineOf, unload, Webview, WebviewError } from "../../src/webview";
+import { engineOf, unload, Webview, WebviewError } from "../../../sweetview/src/raw-webview";
 import { watchdog } from "./kit";
 
 watchdog(30_000);

@@ -18,6 +18,7 @@ use crate::runtime::{Runtime, TimeoutId};
 use crate::screen;
 use crate::tray::{Tray, TrayInit};
 use crate::window::{Window, WindowInit};
+use crate::window::tab_frame::{PopupEntry, TabFrame};
 use crate::Rect;
 
 const VK_RETURN: u16 = 0x0d;
@@ -177,12 +178,15 @@ fn an_ordinary_owner_is_the_foreground_window_after_its_dismissed_menu() {
   });
 }
 
-/// `Menu.popup` with a `noActivate` owner (review of `2a0b808`, F1 and F3): the overlay never holds
-/// the foreground, while its menu is open or after it. A hidden stand-in owns the menu; the window
-/// that was in front gets the foreground back at once when nothing is chosen, after the loop's next
-/// turn when an item is chosen (its handler runs first), not at all when the handler showed a window
-/// of its own; and when that window is destroyed while the menu is open, the overlay is still neither
-/// the foreground nor active. Read while the menu is open, from inside its loop.
+/// `Menu.popup` with a `noActivate` owner (review of `2a0b808`, F1 and F3; round 2, G2 to G4): the
+/// overlay never holds the foreground, nor is it active, while its menu is open or after it, read
+/// afresh inside each menu. A hidden stand-in, made once and released with the menus, owns the
+/// menu. The window that was in front gets the foreground back at once when nothing is chosen; when
+/// an item is chosen, the stand-in still holds it when the handler starts, and the earlier window
+/// gets it after; a window the handler showed keeps it. When the earlier window is gone or can no
+/// longer take it (minimised meanwhile), the foreground is neither the overlay's nor the stand-in's.
+/// A second popup opened at once by a choice's handler keeps the window from before the first, and
+/// nothing moves the foreground while it is open.
 #[test]
 fn a_no_activate_owner_never_takes_the_foreground_for_its_menu() {
   on_ui_thread(|runtime| {
@@ -197,13 +201,20 @@ fn a_no_activate_owner_never_takes_the_foreground_for_its_menu() {
         panic!("not run: this desktop's foreground could not be given to the test's window");
       }
     };
-    let while_open = Rc::new(Cell::new(0isize));
+    // (foreground, active) read inside the open menu; (-1, -1) until a menu opened.
+    let inside = Rc::new(Cell::new((-1isize, -1isize)));
     let open_then = |keys: &'static [u16]| {
-      let seen = while_open.clone();
+      inside.set((-1, -1));
+      let seen = inside.clone();
       when_menu_opens(&runtime, move |menu_window| {
-        seen.set(os::foreground());
+        seen.set((os::foreground(), os::active()));
         os::press_keys(menu_window, keys);
       });
+    };
+    let overlay_was_left_alone = |case: &str| {
+      let (foreground, active) = inside.get();
+      assert!(foreground != -1, "{case}: the menu opened");
+      assert!(foreground != overlay_handle && active != overlay_handle, "{case}: inside the menu the overlay is neither foreground nor active ({foreground}, {active})");
     };
     let front = os::OwnWindow::new("rt os window in front", (40, 260, 160, 100), |_| {}).expect("front");
 
@@ -211,38 +222,125 @@ fn a_no_activate_owner_never_takes_the_foreground_for_its_menu() {
     in_front(front.handle_value());
     open_then(&[VK_ESCAPE]);
     assert_eq!(popup(), None);
-    assert_ne!(while_open.get(), overlay_handle, "dismissed: the overlay never held the foreground while its menu was open");
+    overlay_was_left_alone("dismissed");
+    let stand_in = menu::stand_in_for_tests();
+    assert!(stand_in != 0 && stand_in != overlay_handle, "a stand-in owned the menu");
     assert_eq!((os::foreground(), os::active() != overlay_handle), (front.handle_value(), true), "dismissed: the earlier window is in front");
 
-    // Chosen, and the handler shows nothing: the earlier window is in front once the loop turns.
+    // Chosen, and the handler shows nothing: the stand-in holds the foreground when the handler
+    // starts (here, when popup returns), and the earlier window has it once the loop turns.
     in_front(front.handle_value());
     open_then(&[VK_DOWN, VK_RETURN]);
     assert_eq!(popup(), Some(1));
-    assert_ne!(while_open.get(), overlay_handle, "chosen: the overlay never held the foreground while its menu was open");
+    overlay_was_left_alone("chosen");
+    assert_eq!(os::foreground(), stand_in, "chosen: not yet given back when the handler starts");
     pump_until(&runtime, 1000, || os::foreground() == front.handle_value());
     assert_eq!((os::foreground(), os::active() != overlay_handle), (front.handle_value(), true), "chosen: the earlier window is in front after the handler");
 
-    // Chosen, and the handler shows a window of its own: that window stays in front.
+    // Chosen, and the handler shows a window of its own: that window keeps the foreground.
     let settings = os::OwnWindow::new("rt os window a handler shows", (40, 400, 160, 100), |_| {}).expect("settings");
     in_front(front.handle_value());
     open_then(&[VK_DOWN, VK_RETURN]);
     assert_eq!(popup(), Some(1));
+    assert_eq!(os::foreground(), stand_in, "the handler starts with the stand-in in front");
     BorrowedWindow::with_handle_value(settings.handle_value(), |window| platform::show(window, false, false, false)); // the handler
     pump_until(&runtime, 300, || false);
     assert_eq!(os::foreground(), settings.handle_value(), "the window the handler showed is in front");
 
-    // The earlier window destroyed while the menu was open: the overlay is neither foreground nor active.
+    // Chosen, and the handler opens a second popup at once (G3): while it is open nothing moves the
+    // foreground (the first's deferred hand-back is stale), and after it the window from before the
+    // first is in front.
+    in_front(front.handle_value());
+    open_then(&[VK_DOWN, VK_RETURN]);
+    assert_eq!(popup(), Some(1));
+    let during_second = Rc::new(Cell::new(-1isize));
+    let (seen, timer_runtime) = (during_second.clone(), runtime.clone());
+    when_menu_opens(&runtime, move |menu_window| {
+      // Read after the loop has had its turns, inside the second menu.
+      timer_runtime
+        .set_timeout(300, move || {
+          seen.set(os::foreground());
+          os::press_keys(menu_window, &[VK_ESCAPE]);
+        })
+        .expect("a timeout inside the menu");
+    });
+    assert_eq!(popup(), None, "the second popup was dismissed");
+    assert_eq!(during_second.get(), stand_in, "nothing gave the foreground away while the second popup was open");
+    pump_until(&runtime, 300, || false);
+    assert_eq!(os::foreground(), front.handle_value(), "after the second popup, the window from before the first is in front");
+
+    // The earlier window destroyed while the menu was open, then one minimised meanwhile (it can no
+    // longer take the foreground): the foreground is neither the overlay's nor the stand-in's.
     let doomed = Rc::new(RefCell::new(os::OwnWindow::new("rt os window destroyed", (40, 540, 160, 100), |_| {})));
     in_front(doomed.borrow().as_ref().expect("doomed").handle_value());
     let gone = doomed.clone();
+    inside.set((-1, -1));
+    let seen = inside.clone();
     when_menu_opens(&runtime, move |menu_window| {
+      seen.set((os::foreground(), os::active()));
       drop(gone.borrow_mut().take());
       os::press_keys(menu_window, &[VK_ESCAPE]);
     });
     assert_eq!(popup(), None);
+    overlay_was_left_alone("destroyed");
     pump_until(&runtime, 300, || false);
-    assert!(os::foreground() != overlay_handle && os::active() != overlay_handle, "the overlay is not left foreground or active");
+    let after = os::foreground();
+    assert!(after != overlay_handle && after != stand_in && os::active() != overlay_handle, "destroyed: neither the overlay nor the stand-in holds the foreground ({after})");
+
+    in_front(front.handle_value());
+    let minimise = front.handle_value();
+    inside.set((-1, -1));
+    let seen = inside.clone();
+    when_menu_opens(&runtime, move |menu_window| {
+      seen.set((os::foreground(), os::active()));
+      os::minimise(minimise);
+      os::press_keys(menu_window, &[VK_ESCAPE]);
+    });
+    assert_eq!(popup(), None);
+    overlay_was_left_alone("minimised");
+    let after = os::foreground();
+    assert!(after != overlay_handle && after != stand_in && after != front.handle_value(), "minimised: the foreground went to a window a person could use ({after})");
+
+    // Made once, and released with the menus at the end of the application.
+    assert_eq!(menu::stand_in_for_tests(), stand_in, "one stand-in for every menu");
+    menu::release_all();
+    assert_eq!(menu::stand_in_for_tests(), 0, "released with the menus");
+    assert!(BorrowedWindow::with_handle_value(stand_in, |_| ()).is_none(), "its window is gone");
     overlay.dispose();
+  });
+}
+
+/// The tab menu goes the one popup way (the fold, D26; round 2, G4): `TabFrame::show_menu` itself
+/// shows its entries, a separator and a disabled item among them (a lone `&` shown as itself), with
+/// the menu's top-left corner at the cursor, and returns the zero-based index of the item chosen.
+#[test]
+fn a_tab_frames_menu_shows_its_entries_at_the_cursor_and_returns_the_chosen_index() {
+  on_ui_thread(|runtime| {
+    let frame = Window::create(WindowInit { title: "rt os tab menu".into(), bounds: Some(Rect { x: 200, y: 200, width: 480, height: 320 }), tab_strip_height: Some(40), ..Default::default() }).expect("a frame");
+    frame.show().expect("shown");
+    let tabs = TabFrame::of(frame.handle()).expect("a tab frame");
+    if !os::set_cursor(400, 300) {
+      panic!("not run: the cursor could not be put where the test reads the menu");
+    }
+    let shown: Rc<RefCell<(Vec<MenuEntry>, Edges)>> = Rc::default();
+    let seen = shown.clone();
+    when_menu_opens(&runtime, move |menu_window| {
+      *seen.borrow_mut() = (os::read_menu(os::menu_of_window(menu_window)), rect_of(menu_window));
+      // The keyboard stops on the first item, on the disabled one, then on "Close tab".
+      os::press_keys(menu_window, &[VK_DOWN, VK_DOWN, VK_DOWN, VK_RETURN]);
+    });
+    let entries = vec![
+      PopupEntry::Item { label: "New tab\tCtrl+T".into(), enabled: true },
+      PopupEntry::Separator,
+      PopupEntry::Item { label: "Fish & chips".into(), enabled: false },
+      PopupEntry::Item { label: "Close tab".into(), enabled: true },
+    ];
+    assert_eq!(tabs.show_menu(&entries).expect("the menu"), Some(3), "the zero-based index of the item chosen");
+    let (read, rect) = shown.borrow().clone();
+    assert_eq!(labels(&read), ["New tab\tCtrl+T", "", "Fish && chips", "Close tab"]);
+    assert!(read[1].separator && read[2].disabled && !read[0].disabled && !read[3].disabled, "a separator and a disabled item: {read:?}");
+    assert_eq!((rect.0, rect.1), (400, 300), "the menu's top-left corner at the cursor");
+    frame.dispose();
   });
 }
 

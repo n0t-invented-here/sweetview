@@ -55,7 +55,6 @@ import type { EventLoopOptions as EventLoopOptions__sweetview__native } from "@n
 import type { EventLoopOptions as EventLoopOptions__sweetview_native } from "@n1h/sweetview-native";
 import type { EventMap as EventMap__sweetview__ipc } from "@n1h/sweetview/ipc";
 import type { EventMap as EventMap__sweetview_ipc } from "@n1h/sweetview-ipc";
-import type { FileDropHandler as FileDropHandler__sweetview_native } from "@n1h/sweetview-native";
 import type { Frame as Frame__sweetview__ipc } from "@n1h/sweetview/ipc";
 import type { Frame as Frame__sweetview_ipc } from "@n1h/sweetview-ipc";
 import type { Handlers as Handlers__sweetview__ipc } from "@n1h/sweetview/ipc";
@@ -122,7 +121,6 @@ import type { RegisterUrlSchemeOptions as RegisterUrlSchemeOptions__sweetview_na
 import type { ReplyFrame as ReplyFrame__sweetview__ipc } from "@n1h/sweetview/ipc";
 import type { ReplyFrame as ReplyFrame__sweetview_ipc } from "@n1h/sweetview-ipc";
 import type { RequestHandler as RequestHandler__sweetview__worker } from "@n1h/sweetview/worker";
-import type { RequestHandler as RequestHandler__sweetview_native } from "@n1h/sweetview-native";
 import type { ResizeEdge as ResizeEdge__sweetview__native } from "@n1h/sweetview/native";
 import type { ResizeEdge as ResizeEdge__sweetview_native } from "@n1h/sweetview-native";
 import type { ResizeHandle as ResizeHandle__sweetview__window_chrome } from "@n1h/sweetview/window-chrome";
@@ -148,8 +146,6 @@ import type { SingleInstanceLock as SingleInstanceLock__sweetview_native } from 
 import type { SingleInstanceOptions as SingleInstanceOptions__sweetview } from "@n1h/sweetview";
 import type { SingleInstanceOptions as SingleInstanceOptions__sweetview__native } from "@n1h/sweetview/native";
 import type { SingleInstanceOptions as SingleInstanceOptions__sweetview_native } from "@n1h/sweetview-native";
-import type { Size as Size__sweetview__native } from "@n1h/sweetview/native";
-import type { Size as Size__sweetview_native } from "@n1h/sweetview-native";
 import type { Tab as Tab__sweetview } from "@n1h/sweetview";
 import type { TabHandle as TabHandle__sweetview__native } from "@n1h/sweetview/native";
 import type { TabHandle as TabHandle__sweetview_native } from "@n1h/sweetview-native";
@@ -165,10 +161,6 @@ import type { TrayOptions as TrayOptions__sweetview__native } from "@n1h/sweetvi
 import type { TrayOptions as TrayOptions__sweetview_native } from "@n1h/sweetview-native";
 import type { UiMethods as UiMethods__sweetview } from "@n1h/sweetview";
 import type { WebViewOptions as WebViewOptions__sweetview } from "@n1h/sweetview";
-import type { Webview as Webview__sweetview_native } from "@n1h/sweetview-native";
-import type { WebviewRequest as WebviewRequest__sweetview_native } from "@n1h/sweetview-native";
-import type { WebviewResponse as WebviewResponse__sweetview_native } from "@n1h/sweetview-native";
-import type { WebviewResponseHead as WebviewResponseHead__sweetview_native } from "@n1h/sweetview-native";
 import type { Window as Window__sweetview__native } from "@n1h/sweetview/native";
 import type { Window as Window__sweetview_native } from "@n1h/sweetview-native";
 import type { WindowChromeControls as WindowChromeControls__sweetview__window_chrome } from "@n1h/sweetview/window-chrome";
@@ -232,9 +224,6 @@ export type RawWebview__sweetview_setAsset = RawWebview__sweetview["setAsset"];
 export type RawWebview__sweetview_setBackgroundColor = RawWebview__sweetview["setBackgroundColor"];
 export type RawWebview__sweetview_setFileDropHandler = RawWebview__sweetview["setFileDropHandler"];
 export type RawWebview__sweetview_setRequestHandler = RawWebview__sweetview["setRequestHandler"];
-export type Webview__sweetview_native_bindRaw = Webview__sweetview_native["bindRaw"];
-export type Webview__sweetview_native_unsafeHandle = Webview__sweetview_native["unsafeHandle"];
-export type Webview__sweetview_native_unsafeWindowHandle = Webview__sweetview_native["unsafeWindowHandle"];
 export type WindowChromeOptions__sweetview__window_chrome_onClose = WindowChromeOptions__sweetview__window_chrome["onClose"];
 export type WindowOptions__sweetview__native_appearance = WindowOptions__sweetview__native["appearance"];
 export type WindowOptions__sweetview__native_frame = WindowOptions__sweetview__native["frame"];
@@ -288,7 +277,6 @@ export type Window__sweetview_native_toggleMaximize = Window__sweetview_native["
 export type WsHost__sweetview__ipc_ws_dispose = WsHost__sweetview__ipc_ws["dispose"];
 export type WsTransport__sweetview__ipc_ws_dispose = WsTransport__sweetview__ipc_ws["dispose"];
 export type Tab__sweetview_window = Tab__sweetview["window"];
-export type Webview__sweetview_native_destroy = Webview__sweetview_native["destroy"];
 
 // Types an application declares in its own code (rows whose "Write now" is a declaration).
 export type MessageHandler = (message: number, wParam: bigint, lParam: bigint) => void;
@@ -357,5 +345,15 @@ import type { WindowTabsOptions as NoPublic_WindowTabsOptions___n1h_sweetview_na
 import type { DarwinTabGroupController as NoPublic_DarwinTabGroupController___n1h_sweetview } from "@n1h/sweetview";
 // @ts-expect-error no public call in 1.0
 import type { DarwinTabGroupController as NoPublic_DarwinTabGroupController___n1h_sweetview_native } from "@n1h/sweetview-native";
+import type { FileDropHandler as FileDropHandler__sweetview } from "@n1h/sweetview";
+import type { RequestHandler as RequestHandler__sweetview } from "@n1h/sweetview";
+import type { Size as Size__sweetview } from "@n1h/sweetview";
+import type { WebviewRequest as WebviewRequest__sweetview } from "@n1h/sweetview";
+import type { WebviewResponse as WebviewResponse__sweetview } from "@n1h/sweetview";
+import type { WebviewResponseHead as WebviewResponseHead__sweetview } from "@n1h/sweetview";
 export type Window__sweetview_native_handle = Window__sweetview_native["handle"];
 export type Window__sweetview_native_startResize = Window__sweetview_native["startResize"];
+export type RawWebview__sweetview_bindRaw = RawWebview__sweetview["bindRaw"];
+export type RawWebview__sweetview_destroy = RawWebview__sweetview["destroy"];
+export type RawWebview__sweetview_unsafeHandle = RawWebview__sweetview["unsafeHandle"];
+export type RawWebview__sweetview_unsafeWindowHandle = RawWebview__sweetview["unsafeWindowHandle"];

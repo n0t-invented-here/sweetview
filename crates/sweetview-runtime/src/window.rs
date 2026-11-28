@@ -593,7 +593,7 @@ impl Core {
     // inside a webview callback) goes first: the window is hidden now and destroyed after it, by
     // a job queued behind the webview's own (D49, R3 of its first review).
     let tao = match tao {
-      Some(tao) if crate::engine::drop_waits_in(self.handle) => match Runtime::existing() {
+      Some(tao) if webview_drop_waits_in(self.handle) => match Runtime::existing() {
         Some(runtime) => {
           tao.set_visible(false);
           let _ = UNDESTROYED.try_with(|pending| pending.borrow_mut().push(tao));
@@ -1433,6 +1433,18 @@ pub fn tracked_count(handle: isize) -> usize {
   count
 }
 
+/// Whether a webview made in the window `handle` names waits for a later turn to drop; never, in
+/// the native package's binding, which has no webview (D50).
+fn webview_drop_waits_in(handle: isize) -> bool {
+  #[cfg(feature = "webview")]
+  return crate::engine::drop_waits_in(handle);
+  #[cfg(not(feature = "webview"))]
+  {
+    let _ = handle;
+    false
+  }
+}
+
 /// Lends the window `handle` names to `f` for the length of the call, for
 /// mounting a webview in it or a call on a window a webview was given: one of
 /// Sweetview's own windows while it lives, or an application's own window of
@@ -1442,6 +1454,7 @@ pub fn tracked_count(handle: isize) -> usize {
 /// a webview that fills it: its page is given the keyboard focus, as the C++ library's own
 /// window gave it on `WM_ACTIVATE`. False for a window Sweetview does not know (one of the
 /// application's own, which nothing of Sweetview's watches).
+#[cfg(feature = "webview")]
 pub(crate) fn set_page_focus(handle: isize, hook: Option<Rc<dyn Fn()>>) -> bool {
   match core_of(handle) {
     Some(core) => {

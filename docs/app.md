@@ -226,7 +226,7 @@ view.run();
 
 | Member | Meaning |
 |---|---|
-| `raw` | The underlying `RawWebview` instance (the `Webview` class of `@n1h/sweetview-native`). |
+| `raw` | The underlying `RawWebview` instance. |
 | `window` | The `Window` this webview was attached to. For a tab's webview on Windows it is the tabbed window the tab is in now (`tab.window`), which changes on tear-off and merge; on macOS it is a borrowed wrapper of the tab's own `NSWindow`, not the logical tabbed window, which `tab.window` is. |
 | `emit(name, payload)` | Delivers an event to the page by evaluating `__sweetview_emit(name, payload)`. A `payload` of `undefined` is sent as `null`. Listeners registered with `onEvent` do not see it. |
 | `notify(method, ...params)` | Posts a fire-and-forget call (`seq: null`) to the worker, with `params` sent as `null` when omitted. `uiMethods` are not consulted. Without a worker, logs `sweetview: <method>: this window has no worker` with `console.error` and sends nothing. |
@@ -587,7 +587,7 @@ from [`@n1h/sweetview/page`](page.md#signalready).
 import { RawWebview, SizeHint, WEBVIEW_VERSION } from "@n1h/sweetview";
 ```
 
-Re-exported from `@n1h/sweetview-native` (its `Webview` class is re-exported as `RawWebview` to avoid colliding with sweetview's `WebView`). It is the class `@n1h/sweetview-webview-bun` exported as `Webview`; on Windows it runs on the Rust binding, and on macOS, until the macOS goal of the Rust rewrite, it hands every call to that package's webview library. Earlier versions re-exported it from `@n1h/sweetview-webview-bun`; see [Upgrading](upgrading.md). `webview.raw` is the `RawWebview` behind a `WebView`.
+Exported by `@n1h/sweetview`, with its companions (`SizeHint`, `WEBVIEW_VERSION`, `WebviewError`, the request and response types and the worker functions `completeWebviewRequest`, `beginWebviewResponse`, `writeWebviewResponseChunk`, `endWebviewResponse`); `@n1h/sweetview-native` has no webview, so an application of it alone takes none (D50). The name is `RawWebview` to avoid colliding with sweetview's `WebView`. It is the class `@n1h/sweetview-webview-bun` exported as `Webview`; on Windows it runs on the Rust binding, and on macOS, until the macOS goal of the Rust rewrite, it hands every call to that package's webview library. Earlier versions re-exported it from `@n1h/sweetview-webview-bun`; see [Upgrading](upgrading.md). `webview.raw` is the `RawWebview` behind a `WebView`.
 
 ## Page loading
 
@@ -608,7 +608,7 @@ dynamically, set `` url: `${ASSET_ORIGIN}/dynamic` `` together with
 | macOS | `webview://localhost` | `WKURLSchemeHandler` for the `webview` scheme |
 | Linux | `http://webview.localhost` | Unsupported (`WebView.attach` throws before creating anything) |
 
-On Windows the webview is part of the Rust binding in `@n1h/sweetview-native`, loaded once per process (`SWEETVIEW_NATIVE_PATH` names a custom build). On macOS, until the macOS goal of the Rust rewrite, the native library path comes from `WEBVIEW_PATH` or `@n1h/sweetview-webview-bun/build/`, and `dlopen` handles are cached per path so repeated windows/tabs never leak library handles. See [the webview](webview-library.md#library-selection-and-symbol-probing).
+On Windows the webview is part of the Rust binding in `@n1h/sweetview`, which has the native package's calls too and is the one binding the process loads (`SWEETVIEW_NATIVE_PATH` names a custom build, which must be built with the webview). On macOS, until the macOS goal of the Rust rewrite, the native library path comes from `WEBVIEW_PATH` or `@n1h/sweetview-webview-bun/build/`, and `dlopen` handles are cached per path so repeated windows/tabs never leak library handles. See [the webview](webview-library.md#library-selection-and-symbol-probing).
 
 ### The RPC trust boundary
 

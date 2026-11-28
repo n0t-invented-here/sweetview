@@ -27,10 +27,10 @@ use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_CLOAK};
 use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, MonitorFromWindow, HMONITOR, MONITORINFO, MONITOR_DEFAULTTONEAREST};
 use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
-use windows::Win32::UI::Input::KeyboardAndMouse::{GetActiveWindow, GetAsyncKeyState, ReleaseCapture, VK_LBUTTON, VK_MBUTTON, VK_RBUTTON};
+use windows::Win32::UI::Input::KeyboardAndMouse::{GetActiveWindow, GetAsyncKeyState, IsWindowEnabled, ReleaseCapture, VK_LBUTTON, VK_MBUTTON, VK_RBUTTON};
 use windows::Win32::UI::Shell::{DefSubclassProc, DragFinish, DragQueryFileW, RemoveWindowSubclass, SetWindowSubclass, HDROP};
 use windows::Win32::UI::WindowsAndMessaging::{
-  CreateIconFromResourceEx, DestroyIcon, DestroyWindow, GetClientRect, GetForegroundWindow, GetSystemMetrics, GetWindow, GetWindowLongPtrW,
+  CreateIconFromResourceEx, DestroyIcon, DestroyWindow, GetClientRect, GetForegroundWindow, GetShellWindow, GetSystemMetrics, GetTopWindow, GetWindow, GetWindowLongPtrW, GW_HWNDNEXT, WS_EX_NOACTIVATE,
   GetWindowPlacement, GetWindowRect, WINDOWPLACEMENT, WPF_RESTORETOMAXIMIZED, GetWindowThreadProcessId, IsIconic, IsWindow, IsWindowVisible, IsZoomed, LoadIconW, MoveWindow,
   PostMessageW, SendMessageTimeoutW, SendMessageW, SetForegroundWindow, SetLayeredWindowAttributes, SetWindowLongPtrW, SetWindowPos,
   SetWindowTextW, SMTO_ABORTIFHUNG, SMTO_BLOCK,
@@ -739,16 +739,54 @@ pub fn foreground_handle_value() -> isize {
   unsafe { GetForegroundWindow() }.0 as isize
 }
 
-/// Gives the foreground to `to` when `holder` still holds it and `to` still names a window: the
-/// end of a popup menu tracked by a stand-in owner (`holder`) for an owner that must not take the
-/// foreground. True when it was asked for; the OS may still refuse it, and then `holder` keeps it.
-pub fn pass_foreground_back(holder: isize, to: isize) -> bool {
-  let (holder, to) = (HWND(holder as *mut core::ffi::c_void), HWND(to as *mut core::ffi::c_void));
-  if to.is_invalid() || to == holder || !is_window_handle(to) || foreground_handle_value() != holder.0 as isize {
-    return false;
+/// The end of a popup menu tracked by a hidden stand-in owner (`holder`) for an owner that must
+/// never take the foreground (`overlay`). When the stand-in still holds the foreground, it is given
+/// to `to`, the window in front before, if that window can still take it; else, so the hidden
+/// stand-in is not left with the keyboard while a person sees another window, to the topmost window
+/// they could be using (visible, enabled, not minimised, not `WS_EX_NOACTIVATE`, and never `overlay`
+/// or `holder`), and to the shell's own window last. Nothing when the stand-in no longer holds it:
+/// a window the person or a handler brought forward keeps it. True when the stand-in does not hold
+/// the foreground afterwards; each grant is checked, as the OS may refuse one.
+pub fn pass_foreground_back(holder: isize, to: isize, overlay: isize) -> bool {
+  if foreground_handle_value() != holder {
+    return true;
   }
-  set_foreground(to);
-  true
+  let takes = |window: HWND| {
+    let value = window.0 as isize;
+    value != 0 && value != holder && value != overlay && is_window_handle(window) && can_take_the_foreground(window) && set_foreground(window) && foreground_handle_value() == value
+  };
+  if takes(HWND(to as *mut core::ffi::c_void)) {
+    return true;
+  }
+  // SAFETY: takes no window (the desktop's top-level windows) and reads no memory of ours.
+  let mut next = unsafe { GetTopWindow(None) }.ok();
+  while let Some(window) = next {
+    if takes(window) {
+      return true;
+    }
+    // SAFETY: `window` is a handle value the OS just returned, validated again by the call.
+    next = unsafe { GetWindow(window, GW_HWNDNEXT) }.ok();
+  }
+  // SAFETY: takes nothing and reads no memory of ours.
+  let shell = unsafe { GetShellWindow() };
+  if !shell.is_invalid() {
+    let _granted = set_foreground(shell);
+  }
+  foreground_handle_value() != holder
+}
+
+/// Whether a person could be using `window` now: visible, enabled, not minimised, and not made
+/// never to activate.
+fn can_take_the_foreground(window: HWND) -> bool {
+  // SAFETY: takes the handle by value, validates it, and reads no memory of ours.
+  let visible = unsafe { IsWindowVisible(window) }.as_bool();
+  // SAFETY: as above.
+  let enabled = unsafe { IsWindowEnabled(window) }.as_bool();
+  // SAFETY: as above.
+  let minimised = unsafe { IsIconic(window) }.as_bool();
+  // SAFETY: as above.
+  let ex_style = unsafe { GetWindowLongPtrW(window, GWL_EXSTYLE) } as u32;
+  visible && enabled && !minimised && ex_style & WS_EX_NOACTIVATE.0 == 0
 }
 
 /// The one of `monitors` the OS has the window on (`MonitorFromWindow`): the one its frame overlaps
@@ -991,9 +1029,10 @@ fn deliver(state: &SubclassState, event: &WindowEvent) -> bool {
 
 /// Makes `hwnd` the foreground window. The OS may refuse the foreground to a
 /// process that does not hold it; that is not an error.
-pub(crate) fn set_foreground(hwnd: HWND) {
+/// True when the OS granted it.
+pub(crate) fn set_foreground(hwnd: HWND) -> bool {
   // SAFETY: takes the handle by value and reads no memory of ours; the OS validates the handle.
-  let _granted = unsafe { SetForegroundWindow(hwnd) };
+  unsafe { SetForegroundWindow(hwnd) }.as_bool()
 }
 
 /// Passes a message the OS gave a subclass procedure on to the next procedure

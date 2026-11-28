@@ -11,8 +11,8 @@
 // clears itself inside its own call is in live-callback-teardown.ts, driven
 // by a real drop instead of a call through its native pointer.
 
-import { binding } from "../../src/binding";
-import { completeWebviewRequest, Webview, WebviewError, writeWebviewResponseChunk, type WebviewRequest } from "../../src/index";
+import { binding } from "../../../sweetview/src/binding";
+import { completeWebviewRequest, Webview, WebviewError, writeWebviewResponseChunk, type WebviewRequest } from "../../../sweetview/src/raw-webview";
 import { watchdog } from "./kit";
 
 watchdog(60_000);

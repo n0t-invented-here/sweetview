@@ -151,10 +151,12 @@ impl Runtime {
   #[doc(hidden)]
   pub fn shutdown_for_tests() {
     // The webviews go while the thread is still in its apartment.
+    #[cfg(feature = "webview")]
     crate::engine::release_all();
     crate::window::destroy_all();
     *WAKER.lock().unwrap_or_else(PoisonError::into_inner) = None;
     // Before the runtime, whose apartment the environment belongs to.
+    #[cfg(feature = "webview")]
     crate::engine::release_environment_for_tests();
     RUNTIME.with(|slot| slot.borrow_mut().take());
   }
@@ -281,7 +283,7 @@ impl Runtime {
   }
 
   /// Tests only: how many listeners the loop has.
-  #[cfg(test)]
+  #[cfg(all(test, feature = "webview"))]
   pub(crate) fn listener_count(&self) -> usize {
     self.listeners.borrow().len()
   }
