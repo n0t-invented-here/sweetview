@@ -119,6 +119,29 @@ describe("rows and paragraphs say what the code does, no more", () => {
   });
 });
 
+describe("the short list says what is true, for whom", () => {
+  test("no line contradicts another, a Windows fact says on Windows, the changes a migrating application meets first are there, and no recipe rebuilds 0.x fault delivery", () => {
+    const start = guideLines.indexOf("## What changes, in the order you meet it");
+    const end = guideLines.indexOf("## What changed for every application");
+    const list = guideLines.slice(start, end).join(" ").replace(/\s+/g, " ");
+    const steps = guideLines.join("\n").replace(/\r/g, "");
+    expect({
+      everyNameKept: /Every public name keeps its module and its name/.test(list),
+      renamesNamed: /createWebviewApp/.test(list) && /maximized\(\)/.test(list),
+      loopOnWindows: /On Windows, `pumpEvents\(\)` inside a running loop does nothing/.test(list),
+      handleOnWindows: /the real `HWND` on Windows/.test(list),
+      envOnWindows: /On Windows, `SWEETVIEW_NATIVE_PATH` replaces `WEBVIEW_PATH`/.test(list),
+      callbackFaults: /`onCallbackError`/.test(list) && /uncaughtException/.test(list),
+      opaqueHandle: /`Webview\.unsafeHandle` is an opaque number/.test(list),
+      workerThrows: /from a `Worker`/.test(list) && /`Window\.fromHandle` throws/.test(list),
+      isolatedInstalls: /isolated installs/.test(list),
+      initMessage: /`wake`/.test(list),
+      reEmitRecipe: /process\.emit\("uncaughtException"/.test(steps),
+      envStepsOnWindows: (steps.match(/set `SWEETVIEW_NATIVE_PATH`/g) ?? []).length === (steps.match(/On Windows, if you set `WEBVIEW_PATH`, set `SWEETVIEW_NATIVE_PATH`/g) ?? []).length,
+    }).toEqual({ everyNameKept: false, renamesNamed: true, loopOnWindows: true, handleOnWindows: true, envOnWindows: true, callbackFaults: true, opaqueHandle: true, workerThrows: true, isolatedInstalls: true, initMessage: true, reEmitRecipe: false, envStepsOnWindows: true });
+  });
+});
+
 describe("what the guide says its test does", () => {
   test("the guide says a row with a new form is run, and what is checked of a row that says no public call in 1.0", () => {
     const text = guideLines.join(" ").replace(/\s+/g, " ");

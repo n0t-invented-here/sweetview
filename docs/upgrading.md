@@ -26,10 +26,16 @@ after them give every export its row.
 
 1. **Install.** Move `@n1h/sweetview` to 1.0. On Windows drop
    `@n1h/sweetview-webview-bun`; keep it for macOS, which runs the code it
-   ran before 1.0 until the macOS goal of the rewrite.
-2. **Imports.** Every public name keeps its module and its name. An import of
-   one of Sweetview's internal modules has a row naming its public call, or
-   saying `no public call in 1.0` for that capability.
+   ran before 1.0 until the macOS goal of the rewrite. With Bun's isolated
+   installs, an application that imports `@n1h/sweetview-native` or runs the
+   build scripts names those packages in its own `package.json`
+   ([step 1](#a-published-01x-or-02x)).
+2. **Imports.** A name of the `v1-drafting` API keeps its module and its
+   name. The 0.x names that changed (`createWebviewApp`, the overlay
+   functions, `maximized()`, `close()` and the rest) have their rows in
+   [Part A](#part-a-published-0x-packages). An import of one of Sweetview's
+   internal modules has a row naming its public call, or saying
+   `no public call in 1.0` for that capability.
 3. **Creating the window.** `createWebviewApp(options)` is
    `createApp(options)`, which makes the window too; window options go in the
    same object.
@@ -44,21 +50,34 @@ after them give every export its row.
 7. **The end.** Delete the teardown lines after the loop and, on Windows, any `unload()`:
    the last line is `app.run()`, and Sweetview releases what it made (on
    macOS, until its goal, keep them).
-8. **Notifications.** Pass the application's identity
+8. **Faults in your callbacks.** An exception thrown by a UI-thread callback
+   or an input hook is caught and printed, and no longer reaches
+   `uncaughtException`; a packaged application, which has no console, sees
+   it only through `onCallbackError`
+   ([exceptions](#what-changed-for-every-application)).
+9. **Notifications.** Pass the application's identity
    (`identity: defineAppIdentity({ appId, appName })`), or toasts show as
    "Sweetview"; no tray is needed first.
-9. **Menus and the window's own state.** `Menu.popup(owner, menu, at)` opens
-   downward and, with `{ above: true }`, upward as a tray menu does;
-   `Window#isMinimized()`, `Window#onMaximizeChange(fn)` and
-   `Window#showSystemMenu()` replace an application's own `IsIconic`, a
-   polling timer and the system menu's internal call.
-10. **The loop.** `app.run()`, or `runEventLoop()` to keep Bun's event loop
-    on the UI thread; `pumpEvents()` inside a running loop does nothing.
-11. **Your own native calls.** `Window.handle` is still the real `HWND`, and
-    an application's own `bun:ffi` calls, its dialogs and menus included,
-    run inside Sweetview's loop.
-12. **Environment.** `SWEETVIEW_NATIVE_PATH` replaces `WEBVIEW_PATH`.
-13. **Building.** `make-app.ts` is in `@n1h/sweetview-build`, and
+10. **Menus and the window's own state.** `Menu.popup(owner, menu, at)` opens
+    downward and, with `{ above: true }`, upward as a tray menu does;
+    `Window#isMinimized()`, `Window#onMaximizeChange(fn)` and
+    `Window#showSystemMenu()` replace an application's own `IsIconic`, a
+    polling timer and the system menu's internal call.
+11. **Threads and handles.** `Clipboard`, `singleInstance` and the other
+    UI-thread calls throw from a `Worker`; `Window.fromHandle` throws for a
+    handle that names no window. `Webview.unsafeHandle` is an opaque number,
+    not a pointer. A worker of your own written against the init message gets
+    `wake` in place of its four old fields.
+12. **The loop.** `app.run()`, or `runEventLoop()` to keep Bun's event loop
+    on the UI thread. On Windows, `pumpEvents()` inside a running loop does
+    nothing.
+13. **Your own native calls.** `Window.handle` is the real `HWND` on Windows
+    (the `NSWindow` pointer on macOS), and an application's own `bun:ffi`
+    calls, its dialogs and menus included, run inside Sweetview's loop.
+14. **Environment.** On Windows, `SWEETVIEW_NATIVE_PATH` replaces
+    `WEBVIEW_PATH`; on macOS, until its goal, `WEBVIEW_PATH` still names the
+    webview library.
+15. **Building.** `make-app.ts` is in `@n1h/sweetview-build`, and
     `refreshWindowsIcons()` of `@n1h/sweetview/build` tells the shell a
     rebuilt program's icon changed.
 
@@ -259,15 +278,14 @@ after them give every export its row.
     `maximized()` is `isMaximized()`, `HitRelay.enabled()` is `isEnabled()`,
     the `close` option of `windowChromeMethods` is `onClose`, and a WebSocket
     host's or transport's `close()` is `dispose()`.
-11. If you set `WEBVIEW_PATH`, set `SWEETVIEW_NATIVE_PATH` to a binding you
-    built instead, or nothing to use the one in the package.
-12. Faults: if the application relied on a `process.on("uncaughtException")`
-    listener for faults in its callbacks, set
-    [`onCallbackError`](native.md#exceptions-thrown-by-your-callbacks) once,
-    beside it: `onCallbackError((error) => void process.emit("uncaughtException", error, "uncaughtException"))`
-    hands the native module's faults to that listener, or call the
-    application's own reporter there. A shipped executable has no console, so
-    without it these faults reach nobody. A page's own calls fail in the page:
+11. On Windows, if you set `WEBVIEW_PATH`, set `SWEETVIEW_NATIVE_PATH` to a
+    binding you built instead, or nothing to use the one in the package; on
+    macOS, until its goal, `WEBVIEW_PATH` still applies.
+12. Faults: an exception a callback throws on the UI thread is caught and
+    printed, and no longer reaches `process.on("uncaughtException")`. To see
+    these faults in a shipped executable, which has no console, set
+    [`onCallbackError`](native.md#exceptions-thrown-by-your-callbacks) once and
+    hand each to the application's own reporter there. A page's own calls fail in the page:
     `await` them there. On macOS, until its goal, the listener is not called
     and the faults are printed as before.
 13. Check what an overlay application notices, in [What changed for every
@@ -295,7 +313,8 @@ after them give every export its row.
    `bun:ffi` table modules has a row in their Part B sections naming its
    public call. For your own Win32 calls, declare your own
    `dlopen` table.
-4. If you set `WEBVIEW_PATH`, set `SWEETVIEW_NATIVE_PATH` instead.
+4. On Windows, if you set `WEBVIEW_PATH`, set `SWEETVIEW_NATIVE_PATH` instead;
+   on macOS, until its goal, `WEBVIEW_PATH` still applies.
 5. A worker you wrote against the internal init message (`InitMessage`)
    gets `wake` instead of `webviewHandle`, `drainCallbackPtr`, `drainToken`
    and `libPath`; `hostService` and `hostRequestHandler` handle it for you.
@@ -319,7 +338,8 @@ after them give every export its row.
    yourself through `bun:ffi` with that handle are `Webview` methods now.
 4. The input-hook and permission enums are values now; code that inlined
    their numbers keeps working.
-5. If you set `WEBVIEW_PATH`, set `SWEETVIEW_NATIVE_PATH` instead.
+5. On Windows, if you set `WEBVIEW_PATH`, set `SWEETVIEW_NATIVE_PATH` instead;
+   on macOS, until its goal, `WEBVIEW_PATH` still applies.
 6. Delete the `unload()` call on Windows: the end of the application
    destroys every live webview itself, and there is no library to close.
    On macOS, until the macOS goal, keep it: it still closes the webview
