@@ -22,7 +22,7 @@ use sweetview_window_logic::ico::{parse_ico, pick_ico_entry};
 use tao::platform::windows::{MonitorHandleExtWindows, WindowExtWindows};
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, RECT, WPARAM};
-use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, HMONITOR, MONITORINFO};
+use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, MonitorFromWindow, HMONITOR, MONITORINFO, MONITOR_DEFAULTTONULL};
 use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetActiveWindow, GetAsyncKeyState, ReleaseCapture, VK_LBUTTON, VK_MBUTTON, VK_RBUTTON};
@@ -337,14 +337,16 @@ pub fn bring_to_front(window: &impl NativeWindow) {
   set_foreground(hwnd);
 }
 
-/// `show()`: a minimised window is restored; otherwise it is shown, without
-/// activation for `no_activate`; then, unless it must not activate or is
+/// `show()`: a minimised window is restored, otherwise it is shown, either
+/// without activation for `no_activate` (as at tag `pre-rust-rewrite`'s tab
+/// frame); then, unless it must not activate or is
 /// topmost, it is brought to the front. Every window goes through it, a `tao`
 /// window included: `tao`'s `set_visible` shows with `SW_SHOW`, which
 /// activates even a `WS_EX_NOACTIVATE` window (D9).
 pub fn show(window: &impl NativeWindow, no_activate: bool, topmost: bool) {
   if is_minimized(window) {
-    show_window(window.hwnd(), SW_RESTORE);
+    // `SW_SHOWNOACTIVATE` restores a minimised window too, without activating it.
+    show_window(window.hwnd(), if no_activate { SW_SHOWNOACTIVATE } else { SW_RESTORE });
   } else {
     show_window(window.hwnd(), if no_activate { SW_SHOWNOACTIVATE } else { SW_SHOW });
   }
@@ -696,6 +698,19 @@ pub fn mouse_buttons_down() -> bool {
 /// True while the left mouse button is down.
 pub fn left_button_down() -> bool {
   key_down(VK_LBUTTON)
+}
+
+/// The one of `monitors` the OS has the window on (`MonitorFromWindow`): the one its frame overlaps
+/// most, else the nearest, and for a minimised window the one its restored position is on. `None`
+/// when the handle names no window or the monitor is not among `monitors`.
+pub fn monitor_of(window: &impl NativeWindow, monitors: impl IntoIterator<Item = tao::monitor::MonitorHandle>) -> Option<tao::monitor::MonitorHandle> {
+  // SAFETY: `MonitorFromWindow` takes the handle by value and reads no memory of ours; the OS
+  // validates the handle, and with `MONITOR_DEFAULTTONULL` an invalid one answers null.
+  let monitor = unsafe { MonitorFromWindow(window.hwnd(), MONITOR_DEFAULTTONULL) };
+  if monitor.is_invalid() {
+    return None;
+  }
+  monitors.into_iter().find(|m| m.hmonitor() == monitor.0 as isize)
 }
 
 /// The part of a monitor windows should use: its bounds less the taskbar.

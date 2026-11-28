@@ -172,8 +172,6 @@ after them give every export its row.
   of 0.x's `popupMenuAtCursor`. Menu item icons are drawn at 16 px. Tray
   click handlers run one loop turn after the click. A tray icon that is not a
   valid `.ico` throws `sweetview: the tray icon could not be decoded: …`.
-  `pickFolder` returns `null` for a virtual folder such as "This PC" and when
-  the dialog fails, where before it disabled OK or threw.
 - **Additions.** `Menu.popup(owner, menu, at, { above: true })` opens a menu upward, as the tray's does; `Window#isMinimized()`, `Window#onMaximizeChange(fn)` and `Window#showSystemMenu()` answer what needed `IsIconic`, a timer polling `isMaximized()` and the internal `windowMenu`; `WindowOptions` `contentSize` (the page's size in CSS pixels, centred) and `backgroundColor` size a window from its page at any screen scale and colour it before the page paints; `windowChromeEvents` sends maximise changes to a page-drawn chrome.
 - **Notifications on Windows.** A `Notifier` shows a WinRT toast and needs
   no `Tray`. 0.x showed the balloon of the application's tray icon (and threw
@@ -1401,7 +1399,7 @@ strip and page rectangles; the tab API operates the built-in strip.
 
 | Old | Write now | Change |
 |---|---|---|
-| `webview.window` | `import type { Tab } from "@n1h/sweetview"`; `Tab#window` | `tab.webview.window` was a wrapper of the tab's own pane window; no pane exists now, so it is a wrapper of the frame the tab opened in, and `tab.window` is the logical window the tab belongs to |
+| `webview.window` | `import type { Tab } from "@n1h/sweetview"`; `Tab#window` | `tab.webview.window` was a wrapper of the tab's own pane window; no pane exists now, so it is `tab.window`, the logical window the tab is in, which changes on tear-off and merge |
 
 ### `@n1h/sweetview-native/win32/window`
 
@@ -1643,25 +1641,25 @@ Windows toasts are made by the binding; `Notifier` is the public form.
 
 #### `packages/sweetview-native/src/win32/tray.ts`
 
-The balloon a tray icon showed is a notification: `Notifier` shows it itself, with the active tray's icon. The tray itself is the public `Tray`, made with `createTray(options)` from `@n1h/sweetview/native`: its icon, tooltip and menu, each settable while it lives (`setIcon`, `setTooltip`, `setMenu`), and its click handler, given when it is made (`onClick`).
+The balloon a tray icon showed is a notification: `Notifier` shows a WinRT toast, which needs no tray. Only when the toast cannot be shown does it fall back to a balloon of a hidden icon of its own, with the active tray's icon when there is one. The tray itself is the public `Tray`, made with `createTray(options)` from `@n1h/sweetview/native`: its icon, tooltip and menu, each settable while it lives (`setIcon`, `setTooltip`, `setMenu`), and its click handler, given when it is made (`onClick`).
 
 | Old | Write now | Change |
 |---|---|---|
-| `notifyIconData` | `import { Notifier } from "@n1h/sweetview/native"`; `Notifier#notify(notification)` | the notifier builds the balloon |
+| `notifyIconData` | `import { Notifier } from "@n1h/sweetview/native"`; `Notifier#notify(notification)` | the notifier shows a toast, and builds its fallback balloon itself |
 | `Balloon` | `import type { NotificationOptions } from "@n1h/sweetview/native"` | `{ title, body, silent }` of a notification |
-| `Win32Tray.balloon` | `import { Notifier } from "@n1h/sweetview/native"`; `Notifier#notify(notification)` | the notifier shows the balloon with the active tray's icon |
-| `currentTrayIconBytes` | `import { Notifier } from "@n1h/sweetview/native"`; `new Notifier(options)` | the notifier uses the active tray's icon itself |
-| `NID_SIZE` | `import { Notifier } from "@n1h/sweetview/native"`; `new Notifier(options)` | the `NOTIFYICONDATAW` layout is internal; a tray balloon is a notification |
-| `NID_HWND` | `import { Notifier } from "@n1h/sweetview/native"`; `new Notifier(options)` | the `NOTIFYICONDATAW` layout is internal; a tray balloon is a notification |
-| `NID_UID` | `import { Notifier } from "@n1h/sweetview/native"`; `new Notifier(options)` | the `NOTIFYICONDATAW` layout is internal; a tray balloon is a notification |
-| `NID_FLAGS` | `import { Notifier } from "@n1h/sweetview/native"`; `new Notifier(options)` | the `NOTIFYICONDATAW` layout is internal; a tray balloon is a notification |
-| `NID_CALLBACK` | `import { Notifier } from "@n1h/sweetview/native"`; `new Notifier(options)` | the `NOTIFYICONDATAW` layout is internal; a tray balloon is a notification |
-| `NID_HICON` | `import { Notifier } from "@n1h/sweetview/native"`; `new Notifier(options)` | the `NOTIFYICONDATAW` layout is internal; a tray balloon is a notification |
-| `NID_TIP` | `import { Notifier } from "@n1h/sweetview/native"`; `new Notifier(options)` | the `NOTIFYICONDATAW` layout is internal; a tray balloon is a notification |
-| `NID_INFO` | `import { Notifier } from "@n1h/sweetview/native"`; `new Notifier(options)` | the `NOTIFYICONDATAW` layout is internal; a tray balloon is a notification |
-| `NID_INFO_TITLE` | `import { Notifier } from "@n1h/sweetview/native"`; `new Notifier(options)` | the `NOTIFYICONDATAW` layout is internal; a tray balloon is a notification |
-| `NID_INFO_FLAGS` | `import { Notifier } from "@n1h/sweetview/native"`; `new Notifier(options)` | the `NOTIFYICONDATAW` layout is internal; a tray balloon is a notification |
-| `NID_BALLOON_ICON` | `import { Notifier } from "@n1h/sweetview/native"`; `new Notifier(options)` | the `NOTIFYICONDATAW` layout is internal; a tray balloon is a notification |
+| `Win32Tray.balloon` | `import { Notifier } from "@n1h/sweetview/native"`; `Notifier#notify(notification)` | the notifier shows a WinRT toast, with no tray needed |
+| `currentTrayIconBytes` | `import { Notifier } from "@n1h/sweetview/native"`; `new Notifier(options)` | a fallback balloon uses the active tray's icon itself |
+| `NID_SIZE` | `import { Notifier } from "@n1h/sweetview/native"`; `new Notifier(options)` | the `NOTIFYICONDATAW` layout is internal; a notification is a toast |
+| `NID_HWND` | `import { Notifier } from "@n1h/sweetview/native"`; `new Notifier(options)` | the `NOTIFYICONDATAW` layout is internal; a notification is a toast |
+| `NID_UID` | `import { Notifier } from "@n1h/sweetview/native"`; `new Notifier(options)` | the `NOTIFYICONDATAW` layout is internal; a notification is a toast |
+| `NID_FLAGS` | `import { Notifier } from "@n1h/sweetview/native"`; `new Notifier(options)` | the `NOTIFYICONDATAW` layout is internal; a notification is a toast |
+| `NID_CALLBACK` | `import { Notifier } from "@n1h/sweetview/native"`; `new Notifier(options)` | the `NOTIFYICONDATAW` layout is internal; a notification is a toast |
+| `NID_HICON` | `import { Notifier } from "@n1h/sweetview/native"`; `new Notifier(options)` | the `NOTIFYICONDATAW` layout is internal; a notification is a toast |
+| `NID_TIP` | `import { Notifier } from "@n1h/sweetview/native"`; `new Notifier(options)` | the `NOTIFYICONDATAW` layout is internal; a notification is a toast |
+| `NID_INFO` | `import { Notifier } from "@n1h/sweetview/native"`; `new Notifier(options)` | the `NOTIFYICONDATAW` layout is internal; a notification is a toast |
+| `NID_INFO_TITLE` | `import { Notifier } from "@n1h/sweetview/native"`; `new Notifier(options)` | the `NOTIFYICONDATAW` layout is internal; a notification is a toast |
+| `NID_INFO_FLAGS` | `import { Notifier } from "@n1h/sweetview/native"`; `new Notifier(options)` | the `NOTIFYICONDATAW` layout is internal; a notification is a toast |
+| `NID_BALLOON_ICON` | `import { Notifier } from "@n1h/sweetview/native"`; `new Notifier(options)` | the `NOTIFYICONDATAW` layout is internal; a notification is a toast |
 
 #### `packages/sweetview-native/src/win32/icon.ts`
 
@@ -1672,7 +1670,7 @@ which makes and frees the `HICON`s itself.
 |---|---|---|
 | `iconBitmap` | `import { Menu } from "@n1h/sweetview/native"`; `Menu.popup(owner, menu, at)` | a menu item's picture is its `icon` field |
 | `LoadedIcon` | `import type { Icon } from "@n1h/sweetview-native"` | an icon is the `.ico` bytes, `{ windows: { ico } }`; no `HICON` is handed out |
-| `loadIcon` | `import { Window } from "@n1h/sweetview-native"`; `Window#setIcon(icon)` | for a window's icons; Sweetview picks the small and the 32 px size from the `.ico`; a notification's balloon uses the active tray's icon itself |
+| `loadIcon` | `import { Window } from "@n1h/sweetview-native"`; `Window#setIcon(icon)` | for a window's icons; Sweetview picks the small and the 32 px size from the `.ico`; a notification's fallback balloon uses the active tray's icon itself |
 | `releaseIcon` | `import { Window } from "@n1h/sweetview-native"`; `Window#setIcon(icon)` | nothing to free: the binding frees the icons it made when the next ones are set or the window goes |
 | `setWindowIcon` | `import { Window } from "@n1h/sweetview-native"`; `Window.fromHandle(handle)`; `Window#setIcon(icon)` | `Window.fromHandle(hwnd).setIcon({ windows: { ico } })` sets the caption and taskbar icons of any window; `undefined` is the stock icon |
 | `clearWindowIcon` | `import { Window } from "@n1h/sweetview-native"`; `Window#setIcon(icon)` | `setIcon(undefined)` goes back to the stock icon; the binding frees the icons it made |

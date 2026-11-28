@@ -393,7 +393,7 @@ are the same window units as `Window` ([Coordinates](#coordinates)).
 | `Screen.primary()` | The primary monitor. |
 | `Screen.all()` | Every connected monitor. |
 | `Screen.at(point)` | The monitor containing `point`, or the nearest one when it is outside all of them. |
-| `Screen.of(window)` | The monitor showing most of `window`: a `Window`, anything with a `handle`, or a raw `WindowHandle`. A macOS tabbed `Window` resolves through its active tab, or through its bounds before any tab exists. |
+| `Screen.of(window)` | The monitor showing most of `window` (for a minimised window, the one its restored position is on): a `Window`, anything with a `handle`, or a raw `WindowHandle`. A macOS tabbed `Window` resolves through its active tab, or through its bounds before any tab exists. |
 | `Screen.bounds()` | The bounding rectangle of all monitors. |
 | `Screen.cursor()` | The cursor position. |
 
