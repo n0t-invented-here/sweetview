@@ -201,14 +201,6 @@ pub fn background_of(handle: isize) -> Option<(u8, u8, u8)> {
   core_of(handle).and_then(|core| core.background.get())
 }
 
-/// Shows the system menu of the window `handle` names when it is one of
-/// Sweetview's own (see `Core::show_system_menu`); `None` for any other window.
-pub(crate) fn show_own_system_menu(handle: isize, at: Point) -> Option<Result<()>> {
-  // Only a window Sweetview made: a wrapper of any other window (of this thread or not) is in the
-  // registry too, and its menu is the OS's, read from its own state and styles on its own thread.
-  core_of(handle).filter(|core| core.owned).map(|core| core.show_system_menu(at))
-}
-
 fn core_of(handle: isize) -> Option<Rc<Core>> {
   WINDOWS.try_with(|w| w.borrow().get(&handle).cloned()).ok().flatten()
 }
@@ -314,14 +306,6 @@ impl Core {
     }
   }
 
-  /// Puts a minimised window back where it was, synchronously: `tao`'s own
-  /// for a window it made, so its flags agree; the OS's for any other.
-  fn restore_from_minimized(&self) {
-    if self.with_tao(|tao| tao.set_minimized(false)).is_none() {
-      self.with_native(|window| platform::show_as(window, ShowAs::Restored));
-    }
-  }
-
   /// A frameless window's maximise: between its bounds and the work area of
   /// the screen it is on, the bounds kept to go back to.
   fn toggle_frameless_maximize(&self) -> Result<()> {
@@ -332,61 +316,6 @@ impl Core {
     // The bounds may not have changed size (no resize to notice it by).
     self.note_maximized();
     Ok(())
-  }
-
-  /// Shows the window's system menu at `at`, its items enabled for the
-  /// window's state as Sweetview knows it, and carries out the chosen command:
-  /// a frameless window is maximised and restored by its own work-area toggle,
-  /// which the OS's `WM_SYSCOMMAND` knows nothing of; everything else goes to
-  /// the OS, as the title bar's own menu sends it.
-  fn show_system_menu(&self, at: Point) -> Result<()> {
-    if !self.alive.get() {
-      return Ok(());
-    }
-    let minimized = self.with_native(|window| platform::is_minimized(window)).unwrap_or(false);
-    // A minimised window keeps the state it is restored to.
-    let maximized = if minimized { self.maximized.get() } else { self.maximized_now() };
-    let state = platform::SystemMenuState {
-      maximized,
-      minimized,
-      can_size: self.chrome.resizable,
-      // A frameless window's maximise is Sweetview's toggle, which any frameless window has.
-      can_maximize: !self.chrome.frame || self.chrome.resizable,
-    };
-    let Some(command) = self.with_native(|window| platform::track_system_menu(window, at, state)).flatten() else { return Ok(()) };
-    if !self.alive.get() {
-      return Ok(());
-    }
-    // The menu's loop ran page calls and timers while it tracked: a command means what its label
-    // says for the window as it is now, not as it was when the menu opened.
-    let minimized_now = self.with_native(|window| platform::is_minimized(window)).unwrap_or(false);
-    match command {
-      // A frameless window's maximise is Sweetview's toggle: the OS's would fill the screen behind it.
-      platform::SystemCommand::Maximize if !self.chrome.frame => {
-        if minimized_now {
-          self.restore_from_minimized();
-          // Un-minimising ran the resize listeners, which may have disposed the window.
-          if !self.alive.get() {
-            return Ok(());
-          }
-        }
-        if !self.maximized_now() {
-          self.toggle_frameless_maximize()?;
-        }
-        Ok(())
-      }
-      platform::SystemCommand::Restore if !self.chrome.frame && !minimized_now => {
-        if self.maximized_now() {
-          self.toggle_frameless_maximize()?;
-        }
-        Ok(())
-      }
-      command => {
-        // The OS carries out a framed window's Maximize and Restore for the window as it is.
-        self.with_native(|window| platform::post_system_command(window, command));
-        Ok(())
-      }
-    }
   }
 
   /// Calls `f` with the `tao` window of an owned window. No borrow is held

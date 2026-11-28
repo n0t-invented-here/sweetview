@@ -134,9 +134,9 @@ is safe to call twice; `built.bitmaps` is always empty.
 [`Window#showSystemMenu()`](windows.md#window-members) shows a `Window`'s
 system menu; `windowMenu(hwnd)` of `@n1h/sweetview-native/win32/tab-window`,
 which it calls, shows the system menu (Restore, Move, Size, Minimize,
-Maximize, Close) of any window of the UI thread at the cursor, with Restore, Move, Size and Maximize enabled as
-the window's maximised state allows, and carries out the chosen command as the
-title bar's own menu does.
+Maximize, Close) of any window of the UI thread at the cursor, with Restore
+enabled when `IsZoomed` and Move, Size and Maximize when not, and posts the
+chosen command as the title bar's own menu does.
 
 ## Tray
 

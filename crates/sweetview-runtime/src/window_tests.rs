@@ -190,6 +190,47 @@ fn frameless_maximise_uses_the_work_area_of_its_own_screen() {
   });
 }
 
+/// Round 4, P2: `windowMenu` (and `Window#showSystemMenu`) gives every window the tag's menu: Restore
+/// enabled when `IsZoomed`, Move, Size and Maximize when not, Minimize always, whatever Sweetview
+/// knows of the window. A minimised frameless window, one maximised by its own work-area toggle
+/// (which the OS does not call zoomed) and one that cannot be sized.
+#[test]
+fn the_system_menu_of_every_window_is_enabled_from_is_zoomed_alone() {
+  on_ui_thread(|runtime| {
+    let at = Some(Rect::new(-2000, -2000, 320, 240));
+    let frameless = Window::create(WindowInit { frame: false, no_activate: true, bounds: at, ..init("rt menu frameless") }).expect("window");
+    let fixed = Window::create(WindowInit { resizable: false, no_activate: true, bounds: at, ..init("rt menu fixed") }).expect("window");
+    // The items as the menu shows them: read inside its loop, then the menu is closed.
+    let shown = |window: &Window| {
+      let read: Rc<Cell<Option<[bool; 5]>>> = Rc::default();
+      let (into, handle) = (read.clone(), window.handle());
+      let tick = runtime
+        .set_interval(20, move || {
+          if into.get().is_none() {
+            into.set(BorrowedWindow::with_handle_value(handle, |w| platform::test_support::system_menu_enabled(w)).flatten());
+            platform::end_menu_for_tests();
+          }
+        })
+        .expect("interval");
+      crate::menu::window_menu(handle).expect("menu");
+      runtime.clear_timeout(tick);
+      read.get().expect("the menu was open")
+    };
+    let tag = |zoomed: bool| [zoomed, !zoomed, !zoomed, true, !zoomed];
+    frameless.show().expect("show");
+    frameless.minimize();
+    assert_eq!(shown(&frameless), tag(false), "a minimised frameless window");
+    frameless.show().expect("restore");
+    frameless.toggle_maximize().expect("maximise");
+    assert!(frameless.is_maximized() && !native(&frameless, |w| platform::is_zoomed(w)));
+    assert_eq!(shown(&frameless), tag(false), "a frameless window maximised by its own toggle");
+    fixed.show().expect("show");
+    assert_eq!(shown(&fixed), tag(false), "a window that cannot be sized");
+    frameless.dispose();
+    fixed.dispose();
+  });
+}
+
 #[test]
 fn is_minimized_follows_the_os_for_an_owned_and_an_adopted_window() {
   on_ui_thread(|runtime| {

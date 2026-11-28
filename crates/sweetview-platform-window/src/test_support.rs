@@ -5,7 +5,10 @@
 use std::ffi::c_void;
 
 use windows::Win32::Graphics::Gdi::DeleteObject;
-use windows::Win32::UI::WindowsAndMessaging::{GetIconInfo, HICON, ICONINFO, ICON_BIG, ICON_SMALL, WM_GETICON};
+use windows::Win32::UI::WindowsAndMessaging::{
+  GetIconInfo, GetMenuState, GetSystemMenu, HICON, ICONINFO, ICON_BIG, ICON_SMALL, MF_BYCOMMAND, MF_DISABLED, MF_GRAYED, SC_MAXIMIZE, SC_MINIMIZE,
+  SC_MOVE, SC_RESTORE, SC_SIZE, WM_GETICON,
+};
 
 use crate::platform::icon_message;
 use crate::NativeWindow;
@@ -17,6 +20,22 @@ pub fn shows_valid_icons(window: &impl NativeWindow) -> bool {
     let icon = icon_message(window.hwnd(), WM_GETICON, kind, None);
     icon != 0 && icon_is_valid(HICON(icon as *mut c_void))
   })
+}
+
+/// Whether each of the window's system menu items Restore, Move, Size, Minimize
+/// and Maximize is enabled, by command; `None` when the window has no system menu.
+pub fn system_menu_enabled(window: &impl NativeWindow) -> Option<[bool; 5]> {
+  // SAFETY: a window function on a handle named by `NativeWindow`; the menu is the window's and
+  // is not destroyed here.
+  let menu = unsafe { GetSystemMenu(window.hwnd(), false) };
+  if menu.is_invalid() {
+    return None;
+  }
+  Some([SC_RESTORE, SC_MOVE, SC_SIZE, SC_MINIMIZE, SC_MAXIMIZE].map(|command| {
+    // SAFETY: `menu` is the window's system menu, alive while the window is; the item is named by command.
+    let state = unsafe { GetMenuState(menu, command, MF_BYCOMMAND) };
+    state & (MF_GRAYED.0 | MF_DISABLED.0) == 0
+  }))
 }
 
 fn icon_is_valid(icon: HICON) -> bool {
