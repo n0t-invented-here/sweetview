@@ -24,26 +24,47 @@ use windows::Win32::Foundation::{ERROR_INVALID_STATE, E_POINTER, E_UNEXPECTED};
 use super::attempts::{Failed, RETRY_WAIT};
 use super::pump::{pump_while, PumpEnd};
 
-thread_local! {
+/// What a thread keeps of WebView2 for its whole life.
+struct ThreadWebView2 {
     /// This thread's WebView2 environment, made once on the first webview and
     /// shared by every later one, as the C++ library's webviews shared one
     /// browser process. A failure is not kept: the next webview tries again.
-    static SHARED: RefCell<Option<ICoreWebView2Environment>> = const { RefCell::new(None) };
+    shared: Option<ICoreWebView2Environment>,
     /// This thread's single-threaded apartment, entered by the first
-    /// `create_environment` on the thread that succeeds in entering it and left
-    /// when the thread ends, after the thread's later-made values (the runtime's
-    /// environment and webviews) have been dropped.
-    static APARTMENT: RefCell<Option<ComApartment>> = const { RefCell::new(None) };
+    /// environment made on the thread that succeeds in entering it and left
+    /// when the thread ends, after the environment.
+    apartment: Option<ComApartment>,
+}
+
+/// At the thread's end the environment is not released: the last release of a
+/// WebView2 environment has WebView2 call back into the thread's windows, and
+/// a callback cannot run while the thread's storage is torn down, so a thread
+/// that ended still holding it faulted with `0xc000041d`
+/// (`STATUS_FATAL_USER_CALLBACK_EXCEPTION`; test
+/// `a_thread_that_made_a_webview_ends_cleanly`), whichever order its storage
+/// went in. The UI thread is the process's main thread, whose storage goes as
+/// the process exits, so the same release could fault there. Let go of while
+/// the thread runs ([`release_shared`], from the end of the loop and the
+/// tests), it is released; left to the thread's end, the reference goes with
+/// the process (WebView2's browser process ends with its host's).
+impl Drop for ThreadWebView2 {
+    fn drop(&mut self) {
+        std::mem::forget(self.shared.take());
+    }
+}
+
+thread_local! {
+    static THREAD: RefCell<ThreadWebView2> = const { RefCell::new(ThreadWebView2 { shared: None, apartment: None }) };
 }
 
 /// Makes this thread a COM single-threaded apartment for the rest of its life,
 /// once. A thread that is multithreaded is refused (and asked again on the next
 /// call), which WebView2 then refuses through the creation.
 fn enter_apartment_once() {
-    APARTMENT.with(|slot| {
-        let mut slot = slot.borrow_mut();
-        if slot.is_none() {
-            *slot = ComApartment::enter().ok();
+    THREAD.with(|thread| {
+        let mut thread = thread.borrow_mut();
+        if thread.apartment.is_none() {
+            thread.apartment = ComApartment::enter().ok();
         }
     });
 }
@@ -112,13 +133,13 @@ pub(super) fn prepare() -> Result<(), ErrorCode> {
 /// new environment for each attempt.
 pub(super) fn for_attempt(number: u32) -> Result<ICoreWebView2Environment, Failed> {
     if number == 0 {
-        if let Some(environment) = SHARED.with(|cell| cell.borrow().clone()) {
+        if let Some(environment) = THREAD.with(|thread| thread.borrow().shared.clone()) {
             return Ok(environment);
         }
     }
     let folder = default_user_data_folder().map(|folder| HSTRING::from(folder.as_path()));
     let environment = create_once(folder.as_ref())?;
-    SHARED.with(|cell| *cell.borrow_mut() = Some(environment.clone()));
+    THREAD.with(|thread| thread.borrow_mut().shared = Some(environment.clone()));
     Ok(environment)
 }
 
@@ -159,7 +180,7 @@ fn create_once(folder: Option<&HSTRING>) -> Result<ICoreWebView2Environment, Fai
 /// test's thread ends right after its body, and WebView2 faults with
 /// `0xc000041d` when an environment is released by the thread's own teardown.
 pub fn release_shared() {
-    drop(SHARED.with(|cell| cell.borrow_mut().take()));
+    drop(THREAD.with(|thread| thread.borrow_mut().shared.take()));
 }
 
 /// Creates a WebView2 environment exactly as the C++ fork's `embed()` does:
@@ -207,7 +228,7 @@ mod tests {
             for _ in 0..3 {
                 enter_apartment_once();
             }
-            assert!(APARTMENT.with(|slot| slot.borrow().is_some()));
+            assert!(THREAD.with(|thread| thread.borrow().apartment.is_some()));
         })
         .join()
         .unwrap();
