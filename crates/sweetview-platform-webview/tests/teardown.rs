@@ -155,6 +155,9 @@ fn teardown() {
         with_extras.gdi <= bare.gdi.max(0),
         "GDI objects return to their start: {with_extras:?} ({bare:?} without the extras)"
     );
+    // The webview itself (its widget window, its controller) gives back every USER and GDI
+    // object it took.
+    assert!(bare.user <= 0 && bare.gdi <= 0, "a webview gives back its window and GDI objects: {bare:?}");
     // Kernel handles are compared with the same loop without the extras: WebView2 keeps about
     // one per webview ever made in the process, extras or not (measured here: 6 over 5 lives
     // without the extras, 4 or 5 with them, in each of three runs).

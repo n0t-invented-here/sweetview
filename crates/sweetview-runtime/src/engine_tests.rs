@@ -14,6 +14,7 @@ use sweetview_platform_webview::test_support::{self, DownloadWatch, PageSettings
 use super::*;
 use crate::runtime::testing::on_ui_thread;
 use crate::window::{Window, WindowInit};
+use sweetview_platform_window::BorrowedWindow;
 
 /// Pumps `runtime` until `done` or `timeout`; returns whether `done` held.
 fn pump_until(runtime: &Runtime, timeout: Duration, mut done: impl FnMut() -> bool) -> bool {
@@ -101,125 +102,267 @@ fn every_kind_of_host_has_the_cpp_fork_s_page_settings() {
   });
 }
 
-/// The kinds of host, in the order the tests go through them.
-const HOSTS: [&str; 3] = ["own window", "given window", "child"];
+/// The kinds of host, in the order the tests go through them: a window of the
+/// engine's own, a given window it fills (as `createApp`'s), a child of a given
+/// window (as a tab's page), and a child moved into another window.
+const HOSTS: [&str; 4] = ["own window", "given window", "child", "reparented child"];
 
-/// A webview in a host of kind `host`, with the window it needs kept alive
-/// beside it. `before` runs once that window exists and before the webview is
-/// made.
-fn make(host: &str, before: impl FnOnce(Option<&Window>)) -> (Engine, Option<Window>) {
+/// A webview in a host of kind `host`, with the windows it needs kept alive
+/// beside it (the one it is in first). `before` runs once that window exists
+/// and before the webview is made.
+fn make(host: &str, before: impl FnOnce(Option<&Window>)) -> (Engine, Vec<Window>) {
   make_debug(host, false, before)
 }
 
 /// [`make`], with the developer tools as `debug`.
-fn make_debug(host: &str, debug: bool, before: impl FnOnce(Option<&Window>)) -> (Engine, Option<Window>) {
+fn make_debug(host: &str, debug: bool, before: impl FnOnce(Option<&Window>)) -> (Engine, Vec<Window>) {
+  let bounds = Bounds { x: 10, y: 10, width: 300, height: 200 };
   match host {
     "own window" => {
       before(None);
       let engine = Engine::create(debug, Host::Own).expect("own");
       engine.set_size(480, 360, SizeHint::None);
-      (engine, None)
+      (engine, Vec::new())
     }
     "given window" => {
       let window = host_window("engine test: filled");
       before(Some(&window));
-      (Engine::create(debug, Host::Fill(window.handle())).expect("fill"), Some(window))
+      (Engine::create(debug, Host::Fill(window.handle())).expect("fill"), vec![window])
     }
-    _ => {
+    "child" => {
       let window = host_window("engine test: child");
       before(Some(&window));
-      let bounds = Bounds { x: 10, y: 10, width: 300, height: 200 };
-      (Engine::create(debug, Host::Child(window.handle(), bounds)).expect("child"), Some(window))
+      (Engine::create(debug, Host::Child(window.handle(), bounds)).expect("child"), vec![window])
+    }
+    _ => {
+      let first = host_window("engine test: child before the move");
+      let engine = Engine::create(debug, Host::Child(first.handle(), bounds)).expect("child");
+      let window = host_window("engine test: reparented");
+      before(Some(&window));
+      engine.reparent(window.handle()).expect("reparent");
+      engine.set_bounds(bounds);
+      (engine, vec![window, first])
     }
   }
 }
 
+/// The page still runs and its webview is still in its window.
+fn still_there(runtime: &Runtime, engine: &Engine, reports: &Rc<RefCell<Vec<String>>>, mark: &str) -> (bool, bool) {
+  let alive = webview_of(engine, test_support::container_alive);
+  engine.eval(&format!("report({mark:?})"));
+  let answered = pump_until(runtime, Duration::from_secs(3), || reports.borrow().iter().any(|r| r.contains(mark)));
+  (alive, answered)
+}
+
 #[test]
-fn a_download_shows_webview2_s_own_interface_as_under_the_cpp_fork() {
+fn a_page_s_window_close_does_nothing_as_under_the_cpp_fork() {
   on_ui_thread(|runtime| {
     let _finish = Finish(&runtime);
+    // The C++ fork registered no WindowCloseRequested handler, so WebView2's request to close
+    // (from `window.close()` in any document or frame, or from the DevTools protocol's
+    // `Page.close`) did nothing, and `window.close` was the browser's own.
+    for host in HOSTS {
+      let (engine, _windows) = make(host, |_| ());
+      // In the initial about:blank document, before any navigation.
+      engine.eval("window.close()");
+      settle(&runtime, Duration::from_millis(500));
+      let blank = webview_of(&engine, test_support::container_alive);
+      let reports = load(&runtime, &engine, PAGE);
+      let after_blank = still_there(&runtime, &engine, &reports, "after about:blank");
+
+      // In the page, then from a cross-origin frame reaching for the top.
+      engine.eval("report('close is ' + window.close.toString())");
+      assert!(pump_until(&runtime, Duration::from_secs(3), || reports.borrow().iter().any(|r| r.contains("close is"))), "{host}: the page said what close is");
+      let native = reports.borrow().iter().any(|r| r.contains("[native code]"));
+      engine.eval("window.close()");
+      settle(&runtime, Duration::from_millis(500));
+      let after_page = still_there(&runtime, &engine, &reports, "after the page");
+      let responder = engine.inner.with_live(|live| live.extras.responder()).expect("live");
+      engine.set_request_handler(Some(Rc::new(move |request: RawRequest| {
+        let body = "<!doctype html><script>window.top.close(); try { top.window.close() } catch (e) {}</script>";
+        responder.complete(request.id, 200, Some(r#"{"Content-Type":"text/html"}"#), Some(body.as_bytes()));
+      })));
+      engine.eval("(() => { const f = document.createElement('iframe'); f.src = 'http://frames.webview.localhost/close.html'; f.onload = () => report('frame loaded'); document.body.append(f); })()");
+      assert!(pump_until(&runtime, Duration::from_secs(10), || reports.borrow().iter().any(|r| r.contains("frame loaded"))), "{host}: the frame loaded");
+      settle(&runtime, Duration::from_millis(500));
+      let after_frame = still_there(&runtime, &engine, &reports, "after the frame");
+
+      // Through the DevTools protocol.
+      assert_eq!(engine.call_devtools_protocol_method("Page.close", "{}"), ErrorCode::Ok);
+      settle(&runtime, Duration::from_millis(800));
+      let after_devtools = still_there(&runtime, &engine, &reports, "after Page.close");
+
+      eprintln!("-- {host}: about:blank {blank} {after_blank:?}; native close {native}; page {after_page:?}; frame {after_frame:?}; Page.close {after_devtools:?}");
+      assert!(blank && after_blank == (true, true), "{host}: window.close() in about:blank left the webview");
+      assert!(native, "{host}: window.close is the browser's own");
+      assert_eq!(after_page, (true, true), "{host}: the page's window.close() left the webview");
+      assert_eq!(after_frame, (true, true), "{host}: a cross-origin frame's window.top.close() left the webview");
+      assert_eq!(after_devtools, (true, true), "{host}: Page.close left the webview");
+      engine.destroy();
+      settle(&runtime, Duration::from_millis(100));
+    }
+  });
+}
+
+#[test]
+fn a_download_is_left_to_webview2_which_keeps_an_existing_file_and_shows_its_interface() {
+  on_ui_thread(|runtime| {
+    let _finish = Finish(&runtime);
+    // The C++ fork registered no DownloadStarting handler: WebView2 chose the path in the
+    // profile's download folder, kept a file already there, and showed its own interface.
+    // The profile's folder points at a scratch folder for the test and is put back after.
     let folder = std::env::temp_dir().join(format!("sweetview-engine-download-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&folder);
     std::fs::create_dir_all(&folder).unwrap();
     for host in HOSTS {
-      let (engine, _window) = make(host, |_| ());
+      let (engine, _windows) = make(host, |_| ());
       load(&runtime, &engine, PAGE);
-      let watch = webview_of(&engine, |webview| DownloadWatch::attach(webview, folder.clone()));
+      let original = webview_of(&engine, test_support::download_folder);
+      webview_of(&engine, |webview| test_support::set_download_folder(webview, &folder.to_string_lossy()));
+      let existing = folder.join("sweetview-download.txt");
+      std::fs::write(&existing, "already here").unwrap();
+      let watch = webview_of(&engine, DownloadWatch::attach);
       engine.eval(
         "(() => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['a download'])); \
          a.download = 'sweetview-download.txt'; document.body.append(a); a.click(); })()",
       );
       assert!(pump_until(&runtime, Duration::from_secs(10), || !watch.handled().is_empty()), "{host}: the download started");
+      let saved = pump_until(&runtime, Duration::from_secs(10), || std::fs::read_dir(&folder).map(|d| d.count()).unwrap_or(0) >= 2);
       let opened = pump_until(&runtime, Duration::from_secs(5), || webview_of(&engine, test_support::download_dialog_open) == Some(true));
-      eprintln!("-- {host}: marked handled {:?}; WebView2's download dialog opened {opened}", watch.handled());
       webview_of(&engine, test_support::close_download_dialog);
-      // `Handled` true is what keeps a download out of WebView2's own interface
-      // (ICoreWebView2DownloadStartingEventArgs::put_Handled); whether the flyout also opens
-      // by itself depends on the window being in the foreground, which a shared desktop does
-      // not give a test, so the real-input test looks at that.
-      assert_eq!(watch.handled(), vec![false], "{host}: the download is left to WebView2, which shows it in its own interface");
+      let names: Vec<String> = std::fs::read_dir(&folder).unwrap().filter_map(|e| e.ok()).map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+      let kept = std::fs::read_to_string(&existing).unwrap_or_default();
+      eprintln!("-- {host}: handled {:?}; path chosen {:?}; files {names:?}; the existing file holds {kept:?}; interface opened {opened}", watch.handled(), watch.paths());
+      webview_of(&engine, |webview| test_support::set_download_folder(webview, &original));
+      assert_eq!(watch.handled(), vec![false], "{host}: nothing marked the download handled");
+      assert!(saved, "{host}: WebView2 saved the download beside the existing file");
+      assert_eq!(kept, "already here", "{host}: the existing file was kept");
+      assert!(opened, "{host}: WebView2's own download interface opened");
       drop(watch);
       engine.destroy();
-      settle(&runtime, Duration::from_millis(100));
+      settle(&runtime, Duration::from_millis(200));
+      for entry in std::fs::read_dir(&folder).unwrap().filter_map(|e| e.ok()) {
+        let _ = std::fs::remove_file(entry.path());
+      }
     }
     let _ = std::fs::remove_dir_all(&folder);
   });
 }
 
-
 #[test]
-fn a_webview_takes_the_focus_only_in_a_window_of_its_own_as_under_the_cpp_fork() {
+fn the_focus_moves_into_the_page_only_where_the_cpp_fork_moved_it() {
   on_ui_thread(|runtime| {
     let _finish = Finish(&runtime);
-    // The C++ fork focused the page at creation only when it made the window itself
-    // (`owns_window()`, win32_edge.hh): a webview made in a given window, or beside a native
-    // control that has the focus, leaves the focus where it is. Read right after
-    // `Engine::create` returns, before the loop runs, so nothing but the creation can have
-    // moved it (a filled window's later activation is `wry`'s focus forwarding; D45).
-    let mut checked = 0;
-    for host in ["given window", "child"] {
+    let mut checked = Vec::new();
+    // 1. Making a webview in a given window, or beside a control that has the focus, leaves
+    //    the focus there (read before the loop runs, so only the creation can have moved it).
+    // 2. A given window that takes the focus itself afterwards keeps it: nothing forwards a
+    //    WM_SETFOCUS of a window Sweetview was given.
+    for host in ["given window", "child", "reparented child"] {
       let mut had_focus = false;
-      let (engine, window) = make(host, |window| {
-        let holder = window.expect("a given window").handle();
-        BorrowedWindow::with_handle_value(holder, test_support::focus_window);
-        had_focus = test_support::focused_window() == holder;
+      let (engine, windows) = make(host, |window| {
+        let window = window.expect("a given window");
+        BorrowedWindow::with_handle_value(window.handle(), test_support::focus_window);
+        had_focus = BorrowedWindow::with_handle_value(window.handle(), test_support::has_focus) == Some(true);
       });
-      let holder = window.as_ref().expect("a given window").handle();
-      let inside = webview_of(&engine, test_support::focus_is_inside);
-      let focused = test_support::focused_window();
-      eprintln!("-- {host}: before the webview, the window had the focus {had_focus}; after Engine::create, focus in the webview {inside}, focused window {focused:#x}");
-      // The webview must never have it. Where it went otherwise is the desktop's business
-      // when another program took the activation meanwhile (the focus is then nobody's).
-      assert!(!inside, "{host}: making the webview did not take the focus");
-      if had_focus && focused != 0 {
-        assert_eq!(focused, holder, "{host}: the given window keeps the focus");
-        checked += 1;
-      } else {
-        eprintln!("   not run for the {host}: the desktop did not leave this thread the focus");
+      let given = windows[0].handle();
+      let created_inside = webview_of(&engine, test_support::focus_is_inside);
+      load(&runtime, &engine, PAGE);
+      BorrowedWindow::with_handle_value(given, test_support::focus_window);
+      let took_it = BorrowedWindow::with_handle_value(given, test_support::has_focus) == Some(true);
+      settle(&runtime, Duration::from_millis(400));
+      let kept = BorrowedWindow::with_handle_value(given, test_support::has_focus) == Some(true);
+      let later_inside = webview_of(&engine, test_support::focus_is_inside);
+      eprintln!("-- {host}: at creation the window had the focus {had_focus}, the page {created_inside}; the window took it again {took_it}, kept it {kept}, the page has it {later_inside}");
+      assert!(!created_inside, "{host}: making the webview did not move the focus into it");
+      assert!(!later_inside, "{host}: the page did not take the focus from the window");
+      if had_focus {
+        checked.push(format!("{host}: creation"));
+      }
+      if took_it {
+        assert!(kept, "{host}: the window that took the focus keeps it");
+        checked.push(format!("{host}: the window's own focus"));
       }
       engine.destroy();
       settle(&runtime, Duration::from_millis(100));
     }
-    eprintln!("-- checked {checked} of 2 hosts");
+    // 3. A window the engine makes gives its page the focus when shown and activated, as the
+    //    fork's own window did on WM_ACTIVATE.
+    let (own, _none) = make("own window", |_| ());
+    load(&runtime, &own, PAGE);
+    let own_inside = pump_until(&runtime, Duration::from_secs(3), || webview_of(&own, test_support::focus_is_inside));
+    eprintln!("-- own window: the page has the focus once the window is shown {own_inside}");
+    if own_inside {
+      checked.push("own window".into());
+    }
+    own.destroy();
+    // 4. A runtime window a page fills (createApp's) gives the page the focus on activation.
+    let (filled, windows) = make("given window", |_| ());
+    load(&runtime, &filled, PAGE);
+    let window = windows[0].handle();
+    BorrowedWindow::with_handle_value(window, test_support::focus_window);
+    BorrowedWindow::with_handle_value(window, test_support::send_activate);
+    let activated = pump_until(&runtime, Duration::from_secs(3), || webview_of(&filled, test_support::focus_is_inside));
+    eprintln!("-- given window: the page has the focus after the window's activation {activated}");
+    assert!(activated, "the page of a runtime window it fills gets the focus when the window is activated");
+    checked.push("activation of a filled window".into());
+    filled.destroy();
+    eprintln!("-- checked: {checked:?}");
+    assert!(checked.len() >= 4, "too little could be checked on this desktop to say anything: {checked:?}");
   });
 }
 
 #[test]
-fn a_page_that_calls_window_close_stays_as_under_the_cpp_fork() {
+fn the_container_is_a_control_parent_and_goes_with_its_webview() {
   on_ui_thread(|runtime| {
     let _finish = Finish(&runtime);
-    // The C++ fork did not handle WindowCloseRequested, so a page's `window.close()` left
-    // the webview where it was.
+    // The fork's widget: WS_EX_CONTROLPARENT, destroyed with its webview (deinit), even in a
+    // window that stays alive. Over repeated lives, every handle is given back.
+    const WS_EX_CONTROLPARENT: u32 = 0x0001_0000;
+    for host in ["given window", "child"] {
+      let window = host_window("engine test: container");
+      let handle = window.handle();
+      let life = || {
+        let engine = match host {
+          "given window" => Engine::create(false, Host::Fill(handle)).expect("fill"),
+          _ => Engine::create(false, Host::Child(handle, Bounds { x: 0, y: 0, width: 200, height: 100 })).expect("child"),
+        };
+        load(&runtime, &engine, PAGE);
+        let style = webview_of(&engine, test_support::widget_ex_style);
+        let widgets = BorrowedWindow::with_handle_value(handle, test_support::widget_children);
+        assert!(style & WS_EX_CONTROLPARENT != 0, "{host}: the container is a control parent ({style:#x})");
+        assert_eq!(widgets, Some(1), "{host}: one container while the webview lives");
+        engine.destroy();
+        settle(&runtime, Duration::from_millis(200));
+        assert_eq!(BorrowedWindow::with_handle_value(handle, test_support::widget_children), Some(0), "{host}: the container went with the webview");
+      };
+      // USER and GDI objects (the widget among them) come back exactly. WebView2 itself keeps
+      // about one kernel handle per webview ever made in a process, under the C++ fork and
+      // `wry` alike (measured by the webview crate's teardown test against bare webviews):
+      // that, and no more, is allowed.
+      let lives = 8;
+      let growth = sweetview_platform_loop::testing::smallest_growth(lives, life);
+      eprintln!("-- {host}: over {lives} lives {growth:?}");
+      assert!(growth.user_objects <= 0 && growth.gdi_objects <= 0, "{host}: every window and GDI object given back: {growth:?}");
+      assert!(growth.kernel_handles <= lives as i64, "{host}: no kernel handle beyond WebView2's own one per webview: {growth:?}");
+      drop(window);
+    }
+  });
+}
+
+#[test]
+fn a_page_may_define_its_own_window_ipc() {
+  on_ui_thread(|runtime| {
+    let _finish = Finish(&runtime);
+    // Nothing of Sweetview's defines `window.ipc`, as the fork defined none.
     for host in HOSTS {
-      let (engine, _window) = make(host, |_| ());
+      let (engine, _windows) = make(host, |_| ());
       let reports = load(&runtime, &engine, PAGE);
-      engine.eval("window.close()");
-      settle(&runtime, Duration::from_millis(800));
-      let alive = webview_of(&engine, test_support::container_alive);
-      engine.eval("report('still here')");
-      let answered = pump_until(&runtime, Duration::from_secs(3), || reports.borrow().iter().any(|r| r.contains("still here")));
-      eprintln!("-- {host}: after window.close(), the webview's window exists {alive}; the page answers {answered}");
-      assert!(alive, "{host}: the webview's window is still there");
-      assert!(answered, "{host}: the page still runs");
+      engine.eval("(() => { 'use strict'; try { window.ipc = { mine: 1 }; report('ipc ' + window.ipc.mine); } catch (e) { report('ipc refused ' + e); } })()");
+      assert!(pump_until(&runtime, Duration::from_secs(3), || reports.borrow().iter().any(|r| r.contains("ipc"))), "{host}: the page answered");
+      let said = reports.borrow().iter().find(|r| r.contains("ipc")).cloned().unwrap_or_default();
+      eprintln!("-- {host}: {said}");
+      assert!(said.contains("ipc 1"), "{host}: the page's own window.ipc: {said}");
       engine.destroy();
       settle(&runtime, Duration::from_millis(100));
     }
@@ -227,17 +370,16 @@ fn a_page_that_calls_window_close_stays_as_under_the_cpp_fork() {
 }
 
 #[test]
-fn a_new_webview_leaves_the_profile_s_autofill_preference_as_it_is_as_under_the_cpp_fork() {
+fn making_a_webview_leaves_the_profile_s_autofill_preference_as_it_is() {
   on_ui_thread(|runtime| {
     let _finish = Finish(&runtime);
-    // The C++ fork never set general autofill, so the preference stayed as the profile had
-    // it. Turned off in one webview (as an application reaching WebView2 itself, or another
-    // program on the profile, can), it stays off when another webview is made.
-    let (first, _first_window) = make("own window", |_| ());
+    // The C++ fork never wrote general autofill. Turned off in one webview, it stays off when
+    // another is made, in any kind of host; the profile is put back after.
+    let (first, _first_windows) = make("own window", |_| ());
     load(&runtime, &first, PAGE);
     webview_of(&first, |webview| test_support::set_general_autofill(webview, false));
     for host in HOSTS {
-      let (second, _window) = make(host, |_| ());
+      let (second, _windows) = make(host, |_| ());
       load(&runtime, &second, PAGE);
       let seen = (webview_of(&first, |w| test_support::page_settings(w).general_autofill), webview_of(&second, |w| test_support::page_settings(w).general_autofill));
       eprintln!("-- after a second webview in a {host}: general autofill (first, second) {seen:?}");
@@ -245,10 +387,63 @@ fn a_new_webview_leaves_the_profile_s_autofill_preference_as_it_is_as_under_the_
       second.destroy();
       settle(&runtime, Duration::from_millis(100));
     }
-    // The profile as the test found it: no other test sees its change.
     webview_of(&first, |webview| test_support::set_general_autofill(webview, true));
     first.destroy();
   });
+}
+
+/// Run by `autofill_across_processes` in a process of its own, on the profile
+/// it names: makes one webview and, as `SWEETVIEW_AUTOFILL_STEP` says, turns
+/// general autofill off ("off") or on ("on"), or only reads it ("read"); then
+/// prints `AUTOFILL <value>`, the value seen before any change.
+#[test]
+#[ignore = "a step of autofill_across_processes, run in a process of its own"]
+fn autofill_step() {
+  let Ok(step) = std::env::var("SWEETVIEW_AUTOFILL_STEP") else { return };
+  on_ui_thread(|runtime| {
+    let _finish = Finish(&runtime);
+    let (engine, _windows) = make("own window", |_| ());
+    load(&runtime, &engine, PAGE);
+    let seen = webview_of(&engine, |w| test_support::page_settings(w).general_autofill);
+    println!("AUTOFILL {seen:?}");
+    match step.as_str() {
+      "off" => webview_of(&engine, |w| test_support::set_general_autofill(w, false)),
+      "on" => webview_of(&engine, |w| test_support::set_general_autofill(w, true)),
+      _ => {}
+    }
+    settle(&runtime, Duration::from_millis(300));
+    engine.destroy();
+  });
+}
+
+#[test]
+fn autofill_across_processes() {
+  // Autofill turned off in one process; the process ends; a new process's first webview on
+  // the same profile is made, and nothing of Sweetview's writes the preference: what it reads
+  // is what WebView2 kept. Then the profile, a scratch folder, is removed.
+  let profile = std::env::temp_dir().join(format!("sweetview-engine-autofill-{}", std::process::id()));
+  let _ = std::fs::remove_dir_all(&profile);
+  let run = |step: &str| -> String {
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+      .args(["engine::tests::autofill_step", "--exact", "--ignored", "--nocapture", "--test-threads=1"])
+      .env("SWEETVIEW_AUTOFILL_STEP", step)
+      .env("WEBVIEW2_USER_DATA_FOLDER", &profile)
+      .output()
+      .expect("the step's process");
+    let text = String::from_utf8_lossy(&output.stdout).into_owned();
+    assert!(output.status.success(), "the {step} step: {text}{}", String::from_utf8_lossy(&output.stderr));
+    // libtest prints a test's output after its "test <name> ... " on the same line.
+    text.lines().find_map(|l| l.split_once("AUTOFILL ").map(|(_, value)| value.split_whitespace().next().unwrap_or_default().to_owned())).unwrap_or_default()
+  };
+  let fresh = run("off");
+  let second_process = run("read");
+  eprintln!("-- a fresh profile's first webview: {fresh}; after it was turned off and that process ended, the next process's first webview: {second_process}");
+  let _ = std::fs::remove_dir_all(&profile);
+  // Measured on WebView2 Runtime 158: WebView2 does not keep the preference from one process
+  // to the next (it is on again in the next process's first webview), so with nothing of
+  // Sweetview's writing it, the next process sees WebView2's own default, as under the fork.
+  assert_eq!(fresh, "Some(true)", "WebView2's default on a fresh profile");
+  assert_eq!(second_process, fresh, "the next process sees WebView2's own value; nothing of Sweetview's wrote one");
 }
 
 // ---- real input -----------------------------------------------------------------------
@@ -361,7 +556,7 @@ fn real_input() {
     eprintln!("-- this test is process {}", std::process::id());
     for host in HOSTS {
       eprintln!("== {host}");
-      let (engine, _window) = make(host, |_| ());
+      let (engine, _windows) = make(host, |_| ());
       let reports = load(&runtime, &engine, INPUT_PAGE);
       settle(&runtime, Duration::from_millis(500));
       let centres: Rc<RefCell<Option<serde_json::Value>>> = Rc::default();
@@ -450,7 +645,9 @@ fn real_input() {
       outcome("Explorer drop", &[(fx, fy)], cover, &injected, true, delivered);
 
       // A real click on a download link: WebView2's own download interface opens.
-      let watch = webview_of(&engine, |webview| DownloadWatch::attach(webview, folder.clone()));
+      let original_folder = webview_of(&engine, test_support::download_folder);
+      webview_of(&engine, |webview| test_support::set_download_folder(webview, &folder.to_string_lossy()));
+      let watch = webview_of(&engine, DownloadWatch::attach);
       let (lx, ly) = point(&engine, &centres, "dl");
       let cover = covered(&[(lx, ly)]);
       let injected = inject(&runtime, &args(&["-Action", "click", "-X", &lx.to_string(), "-Y", &ly.to_string()]), Duration::from_secs(8), || !watch.handled().is_empty());
@@ -459,6 +656,7 @@ fn real_input() {
       eprintln!("-- {host}: download marked handled {:?}; WebView2's download interface opened {opened}", watch.handled());
       outcome("download", &[(lx, ly)], cover, &injected, false, watch.handled() == vec![false] && opened);
       drop(watch);
+      webview_of(&engine, |webview| test_support::set_download_folder(webview, &original_folder));
 
       // Ctrl+wheel, Ctrl+0, Ctrl+plus, Ctrl+0 over the page.
       let (zx, zy) = point(&engine, &centres, "files");
@@ -485,5 +683,7 @@ fn real_input() {
     eprintln!("-- not run: {not_run:?}");
     eprintln!("-- failed: {failures:?}");
     assert!(failures.is_empty(), "failed: {failures:?}");
+    // A step not run proved nothing: the run is not a pass.
+    assert!(not_run.is_empty(), "not run: {not_run:?}");
   });
 }

@@ -5,7 +5,6 @@
 //! not this crate's code, so a test asserts what WebView2 has.
 
 use std::cell::RefCell;
-use std::path::PathBuf;
 use std::rc::Rc;
 
 use webview2_com::Microsoft::Web::WebView2::Win32::*;
@@ -161,34 +160,30 @@ pub fn focus_is_inside(webview: &Webview) -> bool {
 }
 
 /// What a `DownloadStarting` handler registered after every other one sees
-/// of each download of a webview: whether it is marked handled (WebView2 then
-/// shows no download interface). It saves each download into `folder`, so a
-/// test writes nothing in the user's own downloads folder.
+/// of each download of a webview, and changes nothing of: whether it is marked
+/// handled (WebView2 then shows no download interface) and the path WebView2
+/// chose for it. A test that downloads points the profile's download folder
+/// at a scratch folder first ([`set_download_folder`]), so nothing is written
+/// in the user's own.
 pub struct DownloadWatch {
-    seen: Rc<RefCell<Vec<bool>>>,
+    seen: Rc<RefCell<Vec<(bool, String)>>>,
     _registration: Registration,
 }
 
 impl DownloadWatch {
-    pub fn attach(webview: &Webview, folder: PathBuf) -> Self {
-        let seen: Rc<RefCell<Vec<bool>>> = Rc::default();
+    pub fn attach(webview: &Webview) -> Self {
+        let seen: Rc<RefCell<Vec<(bool, String)>>> = Rc::default();
         let record = seen.clone();
         let handler = DownloadStarting::create(move |args| {
             let mut handled = BOOL::default();
             // SAFETY: `args` is the live event args WebView2 passed to this handler, and
             // `handled` a local BOOL for the call to fill.
             let _ = unsafe { args.Handled(&mut handled) };
-            record.borrow_mut().push(handled.as_bool());
-            let mut suggested = PWSTR::null();
-            // SAFETY: `args` as above; `suggested` is a local PWSTR for the call to fill,
-            // freed by `take_pwstr`.
-            let _ = unsafe { args.ResultFilePath(&mut suggested) };
-            // `suggested` was filled by `ResultFilePath` just above (or left null).
-            let suggested = PathBuf::from(webview2_com::take_pwstr(suggested));
-            let name = suggested.file_name().map(PathBuf::from).unwrap_or_else(|| PathBuf::from("download"));
-            let path = HSTRING::from(folder.join(name).as_path());
-            // SAFETY: `args` as above; `path` is an owned HSTRING for the call.
-            let _ = unsafe { args.SetResultFilePath(&path) };
+            let mut path = PWSTR::null();
+            // SAFETY: `args` as above; `path` is a local PWSTR for the call to fill, freed by `take_pwstr`.
+            let _ = unsafe { args.ResultFilePath(&mut path) };
+            // `path` was filled by `ResultFilePath` just above (or left null).
+            record.borrow_mut().push((handled.as_bool(), webview2_com::take_pwstr(path)));
         });
         let webview4 = webview.core().clone().cast::<ICoreWebView2_4>().expect("ICoreWebView2_4");
         let registration = Registration::add_download_starting(&webview4, &handler).expect("add_DownloadStarting");
@@ -197,8 +192,46 @@ impl DownloadWatch {
 
     /// For each download so far, whether it was marked handled.
     pub fn handled(&self) -> Vec<bool> {
-        self.seen.borrow().clone()
+        self.seen.borrow().iter().map(|(handled, _)| *handled).collect()
     }
+
+    /// For each download so far, the path WebView2 chose for it.
+    pub fn paths(&self) -> Vec<String> {
+        self.seen.borrow().iter().map(|(_, path)| path.clone()).collect()
+    }
+}
+
+fn profile_of(webview: &Webview) -> ICoreWebView2Profile {
+    let webview13 = webview.core().clone().cast::<ICoreWebView2_13>().expect("ICoreWebView2_13");
+    // SAFETY: `webview13` is a COM reference this frame owns; no arguments.
+    unsafe { webview13.Profile() }.expect("Profile")
+}
+
+/// The profile's download folder (`ICoreWebView2Profile::DefaultDownloadFolderPath`).
+pub fn download_folder(webview: &Webview) -> String {
+    let mut path = PWSTR::null();
+    // SAFETY: `path` is a local PWSTR for the call to fill, freed by `take_pwstr` below.
+    let _ = unsafe { profile_of(webview).DefaultDownloadFolderPath(&mut path) };
+    // `path` was filled by the call just above (or left null).
+    webview2_com::take_pwstr(path)
+}
+
+/// Points the profile's download folder at `folder`. A test puts the folder
+/// it found back when it is done.
+pub fn set_download_folder(webview: &Webview, folder: &str) {
+    // SAFETY: the profile is a COM reference the call holds; the path is an owned HSTRING for the call.
+    unsafe { profile_of(webview).SetDefaultDownloadFolderPath(&HSTRING::from(folder)) }.expect("SetDefaultDownloadFolderPath");
+}
+
+/// Sends `WM_ACTIVATE` (`WA_ACTIVE`) to `window`, as the system does when the
+/// window becomes the active one.
+pub fn send_activate(window: &BorrowedWindow<'_>) {
+    use windows::Win32::Foundation::{LPARAM, WPARAM};
+    use windows::Win32::UI::WindowsAndMessaging::{SendMessageW, WA_ACTIVE, WM_ACTIVATE};
+    let hwnd = HWND(sweetview_platform_window::handle_value(window) as *mut _);
+    // SAFETY: `hwnd` is the borrowed window's handle, a window of this thread, and the message
+    // carries plain values.
+    let _ = unsafe { SendMessageW(hwnd, WM_ACTIVATE, Some(WPARAM(WA_ACTIVE as usize)), Some(LPARAM(0))) };
 }
 
 /// Whether WebView2's own download dialog is open on `webview`; `None` without
