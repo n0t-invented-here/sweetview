@@ -1432,7 +1432,7 @@ strip and page rectangles; the tab API operates the built-in strip.
 | Old | Write now | Change |
 |---|---|---|
 | `_debugTrackedCount` | no public call in 1.0 | what Sweetview keeps for a window, a diagnostic of Sweetview's own tests: no public call in 1.0 |
-| `asHwnd` | no public call in 1.0 | a window handle as a bigint, throwing for NULL: no public call in 1.0; `Window#handle` is a window's handle |
+| `asHwnd` | `import { Window } from "@n1h/sweetview-native"`; `Window#handle` | a window's handle is `Window#handle` (the `HWND` on Windows, the `NSWindow` pointer on macOS); converting a raw handle to the native layer's form, as this did (throwing for NULL), has no public call in 1.0 |
 | `colorRef` | `import { Window } from "@n1h/sweetview-native"`; `new Window(options)` | pass `colorKey: "#rrggbb"`; Sweetview converts the colour itself |
 | `createWindow` | `import { Window } from "@n1h/sweetview-native"`; `new Window(options)` | internal backend; the public window is `new Window(options)` |
 | `fromHandle` | `import { Window } from "@n1h/sweetview-native"`; `Window.fromHandle(handle)` | internal backend; the public wrapper is `Window.fromHandle` |
@@ -1564,7 +1564,7 @@ path follows these rows too.
 | Old | Write now | Change |
 |---|---|---|
 | `DarwinTabGroupController` | no public call in 1.0 | the hold the tabs library keeps on a window's tab group, as the tabs library drives AppKit's window tabbing on macOS: no public call in 1.0; `WebView.openTab(window, options)` opens a tab in a `tabs: true` window |
-| `asNSWindow` | `import { Window } from "@n1h/sweetview-native"`; `Window#handle` | the `NSWindow` pointer of a `Window` on macOS (the `HWND` on Windows) |
+| `asNSWindow` | `import { Window } from "@n1h/sweetview-native"`; `Window#handle` | a window's handle is `Window#handle` (the `HWND` on Windows, the `NSWindow` pointer on macOS); converting a raw handle to the native layer's form, as this did (throwing for NULL), has no public call in 1.0 |
 | `bindDarwinTabGroup` | no public call in 1.0 | binding a window to its tab group, as the tabs library drives AppKit's window tabbing on macOS: no public call in 1.0; `WebView.openTab(window, options)` opens a tab in a `tabs: true` window |
 | `createWindow` | `import { Window } from "@n1h/sweetview-native"`; `new Window(options)` | the public window, the same on macOS and Windows |
 | `darwinTabWindowClass` | no public call in 1.0 | the window class of a tab, as the tabs library drives AppKit's window tabbing on macOS: no public call in 1.0; `WebView.openTab(window, options)` opens a tab in a `tabs: true` window |

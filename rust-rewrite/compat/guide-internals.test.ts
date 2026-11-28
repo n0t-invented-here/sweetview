@@ -151,6 +151,15 @@ describe("the short list says what is true, for whom", () => {
   });
 });
 
+describe("twin rows say the same thing", () => {
+  test("asHwnd and its macOS twin asNSWindow both name Window#handle and say the conversion of a raw handle has no public call", () => {
+    const hwnd = row("`@n1h/sweetview-native/win32/window`", "`asHwnd`").split(" | ");
+    const ns = row("`@n1h/sweetview-native/darwin/window`", "`asNSWindow`").split(" | ");
+    const SAME = "a window's handle is `Window#handle` (the `HWND` on Windows, the `NSWindow` pointer on macOS); converting a raw handle to the native layer's form, as this did (throwing for NULL), has no public call in 1.0";
+    expect({ hwnd: [hwnd[1], hwnd[2]], ns: [ns[1], ns[2]] }).toEqual({ hwnd: ['`import { Window } from "@n1h/sweetview-native"`; `Window#handle`', `${SAME} |`], ns: ['`import { Window } from "@n1h/sweetview-native"`; `Window#handle`', `${SAME} |`] });
+  });
+});
+
 describe("what the guide says its test does", () => {
   test("the guide says a row with a new form is run, and what is checked of a row that says no public call in 1.0", () => {
     const text = guideLines.join(" ").replace(/\s+/g, " ");
