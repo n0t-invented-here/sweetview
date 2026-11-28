@@ -85,135 +85,169 @@ pub fn remove_keyboard_hook() -> Result<i32> {
 
 #[cfg(all(test, windows))]
 mod tests {
-  use std::cell::RefCell;
+  use std::cell::{Cell, RefCell};
+  use std::collections::VecDeque;
   use std::rc::Rc;
-  use std::time::{Duration, Instant};
 
   use sweetview_platform_input::KeyEventKind;
   use sweetview_platform_window::test_support as os;
 
   use super::*;
   use crate::runtime::testing::on_ui_thread;
-  use crate::runtime::Runtime;
 
   /// F24: bound to nothing, and swallowed by the test's hook so no other window sees it.
   const F24: u16 = 0x87;
+  /// Set, with the mode, in the environment of the child process each test starts.
+  const CHILD: &str = "SWEETVIEW_RUNTIME_TEST_HOOK_OWN_FOREGROUND";
 
-  fn pump_for(runtime: &Runtime, ms: u64) {
-    let deadline = Instant::now() + Duration::from_millis(ms);
-    while Instant::now() < deadline {
-      runtime.pump();
-      std::thread::sleep(Duration::from_millis(5));
+  fn kind_name(kind: KeyEventKind) -> &'static str {
+    match kind {
+      KeyEventKind::Down => "down",
+      KeyEventKind::Up => "up",
+      KeyEventKind::Repeat => "repeat",
     }
   }
 
-  /// F24 down and up as real input, sent from another thread while this one pumps (a hook's
-  /// thread busy inside `SendInput` would make the OS pass the first event on unseen).
-  fn tap_f24(runtime: &Runtime) {
-    let sender = std::thread::spawn(|| os::send_key(F24, false) && os::send_key(F24, true));
-    while !sender.is_finished() {
-      runtime.pump();
-    }
-    assert!(sender.join().expect("the sending thread"), "SendInput took both keys");
-  }
+  type Step = Box<dyn FnOnce()>;
 
-  /// What the hook saw of one tap of F24, and whether the window was in front when it was typed.
-  #[derive(Debug, PartialEq)]
-  struct Typed {
-    window_in_front: bool,
-    saw: Vec<KeyEventKind>,
-  }
-
-  /// Installs the keyboard hook, puts the window with handle value `window` in front, taps F24,
-  /// then gives the foreground to the taskbar and taps it again: what the hook saw each time.
-  fn typed_in_front_and_behind(runtime: &Runtime, window: isize) -> (Typed, Typed) {
-    let seen: Rc<RefCell<Vec<KeyEventKind>>> = Rc::default();
-    let sink = seen.clone();
-    let installed = install_keyboard_hook(move |event| {
-      if event.raw != u32::from(F24) {
-        return false;
-      }
-      sink.borrow_mut().push(event.kind);
-      true
+  /// The child's half, as `hook-own-foreground.ts` was: in a process of its own, a window of the
+  /// application's own (a `Window`, or a webview's own window) shown, the keyboard hook installed,
+  /// and the blocking loop run; one step every 350 ms from a native interval: take the foreground
+  /// twice, tap F24 (down and up, as real input, from another thread so the hook's thread is free),
+  /// record what the hook saw; give the foreground to the taskbar, tap again, record; end the loop.
+  /// Prints `RESULT <json>`.
+  fn child(mode: &str) {
+    use crate::engine::{Engine, Host, SizeHint};
+    use crate::window::{Window, WindowInit};
+    crate::loop_tests::use_test_webview_profile();
+    on_ui_thread(|runtime| {
+      let (handle, keep): (isize, Step) = if mode == "webview" {
+        let engine = Engine::create(false, Host::Own, None).expect("webview");
+        engine.set_title("rt hook own foreground webview");
+        engine.set_html("<!doctype html><p>hook own foreground</p>");
+        engine.set_size(420, 300, SizeHint::None);
+        (engine.window_handle(), Box::new(move || engine.destroy()))
+      } else {
+        let init = WindowInit { title: "rt hook own foreground".into(), bounds: Some(crate::Rect::new(220, 220, 420, 300)), frame: true, resizable: true, ..Default::default() };
+        let window = Window::create(init).expect("window");
+        window.show().expect("show");
+        (window.handle(), Box::new(move || window.dispose()))
+      };
+      let seen: Rc<RefCell<Vec<&'static str>>> = Rc::default();
+      let sink = seen.clone();
+      let installed = install_keyboard_hook(move |event| {
+        if event.raw == u32::from(F24) {
+          sink.borrow_mut().push(kind_name(event.kind));
+        }
+        true // swallowed, so F24 reaches nothing else on the desktop
+      });
+      assert_eq!(installed, Ok(OK));
+      let result: Rc<RefCell<serde_json::Map<String, serde_json::Value>>> = Rc::default();
+      let (before, ours) = (Rc::new(Cell::new(0usize)), Rc::new(Cell::new(false)));
+      let typing = || -> Step {
+        let (seen, before, ours) = (seen.clone(), before.clone(), ours.clone());
+        Box::new(move || {
+          before.set(seen.borrow().len());
+          ours.set(os::foreground() == handle);
+          std::thread::spawn(|| {
+            os::send_key(F24, false);
+            os::send_key(F24, true);
+          });
+        })
+      };
+      let record = |name: &'static str| -> Step {
+        let (seen, result, before, ours) = (seen.clone(), result.clone(), before.clone(), ours.clone());
+        Box::new(move || {
+          let saw: Vec<&str> = seen.borrow()[before.get()..].to_vec();
+          result.borrow_mut().insert(name.into(), serde_json::json!({ "foregroundIsOurs": ours.get(), "saw": saw }));
+        })
+      };
+      let quitter = runtime.clone();
+      let steps: VecDeque<Step> = VecDeque::from(vec![
+        Box::new(|| {}) as Step,
+        Box::new(move || {
+          os::take_foreground(handle);
+        }),
+        Box::new(move || {
+          os::take_foreground(handle);
+        }),
+        typing(),
+        record("inFront"),
+        Box::new(|| {
+          os::take_foreground(os::taskbar());
+        }),
+        typing(),
+        record("behind"),
+        Box::new(move || quitter.request_exit()),
+      ]);
+      let steps = RefCell::new(steps);
+      let interval = runtime
+        .set_interval(350, move || {
+          let step = steps.borrow_mut().pop_front();
+          if let Some(step) = step {
+            step();
+          }
+        })
+        .expect("steps");
+      // The limit: whatever happens, the run ends.
+      let ender = runtime.clone();
+      let limit = runtime.set_timeout(20_000, move || ender.request_exit()).expect("limit");
+      runtime.run_blocking().expect("the blocking run");
+      runtime.clear_timeout(interval);
+      runtime.clear_timeout(limit);
+      assert_eq!(remove_keyboard_hook(), Ok(OK));
+      keep();
+      println!("RESULT {}", serde_json::Value::Object(result.borrow().clone()));
     });
-    assert_eq!(installed, Ok(OK));
-    let tap = |front: bool| {
-      let before = seen.borrow().len();
-      let window_in_front = os::foreground() == window;
-      assert_eq!(window_in_front, front, "the foreground is {:#x}, the window is {window:#x}", os::foreground());
-      tap_f24(runtime);
-      let deadline = Instant::now() + Duration::from_secs(2);
-      while seen.borrow().len() < before + 2 && Instant::now() < deadline {
-        runtime.pump();
+  }
+
+  /// The parent's half: runs the child up to three times until the desktop gives its window the
+  /// foreground, then judges what the hook saw (or refuses to judge, as the TS test skipped).
+  fn typed_in_front_and_behind(mode: &str, test: &str) {
+    if let Some(child_mode) = std::env::var_os(CHILD) {
+      if child_mode == mode {
+        child(mode);
       }
-      pump_for(runtime, 30);
-      Typed { window_in_front, saw: seen.borrow()[before..].to_vec() }
-    };
-    pump_for(runtime, 200);
-    let mut given = false;
-    for _ in 0..10 {
-      if os::take_foreground(window) {
-        given = true;
+      return;
+    }
+    let mut last = serde_json::Value::Null;
+    for _ in 0..3 {
+      let output = std::process::Command::new(std::env::current_exe().expect("the test executable"))
+        .args([test, "--exact", "--nocapture", "--test-threads=1"])
+        .env(CHILD, mode)
+        .output()
+        .expect("the child process");
+      let stdout = String::from_utf8_lossy(&output.stdout);
+      assert!(output.status.success(), "the child ran: {stdout}\n{}", String::from_utf8_lossy(&output.stderr));
+      let line = stdout.split("RESULT ").nth(1).and_then(|rest| rest.lines().next()).unwrap_or("null");
+      last = serde_json::from_str(line).unwrap_or(serde_json::Value::Null);
+      if last["inFront"]["foregroundIsOurs"] == serde_json::Value::Bool(true) {
         break;
       }
-      pump_for(runtime, 100);
     }
-    pump_for(runtime, 100);
-    assert!(
-      given && os::foreground() == window,
-      "refused to judge: the desktop did not give the test's window the foreground (it is {:#x}); run again",
-      os::foreground()
-    );
-    let in_front = tap(true);
-    assert!(os::take_foreground(os::taskbar()), "the taskbar took the foreground");
-    pump_for(runtime, 100);
-    let behind = tap(false);
-    assert_eq!(remove_keyboard_hook(), Ok(OK));
-    (in_front, behind)
+    if last["inFront"]["foregroundIsOurs"] != serde_json::Value::Bool(true) {
+      panic!("refused to judge: the desktop did not give the child's window the foreground in three runs; run again: {last}");
+    }
+    let down_up = serde_json::json!(["down", "up"]);
+    assert_eq!(last["inFront"]["saw"], down_up, "typed into the application's own {mode} window: {last}");
+    assert_eq!(last["behind"]["foregroundIsOurs"], serde_json::Value::Bool(false), "the control ran with another window in front: {last}");
+    assert_eq!(last["behind"]["saw"], down_up, "the control: typed with another application's window in front: {last}");
   }
 
   /// Windows does not call a process's own low-level keyboard hook while a window of that
   /// process, registered for raw keyboard input, holds the foreground; `tao` registers its
   /// windows unless told not to (`build_event_loop`). So a key typed into the application's own
-  /// window must reach the hook as one typed into another application's does.
+  /// window must reach the hook as one typed into another application's does. Run, as
+  /// `hook-own-foreground.ts` was, in a process of its own under the blocking loop.
   #[test]
   fn a_key_typed_while_the_applications_own_window_is_in_front_reaches_the_keyboard_hook() {
-    use crate::window::{Window, WindowInit};
-    on_ui_thread(|runtime| {
-      let window = Window::create(WindowInit {
-        title: "rt hook own foreground".into(),
-        bounds: Some(crate::Rect::new(220, 220, 420, 300)),
-        frame: true,
-        resizable: true,
-        ..Default::default()
-      })
-      .expect("window");
-      window.show().expect("show");
-      let (in_front, behind) = typed_in_front_and_behind(&runtime, window.handle());
-      window.dispose();
-      let down_up = vec![KeyEventKind::Down, KeyEventKind::Up];
-      assert_eq!(in_front, Typed { window_in_front: true, saw: down_up.clone() }, "typed into the application's own window");
-      assert_eq!(behind, Typed { window_in_front: false, saw: down_up }, "the control: typed with another application's window in front");
-    });
+    typed_in_front_and_behind("window", "input::tests::a_key_typed_while_the_applications_own_window_is_in_front_reaches_the_keyboard_hook");
   }
 
   /// The same, with the window of a webview of its own in front: WebView2's own windows inside
   /// it must not keep the key from the hook either.
   #[test]
   fn a_key_typed_while_the_applications_own_webview_window_is_in_front_reaches_the_keyboard_hook() {
-    use crate::engine::{Engine, Host, SizeHint};
-    crate::loop_tests::use_test_webview_profile();
-    on_ui_thread(|runtime| {
-      let engine = Engine::create(false, Host::Own, None).expect("webview");
-      engine.set_title("rt hook own foreground webview");
-      engine.set_html("<!doctype html><p>hook own foreground</p>");
-      engine.set_size(420, 300, SizeHint::None);
-      let (in_front, behind) = typed_in_front_and_behind(&runtime, engine.window_handle());
-      engine.destroy();
-      pump_for(&runtime, 50);
-      let down_up = vec![KeyEventKind::Down, KeyEventKind::Up];
-      assert_eq!(in_front, Typed { window_in_front: true, saw: down_up.clone() }, "typed into the application's own webview window");
-      assert_eq!(behind, Typed { window_in_front: false, saw: down_up }, "the control: typed with another application's window in front");
-    });
+    typed_in_front_and_behind("webview", "input::tests::a_key_typed_while_the_applications_own_webview_window_is_in_front_reaches_the_keyboard_hook");
   }
 }

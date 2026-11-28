@@ -214,21 +214,27 @@ fn a_menu_opens_at_the_cursor_or_a_point_below_it_or_above_it() {
       assert_eq!(menu::popup(owner.handle_value(), &data, at, corner).expect("popup"), None);
       read.get()
     };
-    // At the cursor, opening above it, as the tray's menu and `popupMenuAtCursor` do.
-    let mut at_cursor = None;
-    for _ in 0..5 {
-      os::set_cursor(point.0, point.1);
-      let (rect, cursor) = placed(None, PopupCorner::BottomLeft);
-      if cursor == point {
-        at_cursor = Some(rect);
-        break;
+    // At the cursor: opening above it, as the tray's menu and `popupMenuAtCursor` do, and below it,
+    // as `Menu.popup` with no point does.
+    let at_cursor = |corner: PopupCorner| {
+      for _ in 0..5 {
+        os::set_cursor(point.0, point.1);
+        let (rect, cursor) = placed(None, corner);
+        if cursor == point {
+          return Some(rect);
+        }
+        pump_until(&runtime, 400, || false);
       }
-      pump_until(&runtime, 400, || false);
-    }
+      None
+    };
+    let (above, below) = (at_cursor(PopupCorner::BottomLeft), at_cursor(PopupCorner::TopLeft));
     os::set_cursor(saved.0, saved.1);
-    let above = at_cursor.unwrap_or_else(|| panic!("refused to judge: the cursor was moved on the shared desktop while the menu opened; run again"));
+    let refused = || panic!("refused to judge: the cursor was moved on the shared desktop while the menu opened; run again");
+    let (above, below) = (above.unwrap_or_else(refused), below.unwrap_or_else(refused));
     assert_eq!((above.0, above.3), point, "its bottom-left corner at the cursor");
     assert!(above.1 < point.1);
+    assert_eq!((below.0, below.1), point, "with no point and no corner asked: its top-left corner at the cursor");
+    assert!(below.3 > point.1);
     // At a point: above with the bottom-left corner, below with the top-left.
     let above = placed(Some((f64::from(point.0), f64::from(point.1))), PopupCorner::BottomLeft);
     assert_eq!((above.0 .0, above.0 .3), point);
@@ -530,18 +536,31 @@ fn a_tray_menu_items_handler_that_shows_a_window_gets_it_to_the_foreground() {
 }
 
 /// "the icon is re-added when the taskbar is recreated (the registered TaskbarCreated message, as
-/// Explorer broadcasts it)": `tray-icon` delivers a click only while the shell knows the icon.
+/// Explorer broadcasts it)". Restarting Explorer is not safe on a shared desktop: the icon is
+/// deleted from the shell behind the tray's back, as Explorer loses every icon when it restarts,
+/// and read back from Explorer as gone; the broadcast is posted to the tray's window; the shell
+/// holds the icon again, Explorer shows it, and a click arrives (`tray-icon` delivers one only
+/// while the shell knows the icon).
 #[test]
-fn the_icon_is_added_again_when_the_taskbar_is_recreated() {
+fn the_icon_lost_by_the_shell_is_added_again_when_the_taskbar_is_recreated() {
   on_ui_thread(|runtime| {
     let clicks = Rc::new(Cell::new(0u32));
     let count = clicks.clone();
-    let tray = Tray::new(TrayInit { on_double_click: Some(Rc::new(move || count.set(count.get() + 1))), ..tray_init(&unique("tray taskbar")) }).expect("tray");
-    assert!(os::post(tray.window_handle_value(), os::registered_message("TaskbarCreated"), 0, 0));
-    pump_until(&runtime, 100, || false);
+    let tooltip = unique("tray taskbar");
+    let tray = Tray::new(TrayInit { on_double_click: Some(Rc::new(move || count.set(count.get() + 1))), ..tray_init(&tooltip) }).expect("tray");
+    let window = tray.window_handle_value();
+    let uid = (1..=64).find(|&uid| os::shell_holds_icon(window, uid)).expect("the shell holds the tray's icon");
+    assert!(matches!(shell_icon(&runtime, &tooltip, true), Shell::Found { .. }), "Explorer shows the icon");
+    assert!(os::delete_shell_icon(window, uid), "the icon is deleted from the shell");
+    assert!(!os::shell_holds_icon(window, uid));
+    assert_eq!(shell_icon(&runtime, &tooltip, false), Shell::Missing, "Explorer shows no icon");
+    assert!(os::post(window, os::registered_message("TaskbarCreated"), 0, 0));
+    pump_until(&runtime, 2000, || os::shell_holds_icon(window, uid));
+    assert!(os::shell_holds_icon(window, uid), "the tray added its icon again");
+    assert!(matches!(shell_icon(&runtime, &tooltip, true), Shell::Found { .. }), "Explorer shows the icon again");
     post_tray(&tray, &[WM_LBUTTONDBLCLK]);
     pump_until(&runtime, 5000, || clicks.get() == 1);
-    assert_eq!(clicks.get(), 1);
+    assert_eq!(clicks.get(), 1, "and a click arrives");
     tray.dispose();
   });
 }
