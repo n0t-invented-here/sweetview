@@ -73,3 +73,12 @@ No pull request or issue was opened on a repository the owner does not own. What
 - On a machine with nobody at it, Windows keeps a toast banner on screen until someone returns and queues later ones behind it. Test runs made before the tests were changed left a queue of banners titled "Sweetview test" and one entry per throwaway app id under `HKCU\Software\Microsoft\Windows\CurrentVersion\Notifications\Settings`. The tests' toasts now show no banner and expire, and the tests remove their own entries. `rust-rewrite/checks/clear-test-toasts.ps1` was run once on this machine and removed 185 such entries with their toast history; it touches only ids that start with the tests' prefixes, never `Sweetview.DesktopApp`. Run it on any other machine where the earlier tests ran.
 - A run of the notifier's tests that is killed half way can leave a key named `Sweetview.NotifierTest.<uuid>`, `Sweetview.NotifierFallbackTest.<uuid>` or `Sweetview.NotifierHandles.<numbers>` under `HKCU\Software\Classes\AppUserModelId`; it is safe to delete.
 - The hosted CI runner (`.github/workflows/windows.yml`) has a small screen, applies window moves late and dismisses toasts at once. `rust-rewrite/DECISIONS.md` D20 lists every test that was corrected because it measured that machine and not the code.
+
+## 8. Checklist item W0.6 and hosted CI
+
+W0.6 is ticked on run 46088815542 of `.github/workflows/windows.yml`, on commit `c744c56`; the block under the item is a summary written by hand from that run, not output pasted from a command. Decision D33 (the owner's word that hosted CI is not approved for use in this project) came afterwards: the workflow now starts only by hand, and this work starts and reads no run. Since that run the workflow file changed in its triggers and comments only, and the code has changed since (the second review's fixes), so no hosted run of the current tree exists. Which of these is right is the owner's to say, under W0.6:
+
+- the run on `c744c56` stands as the item's proof, as a record of a workflow that was run once and is kept; or
+- the item is unticked, with D33 as its reason, or the workflow file deleted (the alternative D33 leaves open).
+
+The second review's G7 asked for this; until the owner answers, the box stays as it is.
