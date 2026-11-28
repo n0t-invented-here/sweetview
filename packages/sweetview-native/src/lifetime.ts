@@ -54,60 +54,7 @@ export function releaseAtEnd(kind: ReleaseKind, release: () => void): () => void
   const entry = () => release();
   const set = entries.get(kind)!;
   set.add(entry);
-  if ((REACHABLE_KINDS as readonly ReleaseKind[]).includes(kind)) hasBeenReachable = true;
   return () => void set.delete(entry);
-}
-
-const reachers = new Set<() => boolean>();
-/** The kinds that are something a person can reach (D46). */
-const REACHABLE_KINDS = ["tray", "notifier", "lock", "hook", "app"] as const;
-let hasBeenReachable = false;
-
-/** For this package's own modules: the application now has something a person can reach (`window.ts`: a window shown). */
-export function noteReachable(): void {
-  hasBeenReachable = true;
-}
-
-/** Whether the application has had anything a person can reach since the process started (D46). */
-export function applicationHasBeenReachable(): boolean {
-  return hasBeenReachable;
-}
-
-/**
- * Registers, for this package's own modules, a test of whether the
- * application has something a person can still reach (`window.ts`: a window
- * it has shown). Returns the function that takes it back.
- */
-export function addReachable(test: () => boolean): () => void {
-  reachers.add(test);
-  return () => void reachers.delete(test);
-}
-
-/**
- * Whether the application has anything a person can still reach, or that can
- * still bring a window back: a tray icon, a notifier, a single-instance lock
- * (a second launch reaches it), an input hook, a WebView of `@n1h/sweetview`
- * whose page and worker can still act or that is being made (`app`; a tab
- * strip, a window's own chrome, registers as `webview` and does not count),
- * or what a registered test reports (a window the application has shown and
- * not disposed). `runEventLoop` ends by itself at the first tick at which
- * this is false once it has been true (D46). Always true where nothing is registered for the end of
- * the application (macOS until its goal).
- */
-export function applicationReachable(): boolean {
-  if (macosKeepsTagPath()) return true;
-  for (const kind of REACHABLE_KINDS) {
-    if (entries.get(kind)!.size > 0) return true;
-  }
-  for (const test of reachers) {
-    try {
-      if (test()) return true;
-    } catch (err) {
-      console.error("sweetview: a reachability test threw:", err);
-      return true;
-    }
-  }
-  return false;
 }
 
 /**

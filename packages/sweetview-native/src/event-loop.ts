@@ -5,7 +5,6 @@
 // from a Bun timer that drains pending OS events each tick, so the UI thread
 // keeps Bun's event loop and `setTimeout`, promises and I/O work on it.
 
-import { applicationHasBeenReachable, applicationReachable } from "./lifetime";
 import { backend } from "./platform";
 
 /** macOS NSApplicationActivationPolicy: `regular` has a Dock tile and app menu, `accessory` has neither but can show windows and menus, `prohibited` cannot show anything. */
@@ -71,18 +70,6 @@ let stopRunning: (() => void) | undefined;
  * until `quitEventLoop` is called or the OS ends the loop. Resolves then.
  * Create the tray, notifier and windows before or after calling it, on this
  * thread. One loop per process: a second call while one runs throws.
- *
- * It also ends by itself, and resolves, when the last thing a person could
- * reach goes: once the application has had something to reach (a window it
- * has shown, a tray icon, a notifier, a single-instance lock, an input hook, a
- * webview, or a webview or tab being made), the first tick at which none is
- * left ends the loop (`applicationReachable`). That is a start-up that failed
- * with its error caught (the webview or tab being made went), or an
- * application whose last window was disposed with nothing else left: nothing
- * could ever end the loop otherwise, and Bun keeps a process waiting on
- * `await runEventLoop()` alive for as long as the promise is pending (D46).
- * Before the application has had anything, the loop waits: it may be
- * started before the windows are made.
  */
 export function runEventLoop(options: EventLoopOptions = {}): Promise<void> {
   const { intervalMs = 16 } = options;
@@ -91,11 +78,7 @@ export function runEventLoop(options: EventLoopOptions = {}): Promise<void> {
   const { pumpEvents: pump } = impl(); // an unsupported OS throws here, synchronously, like every other native call
   return new Promise((resolve) => {
     const timer = setInterval(() => {
-      if (!pump()) {
-        stopRunning?.();
-        return;
-      }
-      if (!applicationReachable() && applicationHasBeenReachable()) stopRunning?.();
+      if (!pump()) stopRunning?.();
     }, intervalMs);
     stopRunning = () => {
       clearInterval(timer);

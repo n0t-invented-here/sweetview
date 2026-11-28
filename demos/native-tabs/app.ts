@@ -120,9 +120,10 @@ if (import.meta.main) {
     await demo.openTab("https://bun.sh");
     first.select();
   } catch (err) {
-    // With no tab and nothing else to reach, the loop ends by itself and the process with it.
+    // Without a window to close, the loop would never end.
     console.error("native-tabs:", err);
     process.exitCode = 1;
+    demo.app.quit();
   }
   await loop;
   // Until the macOS goal of the Rust rewrite, macOS runs the code it ran at the tag pre-rust-rewrite,

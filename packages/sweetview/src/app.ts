@@ -88,11 +88,6 @@ export type TabOptions<M extends MethodMap = MethodMap> = WebViewOptions<M> & {
 export type TabAttachHooks = {
   /** The tab's current logical host: file-drop demand comes from it and drops over the webview are delivered to it. */
   fileDropHost(): Window;
-  /**
-   * True for a webview that is the window's own chrome (the Windows tab strip), not one the
-   * application made: it does not keep the pumped loop running by itself (D46).
-   */
-  chrome?: boolean;
   /** Replaces `window.show()` on the borrowed child window for `showOnReady` and the ready watchdog. */
   revealWindow?(): void;
   /**
@@ -172,13 +167,6 @@ export type TabsDriver = {
 let tabsDriver: TabsDriver | undefined;
 /** Windows the end of a blocking run() hid before its webview went, to show again when a webview in one runs next (D46). */
 const hiddenAtRunEnd = new WeakSet<Window>();
-
-/**
- * Registers a webview or tab being made with the end of the application, as an `app` entry
- * with nothing to release yet (what it makes registers itself as it is made): while it is
- * there, the pumped loop counts the application as reachable (D46). Returns the unregister.
- */
-const makingAWebView = (): (() => void) => releaseAtEnd("app", () => {});
 export function registerTabsDriver(driver: TabsDriver): void {
   tabsDriver = driver;
 }
@@ -284,17 +272,6 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
     window: Window,
     options: WebViewOptions<M>,
   ): Promise<WebView<M, E>> {
-    // A webview being made keeps the pumped loop running until it is made or fails (D46); a
-    // tab strip is the window's own chrome and does not.
-    const making = (options as InternalWebViewOptions<M>)[tabAttachHooks]?.chrome ? undefined : makingAWebView();
-    try {
-      return await WebView.#attach<M, E>(window, options);
-    } finally {
-      making?.();
-    }
-  }
-
-  static async #attach<M extends MethodMap, E extends EventMap>(window: Window, options: WebViewOptions<M>): Promise<WebView<M, E>> {
     const tabHooks = (options as InternalWebViewOptions<M>)[tabAttachHooks];
     if (process.platform !== "win32" && process.platform !== "darwin") {
       throw new Error(
@@ -915,10 +892,8 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
           discardQuit();
         },
       });
-      // Disposed when the application ends, before the windows: its worker stops and its webview
-      // goes. An `app` entry also keeps the pumped loop running (D46); a tab strip, the window's
-      // own chrome, is a `webview` entry, released after the tabs and not counted.
-      unregisterAtEnd = releaseAtEnd(tabHooks?.chrome ? "webview" : "app", () => webview.dispose());
+      // Disposed when the application ends, before the windows: its worker stops and its webview goes.
+      unregisterAtEnd = releaseAtEnd("app", () => webview.dispose());
       return webview;
     } catch (err) {
       if (raw.unsafeHandle !== null) {
@@ -938,9 +913,7 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
     if (!tabsDriver) {
       throw new Error("sweetview: tabs driver is not loaded");
     }
-    // A tab being made keeps the pumped loop running until it is made or fails (D46).
-    const making = makingAWebView();
-    return tabsDriver.openTab<M, E>(window, options).finally(making);
+    return tabsDriver.openTab<M, E>(window, options);
   }
 
   emit<N extends keyof E & string>(name: N, payload: E[N]): void {
