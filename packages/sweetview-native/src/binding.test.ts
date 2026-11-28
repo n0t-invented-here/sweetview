@@ -359,6 +359,46 @@ describe.if(onWindows)("native binding: threads (W1.5, W1.7)", () => {
     }
   });
 
+  // The modal-loop part that is TypeScript's: a Bun Worker writing a frame to the Ring and waking the
+  // UI thread while it is inside a real modal loop (a popup menu's). That native timers, wakes and a
+  // page's calls are served inside modal loops, in each loop mode, is proven in Rust
+  // (crates/sweetview-runtime/src/loop_tests.rs).
+  test("from a Worker, a frame written to the ring then wake() runs the drain on the UI thread inside a popup menu's modal loop", async () => {
+    const native = binding();
+    const { Menu } = await import("./menu");
+    const { Window } = await import("./window");
+    const { endMenu, openPopupMenu } = await import("../test/win32-os");
+    const { worker, next } = openWorker();
+    const owner = new Window({ title: "binding.test modal owner", noActivate: true, bounds: { x: 60, y: 60, width: 200, height: 120 } });
+    try {
+      // The worker loads the binding before the UI thread enters the menu.
+      const probed = next();
+      worker.postMessage({ kind: "probe" });
+      await probed;
+      const sab = Ring.create(1024);
+      const ring = new Ring(sab);
+      const frames: string[] = [];
+      let drainedInsideMenu = false;
+      native.setDrain(7103, () => {
+        ring.acknowledgeWakeup();
+        drainedInsideMenu = openPopupMenu() !== 0n && native.isUiThread();
+        for (const bytes of ring.drain()) frames.push(new TextDecoder().decode(bytes));
+        endMenu();
+      });
+      // From inside the menu's loop: ask the worker to write and wake; a limit closes the menu regardless.
+      native.scheduleTimeout(150, () => worker.postMessage({ kind: "write", ring: sab, token: 7103, text: "from the worker, inside a menu" }));
+      const limit = native.scheduleTimeout(8000, () => endMenu());
+      Menu.popup(owner.handle, [{ label: "One" }], { x: 80, y: 80 });
+      native.cancelTimeout(limit);
+      native.setDrain(7103, null);
+      expect(frames).toEqual(["from the worker, inside a menu"]);
+      expect(drainedInsideMenu).toBe(true);
+    } finally {
+      owner.dispose();
+      worker.terminate();
+    }
+  });
+
   test("from a Worker, a frame written to the ring then wake() runs the drain on the UI thread inside the blocking loop", async () => {
     const native = binding();
     const { worker, next } = openWorker();

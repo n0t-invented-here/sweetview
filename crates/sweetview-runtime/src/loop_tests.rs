@@ -44,6 +44,30 @@ fn run_loop(runtime: &Rc<Runtime>, mode: Mode, done: &Cell<bool>, pump_every: Du
   }
 }
 
+/// Set, with the mode's name, in the environment of a child process of this test executable.
+const MODE_CHILD: &str = "SWEETVIEW_RUNTIME_TEST_LOOP_MODE";
+
+/// Runs `body` once per loop mode, each in a fresh child process of this test executable, as the
+/// TypeScript fixtures ran each mode in a process of its own: no state of one mode's run (the
+/// runtime, its tick thread, WebView2's environment, a tray icon) is there for the other's. In the
+/// child, `body` runs the mode its environment names; a failing assertion fails the child, and the
+/// parent fails with its output.
+fn in_a_fresh_process_per_mode(test: &str, body: impl Fn(Mode)) {
+  if let Ok(name) = std::env::var(MODE_CHILD) {
+    return body(if name == "blocking" { Mode::Blocking } else { Mode::Pumped });
+  }
+  for name in ["blocking", "pumped"] {
+    let output = std::process::Command::new(std::env::current_exe().expect("the test executable"))
+      .args([test, "--exact", "--nocapture", "--test-threads=1"])
+      .env(MODE_CHILD, name)
+      .output()
+      .expect("the child process");
+    let (stdout, stderr) = (String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+    eprintln!("{name}: {stdout}");
+    assert!(output.status.success() && stdout.contains("1 passed"), "the {name} loop, in a process of its own:\n{stdout}\n{stderr}");
+  }
+}
+
 /// Marks the run done; the blocking run is asked to end.
 fn finish(runtime: &Runtime, mode: Mode, done: &Cell<bool>) {
   done.set(true);
@@ -106,7 +130,7 @@ fn an_interval_set_just_before_a_right_click_ticks_inside_every_tray_menu_in_bot
   use crate::tray::{Tray, TrayInit};
   const ROUNDS: usize = 8;
   const FIRST_TICK_LIMIT: Duration = Duration::from_millis(250);
-  on_ui_thread(|runtime| {
+  in_a_fresh_process_per_mode("loop_tests::an_interval_set_just_before_a_right_click_ticks_inside_every_tray_menu_in_both_loop_modes", |only| on_ui_thread(|runtime| {
     let start = Instant::now();
     let armed = Arc::new(AtomicI64::new(-1));
     let rescues = Arc::new(AtomicUsize::new(0));
@@ -125,7 +149,8 @@ fn an_interval_set_just_before_a_right_click_ticks_inside_every_tray_menu_in_bot
       })
     };
     let mut report = Vec::new();
-    for mode in [Mode::Blocking, Mode::Pumped] {
+    {
+      let mode = only;
       let state = Rc::new(TrayMenuState::default());
       let (opening, armed_by_menu) = (state.clone(), armed.clone());
       let tray = Tray::new(TrayInit {
@@ -220,7 +245,7 @@ fn an_interval_set_just_before_a_right_click_ticks_inside_every_tray_menu_in_bot
         assert!(played.first_tick.is_some_and(|first| first <= FIRST_TICK_LIMIT), "{mode:?} round {i}: the first tick came within {FIRST_TICK_LIMIT:?} of the opening: {played:?}");
       }
     }
-  });
+  }));
 }
 
 // ---- a busy interval and the application's own window (D38) --------------------------------------
@@ -255,10 +280,11 @@ fn a_busy_interval_leaves_the_applications_own_window_its_input_and_paint_in_bot
   const LIMIT: Duration = Duration::from_millis(100);
   const AT: (i32, i32, i32, i32) = (240, 240, 320, 220);
   const CENTRE: (i32, i32) = (AT.0 + AT.2 / 2, AT.1 + AT.3 / 2);
-  on_ui_thread(|runtime| {
+  in_a_fresh_process_per_mode("loop_tests::a_busy_interval_leaves_the_applications_own_window_its_input_and_paint_in_both_loop_modes", |only| on_ui_thread(|runtime| {
     let original = os::cursor();
     let mut report = Vec::new();
-    for mode in [Mode::Blocking, Mode::Pumped] {
+    {
+      let mode = only;
       let state = Rc::new(BusyState::default());
       let seen = state.clone();
       let own = Rc::new(
@@ -345,7 +371,7 @@ fn a_busy_interval_leaves_the_applications_own_window_its_input_and_paint_in_bot
         assert!(*waited <= LIMIT, "{mode:?}: a request waited {waited:?} behind the interval: input {input:?}, paint {paint:?}");
       }
     }
-  });
+  }));
 }
 
 // ---- the application's own modal loops, opened from a page's call (W1.8) ----------------------------
@@ -429,8 +455,9 @@ const DRAIN_TOKEN: u64 = 7801;
 fn page_calls_wakes_and_timeouts_are_served_inside_the_applications_own_modal_loops_in_both_loop_modes() {
   use crate::engine::{Engine, Host, SizeHint};
   use_test_webview_profile();
-  on_ui_thread(|runtime| {
-    for mode in [Mode::Blocking, Mode::Pumped] {
+  in_a_fresh_process_per_mode("loop_tests::page_calls_wakes_and_timeouts_are_served_inside_the_applications_own_modal_loops_in_both_loop_modes", |only| on_ui_thread(|runtime| {
+    {
+      let mode = only;
       let state = Rc::new(ModalState::default());
       let box_title = format!("sweetview runtime modal test {} {mode:?}", std::process::id());
       // The other thread: writes what it is asked to, then wakes the UI thread, as a Worker does.
@@ -611,5 +638,5 @@ fn page_calls_wakes_and_timeouts_are_served_inside_the_applications_own_modal_lo
       assert!(in_menu.complete(), "{mode:?}: inside the popup menu, the same: {in_menu:?}");
       assert_eq!(*state.frames.borrow(), ["written while the box was open", "written while the menu was open"], "{mode:?}");
     }
-  });
+  }));
 }
