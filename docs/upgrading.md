@@ -173,13 +173,14 @@ this page: it imports each new form and checks that it is what the row says.
    (`frame`, `transparent`, `topmost`, `icon`, …) go in the same object. What
    it returns is an `App`: `call` is `notify`, `windowHandle` is
    `app.window.handle`, `webview.raw` is the webview class.
-3. Sizes: `width` and `height` were the page's client size in DIPs; `bounds`
-   is the window's outer frame in physical pixels. Drop them when the window
-   already has its bounds (an overlay made with `createOverlayWindow`'s
-   `bounds`). To keep a page of `width` x `height` DIPs in a framed window,
-   set it after `createApp`:
-   `app.webview.raw.size = { width, height, hint: SizeHint.NONE }`
-   (`SizeHint.FIXED` for a window that is not resizable).
+3. Sizes: `width` and `height` were the page's client size in DIPs, the
+   window centred: that is `contentSize: { width, height }` now, the frame
+   sized around the page at the screen's scale and the window centred on the
+   primary work area (pass `contentSize: { width: 1100, height: 800 }` for
+   0.x's default). `bounds` is the other way: the window's outer frame in
+   physical pixels; give one or the other. Drop `width` and `height` when the
+   window already has its bounds (an overlay made with
+   `createOverlayWindow`'s `bounds`).
 4. Showing: the window is created hidden. Call `app.window.show()` once it
    is wired, or pass `showOnReady: true`.
 5. Closing: a close request on a window with no `onClose` listener disposes
