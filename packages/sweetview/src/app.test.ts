@@ -690,6 +690,29 @@ describe.if(onWindows)("WebView & createApp (win32)", () => {
     }
   }, 120_000);
 
+  test("the start colour with and without WEBVIEW2_DEFAULT_BACKGROUND_COLOR: no white while the webview starts, and the window's colour behind the page once it paints", async () => {
+    // Review round 2, finding 8. Class: every way WebView2 can be told a background at its start that
+    // this machine can take: the controller option the binding gives (this runtime has
+    // ICoreWebView2ControllerOptions3), and the environment variable Microsoft documents as
+    // overriding it. Sweetview sets the colour again once the webview is made, so the window's colour
+    // is the one that stays. A runtime without the interface (the colour set only after creation)
+    // cannot be had here.
+    const fixture = new URL("../test/fixtures/start-background.ts", import.meta.url);
+    for (const env of [undefined, "FF00FF00"]) {
+      const child = Bun.spawn([process.execPath, require("node:url").fileURLToPath(fixture)], {
+        env: { ...process.env, ...(env === undefined ? {} : { WEBVIEW2_DEFAULT_BACKGROUND_COLOR: env }) },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const out = await new Response(child.stdout).text();
+      await child.exited;
+      const line = out.split(/\r?\n/).find((l) => l.startsWith("RESULT "));
+      expect(line).toBeDefined();
+      const r = JSON.parse(line!.slice(7)) as { mark: string; below: string; during: string[] };
+      expect({ env, mark: r.mark, below: r.below, white: r.during.includes("#ffffff") }).toEqual({ env, mark: "#ff00ff", below: "#304050", white: false });
+    }
+  }, 120_000);
+
   test("close-to-tray can intercept the default close on a createApp window", async () => {
     const { WM_CLOSE, user32 } = await import("../../sweetview-native/test/win32-os");
     const app = await createApp({ url: "about:blank", noActivate: true });
