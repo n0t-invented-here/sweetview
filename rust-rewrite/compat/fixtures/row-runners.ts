@@ -401,6 +401,14 @@ export const RUNNERS: Record<string, Runner> = {
     const owner = ctx.window();
     const { result, seen } = await popupRun(ctx, () => value.popup(owner, MENU, { x: 40, y: 40 }));
     must(seen && result === false, "the menu opened and, dismissed, chose nothing", { seen, result });
+    // Owned by a raw handle (the popupMenu row's `popupMenu(owner.handle, template, at)`).
+    const byHandle = await popupRun(ctx, () => value.popup(owner.handle, MENU, { x: 50, y: 50 }));
+    must(byHandle.seen && byHandle.result === false, "owned by a raw handle, the menu opened and, dismissed, chose nothing", byHandle);
+    // At the cursor, owned by a tabbed window's frame (the showTabPopupMenu row's `showTabPopupMenu(frame, template)`).
+    const tabbed = ctx.window({ tabs: true });
+    tabbed.show();
+    const onFrame = await popupRun(ctx, () => value.popup(tabbed, MENU));
+    must(onFrame.seen && onFrame.result === false, "at the cursor, owned by a tabbed window's frame, the menu opened and, dismissed, chose nothing", onFrame);
     // `{ above: true }` (the popupMenuAtCursor row's public form): the menu's bottom-left corner at the point.
     // The middle of the primary work area, so the OS moves the menu neither way.
     const area = (await import("@n1h/sweetview-native")).Screen.primary().workArea;
@@ -730,6 +738,12 @@ export const RUNNERS: Record<string, Runner> = {
     win.show();
     const { result, seen } = await popupRun(ctx, () => win.showSystemMenu());
     must(seen && result === undefined && !ctx.os.user32.IsIconic(hwndOf(win)) && win.isVisible(), "the system menu opened and, dismissed, did nothing", { seen });
+    // Any window of the thread by its handle (the windowMenu row's `windowMenu(hwnd)`): through a wrapper of it.
+    const { Window } = await import("@n1h/sweetview-native");
+    const wrapped = Window.fromHandle(win.handle);
+    const viaHandle = await popupRun(ctx, () => wrapped.showSystemMenu());
+    wrapped.dispose();
+    must(viaHandle.seen && viaHandle.result === undefined && !ctx.os.user32.IsIconic(hwndOf(win)) && ctx.os.isWindow(hwndOf(win)), "the system menu of a window wrapped by its handle opened and, dismissed, did nothing", viaHandle);
   }),
   "Window#isMaximized": desktop(async (_value, ctx) => {
     const win = ctx.window({ noActivate: true });
@@ -810,17 +824,6 @@ export const RUNNERS: Record<string, Runner> = {
     const plain = ctx.window();
     const frame = fn(hwndOf(tabbed));
     must(frame !== undefined && frame.hwnd === hwndOf(tabbed) && fn(hwndOf(plain)) === undefined, "a tab frame for a tabbed window only");
-  }),
-  showTabPopupMenu: desktop(async (fn, ctx) => {
-    const tabbed = ctx.window({ tabs: true });
-    tabbed.show();
-    const { result, seen } = await popupRun(ctx, () => fn(hwndOf(tabbed), MENU));
-    must(seen && result === false, "the menu opened on the frame and, dismissed, chose nothing", { seen, result });
-  }),
-  popupMenu: desktop(async (fn, ctx) => {
-    const owner = ctx.window();
-    const { result, seen } = await popupRun(ctx, () => fn(owner.handle, MENU, { x: 50, y: 50 }));
-    must(seen && result === false, "the menu opened and, dismissed, chose nothing", { seen, result });
   }),
   popupMenuAtCursor: desktop(async (fn, ctx) => {
     const owner = ctx.window();

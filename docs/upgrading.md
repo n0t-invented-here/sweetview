@@ -1280,9 +1280,9 @@ in it, so an import of either by file path follows these rows too.
 | `getTabFrame` | `import { getTabFrame } from "@n1h/sweetview-native/win32/tab-window"`; `getTabFrame(hwnd)` | takes the handle of a `new Window({ tabs: true })` as a bigint, `getTabFrame(BigInt(win.handle))`; `undefined` for any other window |
 | `leftButtonDown` | `import { installMouseHook } from "@n1h/sweetview-native"`; `installMouseHook(handler)` | button state from `LeftDown` and `LeftUp` events |
 | `setDarkWindows` | `import { Window } from "@n1h/sweetview-native"`; `new Window(options)` | `appearance: "system"` follows the system's setting |
-| `showTabPopupMenu` | `import { showTabPopupMenu } from "@n1h/sweetview-native/win32/tab-window"`; `showTabPopupMenu(owner, template)` | unchanged: the menu `Menu.popup(owner, menu)` shows, at the cursor, for any window of the thread |
+| `showTabPopupMenu` | `import { Menu } from "@n1h/sweetview-native"`; `Menu.popup(owner, menu)` | the same menu, at the cursor, owned by `owner`: a tabbed `Window`, or any window of the thread; `showTabPopupMenu(owner, template)` was this call |
 | `windowExists` | `import { Window } from "@n1h/sweetview-native"`; `Window.fromHandle(handle)` | throws `sweetview: not a window: 0x…` for a handle that names no window |
-| `windowMenu` | `import { Window } from "@n1h/sweetview-native"`; `Window#showSystemMenu()` | the system menu of a `Window` (a page-drawn title bar's right click; `window.systemMenu` of the window chrome), its choice carried out; `windowMenu(hwnd)` stays internal |
+| `windowMenu` | `import { Window } from "@n1h/sweetview-native"`; `Window#showSystemMenu()` | the system menu of a `Window` (a page-drawn title bar's right click; `window.systemMenu` of the window chrome), its choice carried out; for any other window of the thread, `Window.fromHandle(hwnd).showSystemMenu()` |
 
 #### `FrameWindow` and `FrameCallbacks` members that changed
 
@@ -1333,7 +1333,7 @@ engine of the webview moves, shows, hides and re-parents it.
 | `buildMenu` | `import { buildMenu } from "@n1h/sweetview-native/win32/menu"`; `buildMenu(template)` | unchanged: `{ hmenu, commands, bitmaps }` for your own `TrackPopupMenu`, command ids from 1 in template order; `bitmaps` is empty, as `destroyMenu` frees the item bitmaps itself |
 | `destroyMenu` | `import { destroyMenu } from "@n1h/sweetview-native/win32/menu"`; `destroyMenu(built)` | unchanged: frees the menu, its submenus and its item bitmaps; safe to call twice |
 | `escapeLabel` | `import { Menu } from "@n1h/sweetview-native"`; `Menu.popup(owner, menu, at)` | nothing to call: the native layer doubles `&` in a label itself |
-| `popupMenu` | `import { popupMenu } from "@n1h/sweetview-native/win32/menu"`; `popupMenu(owner, template, at)` | unchanged (internal): the menu's top-left corner at `at`, or at the cursor without it, so it opens downward; `Menu.popup(owner, menu, at)` is the public call that does the same |
+| `popupMenu` | `import { Menu } from "@n1h/sweetview-native"`; `Menu.popup(owner, menu, at)` | the same call: the menu's top-left corner at `at`, or at the cursor without it, so it opens downward; `owner` is a `Window` or its handle |
 | `popupMenuAtCursor` | `import { Menu } from "@n1h/sweetview-native"`; `Menu.popup(owner, menu, at, { above: true })` | `{ above: true }` puts the menu's bottom-left corner at the cursor (`at` omitted) or at `at`, so it opens upward, as the tray's menu does; `popupMenuAtCursor` stays an internal call of the tray |
 
 ### `@n1h/sweetview-native/win32/message-window`
