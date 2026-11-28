@@ -972,3 +972,70 @@ fn a_webview_whose_setup_fails_leaves_no_listener_of_its_own_window() {
     assert_eq!(runtime.listener_count(), before, "no listener left behind");
   });
 }
+
+/// A page at `http://webview.localhost/<name>` titled `name` that reports `ready <name>`.
+fn serve_page(engine: &Engine, name: &str) -> String {
+  let html = format!("<!doctype html><title>{name}</title><body>{name}<script>report('ready {name}')</script></body>");
+  assert_eq!(engine.set_asset(name, "text/html", html.into_bytes()), ErrorCode::Ok);
+  format!("http://webview.localhost/{name}")
+}
+
+#[test]
+fn a_script_after_a_navigation_within_the_document_runs_at_once() {
+  on_ui_thread(|runtime| {
+    let _finish = Finish(&runtime);
+    // Y1: a navigation that changes only the fragment makes no new document, and WebView2
+    // raises no NavigationStarting for it: a script asked for after it runs in that document,
+    // and what is asked for after it is not held behind it.
+    let (engine, _windows) = make("given window", |_| ());
+    let reports: Rc<RefCell<Vec<String>>> = Rc::default();
+    let sink = reports.clone();
+    assert_eq!(engine.bind("report", Rc::new(move |_seq, args| sink.borrow_mut().push(args.to_string()))), ErrorCode::Ok);
+    let url = serve_page(&engine, "first");
+    engine.navigate(&url);
+    assert!(pump_until(&runtime, Duration::from_secs(10), || reports.borrow().iter().any(|r| r.contains("ready first"))), "the page loaded");
+    for round in 0..3 {
+      reports.borrow_mut().clear();
+      engine.navigate(&format!("{url}#part{round}"));
+      engine.eval("report('after ' + location.hash + ' in ' + document.title)");
+      let ran = pump_until(&runtime, Duration::from_secs(5), || reports.borrow().iter().any(|r| r.contains("after")));
+      eprintln!("-- round {round}: {:?}", reports.borrow());
+      assert!(ran, "round {round}: the script after a fragment navigation ran");
+      assert!(reports.borrow().iter().any(|r| r.contains("in first")), "round {round}: in the same document");
+    }
+    engine.destroy();
+  });
+}
+
+#[test]
+fn a_script_after_two_overlapping_navigations_runs_in_the_second_s_document() {
+  on_ui_thread(|runtime| {
+    let _finish = Finish(&runtime);
+    // Y1: two navigations sent back to back, then a script: the first one's events are not
+    // taken for the second's, and the script runs in the second one's document.
+    for host in HOSTS {
+      let (engine, _windows) = make(host, |_| ());
+      let reports: Rc<RefCell<Vec<String>>> = Rc::default();
+      let sink = reports.clone();
+      assert_eq!(engine.bind("report", Rc::new(move |_seq, args| sink.borrow_mut().push(args.to_string()))), ErrorCode::Ok);
+      let start = serve_page(&engine, "start");
+      engine.navigate(&start);
+      assert!(pump_until(&runtime, Duration::from_secs(10), || reports.borrow().iter().any(|r| r.contains("ready start"))), "{host}: loaded");
+      for round in 0..4 {
+        reports.borrow_mut().clear();
+        let a = serve_page(&engine, &format!("a{round}"));
+        let b = serve_page(&engine, &format!("b{round}"));
+        engine.navigate(&a);
+        engine.navigate(&b);
+        engine.eval("report('script in ' + document.title)");
+        let ran = pump_until(&runtime, Duration::from_secs(10), || reports.borrow().iter().any(|r| r.contains("script in")));
+        let said = reports.borrow().iter().find(|r| r.contains("script in")).cloned().unwrap_or_default();
+        eprintln!("-- {host}, round {round}: {said}");
+        assert!(ran, "{host}, round {round}: the script ran");
+        assert!(said.contains(&format!("script in b{round}")), "{host}, round {round}: in the second navigation's document: {said}");
+      }
+      engine.destroy();
+      settle(&runtime, Duration::from_millis(100));
+    }
+  });
+}

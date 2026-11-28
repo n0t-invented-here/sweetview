@@ -7,6 +7,7 @@ mod handlers;
 mod host;
 mod istream;
 mod attempts;
+mod gate;
 mod pump;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
@@ -87,12 +88,8 @@ struct Inner {
     new_window_registration: RefCell<Option<Registration>>,
     navigations: RefCell<Navigations>,
     host_epoch: Cell<u64>,
-    /// True from a navigation the host sends until its document exists
-    /// (`ContentLoading`) or it ends without one (`NavigationCompleted`).
-    awaiting_start: Cell<bool>,
-    /// The id of the navigation `awaiting_start` waits for, from the first
-    /// `NavigationStarting` after it was sent.
-    awaited: Cell<Option<u64>>,
+    /// When a script asked for after a navigation may go (`gate.rs`).
+    gate: RefCell<self::gate::Gate>,
     /// Called when that navigation's document exists or it has ended, inside
     /// WebView2's `ContentLoading` or `NavigationCompleted`.
     navigation_started: RefCell<Option<Rc<dyn Fn()>>>,
@@ -177,8 +174,7 @@ impl WebviewExtras {
             new_window_registration: RefCell::new(None),
             navigations: RefCell::new(Navigations::default()),
             host_epoch: Cell::new(0),
-            awaiting_start: Cell::new(false),
-            awaited: Cell::new(None),
+            gate: RefCell::new(self::gate::Gate::default()),
             navigation_started: RefCell::new(None),
             registrations: RefCell::new(Vec::new()),
             filters: RefCell::new(Vec::new()),
@@ -398,21 +394,50 @@ impl WebviewExtras {
     }
 
     /// Records that a navigation the host asked for is being sent to WebView2
-    /// now (`started` false), or that it was refused and will not start
-    /// (`started` true). Until its document exists, or it ends without one,
+    /// now; `within` when it stays in the document (see
+    /// [`stays_in_document`](Self::stays_in_document)). Until the last one
+    /// sent has its document, or ends without one,
     /// [`navigation_starting`](Self::navigation_starting) is true: a script
     /// asked for before then can run in the document being replaced (measured
     /// on a new webview's first navigation, even after its
-    /// `NavigationStarting`).
-    pub fn note_host_navigation_sent(&self, started: bool) {
-        self.inner.awaiting_start.set(!started);
-        self.inner.awaited.set(None);
+    /// `NavigationStarting`). Called before `Navigate` and never again after a
+    /// successful one, so a `NavigationStarting` raised inside the call counts.
+    pub fn note_host_navigation_sent(&self, within: bool) {
+        self.inner.gate.borrow_mut().sent(within);
+    }
+
+    /// The navigation just noted as sent was refused by WebView2.
+    pub fn note_host_navigation_refused(&self) {
+        let opened = self.inner.gate.borrow_mut().refused();
+        if opened {
+            let handler = self.inner.navigation_started.borrow().clone();
+            if let Some(handler) = handler {
+                handler();
+            }
+        }
+    }
+
+    /// Whether navigating to `url` stays in the document shown now: the same
+    /// address with only its fragment new or changed. WebView2 raises no
+    /// navigation events for such a navigation (no new document is made), so
+    /// nothing may wait for them.
+    pub fn stays_in_document(&self, url: &str) -> bool {
+        let Some((target, _)) = url.split_once('#') else { return false };
+        let mut source = PWSTR::null();
+        // SAFETY: `source` is a local PWSTR for the call to fill; freed by `take_pwstr`.
+        if unsafe { self.inner.webview.Source(&mut source) }.is_err() {
+            return false;
+        }
+        // Filled by `Source` on success with a NUL-terminated string allocated for us.
+        let current = take_pwstr(source);
+        let current = current.split_once('#').map_or(current.as_str(), |(base, _)| base);
+        !current.is_empty() && current == target
     }
 
     /// True from a navigation the host sent until its document exists or it
     /// has ended.
     pub fn navigation_starting(&self) -> bool {
-        self.inner.awaiting_start.get()
+        self.inner.gate.borrow().waiting()
     }
 
     /// Sets or clears the handler called when the navigation the host sent
@@ -880,7 +905,7 @@ impl Inner {
         // SAFETY: `args` is the event's arguments, held by WebView2 for this call; `id` is a
         // local u64 for the call to fill.
         if unsafe { args.NavigationId(&mut id) }.is_ok() {
-            self.navigation_arrived(id);
+            self.navigation_arrived(id, false);
         }
     }
 
@@ -928,17 +953,14 @@ impl Inner {
         navigations.urls.insert(id, url);
         navigations.epochs.insert(id, self.host_epoch.get());
         drop(navigations);
-        if self.awaiting_start.get() && self.awaited.get().is_none() {
-            self.awaited.set(Some(id));
-        }
+        self.gate.borrow_mut().started(id);
     }
 
-    /// The navigation `id` has its document or has ended: a script held for
-    /// it may go now.
-    fn navigation_arrived(&self, id: u64) {
-        if self.awaiting_start.get() && self.awaited.get() == Some(id) {
-            self.awaiting_start.set(false);
-            self.awaited.set(None);
+    /// Navigation `id` has its document (`ContentLoading`) or has ended
+    /// (`NavigationCompleted`, `cancelled` when another navigation cut it off).
+    fn navigation_arrived(&self, id: u64, cancelled: bool) {
+        let opened = self.gate.borrow_mut().arrived(id, cancelled);
+        if opened {
             let handler = self.navigation_started.borrow().clone();
             if let Some(handler) = handler {
                 handler();
@@ -952,7 +974,15 @@ impl Inner {
         if unsafe { args.NavigationId(&mut id) }.is_err() {
             return;
         }
-        self.navigation_arrived(id);
+        let mut succeeded = BOOL(0);
+        let mut why = COREWEBVIEW2_WEB_ERROR_STATUS::default();
+        // SAFETY: `succeeded` and `why` are locals for the calls to fill.
+        let cancelled = unsafe { args.IsSuccess(&mut succeeded) }.is_ok()
+            && !succeeded.as_bool()
+            // SAFETY: as above.
+            && unsafe { args.WebErrorStatus(&mut why) }.is_ok()
+            && why == COREWEBVIEW2_WEB_ERROR_STATUS_OPERATION_CANCELED;
+        self.navigation_arrived(id, cancelled);
         let (started, epoch) = {
             let mut navigations = self.navigations.borrow_mut();
             (navigations.urls.remove(&id), navigations.epochs.remove(&id).unwrap_or(0))

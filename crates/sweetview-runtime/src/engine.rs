@@ -708,16 +708,24 @@ impl Inner {
       let _ = match op {
         PageOp::Url(url) => {
           live.extras.note_host_navigation();
-          live.extras.note_host_navigation_sent(false);
+          // A navigation within the document (only the fragment changes) makes no document and
+          // raises no events: nothing waits for it.
+          let within = live.extras.stays_in_document(url);
+          live.extras.note_host_navigation_sent(within);
           let sent = live.webview.navigate(url);
-          live.extras.note_host_navigation_sent(sent != ErrorCode::Ok);
+          // Only a refusal changes what is waited for: a start raised inside the call counts.
+          if sent != ErrorCode::Ok && !within {
+            live.extras.note_host_navigation_refused();
+          }
           sent
         }
         PageOp::Html(html) => {
           live.extras.note_host_navigation();
           live.extras.note_host_navigation_sent(false);
           let sent = live.webview.navigate_to_string(html);
-          live.extras.note_host_navigation_sent(sent != ErrorCode::Ok);
+          if sent != ErrorCode::Ok {
+            live.extras.note_host_navigation_refused();
+          }
           sent
         }
         PageOp::Script(source) => live.webview.evaluate(source),
