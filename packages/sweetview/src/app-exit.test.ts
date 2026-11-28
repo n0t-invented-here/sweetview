@@ -237,19 +237,24 @@ describe.if(process.platform === "win32")("an application with nothing after its
   }, LIVE_TEST_MS);
 });
 
-type Outer = { trayHeld: boolean; trayWindow: boolean; balloonHeld: boolean; notifierShows: boolean; lockWindows: number };
+// The notifier is read by what it reports itself (its window, a balloon accepted, a click that comes
+// back), not by whether the shell still holds its balloon's icon, which the shell may end at any
+// time (D20). That the icon is gone is read at the end only.
+type Outer = { trayHeld: boolean; trayWindow: boolean; notifierWindow: boolean; notifierShows: boolean; notifierAnswers?: boolean; lockWindows: number };
+type AtExit = Omit<Outer, "notifierAnswers"> & { balloonHeld: boolean };
 
 describe.if(process.platform === "win32")("nothing is taken from an application while its process runs", () => {
   test("a blocking run() inside runEventLoop() keeps the outer tray, notifier, window and webview", async () => {
     const run = await runFixture("app-loops.ts", { SWEETVIEW_LOOPS_TEST: "nested" });
     expect(run.exitCode).toBe(0);
     expect(unexpected(run.stderr)).toBe("");
-    const result = resultOf<{ afterInnerRun: Outer & { outerWindow: boolean; outerWebview: boolean; innerWebview: boolean; innerWindow: boolean }; atExit: Outer }>(run.stdout);
+    const result = resultOf<{ afterInnerRun: Outer & { outerWindow: boolean; outerWebview: boolean; innerWebview: boolean; innerWindow: boolean }; atExit: AtExit }>(run.stdout);
     expect(result?.afterInnerRun).toEqual({
       trayHeld: true,
       trayWindow: true,
-      balloonHeld: true,
+      notifierWindow: true,
       notifierShows: true,
+      notifierAnswers: true,
       lockWindows: 0,
       outerWindow: true,
       outerWebview: true,
@@ -257,7 +262,7 @@ describe.if(process.platform === "win32")("nothing is taken from an application 
       innerWebview: false,
       innerWindow: true,
     });
-    expect(result?.atExit).toMatchObject({ trayHeld: false, trayWindow: false, balloonHeld: false, notifierShows: false });
+    expect(result?.atExit).toMatchObject({ trayHeld: false, trayWindow: false, notifierWindow: false, balloonHeld: false, notifierShows: false });
   }, LIVE_TEST_MS);
 
   test("a tray, a notifier and a single-instance lock made before a first blocking run() still work during a second one", async () => {
@@ -279,11 +284,11 @@ describe.if(process.platform === "win32")("nothing is taken from an application 
     expect(unexpected(run.stderr)).toBe("");
     expect(second).toBeDefined();
     expect(JSON.parse(await second!)).toEqual({ isPrimary: false, handedOff: true });
-    const result = resultOf<{ primary: boolean; afterFirstRun: Outer; duringSecondRun: Outer & { secondInstances: string[] }; atExit: Outer }>(run.stdout);
+    const result = resultOf<{ primary: boolean; afterFirstRun: Outer; duringSecondRun: Outer & { secondInstances: string[] }; atExit: AtExit }>(run.stdout);
     expect(result?.primary).toBe(true);
-    const kept = { trayHeld: true, trayWindow: true, balloonHeld: true, notifierShows: true, lockWindows: 1 };
+    const kept = { trayHeld: true, trayWindow: true, notifierWindow: true, notifierShows: true, notifierAnswers: true, lockWindows: 1 };
     expect(result?.afterFirstRun).toEqual(kept);
     expect(result?.duringSecondRun).toEqual({ ...kept, secondInstances: ["second-launch"] });
-    expect(result?.atExit).toMatchObject({ trayHeld: false, trayWindow: false, balloonHeld: false, lockWindows: 0 });
+    expect(result?.atExit).toMatchObject({ trayHeld: false, trayWindow: false, notifierWindow: false, balloonHeld: false, lockWindows: 0 });
   }, LIVE_TEST_MS);
 });
