@@ -28,7 +28,7 @@ use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetActiveWindow, GetAsyncKeyState, ReleaseCapture, VK_LBUTTON, VK_MBUTTON, VK_RBUTTON};
 use windows::Win32::UI::Shell::{DefSubclassProc, DragFinish, DragQueryFileW, RemoveWindowSubclass, SetWindowSubclass, HDROP};
 use windows::Win32::UI::WindowsAndMessaging::{
-  CreateIconFromResourceEx, DestroyIcon, DestroyWindow, GetClientRect, GetSystemMetrics, GetWindow, GetWindowLongPtrW,
+  CreateIconFromResourceEx, DestroyIcon, DestroyWindow, GetClientRect, GetForegroundWindow, GetSystemMetrics, GetWindow, GetWindowLongPtrW,
   GetWindowPlacement, GetWindowRect, WINDOWPLACEMENT, WPF_RESTORETOMAXIMIZED, GetWindowThreadProcessId, IsIconic, IsWindow, IsWindowVisible, IsZoomed, LoadIconW, MoveWindow,
   PostMessageW, SendMessageTimeoutW, SendMessageW, SetForegroundWindow, SetLayeredWindowAttributes, SetWindowLongPtrW, SetWindowPos,
   SetWindowTextW, SMTO_ABORTIFHUNG, SMTO_BLOCK,
@@ -935,6 +935,26 @@ fn deliver(state: &SubclassState, event: &WindowEvent) -> bool {
 pub(crate) fn set_foreground(hwnd: HWND) {
   // SAFETY: takes the handle by value and reads no memory of ours; the OS validates the handle.
   let _granted = unsafe { SetForegroundWindow(hwnd) };
+}
+
+/// The foreground window now; a null handle when there is none.
+pub(crate) fn foreground_window() -> HWND {
+  // SAFETY: takes nothing and reads no memory of ours.
+  unsafe { GetForegroundWindow() }
+}
+
+/// After a popup menu whose `owner` was made the foreground window to track it:
+/// puts back `before`, the window that was in front when the menu was asked for,
+/// so a menu leaves the foreground where it found it. Only when the owner still
+/// holds it (nothing took it while the menu was open: a click elsewhere that
+/// dismissed the menu gives it to the window clicked) and was not in front
+/// before (an owner that was keeps it, as it always did). An item's handler runs
+/// after this, so a window it shows or focuses is not covered.
+pub(crate) fn give_back_foreground(owner: HWND, before: HWND) {
+  if before.is_invalid() || before == owner || !is_window_handle(before) || foreground_window() != owner {
+    return;
+  }
+  set_foreground(before);
 }
 
 /// Passes a message the OS gave a subclass procedure on to the next procedure

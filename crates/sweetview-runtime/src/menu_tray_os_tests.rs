@@ -156,6 +156,35 @@ fn a_popup_menu_at_a_point_shows_check_marks_icons_submenus_separators_and_disab
   });
 }
 
+/// `Menu.popup` leaves the foreground where it found it: the menu's owner is made the foreground
+/// window to track the menu, and once the menu closes the window that was in front before is in
+/// front again, so an owner shown without activation (`noActivate`) is never left active. An owner
+/// that was in front before keeps the foreground, as it always did.
+#[test]
+fn a_popup_menu_gives_the_foreground_back_to_the_window_that_had_it() {
+  on_ui_thread(|runtime| {
+    let front = os::OwnWindow::new("rt os window in front", (40, 260, 160, 100), |_| {}).expect("front");
+    // Shown without activation, as a `noActivate` window is.
+    let overlay = os::OwnWindow::new("rt os no-activate owner", (240, 260, 160, 100), |_| {}).expect("overlay");
+    assert!(os::take_foreground(front.handle_value()), "the first window holds the foreground");
+    let data = vec![item(1, "Open"), item(2, "Close")];
+    let popup = |owner: isize| menu::popup(owner, &data, Some((260.0, 280.0)), PopupCorner::TopLeft).expect("popup");
+
+    when_menu_opens(&runtime, |menu_window| os::press_keys(menu_window, &[VK_ESCAPE]));
+    assert_eq!(popup(overlay.handle_value()), None);
+    assert_eq!((os::foreground(), os::active()), (front.handle_value(), front.handle_value()), "dismissed: the first window is in front and active again");
+
+    when_menu_opens(&runtime, |menu_window| os::press_keys(menu_window, &[VK_DOWN, VK_RETURN]));
+    assert_eq!(popup(overlay.handle_value()), Some(1));
+    assert_eq!((os::foreground(), os::active()), (front.handle_value(), front.handle_value()), "chosen: the first window is in front and active again");
+
+    // An ordinary owner that was in front before keeps the foreground.
+    when_menu_opens(&runtime, |menu_window| os::press_keys(menu_window, &[VK_ESCAPE]));
+    assert_eq!(popup(front.handle_value()), None);
+    assert_eq!(os::foreground(), front.handle_value(), "the owner that was in front is in front");
+  });
+}
+
 /// "an item in a submenu is chosen; a dismissed menu chooses nothing".
 #[test]
 fn an_item_in_a_submenu_is_chosen_and_a_dismissed_menu_chooses_nothing() {
