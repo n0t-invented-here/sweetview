@@ -482,8 +482,8 @@ describe.if(onWindows)("WebView & createApp (win32)", () => {
     // sampling (so the interval sampled is the one it started and painted in), and the page area
     // settled on the window's colour once it has. A page's own canvas, before its stylesheet applies,
     // follows its colour scheme (#121212 in a dark one): that is the page's, not the browser's
-    // background (docs/native/windows.md says so). This runtime has ICoreWebView2ControllerOptions3,
-    // which is when the colour is WebView2's from the moment it is made.
+    // background (docs/native/windows.md says so). The colour is WebView2's before the webview is
+    // first shown.
     const { clientSize, clientToScreen, screenPixel } = await import("../../sweetview-native/test/win32-os");
     const { scheduleNativeTimeout } = await import("../../sweetview-native/src/internal");
     const { STRIP_HEIGHT } = await import("../../sweetview-native/src/win32/strip-shared");
@@ -751,8 +751,8 @@ describe.if(onWindows)("WebView & createApp (win32)", () => {
 
   test("the start colour, in a process with no WEBVIEW2_DEFAULT_BACKGROUND_COLOR: no white while the webview starts, and the window's colour behind the page once it paints", async () => {
     // Review round 2's finding 8, and round 3's D: a process of its own, whose environment has no
-    // override of WebView2's start colour (the variable is removed, not inherited). This runtime has
-    // ICoreWebView2ControllerOptions3. What the variable does when set is Microsoft's to say
+    // override of WebView2's start colour (the variable is removed, not inherited). What the
+    // variable does when set is Microsoft's to say
     // (docs/native/windows.md cites it); this machine could not show its colour, so no test claims it.
     const fixture = new URL("../test/fixtures/start-background.ts", import.meta.url);
     const env: Record<string, string | undefined> = { ...process.env };

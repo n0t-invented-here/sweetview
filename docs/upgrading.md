@@ -109,8 +109,8 @@ after them give every export its row.
   after Quit: `unref()` or clear it ([the end of the application](app.md#the-end-of-the-application)).
   On macOS, until the macOS goal of the rewrite, keep those lines: macOS still
   runs the code it ran before 1.0, which releases nothing at exit.
-- **The engine on Windows.** The webview is WebView2 driven by Rust (`wry`
-  and Sweetview's own additions), and windows, the tray, menus, dialogs,
+- **The engine on Windows.** The webview is WebView2 driven by Rust (this
+  project's own crates, which make it as the C++ library made it), and windows, the tray, menus, dialogs,
   notifications, input hooks and the event loop are Rust too. The native
   code is one file per target in `@n1h/sweetview-native`:
   `prebuilt/sweetview.win32-x64-msvc.node`. It is loaded with `require`, so
@@ -221,6 +221,22 @@ after them give every export its row.
   `%APPDATA%\<exe file name>` (for example `%APPDATA%\bun.exe` under `bun`,
   or `%APPDATA%\my-app.exe` for a compiled executable), so cookies, storage
   and caches carry over. `WEBVIEW2_USER_DATA_FOLDER` still overrides it.
+- **The page behaves as it did.** A webview on Windows has the settings the
+  C++ library gave it: Ctrl+wheel, Ctrl+plus, Ctrl+minus, Ctrl+0 and a touch
+  pinch zoom the page; a horizontal swipe on a touch screen goes back and
+  forward; no status bar shows a link's address while the pointer is over it;
+  the right-click menu is the browser's; the browser's keys (Ctrl+F, Ctrl+P,
+  F5) work; the developer tools follow `debug`. CSS
+  `app-region` (`-webkit-app-region: drag`, from a stylesheet written for
+  another shell) does nothing, so such an area gets its mouse events and does
+  not drag the window: drag a frameless window with `Window.startDrag`
+  ([window chrome](window-chrome.md)). A webview made in a window the
+  application gives it does not take the keyboard focus; a page's
+  `window.close()` does nothing; a download shows WebView2's own download
+  interface and goes to the user's downloads folder; making a webview leaves
+  the profile's autofill preference as it was ([page behaviour](webview-library.md#page-behaviour)).
+  Sweetview has no option to change any of these yet; zoom cannot be turned
+  off for an application-like page.
 - **Your own `bun:ffi` calls keep working.** An application's own `dlopen`
   tables, including its own modal dialogs and popup menus, run inside
   Sweetview's event loop in both of its modes (the blocking `run()` and the

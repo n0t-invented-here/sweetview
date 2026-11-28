@@ -4,10 +4,76 @@ import { hostRequestHandler, hostService, type RequestHandler } from "@n1h/sweet
 const seen: string[] = [];
 let pending = () => {};
 let streamEof = () => {};
-const service = defineService<{ paths: [null, string[]] }, { pending: null; streamEof: null }>((emit) => {
+
+// "pace" mode. /live writes its next part only once the page has acknowledged the one before
+// (or 2 s have passed): `liveAcks` records, per part, whether the page had it in time. /bulk is
+// BULK_BYTES of a pattern, produced as fast as the stream is read; the page reports how much it
+// has read, and `maxAhead` is the most the worker has produced beyond that (bytes held by the
+// ring, the binding or WebView2).
+const BULK_BYTES = 24 * 1024 * 1024 + 4321;
+const BULK_PART = 256 * 1024;
+const liveAcks: boolean[] = [];
+let acked = 0;
+let ackWaiter: (() => void) | undefined;
+let produced = 0;
+let consumed = 0;
+let maxAhead = 0;
+// Whether the page had read any of /bulk before the worker ended it: once everything is
+// produced, the worker waits up to 3 s for the page's first report before it closes the body,
+// so the worker, which ends the response, decides.
+let firstBeforeEnd: boolean | undefined;
+let consumedWaiter: (() => void) | undefined;
+const waitForFirstRead = () =>
+  new Promise<boolean>((resolve) => {
+    if (consumed > 0) return resolve(true);
+    const timer = setTimeout(() => {
+      consumedWaiter = undefined;
+      resolve(false);
+    }, 3000);
+    consumedWaiter = () => {
+      clearTimeout(timer);
+      consumedWaiter = undefined;
+      resolve(true);
+    };
+  });
+const waitForAck = (n: number) =>
+  new Promise<boolean>((resolve) => {
+    const timer = setTimeout(() => {
+      ackWaiter = undefined;
+      resolve(false);
+    }, 2000);
+    const check = () => {
+      if (acked < n) return;
+      clearTimeout(timer);
+      ackWaiter = undefined;
+      resolve(true);
+    };
+    ackWaiter = check;
+    check();
+  });
+
+const service = defineService<{
+  paths: [null, string[]];
+  ack: [number, void];
+  consumed: [number, void];
+  pacing: [null, { liveAcks: boolean[]; produced: number; maxAhead: number; firstBeforeEnd: boolean | undefined }];
+}, { pending: null; streamEof: null }>((emit) => {
   pending = () => emit("pending", null);
   streamEof = () => emit("streamEof", null);
-  return { methods: { paths: () => seen } };
+  return {
+    methods: {
+      paths: () => seen,
+      ack: (n: number) => {
+        acked = Math.max(acked, n);
+        ackWaiter?.();
+      },
+      consumed: (n: number) => {
+        consumed = n;
+        consumedWaiter?.();
+      },
+      pacing: () => ({ liveAcks, produced, maxAhead, firstBeforeEnd }),
+    },
+  };
 });
 
 const onRequest: RequestHandler = async (request) => {
@@ -46,6 +112,37 @@ const onRequest: RequestHandler = async (request) => {
         },
       }), { headers: { "Content-Type": "text/plain" } });
     }
+    case "/live": {
+      const parts = ["live one;", "live two;", "live three;"];
+      const encoder = new TextEncoder();
+      let next = 0;
+      return new Response(new ReadableStream<Uint8Array>({
+        async pull(controller) {
+          if (next > 0) liveAcks.push(await waitForAck(next));
+          if (next === parts.length) controller.close();
+          else controller.enqueue(encoder.encode(parts[next++]));
+        },
+      }, { highWaterMark: 0 }), { headers: { "Content-Type": "text/plain; charset=utf-8" } });
+    }
+    case "/bulk":
+      return new Response(new ReadableStream<Uint8Array>({
+        async pull(controller) {
+          if (produced >= BULK_BYTES) {
+            firstBeforeEnd = await waitForFirstRead();
+            controller.close();
+            return;
+          }
+          const n = Math.min(BULK_PART, BULK_BYTES - produced);
+          const part = new Uint8Array(n);
+          for (let k = 0; k < n; k++) {
+            const i = produced + k;
+            part[k] = (i % 251) ^ (Math.floor(i / 65536) % 256);
+          }
+          produced += n;
+          maxAhead = Math.max(maxAhead, produced - consumed);
+          controller.enqueue(part);
+        },
+      }, { highWaterMark: 0 }), { headers: { "Content-Type": "application/octet-stream" } });
     case "/pixel.gif":
       return new Response(Buffer.from("R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==", "base64"), {
         headers: { "Content-Type": "image/gif" },
