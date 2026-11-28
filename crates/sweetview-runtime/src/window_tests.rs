@@ -306,6 +306,29 @@ fn maximise_listeners_see_each_change_in_order_when_a_listener_changes_the_state
   });
 }
 
+/// Review N5: a listener subscribed while the window is minimised from maximised hears nothing
+/// when the window is restored to maximised: nothing changed.
+#[test]
+fn a_maximise_listener_subscribed_while_minimised_hears_no_change_on_restore() {
+  on_ui_thread(|runtime| {
+    let window = Window::create(WindowInit { bounds: Some(Rect::new(150, 150, 320, 240)), ..init("rt minimised subscribe") }).expect("window");
+    window.show().expect("show");
+    runtime.pump();
+    window.toggle_maximize().expect("maximise");
+    window.minimize();
+    assert!(native(&window, |w| platform::is_minimized(w)));
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    let sink = seen.clone();
+    window.on_maximize_change(Some(Rc::new(move |maximized| sink.borrow_mut().push(maximized)))).expect("listener");
+    window.show().expect("restore, maximised");
+    assert!(window.is_maximized());
+    assert_eq!(*seen.borrow(), Vec::<bool>::new(), "restoring to the state it had is no change");
+    window.toggle_maximize().expect("restore");
+    assert_eq!(*seen.borrow(), vec![false]);
+    window.dispose();
+  });
+}
+
 #[test]
 fn adopting_a_handle_that_is_not_a_window_fails() {
   on_ui_thread(|_runtime| {

@@ -710,6 +710,10 @@ impl Window {
     let (chrome, on_this_thread) = BorrowedWindow::with_handle_value(handle, |window| (platform::chrome(window), platform::is_on_this_thread(window)))
       .ok_or_else(|| Error::state(format!("sweetview: not a window: {handle:#x}")))?;
     let core = Core::new(handle, None, chrome, false, logic::DEFAULT_MIN_SIZE, false, None);
+    // The state a window Sweetview did not make is in when it is wrapped, kept from then on by its resizes.
+    if !core.with_native(|window| platform::is_minimized(window)).unwrap_or(true) {
+      core.maximized.set(core.maximized_now());
+    }
     if on_this_thread {
       core.subclass()?;
     }
@@ -1007,10 +1011,9 @@ impl Window {
       return Ok(());
     }
     if listener.is_some() {
+      // The state is kept from every resize, listened to or not, so a listener starts from it as
+      // it is: read again now, a minimised window would read as not maximised (review N5).
       self.require_subclass()?;
-      if self.core.listeners.borrow().maximize.is_empty() {
-        self.core.maximized.set(self.core.maximized_now());
-      }
     }
     set_listener(&mut self.core.listeners.borrow_mut().maximize, self.id, listener);
     Ok(())
