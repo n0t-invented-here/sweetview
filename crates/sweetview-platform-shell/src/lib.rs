@@ -18,29 +18,13 @@ pub mod url_scheme;
 mod win;
 
 /// Why a shell call failed. The text is the message today's code throws.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ShellError(pub String);
-
-impl std::fmt::Display for ShellError {
-  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    f.write_str(&self.0)
-  }
-}
-
-impl std::error::Error for ShellError {}
+pub use sweetview_shell_data::ShellError;
 
 #[cfg(not(windows))]
 pub(crate) fn unported(what: &str) -> ShellError {
   ShellError(format!("sweetview: {what} is not ported to this platform yet"))
 }
 
-/// JavaScript's `\s`, which today's `trim()` removes.
-pub(crate) fn js_whitespace(c: char) -> bool {
-  matches!(
-    c,
-    '\t' | '\n' | '\u{b}' | '\u{c}' | '\r' | ' ' | '\u{a0}' | '\u{1680}' | '\u{2000}'..='\u{200a}' | '\u{2028}' | '\u{2029}' | '\u{202f}' | '\u{205f}' | '\u{3000}' | '\u{feff}'
-  )
-}
 
 /// Tests in this crate share the clipboard, the registry and the process's
 /// handle counts, so they run one at a time.

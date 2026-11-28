@@ -161,76 +161,6 @@ describe.if(onWindows)("win32 Window", () => {
     }
   });
 
-  test("onMaximizeChange, two listeners of one Window: each change once and the last heard is the window's state; one removed, or the window disposed, during delivery hears nothing more; one added during delivery does not hear it", async () => {
-    // Round 3, measure B: onMaximizeChange's sentences 1 and 2, for the listeners of one Window
-    // (the fan-out of its one listener in the binding).
-    const at = { x: 160, y: 160, width: 320, height: 240 };
-    // 1: the first listener restores the window when it hears it was maximised.
-    {
-      const win = new Window({ title: "sentence 1", frame: false, noActivate: true, bounds: at });
-      const first: boolean[] = [];
-      const second: boolean[] = [];
-      let once = false;
-      win.onMaximizeChange((m) => {
-        first.push(m);
-        if (m && !once) {
-          once = true;
-          win.toggleMaximize();
-        }
-      });
-      win.onMaximizeChange((m) => second.push(m));
-      win.toggleMaximize();
-      const state = win.isMaximized();
-      expect({ state, firstLast: first.at(-1), secondLast: second.at(-1), second }).toEqual({ state: false, firstLast: false, secondLast: false, second: [false] });
-      win.dispose();
-    }
-    // 2: removed by the listener before it, and one added during delivery.
-    {
-      const win = new Window({ title: "sentence 2", frame: false, noActivate: true, bounds: at });
-      const second: boolean[] = [];
-      const late: boolean[] = [];
-      const offSecond = { off: () => {} };
-      win.onMaximizeChange(() => {
-        offSecond.off();
-        if (late.length === 0) win.onMaximizeChange((m) => late.push(m));
-      });
-      offSecond.off = win.onMaximizeChange((m) => second.push(m));
-      win.toggleMaximize();
-      expect({ second, late }).toEqual({ second: [], late: [] });
-      win.toggleMaximize();
-      expect({ second, late }).toEqual({ second: [], late: [false] });
-      win.dispose();
-    }
-    // 2: the window disposed by the listener before it.
-    {
-      const win = new Window({ title: "sentence 2 dispose", frame: false, noActivate: true, bounds: at });
-      const second: boolean[] = [];
-      win.onMaximizeChange(() => win.dispose());
-      win.onMaximizeChange((m) => second.push(m));
-      win.toggleMaximize();
-      expect(second).toEqual([]);
-    }
-    // 3: a listener that changes the state every time it is told does not hang the application,
-    // and the window stays usable (the refused change is printed by the binding).
-    {
-      const win = new Window({ title: "sentence 3", frame: false, noActivate: true, bounds: at });
-      let calls = 0;
-      const off = win.onMaximizeChange(() => {
-        calls++;
-        win.toggleMaximize();
-      });
-      win.toggleMaximize();
-      expect(calls).toBeLessThanOrEqual(2);
-      off();
-      const seen: boolean[] = [];
-      win.onMaximizeChange((m) => seen.push(m));
-      const before = win.isMaximized();
-      win.toggleMaximize();
-      expect(seen).toEqual([!before]);
-      win.dispose();
-    }
-  });
-
   test("a resize or move raised inside a listener is delivered as at the tag: at once to every listener, then the outer delivery goes on with its bounds, for two listeners of one Window and for two wrappers", async () => {
     // Review round 3, measure A. At tag pre-rust-rewrite (win32/window.ts, fireResize and fireMove,
     // lines 173 to 197) a resize or move read its bounds once and went to a snapshot of the window's
@@ -275,6 +205,53 @@ describe.if(onWindows)("win32 Window", () => {
     }
   });
 
+  test("two wrappers of one window share one list of resize, move and maximise listeners: in the order added, the same function once, either unsubscribe takes it out, a dispose takes out what its wrapper added", () => {
+    // Review round 5, R5-8: the function keys of win32/listener-keys.ts are what make the list one.
+    const w = new Window({ frame: false, noActivate: true, bounds: { x: -2000, y: -2000, width: 300, height: 200 } });
+    const b = Window.fromHandle(w.handle!);
+    try {
+      let n = 0;
+      const kinds = [
+        { name: "onResize", fire: () => w.setBounds({ ...w.bounds(), width: 300 + (++n % 2) * 10 }) },
+        { name: "onMove", fire: () => w.setBounds({ ...w.bounds(), x: -2000 + (++n % 2) * 10 }) },
+        { name: "onMaximizeChange", fire: () => w.toggleMaximize() },
+      ] as const;
+      for (const { name, fire } of kinds) {
+        const heard: string[] = [];
+        const told = (label: string) => () => heard.push(label);
+        const [a1, b1, a2, both] = [told("A1"), told("B1"), told("A2"), told("both")];
+        const on = (win: Window, fn: () => void) => (win[name] as (fn: () => void) => () => void).call(win, fn);
+        on(w, a1);
+        const offB1 = on(b, b1);
+        on(w, a2);
+        on(w, both);
+        const offBothThroughB = on(b, both);
+        const round = () => {
+          heard.length = 0;
+          fire();
+          return [...heard];
+        };
+        expect({ name, heard: round() }).toEqual({ name, heard: ["A1", "B1", "A2", "both"] });
+        offBothThroughB();
+        expect({ name, heard: round() }).toEqual({ name, heard: ["A1", "B1", "A2"] });
+        offB1();
+        expect({ name, heard: round() }).toEqual({ name, heard: ["A1", "A2"] });
+        on(b, b1);
+        expect({ name, heard: round() }).toEqual({ name, heard: ["A1", "A2", "B1"] });
+      }
+      // b's dispose takes out what b added; w's stay.
+      const heard: string[] = [];
+      w.onResize(() => heard.push("w"));
+      b.onResize(() => heard.push("b"));
+      b.dispose();
+      w.setBounds({ ...w.bounds(), width: 333 });
+      expect(heard).toEqual(["w"]);
+    } finally {
+      b.dispose();
+      w.dispose();
+    }
+  });
+
   test("Window.fromHandle reports the wrapped window's frame and resizability", () => {
     const frameless = new Window({ frame: false });
     const fixed = new Window({ resizable: false });
@@ -314,6 +291,14 @@ describe.if(onWindows)("win32 Window", () => {
     } finally {
       owner.dispose();
     }
+  });
+
+  test("the probe's screenPixel throws for a point no screen shows, rather than reading it as white", async () => {
+    // Review N10: GetPixel's CLR_INVALID became "#ffffff". app.test.ts and its fixtures read the screen with it.
+    const { screenPixel } = await import("../../test/win32-os");
+    const { Screen } = await import("../screen");
+    const far = Screen.bounds();
+    expect(() => screenPixel(far.x - 10_000, far.y - 10_000)).toThrow("GetPixel");
   });
 
   test("bounds with contentSize throws; a malformed backgroundColor throws; a transparent window keeps no backgroundColor", () => {

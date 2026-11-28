@@ -99,7 +99,7 @@ pub fn set_placement(_window: &impl NativeWindow, _placement: Placement) -> bool
   false
 }
 pub fn bring_to_front(_window: &impl NativeWindow) {}
-pub fn show(_window: &impl NativeWindow, _no_activate: bool, _topmost: bool) {}
+pub fn show(_window: &impl NativeWindow, _no_activate: bool, _topmost: bool, _tab_frame: bool) {}
 pub fn show_as(_window: &impl NativeWindow, _state: ShowAs) {}
 pub fn set_title(_window: &impl NativeWindow, _title: &str) -> bool {
   false
@@ -118,6 +118,9 @@ pub fn mouse_buttons_down() -> bool {
 }
 pub fn left_button_down() -> bool {
   false
+}
+pub fn monitor_of(_window: &impl NativeWindow, _monitors: impl IntoIterator<Item = tao::monitor::MonitorHandle>) -> Option<tao::monitor::MonitorHandle> {
+  None
 }
 pub fn work_area(_monitor: &tao::monitor::MonitorHandle) -> Option<Rect> {
   None
@@ -161,6 +164,7 @@ impl WindowSubclass {
   }
   pub fn set_policy(&self, _policy: ExStylePolicy) {}
   pub fn set_hold_visibility(&self, _on: bool) {}
+  pub fn set_listen_first(&self, _on: bool) {}
   pub fn set_fill_child(&self, _on: bool) {}
   pub fn force_style(&self, _bits: u32) {}
 }

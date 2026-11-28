@@ -149,7 +149,7 @@ describe.skipIf(!onWindows)("Windows behaviour an application notices", () => {
     });
   }, 60_000);
 
-  test("tabs: the frame is a Window with tabs, getTabFrame gives its strip and page, close requests reach onClose, the tab menus act on any window of the thread, tab.webview.window wraps the frame", async () => {
+  test("tabs: the frame is a Window with tabs, getTabFrame gives its strip and page, close requests reach onClose, the tab menus act on any window of the thread, tab.webview.window is the window the tab is in, after a tear-off and a merge too", async () => {
     expect(await runChild(fixture("tabs.ts"))).toEqual({
       frameOfTabbedWindow: true,
       frameOfPlainWindow: true,
@@ -165,7 +165,7 @@ describe.skipIf(!onWindows)("Windows behaviour an application notices", () => {
       requestCloseReachesOnClose: true,
       windowKeptByListener: true,
       tabWindowIsLogical: true,
-      tabWebviewWindowWrapsFrame: true,
+      tabWebviewWindowIsTheTabsWindow: { opened: true, tornOff: true, merged: true },
     });
   }, 120_000);
 
@@ -348,7 +348,9 @@ describe.skipIf(!onWindows)("Windows behaviour an application notices", () => {
     expect(native).not.toContain("function reported");
   }, 420_000);
 
-  test.todo("onCallbackError is told about the faults of @n1h/sweetview (uiMethods, deferredUiMethods, onRequest, the ready hooks, the worker): it needs a way to the reporter that is no entry point, which rust-rewrite-no-win32-subpaths is to provide");
+  // In 1.0 onCallbackError is not told about the faults @n1h/sweetview catches itself (uiMethods,
+  // deferredUiMethods, onRequest, the ready hooks, the worker): no code moves between the packages
+  // (D44, the owner's ruling). The test above pins that they print and answer as with no listener.
 });
 
 // Part A, "Scripts run by path" and the subpaths of `@n1h/sweetview-native`: what an installed

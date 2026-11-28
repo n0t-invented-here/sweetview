@@ -22,13 +22,13 @@ use sweetview_window_logic::ico::{parse_ico, pick_ico_entry};
 use tao::platform::windows::{MonitorHandleExtWindows, WindowExtWindows};
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, RECT, WPARAM};
-use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, HMONITOR, MONITORINFO};
+use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, MonitorFromWindow, HMONITOR, MONITORINFO, MONITOR_DEFAULTTONEAREST};
 use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetActiveWindow, GetAsyncKeyState, ReleaseCapture, VK_LBUTTON, VK_MBUTTON, VK_RBUTTON};
 use windows::Win32::UI::Shell::{DefSubclassProc, DragFinish, DragQueryFileW, RemoveWindowSubclass, SetWindowSubclass, HDROP};
 use windows::Win32::UI::WindowsAndMessaging::{
-  CreateIconFromResourceEx, DestroyIcon, DestroyWindow, GetClientRect, GetSystemMetrics, GetWindow, GetWindowLongPtrW,
+  CreateIconFromResourceEx, DestroyIcon, DestroyWindow, GetClientRect, GetForegroundWindow, GetSystemMetrics, GetWindow, GetWindowLongPtrW,
   GetWindowPlacement, GetWindowRect, WINDOWPLACEMENT, WPF_RESTORETOMAXIMIZED, GetWindowThreadProcessId, IsIconic, IsWindow, IsWindowVisible, IsZoomed, LoadIconW, MoveWindow,
   PostMessageW, SendMessageTimeoutW, SendMessageW, SetForegroundWindow, SetLayeredWindowAttributes, SetWindowLongPtrW, SetWindowPos,
   SetWindowTextW, SMTO_ABORTIFHUNG, SMTO_BLOCK,
@@ -337,14 +337,17 @@ pub fn bring_to_front(window: &impl NativeWindow) {
   set_foreground(hwnd);
 }
 
-/// `show()`: a minimised window is restored; otherwise it is shown, without
-/// activation for `no_activate`; then, unless it must not activate or is
-/// topmost, it is brought to the front. Every window goes through it, a `tao`
-/// window included: `tao`'s `set_visible` shows with `SW_SHOW`, which
+/// `show()`: a minimised window is restored (`SW_RESTORE`; for a tab frame
+/// that must not activate, `SW_SHOWNOACTIVATE`, as at tag `pre-rust-rewrite`,
+/// whose regular windows and tab frame each did so), otherwise it is shown,
+/// without activation for `no_activate`; then, unless it must not activate or
+/// is topmost, it is brought to the front. Every window goes through it, a
+/// `tao` window included: `tao`'s `set_visible` shows with `SW_SHOW`, which
 /// activates even a `WS_EX_NOACTIVATE` window (D9).
-pub fn show(window: &impl NativeWindow, no_activate: bool, topmost: bool) {
+pub fn show(window: &impl NativeWindow, no_activate: bool, topmost: bool, tab_frame: bool) {
   if is_minimized(window) {
-    show_window(window.hwnd(), SW_RESTORE);
+    // `SW_SHOWNOACTIVATE` restores a minimised window too, without activating it.
+    show_window(window.hwnd(), if no_activate && tab_frame { SW_SHOWNOACTIVATE } else { SW_RESTORE });
   } else {
     show_window(window.hwnd(), if no_activate { SW_SHOWNOACTIVATE } else { SW_SHOW });
   }
@@ -698,6 +701,27 @@ pub fn left_button_down() -> bool {
   key_down(VK_LBUTTON)
 }
 
+/// The one of `monitors` the OS has the window on (`MonitorFromWindow`): the one its frame overlaps
+/// most, else the nearest, and for a minimised window the one its restored position is on. `None`
+/// when the handle names no window or the monitor is not among `monitors`.
+pub fn monitor_of(window: &impl NativeWindow, monitors: impl IntoIterator<Item = tao::monitor::MonitorHandle>) -> Option<tao::monitor::MonitorHandle> {
+  let monitor = monitor_handle_of(window.hwnd())?;
+  monitors.into_iter().find(|m| m.hmonitor() == monitor)
+}
+
+/// The monitor handle value `MonitorFromWindow` answers for `hwnd` with `MONITOR_DEFAULTTONEAREST`,
+/// as at tag `pre-rust-rewrite`: a window off every screen is on the nearest. `None` only for a
+/// handle that names no window.
+fn monitor_handle_of(hwnd: HWND) -> Option<isize> {
+  if !is_window_handle(hwnd) {
+    return None;
+  }
+  // SAFETY: `MonitorFromWindow` takes the handle by value and reads no memory of ours; the OS
+  // validates the handle.
+  let monitor = unsafe { MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST) };
+  (!monitor.is_invalid()).then_some(monitor.0 as isize)
+}
+
 /// The part of a monitor windows should use: its bounds less the taskbar.
 pub fn work_area(monitor: &tao::monitor::MonitorHandle) -> Option<Rect> {
   let hmonitor = HMONITOR(monitor.hmonitor() as *mut c_void);
@@ -728,6 +752,8 @@ struct SubclassState {
   policy: Cell<ExStylePolicy>,
   fill_child: Cell<bool>,
   hold_visibility: Cell<bool>,
+  /// Size and move events are delivered before the message reaches the window's own procedure.
+  listen_first: Cell<bool>,
   /// `GWL_STYLE` bits kept on through every style rewrite.
   forced_style: Cell<u32>,
   /// Set once the window is destroyed and the subclass removed (`WM_NCDESTROY`).
@@ -795,6 +821,7 @@ impl WindowSubclass {
       policy: Cell::new(ExStylePolicy::default()),
       fill_child: Cell::new(false),
       hold_visibility: Cell::new(false),
+      listen_first: Cell::new(false),
       forced_style: Cell::new(0),
       gone: Cell::new(false),
     });
@@ -836,6 +863,15 @@ impl WindowSubclass {
   /// is stale after a show it did not make.
   pub fn set_hold_visibility(&self, on: bool) {
     self.state.hold_visibility.set(on);
+  }
+
+  /// When on, [`WindowEvent::Resized`] and [`WindowEvent::Moved`] are delivered
+  /// before `WM_SIZE` and `WM_MOVE` reach the window's own procedure, as tag
+  /// `pre-rust-rewrite`'s subclass of a window it did not make did; when off
+  /// (the default), after. A window `tao` made has its procedure run first, so
+  /// `tao`'s state is current when the listeners run.
+  pub fn set_listen_first(&self, on: bool) {
+    self.state.listen_first.set(on);
   }
 
   /// Keeps the `GWL_STYLE` bits `bits` on from now on, through every later
@@ -910,6 +946,26 @@ pub(crate) fn set_foreground(hwnd: HWND) {
   let _granted = unsafe { SetForegroundWindow(hwnd) };
 }
 
+/// The foreground window now; a null handle when there is none.
+pub(crate) fn foreground_window() -> HWND {
+  // SAFETY: takes nothing and reads no memory of ours.
+  unsafe { GetForegroundWindow() }
+}
+
+/// After a popup menu whose `owner` was made the foreground window to track it:
+/// puts back `before`, the window that was in front when the menu was asked for,
+/// so a menu leaves the foreground where it found it. Only when the owner still
+/// holds it (nothing took it while the menu was open: a click elsewhere that
+/// dismissed the menu gives it to the window clicked) and was not in front
+/// before (an owner that was keeps it, as it always did). An item's handler runs
+/// after this, so a window it shows or focuses is not covered.
+pub(crate) fn give_back_foreground(owner: HWND, before: HWND) {
+  if before.is_invalid() || before == owner || !is_window_handle(before) || foreground_window() != owner {
+    return;
+  }
+  set_foreground(before);
+}
+
 /// Passes a message the OS gave a subclass procedure on to the next procedure
 /// in the window's chain, whichever subclass of this crate received it.
 pub(crate) fn forward(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
@@ -938,7 +994,8 @@ fn handle(hwnd: HWND, message: u32, wparam: WPARAM, mut lparam: LPARAM) -> Optio
   let state = state_of(hwnd)?;
   match message {
     WM_SIZE => {
-      let result = forward(hwnd, message, wparam, lparam);
+      let listen_first = state.listen_first.get();
+      let forwarded = (!listen_first).then(|| forward(hwnd, message, wparam, lparam));
       if wparam.0 != SIZE_MINIMIZED as usize {
         if state.fill_child.get() {
           fill_first_child_of(hwnd);
@@ -947,16 +1004,15 @@ fn handle(hwnd: HWND, message: u32, wparam: WPARAM, mut lparam: LPARAM) -> Optio
           deliver(&state, &WindowEvent::Resized(bounds));
         }
       }
-      Some(result)
+      Some(forwarded.unwrap_or_else(|| forward(hwnd, message, wparam, lparam)))
     }
     WM_MOVE => {
-      let result = forward(hwnd, message, wparam, lparam);
-      if !is_iconic(hwnd) {
-        if let Some(bounds) = outer_bounds_of(hwnd) {
-          deliver(&state, &WindowEvent::Moved(bounds));
-        }
+      let listen_first = state.listen_first.get();
+      let forwarded = (!listen_first).then(|| forward(hwnd, message, wparam, lparam));
+      if let Some(bounds) = outer_bounds_of(hwnd) {
+        deliver(&state, &WindowEvent::Moved { bounds, minimized: is_iconic(hwnd) });
       }
-      Some(result)
+      Some(forwarded.unwrap_or_else(|| forward(hwnd, message, wparam, lparam)))
     }
     WM_CLOSE => deliver(&state, &WindowEvent::CloseRequested).then_some(LRESULT(0)),
     WM_ACTIVATE => {

@@ -253,4 +253,68 @@ mod tests {
       assert_eq!(notifier.balloons_shown(), shown_before + 1, "without the tray the notifier's icon still shows a balloon");
     });
   }
+
+  /// `callbacks.test.ts` "W1.4 a click handler disposes its notifier from inside its own call; a
+  /// click already queued is not delivered", on the runtime's `Notifier` (what the binding holds).
+  /// Dropped from inside its own `on_click` with a second balloon click already posted, only the
+  /// first click runs. And one released from inside its click, still held as the binding's wrapper
+  /// is: it has no balloon pending, a late event finds nothing, and it shows nothing more.
+  #[test]
+  fn a_notifier_dropped_or_released_from_inside_its_own_click_delivers_no_queued_click_and_shows_nothing_more() {
+    use std::cell::Cell;
+    on_ui_thread(|runtime| {
+      let pump_for = |ms: u64| {
+        let deadline = Instant::now() + Duration::from_millis(ms);
+        while Instant::now() < deadline {
+          runtime.pump();
+          std::thread::sleep(Duration::from_millis(5));
+        }
+      };
+      let note = |id: &str| Notification { id: id.into(), title: "Sweetview test".into(), silent: true, ..Default::default() };
+
+      // Dropped.
+      let slot: Rc<RefCell<Option<Notifier>>> = Rc::default();
+      let clicks: Rc<RefCell<Vec<String>>> = Rc::default();
+      let (inner, sink) = (slot.clone(), clicks.clone());
+      let notifier = Notifier::new(NotifierOptions::default(), move |id, _| {
+        sink.borrow_mut().push(id.to_owned());
+        drop(inner.borrow_mut().take());
+      })
+      .expect("notifier");
+      notifier.force_path(ForcedPath::BalloonOnly);
+      let Some(Shown::Balloon(first)) = notifier.show(&note("first")) else { panic!("balloon") };
+      let Some(Shown::Balloon(second)) = notifier.show(&note("second")) else { panic!("balloon") };
+      // Both clicks are posted before either is dispatched.
+      assert!(notifier.simulate_balloon_event(first, BalloonEvent::Clicked));
+      assert!(notifier.simulate_balloon_event(second, BalloonEvent::Clicked));
+      *slot.borrow_mut() = Some(notifier);
+      pump_for(200);
+      assert_eq!(*clicks.borrow(), ["first"], "the click queued behind the drop is not delivered");
+      assert!(slot.borrow().is_none());
+
+      // Released, and still held.
+      let held: Rc<RefCell<Option<Rc<Notifier>>>> = Rc::default();
+      let calls = Rc::new(Cell::new(0u32));
+      let (inner, count) = (held.clone(), calls.clone());
+      let notifier = Rc::new(
+        Notifier::new(NotifierOptions::default(), move |_, _| {
+          count.set(count.get() + 1);
+          if let Some(notifier) = inner.borrow().as_ref() {
+            notifier.release();
+          }
+        })
+        .expect("notifier"),
+      );
+      notifier.force_path(ForcedPath::BalloonOnly);
+      let Some(Shown::Balloon(uid)) = notifier.show(&note("released")) else { panic!("balloon") };
+      *held.borrow_mut() = Some(notifier.clone());
+      assert!(notifier.simulate_balloon_event(uid, BalloonEvent::Clicked));
+      pump_for(200);
+      assert_eq!(calls.get(), 1);
+      assert_eq!(notifier.pending_balloons(), 0, "no balloon pending");
+      assert!(!notifier.simulate_balloon_event(uid, BalloonEvent::Clicked), "a late event finds nothing");
+      assert!(!notifier.notify(&note("after")), "it shows nothing more");
+      held.borrow_mut().take();
+    });
+  }
 }

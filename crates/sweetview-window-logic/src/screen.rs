@@ -1,6 +1,7 @@
-//! Which screen a point or a window belongs to, the way the OS picks one:
-//! the screen that holds the point, else the nearest; for a window, the screen
-//! its rectangle overlaps most, else the nearest to it.
+//! Which screen a point belongs to, the way the OS picks one: the screen that
+//! holds the point, else the nearest. A window's screen is the OS's own answer
+//! (`MonitorFromWindow`, in the platform crate), which knows a minimised
+//! window's restored position.
 
 use crate::geometry::{Point, Rect};
 
@@ -10,16 +11,6 @@ pub fn screen_at(screens: &[Rect], point: Point) -> Option<usize> {
     return Some(index);
   }
   nearest(screens, point)
-}
-
-/// The index in `screens` of the screen a window with outer rectangle
-/// `window` is on. `None` only when `screens` is empty.
-pub fn screen_of_rect(screens: &[Rect], window: Rect) -> Option<usize> {
-  let best = screens.iter().enumerate().map(|(i, s)| (i, s.overlap_area(&window))).max_by_key(|&(i, area)| (area, std::cmp::Reverse(i)));
-  match best {
-    Some((index, area)) if area > 0 => Some(index),
-    _ => nearest(screens, Point { x: window.x + window.width / 2, y: window.y + window.height / 2 }),
-  }
 }
 
 fn nearest(screens: &[Rect], point: Point) -> Option<usize> {
@@ -46,15 +37,6 @@ mod tests {
     assert_eq!(screen_at(&screens, Point { x: 999_999, y: 999_999 }), Some(0));
     assert_eq!(screen_at(&screens, Point { x: -5000, y: -100_000 }), Some(1));
     assert_eq!(screen_at(&[], Point { x: 0, y: 0 }), None);
-  }
-
-  #[test]
-  fn a_window_belongs_to_the_screen_it_overlaps_most() {
-    let screens = [PRIMARY, LEFT];
-    assert_eq!(screen_of_rect(&screens, Rect::new(-300, 100, 400, 300)), Some(1));
-    assert_eq!(screen_of_rect(&screens, Rect::new(-100, 100, 400, 300)), Some(0));
-    // A zero-size window at the origin (a message window) is on the screen holding the origin.
-    assert_eq!(screen_of_rect(&screens, Rect::new(0, 0, 0, 0)), Some(0));
   }
 
   #[test]

@@ -17,11 +17,12 @@ use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_USE_IMMERSIVE_D
 use windows::Win32::Graphics::Gdi::{ClientToScreen, DeleteObject, GetDC, GetPixel, InvalidateRect, ReleaseDC, CLR_INVALID};
 use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentProcessId, GetCurrentThreadId};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-  GetAsyncKeyState, GetKeyState, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBDINPUT, KEYBD_EVENT_FLAGS,
+  GetActiveWindow, GetAsyncKeyState, GetKeyState, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBDINPUT, KEYBD_EVENT_FLAGS,
   KEYEVENTF_KEYUP, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEINPUT, VIRTUAL_KEY, VK_LBUTTON, VK_MBUTTON, VK_RBUTTON,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-  AppendMenuW, BringWindowToTop, GetClientRect, GetMenuItemCount, GetMenuItemID, GetMenuItemInfoW, GetMenuItemRect, GetMenuState,
+  AppendMenuW, BringWindowToTop, GetSystemMenu, MF_BYCOMMAND, MF_DISABLED, MF_GRAYED, SC_MAXIMIZE, SC_MINIMIZE, SC_MOVE, SC_RESTORE,
+  SC_SIZE, GetClientRect, GetMenuItemCount, GetMenuItemID, GetMenuItemInfoW, GetMenuItemRect, GetMenuState,
   GetMenuStringW, GetSubMenu, IsMenu, RegisterWindowMessageW, MENUITEMINFOW, MF_BYPOSITION, MIIM_BITMAP, TPM_RIGHTBUTTON, GetGUIThreadInfo, GetWindowTextW, SendMessageW, GUITHREADINFO, GUI_INMOVESIZE, MINMAXINFO,
   WM_DROPFILES, WM_GETMINMAXINFO, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DestroyWindow, FindWindowExW,
   FindWindowW, GetCursorPos, GetForegroundWindow, GetIconInfo, GetWindowThreadProcessId, IsWindowVisible, MessageBoxW, PostMessageW,
@@ -40,6 +41,22 @@ pub fn shows_valid_icons(window: &impl NativeWindow) -> bool {
     let icon = icon_message(window.hwnd(), WM_GETICON, kind, None);
     icon != 0 && icon_is_valid(HICON(icon as *mut c_void))
   })
+}
+
+/// Whether each of the window's system menu items Restore, Move, Size, Minimize
+/// and Maximize is enabled, by command; `None` when the window has no system menu.
+pub fn system_menu_enabled(window: &impl NativeWindow) -> Option<[bool; 5]> {
+  // SAFETY: a window function on a handle named by `NativeWindow`; the menu is the window's and
+  // is not destroyed here.
+  let menu = unsafe { GetSystemMenu(window.hwnd(), false) };
+  if menu.is_invalid() {
+    return None;
+  }
+  Some([SC_RESTORE, SC_MOVE, SC_SIZE, SC_MINIMIZE, SC_MAXIMIZE].map(|command| {
+    // SAFETY: `menu` is the window's system menu, alive while the window is; the item is named by command.
+    let state = unsafe { GetMenuState(menu, command, MF_BYCOMMAND) };
+    state & (MF_GRAYED.0 | MF_DISABLED.0) == 0
+  }))
 }
 
 fn icon_is_valid(icon: HICON) -> bool {
@@ -76,6 +93,12 @@ pub fn post(window: isize, message: u32, wparam: usize, lparam: isize) -> bool {
 pub fn foreground() -> isize {
   // SAFETY: takes nothing and reads no memory of ours.
   unsafe { GetForegroundWindow() }.0 as isize
+}
+
+/// The handle value of this thread's active window; 0 when it has none.
+pub fn active() -> isize {
+  // SAFETY: takes nothing and reads no memory of ours.
+  unsafe { GetActiveWindow() }.0 as isize
 }
 
 /// Brings `window` to the foreground: asked plainly first; when the OS refuses, this thread's
@@ -124,10 +147,54 @@ pub fn window_titled(title: &str) -> isize {
   unsafe { FindWindowW(PCWSTR::null(), &title) }.map_or(0, |hwnd| hwnd.0 as isize)
 }
 
-/// The handle value of the window at a point of the screen; 0 when there is none.
+/// The handle value of the top-level window at a point of the screen (`WindowFromPoint`, then
+/// its root, as a child window such as the taskbar's buttons belongs to it); 0 when there is none.
 pub fn window_at(x: i32, y: i32) -> isize {
+  use windows::Win32::UI::WindowsAndMessaging::{GetAncestor, GA_ROOT};
   // SAFETY: the point is passed by value.
-  unsafe { WindowFromPoint(POINT { x, y }) }.0 as isize
+  let hit = unsafe { WindowFromPoint(POINT { x, y }) };
+  if hit.is_invalid() {
+    return 0;
+  }
+  // SAFETY: `hit` is a handle value the OS just returned and validates again.
+  unsafe { GetAncestor(hit, GA_ROOT) }.0 as isize
+}
+
+/// This process's top-level windows, by handle value, in z-order, without its console window (a
+/// console program has one, which `GetWindowThreadProcessId` reports as the process's).
+pub fn own_top_level_windows() -> Vec<isize> {
+  // SAFETY: takes nothing and reads no memory; a null handle when the process has no console.
+  let console = unsafe { windows::Win32::System::Console::GetConsoleWindow() }.0 as isize;
+  // SAFETY: takes nothing and reads no memory.
+  let process = unsafe { GetCurrentProcessId() };
+  let mut found = Vec::new();
+  let mut after: Option<HWND> = None;
+  loop {
+    // SAFETY: no class or window name is passed; `after` is none or a handle value the previous
+    // call returned, which the OS validates.
+    let next = unsafe { FindWindowExW(None, after, PCWSTR::null(), PCWSTR::null()) };
+    let Ok(window) = next else { break };
+    let mut owner = 0u32;
+    // SAFETY: `window` is a handle value the OS just returned and validates again; `owner` is a
+    // u32 owned by this frame for the call to fill.
+    let _thread = unsafe { GetWindowThreadProcessId(window, Some(&mut owner)) };
+    if owner == process && window.0 as isize != console {
+      found.push(window.0 as isize);
+    }
+    after = Some(window);
+  }
+  found
+}
+
+/// A layered window's colour key (a COLORREF, `0x00bbggrr`), alpha and `LWA_*` flags, as
+/// `GetLayeredWindowAttributes` reads them; `None` for a window that is not layered.
+pub fn layered_attributes(window: isize) -> Option<(u32, u8, u32)> {
+  use windows::Win32::Foundation::COLORREF;
+  use windows::Win32::UI::WindowsAndMessaging::{GetLayeredWindowAttributes, LAYERED_WINDOW_ATTRIBUTES_FLAGS};
+  let (mut key, mut alpha, mut flags) = (COLORREF(0), 0u8, LAYERED_WINDOW_ATTRIBUTES_FLAGS(0));
+  // SAFETY: the three out-values are locals of this frame, written for the call.
+  unsafe { GetLayeredWindowAttributes(hwnd_of(window), Some(&mut key), Some(&mut alpha), Some(&mut flags)) }.ok()?;
+  Some((key.0, alpha, flags.0))
 }
 
 // ---- input ---------------------------------------------------------------------------
@@ -256,7 +323,27 @@ pub struct OwnWindow {
 impl OwnWindow {
   /// Shows the window at `(x, y)`, `width` by `height` screen pixels, topmost and not
   /// activated; `on_message` is told each message its procedure is dispatched.
-  pub fn new(title: &str, (x, y, width, height): (i32, i32, i32, i32), on_message: impl Fn(u32) + 'static) -> Option<OwnWindow> {
+  pub fn new(title: &str, rect: (i32, i32, i32, i32), on_message: impl Fn(u32) + 'static) -> Option<OwnWindow> {
+    Self::make(title, rect, WS_EX_TOOLWINDOW, WS_POPUP, true, on_message)
+  }
+
+  /// A framed window of the application's own (`WS_OVERLAPPEDWINDOW`: a title bar, a sizing border,
+  /// the minimise and maximise buttons and the system menu), shown without activation and not
+  /// topmost, whose procedure reports every message it is dispatched.
+  pub fn framed(title: &str, rect: (i32, i32, i32, i32), on_message: impl Fn(u32) + 'static) -> Option<OwnWindow> {
+    use windows::Win32::UI::WindowsAndMessaging::{WINDOW_EX_STYLE, WS_OVERLAPPEDWINDOW};
+    Self::make(title, rect, WINDOW_EX_STYLE(0), WS_OVERLAPPEDWINDOW, false, on_message)
+  }
+
+  fn make(
+    title: &str,
+    (x, y, width, height): (i32, i32, i32, i32),
+    ex_style: windows::Win32::UI::WindowsAndMessaging::WINDOW_EX_STYLE,
+    style: windows::Win32::UI::WindowsAndMessaging::WINDOW_STYLE,
+    topmost: bool,
+    on_message: impl Fn(u32) + 'static,
+  ) -> Option<OwnWindow> {
+    use windows::Win32::UI::WindowsAndMessaging::HWND_NOTOPMOST;
     let class = w!("sweetview.test-own-window");
     let description = WNDCLASSW { lpfnWndProc: Some(own_window_procedure), lpszClassName: class, ..Default::default() };
     // SAFETY: `description` is a fully initialised WNDCLASSW on this frame; its class name is a
@@ -265,7 +352,7 @@ impl OwnWindow {
     let title = HSTRING::from(title);
     // SAFETY: the class is registered above; `title` is a wide string owned by this frame for the
     // call; no parent, menu, instance or creation parameter is passed.
-    let made = unsafe { CreateWindowExW(WS_EX_TOOLWINDOW, class, &title, WS_POPUP, x, y, width, height, None, None, None, None) };
+    let made = unsafe { CreateWindowExW(ex_style, class, &title, style, x, y, width, height, None, None, None, None) };
     let hwnd = made.ok()?;
     // Owned from here: a failure below still destroys the window.
     let destroyed = Rc::new(std::cell::Cell::new(false));
@@ -277,8 +364,9 @@ impl OwnWindow {
       }
     });
     OWN_HANDLERS.with(|all| all.borrow_mut().insert(window.handle_value(), handler));
+    let band = if topmost { HWND_TOPMOST } else { HWND_NOTOPMOST };
     // SAFETY: `window.hwnd` is the live window made above; the flags are constants.
-    unsafe { SetWindowPos(window.hwnd, Some(HWND_TOPMOST), x, y, width, height, SWP_SHOWWINDOW | SWP_NOACTIVATE) }.ok()?;
+    unsafe { SetWindowPos(window.hwnd, Some(band), x, y, width, height, SWP_SHOWWINDOW | SWP_NOACTIVATE) }.ok()?;
     Some(window)
   }
 

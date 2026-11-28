@@ -403,8 +403,8 @@ fn the_systems_own_commands_report_maximise_changes_once_for_framed_frameless_an
     let wrapped = Window::adopt(framed.handle()).expect("adopt");
     let (framed_seen, wrapper_seen) = (Rc::new(RefCell::new(Vec::new())), Rc::new(RefCell::new(Vec::new())));
     let (a, b) = (framed_seen.clone(), wrapper_seen.clone());
-    framed.on_maximize_change(Some(Rc::new(move |m| a.borrow_mut().push(m)))).expect("listener");
-    wrapped.on_maximize_change(Some(Rc::new(move |m| b.borrow_mut().push(m)))).expect("listener");
+    framed.on_maximize_change(framed.id, Some(Rc::new(move |m| a.borrow_mut().push(m)))).expect("listener");
+    wrapped.on_maximize_change(wrapped.id, Some(Rc::new(move |m| b.borrow_mut().push(m)))).expect("listener");
     let command = |sc: usize| os::send(framed.handle(), WM_SYSCOMMAND, sc, 0);
     framed.show().expect("show");
     framed.toggle_maximize().expect("maximise");
@@ -418,7 +418,7 @@ fn the_systems_own_commands_report_maximise_changes_once_for_framed_frameless_an
     command(SC_RESTORE);
     assert_eq!(*framed_seen.borrow(), [true, false, true, false]);
     assert_eq!(*wrapper_seen.borrow(), [true, false, true, false]);
-    wrapped.on_maximize_change(None).expect("removed");
+    wrapped.on_maximize_change(wrapped.id, None).expect("removed");
     framed.toggle_maximize().expect("maximise");
     assert_eq!(wrapper_seen.borrow().len(), 4);
     assert_eq!(*framed_seen.borrow(), [true, false, true, false, true]);
@@ -430,12 +430,12 @@ fn the_systems_own_commands_report_maximise_changes_once_for_framed_frameless_an
     for (name, window) in [("frameless", &frameless), ("tabbed", &tabs)] {
       let seen = Rc::new(RefCell::new(Vec::new()));
       let sink = seen.clone();
-      window.on_maximize_change(Some(Rc::new(move |m| sink.borrow_mut().push(m)))).expect("listener");
+      window.on_maximize_change(window.id, Some(Rc::new(move |m| sink.borrow_mut().push(m)))).expect("listener");
       window.show().expect("show");
       window.toggle_maximize().expect("maximise");
       assert!(window.is_maximized(), "{name}");
       window.toggle_maximize().expect("restore");
-      window.on_maximize_change(None).expect("removed");
+      window.on_maximize_change(window.id, None).expect("removed");
       window.toggle_maximize().expect("maximise again");
       assert_eq!(*seen.borrow(), [true, false], "{name}");
     }
@@ -484,9 +484,57 @@ fn an_applications_own_popup_window_wrapped_after_maximise_and_minimise_reads_as
     assert!(!wrapped.is_maximized());
     let seen = Rc::new(RefCell::new(Vec::new()));
     let sink = seen.clone();
-    wrapped.on_maximize_change(Some(Rc::new(move |m| sink.borrow_mut().push(m)))).expect("listener");
+    wrapped.on_maximize_change(wrapped.id, Some(Rc::new(move |m| sink.borrow_mut().push(m)))).expect("listener");
     command(SC_RESTORE);
     assert_eq!((wrapped.is_maximized(), seen.borrow().clone()), (false, vec![]));
+    wrapped.dispose();
+  });
+}
+
+/// `window-native.test.ts` "a window the application made, maximised and minimised before
+/// Window.fromHandle wraps it, reports nothing when restored to maximised": a framed window of the
+/// application's own (`WS_OVERLAPPEDWINDOW`), driven with the system's own `WM_SYSCOMMAND`s.
+#[test]
+fn an_applications_own_framed_window_wrapped_while_minimised_from_maximised_reports_only_the_real_change() {
+  on_ui_thread(|_runtime| {
+    let own = os::OwnWindow::framed("rt os own framed wrapped minimised", (60, 60, 300, 200), |_| {}).expect("the application's own framed window");
+    let command = |sc: usize| os::send(own.handle_value(), WM_SYSCOMMAND, sc, 0);
+    command(SC_MAXIMIZE);
+    command(SC_MINIMIZE);
+    let wrapped = Window::adopt(own.handle_value()).expect("adopt");
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    let sink = seen.clone();
+    wrapped.on_maximize_change(wrapped.id, Some(Rc::new(move |m| sink.borrow_mut().push(m)))).expect("listener");
+    command(SC_RESTORE); // back to maximised
+    assert_eq!((wrapped.is_maximized(), seen.borrow().clone()), (true, vec![]), "restored to maximised: no change");
+    command(SC_RESTORE);
+    assert_eq!((wrapped.is_maximized(), seen.borrow().clone()), (false, vec![false]), "restored: one change");
+    wrapped.dispose();
+  });
+}
+
+/// `window-native.test.ts` "onMaximizeChange arrives for a window the application made:
+/// maximised, minimised and restored to maximised (nothing), restored", and nothing after the
+/// listener is removed.
+#[test]
+fn an_applications_own_framed_window_reports_each_maximise_change_of_the_systems_commands_until_unsubscribed() {
+  on_ui_thread(|_runtime| {
+    let own = os::OwnWindow::framed("rt os own framed maximise", (60, 60, 300, 200), |_| {}).expect("the application's own framed window");
+    let wrapped = Window::adopt(own.handle_value()).expect("adopt");
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    let sink = seen.clone();
+    wrapped.on_maximize_change(wrapped.id, Some(Rc::new(move |m| sink.borrow_mut().push(m)))).expect("listener");
+    let command = |sc: usize| os::send(own.handle_value(), WM_SYSCOMMAND, sc, 0);
+    command(SC_MAXIMIZE);
+    assert_eq!((wrapped.is_maximized(), seen.borrow().clone()), (true, vec![true]));
+    command(SC_MINIMIZE);
+    command(SC_RESTORE); // back to maximised
+    assert_eq!((wrapped.is_maximized(), seen.borrow().clone()), (true, vec![true]), "minimised and restored to maximised: nothing");
+    command(SC_RESTORE);
+    assert_eq!((wrapped.is_maximized(), seen.borrow().clone()), (false, vec![true, false]));
+    wrapped.on_maximize_change(wrapped.id, None).expect("removed");
+    command(SC_MAXIMIZE);
+    assert_eq!(*seen.borrow(), [true, false], "nothing after the listener is removed");
     wrapped.dispose();
   });
 }
@@ -504,8 +552,8 @@ fn an_applications_own_window_reports_resize_move_close_and_drops_and_outlives_i
     let seen: Rc<RefCell<Vec<String>>> = Rc::default();
     let drops: Rc<RefCell<Vec<Vec<String>>>> = Rc::default();
     let (a, b, c, d) = (seen.clone(), seen.clone(), seen.clone(), drops.clone());
-    wrapped.on_resize(Some(Rc::new(move |r| a.borrow_mut().push(format!("resize {}x{}", r.width, r.height))))).expect("resize");
-    wrapped.on_move(Some(Rc::new(move |r| b.borrow_mut().push(format!("move {},{}", r.x, r.y))))).expect("move");
+    wrapped.on_resize(wrapped.id, Some(Rc::new(move |r| a.borrow_mut().push(format!("resize {}x{}", r.width, r.height))))).expect("resize");
+    wrapped.on_move(wrapped.id, Some(Rc::new(move |r| b.borrow_mut().push(format!("move {},{}", r.x, r.y))))).expect("move");
     wrapped.on_close_request(Some(Rc::new(move || c.borrow_mut().push("close".into())))).expect("close");
     wrapped.on_file_drop(Some(Rc::new(move |paths| d.borrow_mut().push(paths)))).expect("drop");
     wrapped.set_bounds(Rect::new(70, 80, 320, 210));
@@ -815,7 +863,7 @@ fn a_maximised_frameless_window_dragged_by_start_drag_stays_maximised_and_its_ne
     let handle = window.handle();
     let seen = Rc::new(RefCell::new(Vec::new()));
     let sink = seen.clone();
-    window.on_maximize_change(Some(Rc::new(move |m| sink.borrow_mut().push(m)))).expect("listener");
+    window.on_maximize_change(window.id, Some(Rc::new(move |m| sink.borrow_mut().push(m)))).expect("listener");
     window.show().expect("show");
     window.toggle_maximize().expect("maximise");
     let maximised = window.bounds();
@@ -875,14 +923,22 @@ fn a_tab_frame_with_no_tab_paints_its_strip_and_page_in_the_appearances_colours(
       let (_, height) = os::client_size(handle);
       let strip_at = os::client_to_screen(handle, 30, ((f64::from(STRIP_HEIGHT) - 4.0) * scale).round() as i32);
       let page_at = os::client_to_screen(handle, 30, height - 10);
-      let read = || (os::screen_pixel(strip_at.0, strip_at.1), os::screen_pixel(page_at.0, page_at.1));
+      // One reading: whether both points are the frame's, and the colours there, taken together.
+      let read = || {
+        let ours = os::window_at(strip_at.0, strip_at.1) == handle && os::window_at(page_at.0, page_at.1) == handle;
+        (ours, (os::screen_pixel(strip_at.0, strip_at.1), os::screen_pixel(page_at.0, page_at.1)))
+      };
       let want = (Some(strip_colour), Some(page_colour));
-      pump_until(runtime.as_ref(), 2000, || read() == want);
-      let ours = os::window_at(strip_at.0, strip_at.1) == handle && os::window_at(page_at.0, page_at.1) == handle;
-      if read() != want && !ours {
+      let last = Cell::new(read());
+      pump_until(runtime.as_ref(), 2000, || {
+        last.set(read());
+        last.get() == (true, want)
+      });
+      let (ours, seen) = last.get();
+      if !ours {
         panic!("refused to judge: another window covers the frame on the shared desktop; run again");
       }
-      assert_eq!(read(), want, "{appearance:?}: the strip and the page in their own colours");
+      assert_eq!(seen, want, "{appearance:?}: the strip and the page in their own colours, read where the frame is the window");
       frame.dispose();
     }
   });
@@ -958,4 +1014,112 @@ fn a_tab_frame_keeps_its_title_system_styles_border_resize_edges_and_default_min
     assert_eq!(os::uses_dark_title_bar(handle), Some(true), "dark appearance: dark title bar");
     frame.dispose();
   });
+}
+
+// ---- colour keys, opacity, and an overlay above the taskbar (`overlay.test.ts`) ------------------------
+
+const LWA_COLORKEY: u32 = 0x1;
+const LWA_ALPHA: u32 = 0x2;
+
+/// `overlay.test.ts` "colorKey swaps #rrggbb into COLORREF 0x00bbggrr", "rejects anything else" and
+/// "opacity sets the layered alpha, alone or with a colour key", read back from the layered window.
+#[test]
+fn a_colour_key_and_opacity_are_the_layered_windows_attributes() {
+  on_ui_thread(|_runtime| {
+    for (key, colorref) in [("#ff00ff", 0x00ff_00ff), ("#112233", 0x0033_2211), ("00ff00", 0x0000_ff00)] {
+      let window = Window::create(WindowInit { frame: false, color_key: Some(key.into()), ..init("rt os colour key") }).expect("window");
+      let (read, _alpha, flags) = os::layered_attributes(window.handle()).expect("a layered window");
+      assert_eq!(read, colorref, "{key}");
+      assert_eq!(flags & LWA_COLORKEY, LWA_COLORKEY, "{key}");
+      window.dispose();
+    }
+    for bad in ["#fff", "magenta"] {
+      let made = Window::create(WindowInit { color_key: Some(bad.into()), ..init("rt os bad key") });
+      assert!(matches!(&made, Err(e) if e.to_string() == format!("sweetview: color key must be #rrggbb, got {bad}")), "{bad}");
+    }
+    let window = Window::create(WindowInit { frame: false, opacity: Some(0.5), color_key: Some("#010203".into()), ..init("rt os opacity") }).expect("window");
+    assert_eq!(os::layered_attributes(window.handle()), Some((0x0003_0201, 128, LWA_COLORKEY | LWA_ALPHA)));
+    window.dispose();
+  });
+}
+
+/// Set in the environment of the hidden child process the test below starts.
+const OVERLAY_CHILD: &str = "SWEETVIEW_RUNTIME_TEST_OVERLAY_CHILD";
+
+/// The child's half: a topmost overlay over 240 pixels of the taskbar, as the first Sweetview
+/// window of this process. Prints one line, `RESULT <json>`.
+fn overlay_child() {
+  let before = os::own_top_level_windows().len();
+  let report = |json: serde_json::Value| println!("RESULT {json}");
+  let taskbar = os::taskbar();
+  if taskbar == 0 {
+    return report(serde_json::json!({ "skipped": "this session has no taskbar (no Shell_TrayWnd window)" }));
+  }
+  let bar = outer(taskbar);
+  let point = (bar.x + bar.width / 2, bar.y + bar.height / 2);
+  if os::window_at(point.0, point.1) != taskbar {
+    return report(serde_json::json!({ "skipped": format!("the taskbar is not the window at its own centre {point:?}: hidden (auto-hide) or covered") }));
+  }
+  on_ui_thread(|runtime| {
+    let overlay = Rect::new(point.0 - 120, bar.y, 240, bar.height);
+    let window = Window::create(WindowInit { frame: false, topmost: true, no_activate: true, hide_from_taskbar: true, bounds: Some(overlay), ..init("rt os overlay") }).expect("overlay");
+    let with_it = os::own_top_level_windows().len();
+    window.show().expect("show");
+    pump_until(runtime.as_ref(), 200, || false);
+    let handle = window.handle();
+    let visible = BorrowedWindow::with_handle_value(handle, |w| platform::is_visible(w)).unwrap_or(false);
+    let topmost = ex_style(handle) & WS_EX_TOPMOST != 0;
+    let at_point = os::window_at(point.0, point.1) == handle;
+    window.hide();
+    pump_until(runtime.as_ref(), 100, || false);
+    let taskbar_again = os::window_at(point.0, point.1) == taskbar;
+    window.dispose();
+    report(serde_json::json!({ "before": before, "withIt": with_it, "visible": visible, "topmost": topmost, "atPoint": at_point, "taskbarAgain": taskbar_again }));
+  });
+}
+
+/// `overlay.test.ts` "a topmost overlay, the first Sweetview window of a process started hidden, is
+/// shown above the taskbar: WindowFromPoint inside the taskbar returns it, and the taskbar once it is
+/// hidden". The test starts itself again as a child process with `STARTF_USESHOWWINDOW` and
+/// `SW_HIDE` (PowerShell's `Start-Process -WindowStyle Hidden`, as a launcher can start an app).
+/// Another session's topmost window can sit over the point: a run whose overlay was not there is run
+/// again, up to three runs.
+#[test]
+fn a_topmost_overlay_as_the_first_window_of_a_process_started_hidden_is_shown_above_the_taskbar() {
+  if std::env::var_os(OVERLAY_CHILD).is_some() {
+    return overlay_child();
+  }
+  let exe = std::env::current_exe().expect("the test executable");
+  let name = "window_os_tests::a_topmost_overlay_as_the_first_window_of_a_process_started_hidden_is_shown_above_the_taskbar";
+  let mut last = serde_json::Value::Null;
+  for _ in 0..3 {
+    let out = std::env::temp_dir().join(format!("sweetview-overlay-{}.txt", std::process::id()));
+    let command = format!(
+      "$child = Start-Process -FilePath '{}' -ArgumentList '{name} --exact --nocapture --test-threads=1' -WindowStyle Hidden -Wait -PassThru -RedirectStandardOutput '{}'; exit $child.ExitCode",
+      exe.display(),
+      out.display()
+    );
+    let status = std::process::Command::new("pwsh").args(["-NoProfile", "-NonInteractive", "-Command", &command]).env(OVERLAY_CHILD, "1").status().expect("pwsh");
+    // `exit $child.ExitCode`: pwsh's own code is the child's.
+    assert_eq!(status.code(), Some(0), "the hidden child's exit code");
+    let text = std::fs::read_to_string(&out).unwrap_or_default();
+    let _ = std::fs::remove_file(&out);
+    let line = text.split("RESULT ").nth(1).and_then(|rest| rest.lines().next()).unwrap_or("null");
+    last = serde_json::from_str(line).unwrap_or(serde_json::Value::Null);
+    if last.get("skipped").is_some() || last["atPoint"] == serde_json::Value::Bool(true) {
+      break;
+    }
+  }
+  if let Some(why) = last.get("skipped") {
+    panic!("refused to judge: {why}; run again on a session with a visible taskbar");
+  }
+  assert_eq!(last["before"], 0, "no window of the process before the first Sweetview window: {last}");
+  assert!(last["withIt"].as_u64().unwrap_or(0) > 1, "with it comes the loop's own hidden window: {last}");
+  // Three runs with the overlay not at the point is a failure, as in `overlay.test.ts`.
+  let yes = serde_json::Value::Bool(true);
+  assert_eq!(
+    (&last["visible"], &last["topmost"], &last["atPoint"], &last["taskbarAgain"]),
+    (&yes, &yes, &yes, &yes),
+    "shown, topmost, above the taskbar at its centre, and the taskbar again once hidden: {last}"
+  );
 }

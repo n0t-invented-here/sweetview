@@ -101,6 +101,10 @@ another library), or a raw handle. The platforms use it differently:
 - Windows: `TrackPopupMenu` needs an owner `HWND` to receive the menu's
   messages, and the owner is brought to the foreground first so the menu
   closes when the user clicks elsewhere. Pass the window the menu belongs to.
+  When the menu closes, the window that was in front before it opened is in
+  front again: a `noActivate` owner (an overlay) is never left active, and an
+  owner that was already in front keeps the foreground. A window the chosen
+  item's `click` shows or focuses stays in front.
   An item is chosen with either mouse button (letting go of the right button
   over it, so a menu opened by a right click is worked in one gesture) or
   from the keyboard.
@@ -119,8 +123,9 @@ the menu. An `HMENU` that the application tracks itself, with its own
 
 [`Window#showSystemMenu()`](windows.md#window-members) shows a `Window`'s
 system menu (Restore, Move, Size, Minimize, Maximize, Close) at the cursor,
-with Restore, Move, Size and Maximize enabled as the window's maximised state
-allows, and carries out the chosen command as the title bar's own menu does.
+with Restore enabled while the OS has the window maximized (`IsZoomed`), Move,
+Size and Maximize while it has not, and Minimize always, and posts the chosen
+command as the title bar's own menu does.
 For any other window of the UI thread, one the application made itself
 included, wrap it once and call `showSystemMenu()` on that one object each
 time, for example from the window's right-click handler:
@@ -136,12 +141,13 @@ win.dispose();
 ```
 
 The wrapper is kept until `win.dispose()` or the end of the application, so
-wrapping the window again on each click keeps one more each time. Two things
-differ from the tag's `windowMenu(hwnd)`, which only borrowed the handle for
+wrapping the window again on each click keeps one more each time. One thing
+differs from the tag's `windowMenu(hwnd)`, which only borrowed the handle for
 the call: `Window.fromHandle` throws for a null handle and for a value that
-names no window, where `windowMenu` did nothing; and a window Sweetview did
-not make is watched through a subclass, for the wrapper's events, until the
-wrapper is disposed.
+names no window, where `windowMenu` did nothing. A wrapper used only for the
+menu changes nothing of the window: a window Sweetview did not make gets a
+subclass only while a listener is attached to a wrapper of it (`onResize`,
+`onMove`, `onMaximizeChange`, `onClose`, `onFileDrop`), as before 1.0.
 
 ## Tray
 

@@ -101,11 +101,11 @@ pub type Refiner = Rc<dyn Fn(i32, i32, u32)>;
 
 #[derive(Default)]
 struct Listeners {
-  resize: Vec<(u64, RectListener)>,
-  moved: Vec<(u64, RectListener)>,
+  resize: Vec<Subscription<dyn Fn(Rect)>>,
+  moved: Vec<Subscription<dyn Fn(Rect)>>,
   close: Vec<(u64, Listener)>,
   drop: Vec<(u64, DropListener)>,
-  maximize: Vec<(u64, BoolListener)>,
+  maximize: Vec<Subscription<dyn Fn(bool)>>,
 }
 
 impl Listeners {
@@ -113,12 +113,43 @@ impl Listeners {
     self.resize.len() + self.moved.len() + self.close.len() + self.drop.len() + self.maximize.len()
   }
 
+  /// What a disposed wrapper subscribed goes with it, as at the tag, where a
+  /// wrapper's dispose took out each listener it had added.
   fn remove_wrapper(&mut self, wrapper: u64) {
-    self.maximize.retain(|(w, _)| *w != wrapper);
-    self.resize.retain(|(w, _)| *w != wrapper);
-    self.moved.retain(|(w, _)| *w != wrapper);
+    for list in [&mut self.resize, &mut self.moved] {
+      list.retain(|s| !s.wrappers.contains(&wrapper));
+    }
+    self.maximize.retain(|s| !s.wrappers.contains(&wrapper));
     self.close.retain(|(w, _)| *w != wrapper);
     self.drop.retain(|(w, _)| *w != wrapper);
+  }
+}
+
+/// One listener of a window's resizes, moves or maximise changes. A window
+/// has one list of each, whichever wrapper subscribed, as tag
+/// `pre-rust-rewrite` had one set per window: listeners are told in the order
+/// they were added, and `key` names the function a listener was made from (in
+/// the binding, a JavaScript function's identity), so the same function
+/// subscribed again, through any wrapper, is still one listener.
+struct Subscription<T: ?Sized> {
+  key: u64,
+  /// The wrappers that subscribed it; disposing any of them takes it out.
+  wrappers: Vec<u64>,
+  listener: Rc<T>,
+}
+
+/// Adds `listener` under `key` for `wrapper`, or, when `key` is subscribed
+/// already, notes `wrapper` among those that subscribed it; `None` takes the
+/// listener under `key` out, whoever subscribed it.
+fn subscribe<T: ?Sized>(list: &mut Vec<Subscription<T>>, wrapper: u64, key: u64, listener: Option<Rc<T>>) {
+  let Some(listener) = listener else {
+    list.retain(|s| s.key != key);
+    return;
+  };
+  match list.iter_mut().find(|s| s.key == key) {
+    Some(existing) if !existing.wrappers.contains(&wrapper) => existing.wrappers.push(wrapper),
+    Some(_) => {}
+    None => list.push(Subscription { key, wrappers: vec![wrapper], listener }),
   }
 }
 
@@ -169,11 +200,8 @@ struct Core {
   restore: Cell<Option<Rect>>,
   /// Whether the window was maximised when that was last looked at, for `on_maximize_change`.
   maximized: Cell<bool>,
-  /// How many changes of the maximised state have been noticed: a delivery stops
-  /// once a later change has been told in its place.
-  maximize_changes: Cell<u64>,
-  /// How many deliveries of a maximise change are on the stack: 1 while the
-  /// listeners hear a change, 2 while they hear one a listener made then.
+  /// Which delivery of a maximise change is under way: 0 none, 1 a change, 2
+  /// the one further delivery of a change a listener made during the first.
   maximize_telling: Cell<u32>,
   /// The window's `backgroundColor` (red, green, blue); `None` without one, or for a transparent
   /// window. A webview made in the window starts with it (`background_of`).
@@ -199,14 +227,6 @@ thread_local! {
 /// other window, or one without a colour.
 pub fn background_of(handle: isize) -> Option<(u8, u8, u8)> {
   core_of(handle).and_then(|core| core.background.get())
-}
-
-/// Shows the system menu of the window `handle` names when it is one of
-/// Sweetview's own (see `Core::show_system_menu`); `None` for any other window.
-pub(crate) fn show_own_system_menu(handle: isize, at: Point) -> Option<Result<()>> {
-  // Only a window Sweetview made: a wrapper of any other window (of this thread or not) is in the
-  // registry too, and its menu is the OS's, read from its own state and styles on its own thread.
-  core_of(handle).filter(|core| core.owned).map(|core| core.show_system_menu(at))
 }
 
 fn core_of(handle: isize) -> Option<Rc<Core>> {
@@ -243,7 +263,6 @@ impl Core {
       gesture_timer: Cell::new(None),
       restore: Cell::new(None),
       maximized: Cell::new(false),
-      maximize_changes: Cell::new(0),
       maximize_telling: Cell::new(0),
       background: Cell::new(None),
       icons: RefCell::new(None),
@@ -257,6 +276,8 @@ impl Core {
     let weak = Rc::downgrade(self);
     let installed = self.with_native(|window| WindowSubclass::install(window, move |event| on_event(&weak, event)));
     let subclass = installed.ok_or_else(|| Error::state("sweetview: the window is gone"))?.map_err(Error::state)?;
+    // A window Sweetview did not make: its listeners run before its own procedure, as at the tag.
+    subclass.set_listen_first(!self.owned);
     *self.subclass.borrow_mut() = Some(subclass);
     Ok(())
   }
@@ -276,15 +297,16 @@ impl Core {
   /// `docs/native/windows.md`). A minimised window is not looked at: it keeps
   /// the state it is restored to.
   ///
-  /// 1. A change is told to each listener once, after it happened. One a
-  ///    listener makes while being told is told at once, from inside that call,
-  ///    and the older change is told to no one after it: so the last value each
-  ///    listener heard is the window's state.
-  /// 2. A change goes to the listeners subscribed when it happened: one removed,
-  ///    or the window disposed, during delivery hears nothing more.
-  /// 3. A change made while the listeners are told of one a listener made is a
-  ///    fault, as re-entry is everywhere in the package (D40, D44): it is
-  ///    printed and not told, and the window keeps its state.
+  /// 1. A change is told once to every listener the window had when it
+  ///    happened, in the order they were added, with the state it changed to.
+  ///    One added during the delivery is not told it; one taken out, or the
+  ///    window disposed, during the delivery hears nothing more of it.
+  /// 2. A change a listener makes from inside its call is told after that
+  ///    delivery finishes, as one further delivery of the state the window is
+  ///    then in (none when it is back where it was). One made during that
+  ///    further delivery is a fault, as re-entry is everywhere in the package
+  ///    (D40): it is printed and not told. No listener misses a delivery
+  ///    another one makes.
   fn note_maximized(&self) {
     let minimized = self.with_native(|window| platform::is_minimized(window)).unwrap_or(true);
     if !self.alive.get() || minimized {
@@ -294,31 +316,36 @@ impl Core {
     if self.maximized.replace(now) == now {
       return;
     }
-    let change = self.maximize_changes.get() + 1;
-    self.maximize_changes.set(change);
-    if self.maximize_telling.get() >= 2 {
-      eprintln!("sweetview: an onMaximizeChange listener changed the window's maximised state while being told of a change a listener made; that change is not told");
-      return;
-    }
-    let _depth = telling(&self.maximize_telling);
-    let subscribed: Vec<(u64, BoolListener)> = self.listeners.borrow().maximize.clone();
-    for (wrapper, listener) in subscribed {
-      // Disposed, or told a later change already: nothing more of this one.
-      if !self.alive.get() || self.maximize_changes.get() != change {
+    match self.maximize_telling.get() {
+      0 => {}
+      // Told once the delivery under way finishes (below).
+      1 => return,
+      _ => {
+        eprintln!("sweetview: an onMaximizeChange listener changed the window's maximised state while being told of a change a listener made; that change is not told");
         return;
       }
-      let still = self.listeners.borrow().maximize.iter().any(|(w, _)| *w == wrapper);
-      if still {
-        listener(now);
-      }
     }
+    let first = telling(&self.maximize_telling);
+    self.tell_maximized(now);
+    if self.alive.get() && self.maximized.get() != now {
+      let _further = telling(&self.maximize_telling);
+      self.tell_maximized(self.maximized.get());
+    }
+    drop(first);
   }
 
-  /// Puts a minimised window back where it was, synchronously: `tao`'s own
-  /// for a window it made, so its flags agree; the OS's for any other.
-  fn restore_from_minimized(&self) {
-    if self.with_tao(|tao| tao.set_minimized(false)).is_none() {
-      self.with_native(|window| platform::show_as(window, ShowAs::Restored));
+  /// One delivery of the maximised state `value` to the listeners the window has now.
+  fn tell_maximized(&self, value: bool) {
+    let subscribed: Vec<(u64, BoolListener)> = self.listeners.borrow().maximize.iter().map(|s| (s.key, s.listener.clone())).collect();
+    for (key, listener) in subscribed {
+      if !self.alive.get() {
+        return;
+      }
+      // Taken out during the delivery: it hears nothing more.
+      let still = self.listeners.borrow().maximize.iter().any(|s| s.key == key);
+      if still {
+        listener(value);
+      }
     }
   }
 
@@ -327,66 +354,18 @@ impl Core {
   fn toggle_frameless_maximize(&self) -> Result<()> {
     let work_area = screen::of_window(self.handle)?.work_area;
     let (next, restore) = logic::toggle_frameless_maximize(self.restore.get(), self.bounds(), work_area);
-    self.restore.set(restore);
-    self.set_bounds(next);
+    // As the tag's toggleMaximize: the bounds to go back to are kept before the maximise and
+    // forgotten after the restore, so a resize listener reads `is_maximized()` true during both.
+    if restore.is_some() {
+      self.restore.set(restore);
+      self.set_bounds(next);
+    } else {
+      self.set_bounds(next);
+      self.restore.set(None);
+    }
     // The bounds may not have changed size (no resize to notice it by).
     self.note_maximized();
     Ok(())
-  }
-
-  /// Shows the window's system menu at `at`, its items enabled for the
-  /// window's state as Sweetview knows it, and carries out the chosen command:
-  /// a frameless window is maximised and restored by its own work-area toggle,
-  /// which the OS's `WM_SYSCOMMAND` knows nothing of; everything else goes to
-  /// the OS, as the title bar's own menu sends it.
-  fn show_system_menu(&self, at: Point) -> Result<()> {
-    if !self.alive.get() {
-      return Ok(());
-    }
-    let minimized = self.with_native(|window| platform::is_minimized(window)).unwrap_or(false);
-    // A minimised window keeps the state it is restored to.
-    let maximized = if minimized { self.maximized.get() } else { self.maximized_now() };
-    let state = platform::SystemMenuState {
-      maximized,
-      minimized,
-      can_size: self.chrome.resizable,
-      // A frameless window's maximise is Sweetview's toggle, which any frameless window has.
-      can_maximize: !self.chrome.frame || self.chrome.resizable,
-    };
-    let Some(command) = self.with_native(|window| platform::track_system_menu(window, at, state)).flatten() else { return Ok(()) };
-    if !self.alive.get() {
-      return Ok(());
-    }
-    // The menu's loop ran page calls and timers while it tracked: a command means what its label
-    // says for the window as it is now, not as it was when the menu opened.
-    let minimized_now = self.with_native(|window| platform::is_minimized(window)).unwrap_or(false);
-    match command {
-      // A frameless window's maximise is Sweetview's toggle: the OS's would fill the screen behind it.
-      platform::SystemCommand::Maximize if !self.chrome.frame => {
-        if minimized_now {
-          self.restore_from_minimized();
-          // Un-minimising ran the resize listeners, which may have disposed the window.
-          if !self.alive.get() {
-            return Ok(());
-          }
-        }
-        if !self.maximized_now() {
-          self.toggle_frameless_maximize()?;
-        }
-        Ok(())
-      }
-      platform::SystemCommand::Restore if !self.chrome.frame && !minimized_now => {
-        if self.maximized_now() {
-          self.toggle_frameless_maximize()?;
-        }
-        Ok(())
-      }
-      command => {
-        // The OS carries out a framed window's Maximize and Restore for the window as it is.
-        self.with_native(|window| platform::post_system_command(window, command));
-        Ok(())
-      }
-    }
   }
 
   /// Calls `f` with the `tao` window of an owned window. No borrow is held
@@ -633,15 +612,17 @@ fn on_event(weak: &Weak<Core>, event: &WindowEvent) -> bool {
       core.note_maximized();
       // As at the tag: the bounds of this resize, to every listener there was when it came; one a
       // listener raises is delivered in full from inside that call, and this one then goes on.
-      let listeners: Vec<RectListener> = core.listeners.borrow().resize.iter().map(|(_, l)| l.clone()).collect();
+      let listeners: Vec<RectListener> = core.listeners.borrow().resize.iter().map(|s| s.listener.clone()).collect();
       listeners.iter().for_each(|l| l(*bounds));
       false
     }
-    WindowEvent::Moved(bounds) => {
-      let listeners: Vec<RectListener> = core.listeners.borrow().moved.iter().map(|(_, l)| l.clone()).collect();
+    // A tab frame's move is told while it is minimised too, as the tag's tab frame told it.
+    WindowEvent::Moved { bounds, minimized } if !*minimized || core.tab.is_some() => {
+      let listeners: Vec<RectListener> = core.listeners.borrow().moved.iter().map(|s| s.listener.clone()).collect();
       listeners.iter().for_each(|l| l(*bounds));
       false
     }
+    WindowEvent::Moved { .. } => false,
     WindowEvent::CloseRequested => {
       let listeners: Vec<Listener> = core.listeners.borrow().close.iter().map(|(_, l)| l.clone()).collect();
       if !listeners.is_empty() {
@@ -683,7 +664,7 @@ fn on_event(weak: &Weak<Core>, event: &WindowEvent) -> bool {
 /// One wrapper of a native window.
 pub struct Window {
   core: Rc<Core>,
-  id: u64,
+  pub(crate) id: u64,
   /// The wrapper `create` returned: disposing it destroys the window.
   owner: bool,
   detected: Option<Chrome>,
@@ -821,28 +802,19 @@ impl Window {
       return Err(Error::state("sweetview: window handle is NULL"));
     }
     if let Some(core) = core_of(handle) {
-      let detected = Some(core.chrome);
-      return Ok(Self::wrap(core, false, detected));
+      // A window Sweetview did not make has no subclass while it has no listener, so nothing
+      // saw it destroyed: its record is reused only while the handle still names a window.
+      if core.owned || BorrowedWindow::with_handle_value(handle, |_| ()).is_some() {
+        let detected = Some(core.chrome);
+        return Ok(Self::wrap(core, false, detected));
+      }
+      core.destroy();
     }
-    let (chrome, on_this_thread) = BorrowedWindow::with_handle_value(handle, |window| (platform::chrome(window), platform::is_on_this_thread(window)))
+    let chrome = BorrowedWindow::with_handle_value(handle, |window| platform::chrome(window))
       .ok_or_else(|| Error::state(format!("sweetview: not a window: {handle:#x}")))?;
     let core = Core::new(handle, None, chrome, false, logic::DEFAULT_MIN_SIZE, false, None);
-    // The state a window Sweetview did not make is in when it is wrapped, kept from then on by its
-    // resizes. A framed one's is the OS's: a minimised one's is the state it is restored to, which
-    // its placement keeps. A frameless one's is Sweetview's own toggle, which a wrapper starts
-    // without, as at the tag (its isMaximized read the saved rectangle).
-    let minimized = core.with_native(|window| platform::is_minimized(window)).unwrap_or(false);
-    let maximized = if !core.chrome.frame {
-      false
-    } else if minimized {
-      core.with_native(|window| platform::restores_maximized(window)).unwrap_or(false)
-    } else {
-      core.maximized_now()
-    };
-    core.maximized.set(maximized);
-    if on_this_thread {
-      core.subclass()?;
-    }
+    // No subclass until a listener needs one, as at the tag: wrapping a window to read its
+    // bounds changes nothing of it. Another thread's window is refused when a listener is added.
     WINDOWS.with(|w| w.borrow_mut().insert(handle, core.clone()));
     Ok(Self::wrap(core, false, Some(chrome)))
   }
@@ -878,7 +850,7 @@ impl Window {
     }
     let core = &self.core;
     // Shown the way `show()` always has: `tao`'s own show activates the window (D9).
-    core.with_native(|window| platform::show(window, core.no_activate, core.topmost.get()));
+    core.with_native(|window| platform::show(window, core.no_activate, core.topmost.get(), core.tab.is_some()));
     core.with_tao(|tao| {
       // `tao` learns the window is visible and not minimised, so its later
       // style rewrites agree; the subclass keeps those from touching `WS_VISIBLE`.
@@ -1103,30 +1075,67 @@ impl Window {
     }
   }
 
+  /// The subclass the window's listeners need: a window Sweetview did not make
+  /// gets it with its first listener, as at the tag. Another thread's window
+  /// cannot have one.
   fn require_subclass(&self) -> Result<()> {
-    if self.core.subclass.borrow().is_none() {
+    let core = &self.core;
+    if core.subclass.borrow().is_some() {
+      return Ok(());
+    }
+    if core.owned {
       return Err(Error::state("sweetview: a window of another thread cannot be observed"));
     }
+    core.subclass()?;
+    // The state the window is in now, kept from then on by its resizes. A framed one's is the
+    // OS's: a minimised one's is the state it is restored to, which its placement keeps. A
+    // frameless one's is Sweetview's own toggle.
+    let minimized = core.with_native(|window| platform::is_minimized(window)).unwrap_or(false);
+    let maximized = if !core.chrome.frame {
+      core.maximized_now()
+    } else if minimized {
+      core.with_native(|window| platform::restores_maximized(window)).unwrap_or(false)
+    } else {
+      core.maximized_now()
+    };
+    core.maximized.set(maximized);
     Ok(())
   }
 
-  /// This wrapper's resize listener, with the outer bounds; `None` removes it.
-  pub fn on_resize(&self, listener: Option<RectListener>) -> Result<()> {
+  /// A window Sweetview did not make loses its subclass with its last
+  /// listener, as at the tag.
+  fn release_subclass_if_unlistened(&self) {
+    let core = &self.core;
+    if core.owned || core.listeners.borrow().len() > 0 {
+      return;
+    }
+    let subclass = core.subclass.borrow_mut().take();
+    drop(subclass);
+  }
+
+  /// A resize listener of the window, with the outer bounds, under `key`
+  /// (see [`Subscription`]); `None` takes the one under `key` out.
+  pub fn on_resize(&self, key: u64, listener: Option<RectListener>) -> Result<()> {
     if !self.live() {
       return Ok(());
     }
     if listener.is_some() {
       self.require_subclass()?;
     }
-    set_listener(&mut self.core.listeners.borrow_mut().resize, self.id, listener);
+    let removed = listener.is_none();
+    subscribe(&mut self.core.listeners.borrow_mut().resize, self.id, key, listener);
+    if removed {
+      self.release_subclass_if_unlistened();
+    }
     Ok(())
   }
 
-  /// This wrapper's maximise listener: `true` when the window becomes
-  /// maximised (a frameless one: fills its work area through
-  /// `toggle_maximize`), `false` when it is restored, by any means. A window
-  /// minimised and restored to the state it had reports nothing. `None` removes it.
-  pub fn on_maximize_change(&self, listener: Option<BoolListener>) -> Result<()> {
+  /// A maximise listener of the window, under `key` (see [`Subscription`]):
+  /// `true` when the window becomes maximised (a frameless one: fills its work
+  /// area through `toggle_maximize`), `false` when it is restored, by any
+  /// means. A window minimised and restored to the state it had reports
+  /// nothing. `None` takes the one under `key` out.
+  pub fn on_maximize_change(&self, key: u64, listener: Option<BoolListener>) -> Result<()> {
     if !self.live() {
       return Ok(());
     }
@@ -1135,19 +1144,29 @@ impl Window {
       // it is: read again now, a minimised window would read as not maximised (review N5).
       self.require_subclass()?;
     }
-    set_listener(&mut self.core.listeners.borrow_mut().maximize, self.id, listener);
+    let removed = listener.is_none();
+    subscribe(&mut self.core.listeners.borrow_mut().maximize, self.id, key, listener);
+    if removed {
+      self.release_subclass_if_unlistened();
+    }
     Ok(())
   }
 
-  /// This wrapper's move listener, with the outer bounds; `None` removes it.
-  pub fn on_move(&self, listener: Option<RectListener>) -> Result<()> {
+  /// A move listener of the window, with the outer bounds, under `key` (see
+  /// [`Subscription`]); `None` takes the one under `key` out. A tab frame's is
+  /// told while the frame is minimised too.
+  pub fn on_move(&self, key: u64, listener: Option<RectListener>) -> Result<()> {
     if !self.live() {
       return Ok(());
     }
     if listener.is_some() {
       self.require_subclass()?;
     }
-    set_listener(&mut self.core.listeners.borrow_mut().moved, self.id, listener);
+    let removed = listener.is_none();
+    subscribe(&mut self.core.listeners.borrow_mut().moved, self.id, key, listener);
+    if removed {
+      self.release_subclass_if_unlistened();
+    }
     Ok(())
   }
 
@@ -1160,7 +1179,11 @@ impl Window {
     if listener.is_some() {
       self.require_subclass()?;
     }
+    let removed = listener.is_none();
     set_listener(&mut self.core.listeners.borrow_mut().close, self.id, listener);
+    if removed {
+      self.release_subclass_if_unlistened();
+    }
     Ok(())
   }
 
@@ -1189,6 +1212,9 @@ impl Window {
     // An adopted window's own setting is left alone until Sweetview first takes drops.
     if any || self.core.policy.get().accept_files.is_some() {
       self.core.update_policy(|p| p.accept_files = Some(any));
+    }
+    if !any {
+      self.release_subclass_if_unlistened();
     }
     Ok(())
   }
@@ -1227,6 +1253,7 @@ impl Window {
     if owns_hit {
       core.clear_hit();
     }
+    self.release_subclass_if_unlistened();
     core.release_if_unused();
   }
 }

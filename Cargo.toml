@@ -39,6 +39,7 @@ ico = "0.6.0"
 sweetview-http = { path = "crates/sweetview-http" }
 sweetview-keycodes = { path = "crates/sweetview-keycodes" }
 sweetview-window-logic = { path = "crates/sweetview-window-logic" }
+sweetview-shell-data = { path = "crates/sweetview-shell-data" }
 sweetview-runtime = { path = "crates/sweetview-runtime" }
 sweetview-napi = { path = "crates/sweetview-napi" }
 sweetview-platform-loop = { path = "crates/sweetview-platform-loop" }

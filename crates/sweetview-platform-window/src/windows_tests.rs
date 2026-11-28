@@ -49,6 +49,20 @@ fn serial() -> std::sync::MutexGuard<'static, ()> {
   crate::TEST_SERIAL.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
+/// Review round 5, R5-1: a window wholly off every screen is on the screen nearest it, as
+/// `MonitorFromWindow` with `MONITOR_DEFAULTTONEAREST` answered at tag `pre-rust-rewrite`; there is
+/// no monitor only for a handle that names no window.
+#[test]
+fn a_window_off_every_screen_is_on_the_nearest_one() {
+  let _serial = serial();
+  let window = TestWindow::new();
+  assert!(set_placement(&window.foreign(), Placement::bounds(Rect::new(100_000, 100_000, 300, 200), false)));
+  assert!(monitor_handle_of(window.0).is_some(), "the nearest screen");
+  let gone = window.0;
+  drop(window);
+  assert_eq!(monitor_handle_of(gone), None, "a handle that names no window");
+}
+
 #[test]
 fn a_handle_value_is_lent_only_when_it_names_a_window() {
   let _serial = serial();
@@ -73,6 +87,49 @@ fn a_handle_value_is_lent_only_when_it_names_a_window() {
   assert!(BorrowedWindow::with_handle_value(value, |_| ()).is_none(), "a value that names no window is not lent");
 }
 
+thread_local! {
+  /// What ran, in order, in the order test below: the application's own subclass and the listener.
+  static RAN: RefCell<Vec<&'static str>> = const { RefCell::new(Vec::new()) };
+}
+
+/// The application's own subclass of its window, installed before Sweetview's, so it runs after
+/// Sweetview's forwards the message: it notes each `WM_SIZE` and `WM_MOVE`.
+extern "system" fn application_subclass(hwnd: HWND, message: u32, wparam: WPARAM, lparam: LPARAM, _id: usize, _data: usize) -> LRESULT {
+  if message == WM_SIZE || message == WM_MOVE {
+    RAN.with(|ran| ran.borrow_mut().push("procedure"));
+  }
+  forward(hwnd, message, wparam, lparam)
+}
+
+/// Round 4, P4: with `set_listen_first`, size and move events reach the listener before the
+/// window's own procedure, as the tag's subclass of a window it did not make did; without, after.
+#[test]
+fn size_and_move_reach_the_listener_before_the_windows_own_procedure_when_listening_first() {
+  let _serial = serial();
+  for listen_first in [false, true] {
+    let window = TestWindow::new();
+    // SAFETY: the procedure is a safe `extern "system"` function of this module with the
+    // signature the call takes; the window is this thread's own, and the subclass is removed below.
+    assert!(unsafe { SetWindowSubclass(window.0, Some(application_subclass), 0x7e57, 0) }.as_bool());
+    let subclass = WindowSubclass::install(&window.foreign(), |event| {
+      if matches!(event, WindowEvent::Resized(_) | WindowEvent::Moved { .. }) {
+        RAN.with(|ran| ran.borrow_mut().push("listener"));
+      }
+      false
+    })
+    .expect("subclass");
+    subclass.set_listen_first(listen_first);
+    RAN.with(|ran| ran.borrow_mut().clear());
+    assert!(set_placement(&window.foreign(), Placement::bounds(Rect::new(60, 70, 320, 240), false)));
+    let ran = RAN.with(|ran| ran.borrow().clone());
+    let pair = if listen_first { ["listener", "procedure"] } else { ["procedure", "listener"] };
+    assert_eq!(ran, [pair, pair].concat(), "listening first: {listen_first}");
+    drop(subclass);
+    // SAFETY: removes the subclass installed above, from this thread's own window.
+    let _removed = unsafe { RemoveWindowSubclass(window.0, Some(application_subclass), 0x7e57) };
+  }
+}
+
 #[test]
 fn the_subclass_delivers_bounds_close_and_destroy() {
   let _serial = serial();
@@ -92,7 +149,7 @@ fn the_subclass_delivers_bounds_close_and_destroy() {
   {
     let seen = seen.borrow();
     assert!(seen.contains(&WindowEvent::Resized(Rect::new(60, 70, 320, 240))), "{seen:?}");
-    assert!(seen.contains(&WindowEvent::Moved(Rect::new(60, 70, 320, 240))), "{seen:?}");
+    assert!(seen.contains(&WindowEvent::Moved { bounds: Rect::new(60, 70, 320, 240), minimized: false }), "{seen:?}");
   }
 
   // A taken close request leaves the window open; one not taken reaches the window's own procedure.
@@ -137,6 +194,7 @@ fn a_subclass_whose_window_is_gone_leaves_a_later_window_alone() {
     policy: Cell::new(ExStylePolicy::default()),
     fill_child: Cell::new(false),
     hold_visibility: Cell::new(false),
+    listen_first: Cell::new(false),
     forced_style: Cell::new(0),
     gone: Cell::new(true),
   });

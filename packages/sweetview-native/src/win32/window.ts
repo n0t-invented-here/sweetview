@@ -13,6 +13,7 @@ import type { Window as NativeWindow } from "../../prebuilt/binding";
 import { packRegions } from "../hit-regions";
 import type { Rect, WindowBackend, WindowHandle, WindowOptions } from "../window";
 import { STRIP_HEIGHT } from "./strip-shared";
+import { keyOf } from "./listener-keys";
 import { getTabFrame } from "./tab-window";
 
 /** True when Windows apps are set to the dark theme. */
@@ -46,40 +47,41 @@ function callEach<T>(handlers: Set<(value: T) => void>, value: T, name: Listener
 }
 
 /**
- * `onMaximizeChange`'s delivery to the handlers of one wrapper (its sentences, in
- * docs/native/windows.md): to the handlers there were when the change came, each skipped once
- * removed or once the window is disposed, and stopped once a later change (one a handler made) has
- * been delivered in its place, so the last value each handler heard is the window's state.
+ * A resize, move or maximise listener: the window's one list of them is the
+ * binding's, whichever wrapper adds to it, as tag `pre-rust-rewrite` kept one
+ * set per window. Each handler is its own listener there, under its
+ * function's key; removing it removes it for every wrapper.
  */
-function callEachCurrent<T>(handlers: Set<(value: T) => void>, value: T, name: ListenerName, live: () => boolean, delivery: { count: number }): void {
-  const mine = ++delivery.count;
-  for (const fn of [...handlers]) {
-    if (!live() || delivery.count !== mine) return;
-    if (!handlers.has(fn)) continue;
-    try {
-      fn(value);
-    } catch (err) {
-      reportCallbackError(`window.${name}`, err, `sweetview: ${name} handler threw:`);
-    }
-  }
+function windowListener<A extends unknown[]>(register: (key: number, listener: ((...args: A) => void) | null) => void, name: ListenerName, live: () => boolean) {
+  return <T>(handler: (value: T) => void, from: (...args: A) => T): (() => void) => {
+    if (!live()) return () => {};
+    const key = keyOf(handler);
+    register(key, (...args: A) => {
+      try {
+        handler(from(...args));
+      } catch (err) {
+        reportCallbackError(`window.${name}`, err, `sweetview: ${name} handler threw:`);
+      }
+    });
+    return () => {
+      if (live()) register(key, null);
+    };
+  };
 }
 
 /**
- * Keeps any number of handlers per event on the JavaScript side and one
- * listener per event in the binding, registered while there is a handler.
- * Resizes and moves go to a snapshot of the handlers, as at the tag; with
- * `current`, `onMaximizeChange`'s rule above.
+ * Keeps any number of close or file-drop handlers of one wrapper on the
+ * JavaScript side and one listener per event in the binding, registered while
+ * there is a handler.
  */
-function subscription<T>(register: (listener: ((value: T) => void) | null) => void, name: ListenerName, current?: { live: () => boolean }) {
+function subscription<T>(register: (listener: ((value: T) => void) | null) => void, name: ListenerName) {
   const handlers = new Set<(value: T) => void>();
-  const delivery = { count: 0 };
   return {
     handlers,
     add(handler: (value: T) => void): () => void {
       // Each subscription can be removed on its own, even for the same function.
       const entry = (value: T) => handler(value);
-      if (handlers.size === 0)
-        register((value) => (current ? callEachCurrent(handlers, value, name, current.live, delivery) : callEach(handlers, value, name)));
+      if (handlers.size === 0) register((value) => callEach(handlers, value, name));
       handlers.add(entry);
       return () => {
         if (!handlers.delete(entry) || handlers.size > 0) return;
@@ -96,11 +98,11 @@ function wrap(native: NativeWindow, owned: boolean, tabbed = false): WindowBacke
   let disposed = false;
   let ownerDispose: (() => void) | undefined;
   const live = () => !disposed;
-  const toRect = (fn: (r: Rect) => void) => (x: number, y: number, width: number, height: number) => fn({ x, y, width, height });
 
-  const resize = subscription<Rect>((l) => native.onResize(l && toRect(l)), "onResize");
-  const maximize = subscription<boolean>((l) => native.onMaximizeChange(l), "onMaximizeChange", { live: () => !disposed });
-  const move = subscription<Rect>((l) => native.onMove(l && toRect(l)), "onMove");
+  const asRect = (x: number, y: number, width: number, height: number): Rect => ({ x, y, width, height });
+  const resize = windowListener<[number, number, number, number]>((key, l) => native.onResize(key, l), "onResize", live);
+  const move = windowListener<[number, number, number, number]>((key, l) => native.onMove(key, l), "onMove", live);
+  const maximize = windowListener<[boolean]>((key, l) => native.onMaximizeChange(key, l), "onMaximizeChange", live);
   const close = subscription<void>((l) => native.onCloseRequest(l && (() => l())), "onClose");
   const fileDrop = subscription<string[]>((l) => native.onFileDrop(l), "onFileDrop");
 
@@ -186,9 +188,9 @@ function wrap(native: NativeWindow, owned: boolean, tabbed = false): WindowBacke
       native.setHitRegions(packRegions(polygons), ask);
     },
 
-    onResize: (handler: RectHandler) => (live() ? resize.add(handler) : () => {}),
-    onMaximizeChange: (handler: (maximized: boolean) => void) => (live() ? maximize.add(handler) : () => {}),
-    onMove: (handler: RectHandler) => (live() ? move.add(handler) : () => {}),
+    onResize: (handler: RectHandler) => resize(handler, asRect),
+    onMaximizeChange: (handler: (maximized: boolean) => void) => maximize(handler, (maximized: boolean) => maximized),
+    onMove: (handler: RectHandler) => move(handler, asRect),
     onClose: (handler: () => void) => (live() ? close.add(handler) : () => {}),
     onFileDrop: (handler: (paths: string[]) => void) => (live() ? fileDrop.add(handler) : () => {}),
 
@@ -206,7 +208,8 @@ function wrap(native: NativeWindow, owned: boolean, tabbed = false): WindowBacke
     dispose() {
       if (disposed) return;
       disposed = true;
-      for (const s of [resize, maximize, move, close, fileDrop]) s.clear();
+      // The binding takes out the resize, move and maximise listeners this wrapper added.
+      for (const s of [close, fileDrop]) s.clear();
       native.dispose();
     },
   };
