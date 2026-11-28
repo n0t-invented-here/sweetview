@@ -20,7 +20,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { onScreen, summarize, type Sample, type WindowSummary } from "../test/fixtures/window-watch";
+import { flatLight, onScreen, seen, summarize, type Sample, type WindowSummary } from "../test/fixtures/window-watch";
 
 const LIVE_TEST_MS = 60_000;
 /** The backdrop of a dark window (#15161a) as the watcher reads it, to 3 bits per channel less. */
@@ -35,7 +35,16 @@ async function watchFixture(mode: string): Promise<Watched> {
   const scratch = mkdtempSync(join(tmpdir(), "sweetview-quit-flash-"));
   const profile = join(scratch, "profile");
   const out = join(scratch, "samples.jsonl");
+  // What is behind the fixture's window is the backstop's magenta, whatever else is on this desktop.
+  const backstop = Bun.spawn([process.execPath, fileURLToPath(new URL("../test/fixtures/backstop.ts", import.meta.url))], { stdout: "pipe", stderr: "pipe" });
   try {
+    const reader = backstop.stdout.getReader();
+    for (let text = ""; !text.includes("READY"); ) {
+      const read = await reader.read();
+      if (read.done) throw new Error(`the backstop ended: ${await new Response(backstop.stderr).text()}`);
+      text += new TextDecoder().decode(read.value);
+    }
+    reader.releaseLock();
     const proc = Bun.spawn([process.execPath, fileURLToPath(new URL("../test/fixtures/quit-flash.ts", import.meta.url))], {
       env: { ...process.env, WEBVIEW2_USER_DATA_FOLDER: profile, SWEETVIEW_FLASH_TEST: mode },
       stdout: "pipe",
@@ -56,6 +65,8 @@ async function watchFixture(mode: string): Promise<Watched> {
     const summary = summarize(samples).find((w) => w.hwnd === hwnd);
     return { exitCode: killed ? null : exitCode, stdout, stderr, samples, summary, hwnd };
   } finally {
+    process.kill(backstop.pid);
+    await backstop.exited;
     for (let attempt = 0; attempt < 50; attempt++) {
       try {
         rmSync(scratch, { recursive: true, force: true });
@@ -68,16 +79,38 @@ async function watchFixture(mode: string): Promise<Watched> {
 }
 
 const near = (a: [number, number, number], b: [number, number, number]) => a.every((v, i) => Math.abs(v - b[i]!) <= 8);
-/** Samples of the window on the screen whose most common colour is light and covers half of it or more. */
-const lightSamples = (w: Watched) => w.samples.filter((s) => s.hwnd === w.hwnd && onScreen(s) && s.flat >= 0.5 && luma(s.mode) >= 200);
+/** Samples of the window seen on the screen whose most common colour is light and covers half of it or more. */
+const lightSamples = (w: Watched) => w.samples.filter((s) => s.hwnd === w.hwnd && seen(s) && s.flat >= 0.5 && luma(s.mode) >= 200);
+
+/**
+ * When a check fails, what the watcher saw is printed: each sample of the window from shortly
+ * before the first one in question to shortly after the last, with its colours, its rectangle,
+ * and what other window the OS named over it.
+ */
+function explain(run: Watched, flagged: Sample[]): void {
+  if (flagged.length === 0) return;
+  const mine = run.samples.filter((s) => s.hwnd === run.hwnd);
+  const from = flagged[0]!.t - 150;
+  const to = flagged.at(-1)!.t + 150;
+  const hex = (m: number[]) => "#" + m.map((v) => v.toString(16).padStart(2, "0")).join("");
+  const lines = mine
+    .filter((s) => s.t >= from && s.t <= to)
+    .map((s) => `${flagged.includes(s) ? ">" : " "} t=${s.t} exists=${s.exists} visible=${s.visible} after=${s.visibleAfter} ours=${s.ours}${s.behind ? ` behind=${hex(s.behind.mode)} ${s.behind.flat.toFixed(2)}` : ""} webviews=${s.webviews} at=${s.left},${s.top} ${s.width}x${s.height} ${hex(s.mode)} ${s.flat.toFixed(2)}${s.coveredBy?.length ? ` covered by ${s.coveredBy.join("; ")}` : ""}`);
+  console.error(`quit-flash watcher, window ${run.hwnd}, what it saw around ${flagged.length} sample(s) in question:\n${lines.join("\n")}\nfixture stdout:\n${run.stdout}`);
+}
 
 function expectEndedCleanly(run: Watched) {
+  // The watcher must have seen the window whenever it was on the screen: a read with another
+  // window over it shows that window, so the run cannot judge this one and does not pass.
+  const covered = run.samples.filter((s) => s.hwnd === run.hwnd && onScreen(s) && (s.coveredBy?.length ?? 0) > 0);
+  explain(run, covered);
+  expect(covered.flatMap((s) => s.coveredBy ?? []).filter((v, i, all) => all.indexOf(v) === i)).toEqual([]);
   expect(run.exitCode).toBe(0);
   expect(run.stderr).toBe("");
   expect(run.stdout).toContain("QUIT");
   expect(run.summary).toBeDefined();
   // The watcher saw the page on the screen before the end.
-  expect(run.samples.some((s) => s.hwnd === run.hwnd && onScreen(s) && near(s.mode, PAGE))).toBe(true);
+  expect(run.samples.some((s) => s.hwnd === run.hwnd && seen(s) && near(s.mode, PAGE))).toBe(true);
   // What the fixture's own exit listener read, after Sweetview's release: the window is destroyed.
   expect(run.stdout).toContain('"windowExists":false');
 }
@@ -90,6 +123,7 @@ describe.if(process.platform === "win32")("a window on its way out (D46)", () =>
         const run = await watchFixture(mode);
         expectEndedCleanly(run);
         const summary = run.summary!;
+        explain(run, [...run.samples.filter((x) => x.hwnd === run.hwnd && (flatLight(x) || lightSamples(run).includes(x)))]);
         expect({ emptyAfterWebview: summary.emptyAfterWebview, longest: summary.longestEmptyAfterWebview }).toEqual({ emptyAfterWebview: 0, longest: { count: 0, ms: 0, from: -1 } });
         expect(summary.flatLight).toBe(0);
         expect(lightSamples(run)).toEqual([]);
@@ -110,8 +144,9 @@ describe.if(process.platform === "win32")("a window on its way out (D46)", () =>
       const summary = run.summary!;
       expect(summary.flatLight).toBe(0);
       expect(lightSamples(run)).toEqual([]);
-      const empty = run.samples.filter((s) => s.hwnd === run.hwnd && onScreen(s) && s.webviews === 0 && summary.lastWebview !== null && s.t < summary.lastWebview);
+      const empty = run.samples.filter((s) => s.hwnd === run.hwnd && seen(s) && s.webviews === 0 && summary.lastWebview !== null && s.t < summary.lastWebview);
       expect(empty.length).toBeGreaterThan(0);
+      explain(run, [...lightSamples(run), ...empty.filter((s) => s.flat >= 0.5 && !near(s.mode, DARK_BACKDROP) && !near(s.mode, PAGE))].sort((a, b) => a.t - b.t));
       expect(empty.filter((s) => s.flat >= 0.5 && !near(s.mode, DARK_BACKDROP) && !near(s.mode, PAGE))).toEqual([]);
       expect(summary.lastOnScreen! <= summary.lastWebview!).toBe(true);
     },
@@ -126,7 +161,8 @@ describe.if(process.platform === "win32")("a window on its way out (D46)", () =>
       expect(lightSamples(run)).toEqual([]);
       expect(run.summary!.flatLight).toBe(0);
       // The tab's page, then the frame's backdrop where it was: the window's on-screen colours.
-      const shown = run.samples.filter((s) => s.hwnd === run.hwnd && onScreen(s));
+      const shown = run.samples.filter((s) => s.hwnd === run.hwnd && seen(s));
+      explain(run, [...lightSamples(run), ...shown.filter((s) => s.flat >= 0.5 && !near(s.mode, DARK_BACKDROP) && !near(s.mode, PAGE))].sort((a, b) => a.t - b.t));
       expect(shown.some((s) => near(s.mode, DARK_BACKDROP))).toBe(true);
       // A frame with no colour over half of it is DWM's open animation blending the window with what
       // is behind it, as it appears: not a colour of the window's own.

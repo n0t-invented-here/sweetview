@@ -35,13 +35,35 @@ export type Sample = {
   /** The client area's most common colour, `[r, g, b]`, and the share of it (0 to 1). */
   mode: [number, number, number];
   flat: number;
+  /** The client area's top-left corner on the screen. */
+  left?: number;
+  top?: number;
+  /**
+   * Whether the pixels read are this window's. A read of the screen waits for the next
+   * composition, so what is known of the window just before it can be older than the pixels
+   * (D46). Before the read the window was visible and the OS named it (its root) as the window
+   * at five points of its client area (the centre and four points near the corners); then:
+   * still so after the read, the pixels are its own; gone from there after the read (hidden or
+   * destroyed meanwhile), the same rectangle is read again once the window is off the screen,
+   * and the pixels are its own unless they are what was behind it (`behind`). Another window
+   * named at any point before the read: not its own.
+   */
+  ours?: boolean;
+  /** For a read the window left the screen during: that rectangle read again with the window off it. */
+  behind?: { mode: [number, number, number]; flat: number };
+  /** What the OS named at those points when it was not this window: `title [class] pid`, before or after. */
+  coveredBy?: string[];
+  /** Visible, not cloaked and not minimised when read again after the screen was. */
+  visibleAfter?: boolean;
 };
 
 /** On the screen: visible, not cloaked by DWM, not minimised, with a client area. */
 export const onScreen = (s: Sample) => s.exists && s.visible && !s.cloaked && !s.iconic && s.width > 0 && s.height > 0;
+/** On the screen, and the pixels read are its own (see `Sample.ours`). */
+export const seen = (s: Sample) => onScreen(s) && s.ours === true;
 const luma = ([r, g, b]: [number, number, number]) => 0.2126 * r + 0.7152 * g + 0.0722 * b;
-/** A client area that is one colour (at least 90 % of it), light (luma at least 200). */
-export const flatLight = (s: Sample) => onScreen(s) && s.flat >= 0.9 && luma(s.mode) >= 200;
+/** A client area seen to be one colour (at least 90 % of it), light (luma at least 200). */
+export const flatLight = (s: Sample) => seen(s) && s.flat >= 0.9 && luma(s.mode) >= 200;
 
 export type Run = { count: number; ms: number; from: number };
 export type WindowSummary = {
@@ -148,6 +170,9 @@ if (import.meta.main) {
     GetWindow: { args: [u64, u32], returns: u64 },
     GetDC: { args: [u64], returns: u64 },
     ReleaseDC: { args: [u64, u64], returns: i32 },
+    // (POINT by value, packed x | y << 32) -> HWND
+    WindowFromPoint: { args: [u64], returns: u64 },
+    GetAncestor: { args: [u64, u32], returns: u64 },
   }).symbols;
   const gdi32 = dlopen("gdi32.dll", {
     CreateCompatibleDC: { args: [u64], returns: u64 },
@@ -207,14 +232,10 @@ if (import.meta.main) {
   const histogram = new Uint32Array(1 << 15);
   const SRCCOPY = 0x00cc0020;
 
-  /** The client area on the screen: its most common colour and the share of it. */
-  const capture = (hwnd: bigint, rect: Int32Array): { width: number; height: number; mode: [number, number, number]; flat: number } => {
-    user32.GetClientRect(hwnd, ptr(rect));
-    const width = rect[2]! - rect[0]!;
-    const height = rect[3]! - rect[1]!;
+  /** A rectangle of the screen: its most common colour and the share of it. */
+  const capture = (left: number, top: number, width: number, height: number): { width: number; height: number; mode: [number, number, number]; flat: number } => {
     if (width <= 0 || height <= 0) return { width: 0, height: 0, mode: [0, 0, 0], flat: 0 };
-    const origin = new Int32Array(2);
-    user32.ClientToScreen(hwnd, ptr(origin));
+    const origin = [left, top];
     if (bitmapSize[0] !== width || bitmapSize[1] !== height) {
       if (bitmap !== 0n) gdi32.DeleteObject(bitmap);
       bitmap = gdi32.CreateCompatibleBitmap(screen, width, height);
@@ -246,9 +267,39 @@ if (import.meta.main) {
     return { width, height, mode, flat: histogram[best]! / total };
   };
 
+  const GA_ROOT = 2;
+  /** Reads that the window left the screen during, waiting for the read of what was behind them. */
+  const unresolved = new Map<bigint, Sample>();
+  const resolve = (sample: Sample) => {
+    const again = capture(sample.left!, sample.top!, sample.width, sample.height);
+    sample.behind = { mode: again.mode, flat: again.flat };
+    const same = again.mode.every((v, i) => Math.abs(v - sample.mode[i]!) <= 8) && Math.abs(again.flat - sample.flat) <= 0.05;
+    sample.ours = !same;
+  };
+  /** The root windows the OS names at five points of the client area that are not `hwnd`, described. */
+  const others = (hwnd: bigint, left: number, top: number, width: number, height: number): string[] => {
+    const inset = Math.min(8, Math.floor(width / 4), Math.floor(height / 4));
+    const points = [
+      [left + Math.floor(width / 2), top + Math.floor(height / 2)],
+      [left + inset, top + inset],
+      [left + width - 1 - inset, top + inset],
+      [left + inset, top + height - 1 - inset],
+      [left + width - 1 - inset, top + height - 1 - inset],
+    ];
+    const found: string[] = [];
+    for (const [x, y] of points) {
+      const at = user32.WindowFromPoint(BigInt.asUintN(32, BigInt(x!)) | (BigInt.asUintN(32, BigInt(y!)) << 32n));
+      const root = at === 0n ? 0n : user32.GetAncestor(at, GA_ROOT);
+      if (root === hwnd) continue;
+      user32.GetWindowThreadProcessId(root, ptr(pidBuf));
+      found.push(`${read(user32.GetWindowTextW, root)} [${read(user32.GetClassNameW, root)}] ${pidBuf[0]}`);
+    }
+    return found;
+  };
+
   // The last state written for each window: a window off the screen is written only when it changes.
   const known = new Map<bigint, string>();
-  const lines: string[] = [];
+  const records: Sample[] = [];
   const started = performance.now();
   const rect = new Int32Array(4);
   const cloakedBuf = new Uint32Array(1);
@@ -275,17 +326,47 @@ if (import.meta.main) {
         webviewCount = 0;
         user32.EnumChildWindows(hwnd, enumChild.ptr, 0n);
         sample.webviews = webviewCount;
-        if (sample.visible && !sample.cloaked && !sample.iconic) Object.assign(sample, capture(hwnd, rect));
+        if (sample.visible && !sample.cloaked && !sample.iconic) {
+          // Whose pixels these are is asked before the screen is read and again after it.
+          user32.GetClientRect(hwnd, ptr(rect));
+          const origin = new Int32Array(2);
+          user32.ClientToScreen(hwnd, ptr(origin));
+          const [left, top, width, height] = [origin[0]!, origin[1]!, rect[2]! - rect[0]!, rect[3]! - rect[1]!];
+          const before = others(hwnd, left, top, width, height);
+          Object.assign(sample, capture(left, top, width, height));
+          [sample.left, sample.top] = [left, top];
+          cloakedBuf[0] = 0;
+          dwmapi.DwmGetWindowAttribute(hwnd, 14, ptr(cloakedBuf), 4);
+          sample.visibleAfter = user32.IsWindow(hwnd) !== 0 && user32.IsWindowVisible(hwnd) !== 0 && cloakedBuf[0] === 0 && user32.IsIconic(hwnd) === 0;
+          const moved = (() => {
+            if (!sample.visibleAfter) return false;
+            const now = new Int32Array(2);
+            user32.ClientToScreen(hwnd, ptr(now));
+            return now[0] !== left || now[1] !== top;
+          })();
+          const after = sample.visibleAfter ? others(hwnd, left, top, width, height) : [];
+          sample.coveredBy = [...new Set([...before, ...after])];
+          if (before.length > 0 || moved) sample.ours = false;
+          else if (sample.visibleAfter) sample.ours = after.length === 0;
+          else unresolved.set(hwnd, sample); // decided by what is behind, once the window is off the screen
+        }
+      }
+      const pending = unresolved.get(hwnd);
+      if (pending && pending !== sample && !onScreen(sample)) {
+        resolve(pending);
+        unresolved.delete(hwnd);
       }
       const state = `${sample.exists} ${sample.visible} ${sample.cloaked} ${sample.iconic} ${sample.webviews}`;
       if (!onScreen(sample) && known.get(hwnd) === state) continue;
       known.set(hwnd, state);
-      lines.push(JSON.stringify(sample));
+      records.push(sample);
     }
     if (exited() || t > maxMs) break;
   }
-  // One last look once the process has gone.
-  for (const hwnd of known.keys()) lines.push(JSON.stringify({ t: Math.round((performance.now() - started) * 10) / 10, hwnd: String(hwnd), title: "", exists: user32.IsWindow(hwnd) !== 0, visible: false, cloaked: false, iconic: false, webviews: 0, width: 0, height: 0, mode: [0, 0, 0], flat: 0 }));
+  // One last look once the process has gone, and what was behind the reads still undecided.
+  for (const sample of unresolved.values()) resolve(sample);
+  for (const hwnd of known.keys()) records.push({ t: Math.round((performance.now() - started) * 10) / 10, hwnd: String(hwnd), title: "", exists: user32.IsWindow(hwnd) !== 0, visible: false, cloaked: false, iconic: false, webviews: 0, width: 0, height: 0, mode: [0, 0, 0], flat: 0 });
+  const lines = records.map((record) => JSON.stringify(record));
   writeFileSync(out, lines.join("\n") + "\n");
   if (bitmap !== 0n) gdi32.DeleteObject(bitmap);
   gdi32.DeleteDC(memory);
