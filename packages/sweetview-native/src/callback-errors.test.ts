@@ -202,3 +202,41 @@ describe("an unsubscribe removes its own registration, once (review 2, item 7)",
     expect(heard).toEqual(["both", "both", "one left"]);
   });
 });
+
+describe("application code run while a fault is reported (review 2, item 2)", () => {
+  test("a listener added while the thrown value is converted does not hear the fault it was added during", () => {
+    const heard: string[] = [];
+    listen(() => void heard.push("present"));
+    const late = new Proxy({}, {
+      getPrototypeOf() {
+        offs.push(onCallbackError(() => void heard.push("added during the conversion")));
+        return Object.prototype;
+      },
+    });
+    reportCallbackError("internal", late, "sweetview: UI dispatch failed:");
+    expect(heard).toEqual(["present"]);
+  });
+
+  test("a conversion that reports the same value again ends, and the nested fault is printed, not lost", () => {
+    const heard: string[] = [];
+    listen(() => void heard.push("delivered"));
+    let conversions = 0;
+    const recursive: object = new Proxy({}, {
+      getPrototypeOf() {
+        conversions++;
+        // As a callback that runs here and throws the same object would be reported.
+        reportCallbackError("window.onResize", recursive, "sweetview: onResize handler threw:");
+        return Object.prototype;
+      },
+    });
+    const log = captureErrors();
+    try {
+      expect(() => reportCallbackError("window.onResize", recursive, "sweetview: onResize handler threw:")).not.toThrow();
+    } finally {
+      log.restore();
+    }
+    expect(heard).toEqual(["delivered"]);
+    expect(conversions).toBeLessThan(10);
+    expect(log.calls.some((args) => args[0] === "sweetview: onResize handler threw:" || String(args[0]).startsWith("sweetview: window.onResize threw"))).toBe(true);
+  });
+});
