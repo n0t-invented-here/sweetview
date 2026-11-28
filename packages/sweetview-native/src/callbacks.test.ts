@@ -989,7 +989,7 @@ describe.if(onWindows)("onCallbackError", () => {
       [
         "internal: deferred boom",
         "internal: timeout boom",
-        // The binding caught this one itself: its reason, the exception as a string, is the message.
+        // The binding caught this one itself: the thrown Error arrives as it is, named by the binding.
         "internal (a native interval): interval boom",
         "worker: drain boom",
         "window.onMove: onMove boom",
