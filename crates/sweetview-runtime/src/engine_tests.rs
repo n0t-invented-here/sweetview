@@ -1039,3 +1039,29 @@ fn a_script_after_two_overlapping_navigations_runs_in_the_second_s_document() {
     }
   });
 }
+
+#[test]
+fn a_webview_whose_drop_script_is_refused_is_a_failed_setup() {
+  on_ui_thread(|runtime| {
+    let _finish = Finish(&runtime);
+    // Y4: WebView2 refusing the drop script's registration (an answer with no script id) is a
+    // failed setup, not a webview that would take no drop; nothing of it is left.
+    for host in HOSTS {
+      let before = runtime.listener_count();
+      test_support::refuse_next_drop_script();
+      let made = match host {
+        "own window" => Engine::create(false, Host::Own, None).map(|engine| (engine, Vec::new())),
+        _ => {
+          let window = host_window("engine test: refused drop script");
+          Engine::create(false, Host::Fill(window.handle()), None).map(|engine| (engine, vec![window]))
+        }
+      };
+      assert!(made.is_err(), "{host}: the refused registration fails the setup");
+      settle(&runtime, Duration::from_millis(100));
+      assert_eq!(runtime.listener_count(), before, "{host}: nothing left behind");
+      if host != "own window" {
+        break;
+      }
+    }
+  });
+}

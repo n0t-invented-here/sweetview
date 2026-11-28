@@ -584,20 +584,25 @@ impl Inner {
         // The drop script is the same in every document and starts disabled. Waited for, pumping
         // this thread's messages, as the fork's `embed` waits for its scripts (`add_init_script`,
         // `add_user_script`, `win32_edge.hh` 1585 to 1592): a new webview has no navigation in
-        // flight, so nothing of this thread's has to run for WebView2 to answer. Not waiting let
-        // what an application does right after making a webview run ahead of WebView2 having its
-        // first document (measured: a strip's page answered 40 ms later than under `wry`, whose
-        // build waited for its scripts too, and the tabs fixture's theme check lost the race).
-        let done = Rc::new(Cell::new(false));
-        let seen = done.clone();
-        let handler = ScriptAdded::create(move |_| seen.set(true));
+        // flight, so nothing of this thread's has to run for WebView2 to answer. WebView2 keeps
+        // a registration ahead of a later navigation either way; the wait is the fork's, and it
+        // is what tells a refused registration, which fails the setup (a webview whose drop
+        // script never installed would take no drop).
+        let registered: Rc<Cell<Option<bool>>> = Rc::new(Cell::new(None));
+        let seen = registered.clone();
+        let handler = ScriptAdded::create(move |id| seen.set(Some(id.is_some())));
         self.add_script(FILE_DROP_SCRIPT, Some(&handler))?;
         drop(handler);
-        match self::pump::pump_while(|| !done.get()) {
-            self::pump::PumpEnd::Done => Ok(()),
+        match self::pump::pump_while(|| registered.get().is_none()) {
+            self::pump::PumpEnd::Done => {}
             // A `WM_QUIT` meanwhile ends the wait, consumed, as the controller's creation does.
-            self::pump::PumpEnd::Quit | self::pump::PumpEnd::Failed => Err(windows::core::Error::from(windows::Win32::Foundation::E_ABORT)),
+            self::pump::PumpEnd::Quit | self::pump::PumpEnd::Failed => return Err(windows::core::Error::from(windows::Win32::Foundation::E_ABORT)),
         }
+        #[cfg(any(test, feature = "test-support"))]
+        if test_support::REFUSE_NEXT_DROP_SCRIPT.with(|refuse| refuse.replace(false)) {
+            registered.set(Some(false));
+        }
+        if registered.get() == Some(true) { Ok(()) } else { Err(windows::core::Error::from(windows::Win32::Foundation::E_FAIL)) }
     }
 
     /// `AddScriptToExecuteOnDocumentCreated`, with the handler that receives the
