@@ -13,15 +13,22 @@
 // when the script ends, on `process.exit` and after an uncaught exception.
 //
 // A release that throws is logged and the others still run.
+//
+// Windows only, until the macOS goal of the Rust rewrite: on macOS `releaseAtEnd`
+// registers nothing and hooks no `exit`, so a macOS application ends as it did at
+// the tag `pre-rust-rewrite`, releasing nothing at exit (its own disposes and
+// `process.exit` do what is done). AppKit and WebKit teardown from inside Bun's
+// `exit` event has not been run on a Mac.
 
 import { binding } from "./binding";
+import { macosKeepsTagPath } from "./platform";
 
 /** The kinds of object, in the order they are released. */
 const ORDER = ["hook", "conceal", "app", "webview", "tray", "notifier", "lock", "window"] as const;
 
 /**
  * What a release entry is for: `hook` an input hook, `conceal` hiding a
- * visible `Window` (D42), `app` a WebView of `@n1h/sweetview` (it stops the
+ * visible `Window` (D43), `app` a WebView of `@n1h/sweetview` (it stops the
  * worker and destroys its webview), `webview` a raw webview, `tray`,
  * `notifier`, `lock` a single-instance lock, `window` a `Window`. Every
  * window is off the screen before any webview goes, a webview goes before
@@ -38,6 +45,8 @@ let releasing = false;
  * that takes it back, for an object disposed by hand; calling it twice does nothing.
  */
 export function releaseAtEnd(kind: ReleaseKind, release: () => void): () => void {
+  // Until the macOS goal: nothing is released at exit there (see the header).
+  if (macosKeepsTagPath()) return () => {};
   if (!exitHooked) {
     exitHooked = true;
     process.once("exit", releaseAll);

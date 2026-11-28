@@ -10,7 +10,7 @@ import type { HitPolygon } from "./hit-regions";
 import type { AppIdentity, AppIdentityIcon } from "@n1h/sweetview-settings";
 import { icoFromRgba, type Icon } from "./icon";
 import { releaseAtEnd } from "./lifetime";
-import { backend } from "./platform";
+import { backend, macosKeepsTagPath } from "./platform";
 import type { Point, Rect, WindowHandle } from "./types";
 
 export type { Point, Rect, WindowHandle } from "./types";
@@ -191,7 +191,7 @@ const ownedWindows = new Set<Window>();
 // waits for the last hold to be released.
 const windowNativeDisposeHolds = new WeakMap<Window, number>();
 const windowPendingNativeDispose = new WeakSet<Window>();
-// Windows the end of a blocking run() hid before its webview went (D42), to be shown again when
+// Windows the end of a blocking run() hid before its webview went (D43), to be shown again when
 // a webview in the same window runs next. The application's own show() or hide() forgets the mark.
 const windowsHiddenAtRunEnd = new WeakSet<Window>();
 
@@ -296,11 +296,12 @@ export function holdWindowNativeDispose(win: Window): () => void {
 /**
  * Internal: hides a visible window this process made, without touching its run-end mark. It is
  * the first instant of a teardown, so no window is on the screen with its webview gone and its
- * client area empty (D42): the window and its webviews are destroyed right after. A failure is
+ * client area empty (D43): the window and its webviews are destroyed right after. A failure is
  * logged and the teardown goes on. Returns whether it hid the window.
  */
 export function concealWindow(win: Window): boolean {
-  if (!windowMetaMap.get(win)?.owned) return false;
+  // macOS keeps the tag's teardown order until its goal (D42): nothing is ordered out first there.
+  if (macosKeepsTagPath() || !windowMetaMap.get(win)?.owned) return false;
   const inner = windowBackendMap.get(win);
   if (!inner) return false;
   try {
@@ -313,7 +314,7 @@ export function concealWindow(win: Window): boolean {
   }
 }
 
-/** Internal: the end of a blocking run() hid this window before its webview went (D42). */
+/** Internal: the end of a blocking run() hid this window before its webview went (D43). */
 export function markHiddenAtRunEnd(win: Window): void {
   windowsHiddenAtRunEnd.add(win);
 }
@@ -442,7 +443,7 @@ export class Window {
     windowBackendMap.set(this, this.#inner);
     windowTabListeners.set(this, this.#tabListeners);
     // Disposed when the application ends, after its webviews and trays; hidden before any of
-    // them goes, so no window is seen with its webview gone (D42).
+    // them goes, so no window is seen with its webview gone (D43).
     this.#unregister = releaseAtEnd("window", () => this.dispose());
     this.#unregisterConceal = releaseAtEnd("conceal", () => void concealWindow(this));
   }
@@ -613,7 +614,7 @@ export class Window {
   dispose(): void {
     if (windowDisposed.has(this)) return;
     // Off the screen first, then its webviews (the dispose hooks), then the window: never a
-    // window on the screen with its webview gone and its client area empty (D42).
+    // window on the screen with its webview gone and its client area empty (D43).
     concealWindow(this);
     windowsHiddenAtRunEnd.delete(this);
     windowDisposed.add(this);

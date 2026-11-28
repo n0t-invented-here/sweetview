@@ -328,7 +328,7 @@ export class Webview {
     window: WindowHandle = null,
   ) {
     // The macOS seam: there the instance is the webview library's own class, with this same API.
-    if (onDarwin) return new (darwin().Webview)(debugOrHandle as never, size, window as never) as unknown as Webview;
+    if (onDarwin) return darwin().createWebview(debugOrHandle, size, window) as unknown as Webview;
     const native = binding();
     if (typeof debugOrHandle === "number" || typeof debugOrHandle === "bigint") {
       const existing = native.Engine.fromHandle(Number(debugOrHandle));

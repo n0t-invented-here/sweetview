@@ -11,7 +11,7 @@ import { createFrameAssembler, type AnyEvent, type EventMap, type MethodMap, typ
 import { RequestResponseAssembler, requestError, runNativeRequest, type NativeRequestResponse, type StreamingResponseFrame } from "./request-response";
 import type { HttpRequestMessage, InitMessage, NativeRequest, NativeResponse, WorkerCrashFrame } from "./messages";
 import { RawWebview, SizeHint, Window, quitEventLoop, runEventLoop, signalReady, type Rect, type TabHandle, type WindowOptions } from "@n1h/sweetview-native";
-import { concealWindow, createChildWebview, discardQuit, emitWindowFileDrop, engineOf, getWindowMeta, holdWindowNativeDispose, isWindowDisposed, markHiddenAtRunEnd, onWindowDispose, onWindowFileDropListenersChange, preserveWindowGeometry, releaseAtEnd, scheduleNativeTimeout, takeHiddenAtRunEnd, windowFileDropCount } from "@n1h/sweetview-native/internal";
+import { concealWindow, createChildWebview, discardQuit, emitWindowFileDrop, engineOf, getWindowMeta, holdWindowNativeDispose, isWindowDisposed, macosKeepsTagPath, markHiddenAtRunEnd, onWindowDispose, onWindowFileDropListenersChange, preserveWindowGeometry, releaseAtEnd, scheduleNativeTimeout, takeHiddenAtRunEnd, windowFileDropCount } from "@n1h/sweetview-native/internal";
 import { Ring } from "./ring";
 import { webviewEngine, type WebviewHost, type WorkerWake } from "./webview-host";
 import { ASSET_ORIGIN } from "./webview-lib";
@@ -223,6 +223,17 @@ const startupErrorHtml = `<!doctype html>
 
 type UiHandler = (params: unknown) => unknown;
 type UiJob = { seq: string; method: string; fn: UiHandler; params: unknown };
+
+/**
+ * Internal. Lets a webview's worker not keep the process alive by itself (see `WebView.attach`).
+ * Until the macOS goal of the Rust rewrite the worker keeps its reference on macOS, as it did at
+ * the tag `pre-rust-rewrite`: that path releases nothing at exit and has not been run on a Mac.
+ * (Bun's Worker has `unref`, as Node's does; its DOM-shaped type does not declare it.)
+ */
+export function unrefWorker(worker: Worker | undefined): void {
+  if (macosKeepsTagPath()) return;
+  (worker as (Worker & { unref(): void }) | undefined)?.unref();
+}
 
 export class WebView<M extends MethodMap = MethodMap, E extends EventMap = EventMap> {
   readonly raw: RawWebview;
@@ -505,8 +516,7 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
       // The worker never keeps the process alive by itself: the loop does while it runs, and once
       // the application has quit the process ends with its script. The worker is terminated
       // with the webview, by dispose() or at the end of the application.
-      // (Bun's Worker has `unref`, as Node's does; its DOM-shaped type does not declare it.)
-      (worker as (Worker & { unref(): void }) | undefined)?.unref();
+      unrefWorker(worker);
       let requestHandlerSet = false;
       let isReady = false;
       let cancelWatchdog: (() => void) | undefined;
@@ -852,7 +862,7 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
             running = false;
             try {
               // Off the screen before its webview goes, so the window is never seen with its
-              // client area empty (D42). It stays alive for code after run() and a second run(),
+              // client area empty (D43). It stays alive for code after run() and a second run(),
               // which shows it again; the end of the application destroys it. A window disposed
               // inside the loop was hidden by its dispose and is destroyed below.
               if (meta.owned && !child && !isWindowDisposed(window) && concealWindow(window)) markHiddenAtRunEnd(window);
@@ -1014,8 +1024,14 @@ export async function createApp<M extends MethodMap = MethodMap, E extends Event
         disposed = true;
         unsubAutoQuit?.();
         // Outside run(), the window's dispose hides it, then destroys the webview (its dispose
-        // hook), then the window (D42). Inside run(), the webview ends the loop, and run()
+        // hook), then the window (D43). Inside run(), the webview ends the loop, and run()
         // hides the window, destroys the webview and then disposes the window.
+        if (macosKeepsTagPath()) {
+          // The tag's order until the macOS goal (D42).
+          webview.dispose();
+          if (!inRun) window.dispose();
+          return;
+        }
         if (!inRun) window.dispose();
         webview.dispose();
       },

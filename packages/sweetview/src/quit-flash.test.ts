@@ -1,6 +1,6 @@
 // A window is never seen with its webview gone and its client area empty, and
 // what shows where no page is painted is the window's backdrop, not white
-// (decision D42). Each test runs test/fixtures/quit-flash.ts in a process of
+// (decision D43). Each test runs test/fixtures/quit-flash.ts in a process of
 // its own, with a WebView2 profile of its own, and test/fixtures/window-watch.ts
 // in a second process, started before the window appears, which samples the
 // screen as fast as it can read it until the fixture has exited:
@@ -82,7 +82,7 @@ function expectEndedCleanly(run: Watched) {
   expect(run.stdout).toContain('"windowExists":false');
 }
 
-describe.if(process.platform === "win32")("a window on its way out (D42)", () => {
+describe.if(process.platform === "win32")("a window on its way out (D43)", () => {
   for (const mode of ["blocking", "pumped", "dispose", "window-dispose", "run-twice"]) {
     test(
       `${mode}: once its webview is gone, the window is never on the screen, and never flat and light`,

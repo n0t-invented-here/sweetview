@@ -45,7 +45,7 @@ use crate::{
 /// Drops a webview made with `wry`'s `build` (it fills the window it was given) and destroys
 /// the container window `wry` made for it in that window. `wry` 0.58.2 destroys the container of
 /// a webview made with `build_as_child` only: a filled one's stayed behind, an empty child of the
-/// window, until the window itself was destroyed, one more for every webview the window had (D42).
+/// window, until the window itself was destroyed, one more for every webview the window had (D43).
 pub fn drop_filling(webview: wry::WebView) {
     let container = webview.hwnd();
     // SAFETY: one call that reads a window's parent: `container` is the window `wry` made for

@@ -548,7 +548,7 @@ impl Window {
     );
     let tao = runtime.with_target(|target| builder.build(target))?.map_err(|e| Error::os("the window could not be made", e))?;
     // Where no webview covers it (before its page paints, or once its webview is gone) a window
-    // shows its appearance's page colour, not the white of a client area nothing paints (D42).
+    // shows its appearance's page colour, not the white of a client area nothing paints (D43).
     // A transparent or colour-keyed window shows through there instead, as it always has.
     let backdrop = (!tabbed && !init.transparent && color_key.is_none()).then(|| backdrop_for(init.appearance, &tao));
     if let Some((red, green, blue)) = backdrop {
@@ -1097,7 +1097,7 @@ fn destroy_undestroyed() {
 }
 
 /// Hides every visible window Sweetview made on this thread, so none is on the screen while the
-/// webviews in it go and before it is destroyed: the step of the end of the application before the webviews (D42).
+/// webviews in it go and before it is destroyed: the step of the end of the application before the webviews (D43).
 pub(crate) fn hide_all() {
   let cores: Vec<Rc<Core>> = WINDOWS.try_with(|w| w.borrow().values().cloned().collect()).unwrap_or_default();
   for core in cores {

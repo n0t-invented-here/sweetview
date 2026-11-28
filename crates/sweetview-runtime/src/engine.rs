@@ -245,7 +245,7 @@ impl Engine {
         }
       });
     // Until its page paints, a webview shows its default background: the colour the window it is
-    // made in paints there (its appearance's, or a tab frame's page colour), not WebView2's white (D42).
+    // made in paints there (its appearance's, or a tab frame's page colour), not WebView2's white (D43).
     let backdrop = match &host {
       Host::Own => None,
       Host::Fill(value) | Host::Child(value, _) => crate::window::backdrop_of(*value),
@@ -757,7 +757,7 @@ impl Inner {
         let Live { extras, webview, window } = live;
         drop(extras);
         match window {
-          // `wry` leaves the container of a webview that fills its window; it goes now (D42).
+          // `wry` leaves the container of a webview that fills its window; it goes now (D43).
           HostWindow::Filled(_) => sweetview_platform_webview::drop_filling(webview),
           _ => drop(webview),
         }

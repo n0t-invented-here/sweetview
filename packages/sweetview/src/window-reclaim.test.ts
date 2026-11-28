@@ -1,5 +1,5 @@
 // A window that closes is destroyed, and what it held is given back (decision
-// D42): test/fixtures/window-reclaim.ts, in a process of its own with a
+// D43): test/fixtures/window-reclaim.ts, in a process of its own with a
 // WebView2 profile of its own, keeps a main window open and opens and closes a
 // second window with a webview 30 times by each path (a close request with no
 // onClose listener, dispose(), createApp's app.dispose(), a tab opened and
@@ -80,7 +80,7 @@ const median = (values: number[]) => {
 /** Private bytes: the median of the last ten rounds less that of the first ten after the warm-up. */
 const climb = (values: number[]) => median(values.slice(-10)) - median(values.slice(0, 10));
 
-describe.if(process.platform === "win32")("a closed window gives back what it held (D42)", () => {
+describe.if(process.platform === "win32")("a closed window gives back what it held (D43)", () => {
   test(
     `${ROUNDS} rounds of each close path`,
     async () => {

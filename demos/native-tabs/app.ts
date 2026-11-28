@@ -126,4 +126,10 @@ if (import.meta.main) {
     demo.app.quit();
   }
   await loop;
+  // Until the macOS goal of the Rust rewrite, macOS runs the code it ran at the tag pre-rust-rewrite,
+  // which releases nothing at exit: there the demo tears down and exits as it did then.
+  if (process.platform === "darwin") {
+    demo.app.dispose();
+    process.exit();
+  }
 }

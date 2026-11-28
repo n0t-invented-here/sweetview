@@ -53,9 +53,13 @@ export type WindowChromeOptions = {
 };
 
 /** The UI-thread half: the `window.*` methods, answered by the window they are given. Spread into `uiMethods`. */
-export function windowChromeMethods(window: Pick<Window, "close" | "isMaximized" | "startDrag" | "startResize" | "minimize" | "toggleMaximize">, options: WindowChromeOptions = {}): WindowChromeMethodTable {
+export function windowChromeMethods(window: Pick<Window, "close" | "hide" | "isMaximized" | "startDrag" | "startResize" | "minimize" | "toggleMaximize">, options: WindowChromeOptions = {}): WindowChromeMethodTable {
   const chrome = options.chrome ?? "page";
-  const onClose = options.onClose ?? (() => window.close());
+  // macOS keeps the tag's default, hiding the window, until its goal (D42). The same test as
+  // macosKeepsTagPath() of @n1h/sweetview-native, written out: the page half of this module is
+  // bundled into pages, which must not import the native package.
+  const macosKeepsTagPath = () => typeof process !== "undefined" && process.platform === "darwin";
+  const onClose = options.onClose ?? (() => (macosKeepsTagPath() ? window.hide() : window.close()));
   return {
     "window.info": () => ({ chrome, maximized: window.isMaximized() }),
     "window.drag": () => window.startDrag(),

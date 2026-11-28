@@ -455,7 +455,7 @@ function showContextMenu(host: WinTabHost, record: WinTabRecord | undefined): vo
 function disposeHost(host: WinTabHost): void {
   if (host.closed) return;
   host.closed = true;
-  // Off the screen before its tabs' webviews go, then destroyed with them (D42).
+  // Off the screen before its tabs' webviews go, then destroyed with them (D43).
   concealWindow(host.window);
   hosts.delete(host.window);
   const idx = hostOrder.indexOf(host);

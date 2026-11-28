@@ -8,7 +8,7 @@
 //!
 //! 1. the system-wide input hooks, which stall the desktop's input while no loop answers them;
 //! 2. the windows' visibility: every visible window is hidden, so none is on the screen with
-//!    its webview gone and its client area empty while the rest goes (D42);
+//!    its webview gone and its client area empty while the rest goes (D43);
 //! 3. the webviews, each before the window it lives in;
 //! 4. the tray icons, before the loop's windows;
 //! 5. the notifiers: their handlers end and their window and hidden notification icons go,

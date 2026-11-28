@@ -12,7 +12,7 @@
 // It prints `WATCHING` once it runs, then writes one JSON line per sample to
 // `out.jsonl` and prints `DONE <samples>` when the process has gone (or after
 // `maxMs`, default 60 s). `summarize` reads such a file; the tests and the
-// measurement of decision D42 use it.
+// measurement of decision D43 use it.
 
 import { FFIType, JSCallback, dlopen, ptr } from "bun:ffi";
 import { writeFileSync } from "node:fs";
