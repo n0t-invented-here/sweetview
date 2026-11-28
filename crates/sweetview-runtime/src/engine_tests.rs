@@ -189,3 +189,34 @@ fn a_page_that_calls_window_close_stays_as_under_the_cpp_fork() {
     finish(&runtime);
   });
 }
+
+#[test]
+fn a_new_webview_leaves_the_profile_s_autofill_preference_as_it_is_as_under_the_cpp_fork() {
+  on_ui_thread(|runtime| {
+    // The C++ fork never set general autofill, so the preference stayed as the profile had
+    // it. Turned off in one webview (as an application reaching WebView2 itself, or another
+    // program on the profile, can), it stays off when another webview is made.
+    let (first, _first_window) = make("own window", |_| ());
+    load(&runtime, &first, PAGE);
+    wry_of(&first, |webview| test_support::set_general_autofill(webview, false));
+    for host in HOSTS {
+      let (second, _window) = make(host, |_| ());
+      load(&runtime, &second, PAGE);
+      let seen = (wry_of(&first, |w| test_support::page_settings(w).general_autofill), wry_of(&second, |w| test_support::page_settings(w).general_autofill));
+      eprintln!("-- after a second webview in a {host}: general autofill (first, second) {seen:?}");
+      assert_eq!(seen, (Some(false), Some(false)), "{host}: the profile's preference is left as it was");
+      second.destroy();
+      settle(&runtime, Duration::from_millis(100));
+    }
+    // With every webview gone, the next is made with the preference as last read.
+    first.destroy();
+    settle(&runtime, Duration::from_millis(200));
+    let (later, _later_window) = make("child", |_| ());
+    load(&runtime, &later, PAGE);
+    let seen = wry_of(&later, |w| test_support::page_settings(w).general_autofill);
+    eprintln!("-- a webview made after every other had gone: general autofill {seen:?}");
+    assert_eq!(seen, Some(false), "the preference as the profile last had it");
+    later.destroy();
+    finish(&runtime);
+  });
+}

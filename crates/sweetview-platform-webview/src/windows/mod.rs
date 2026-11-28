@@ -153,6 +153,26 @@ pub fn with_page_behaviour(builder: wry::WebViewBuilder<'_>) -> wry::WebViewBuil
     builder.with_hotkeys_zoom(true).with_back_forward_navigation_gestures(true)
 }
 
+/// The profile's general autofill preference (`ICoreWebView2Settings4`), read
+/// from a live webview of the profile; `None` without the interface. The
+/// setting is the profile's, shared by all its webviews, and `wry` writes its
+/// own value into it whenever it builds one; the caller hands this to
+/// `wry::WebViewBuilder::with_general_autofill_enabled` so that what `wry`
+/// writes is what the profile already had, as under the C++ fork, which
+/// never set it.
+pub fn general_autofill(webview: &wry::WebView) -> Option<bool> {
+    let core = webview.webview();
+    // SAFETY: `core` is a COM reference this frame owns to the live ICoreWebView2 of
+    // `webview`; `Settings` takes no arguments and returns an owned reference.
+    let settings = unsafe { core.Settings() }.ok()?;
+    let settings4 = settings.cast::<ICoreWebView2Settings4>().ok()?;
+    let mut enabled = BOOL::default();
+    // SAFETY: `settings4` is a COM reference this frame holds (from `cast`) to the live
+    // settings object, and `enabled` a local BOOL for the call to fill.
+    unsafe { settings4.IsGeneralAutofillEnabled(&mut enabled) }.ok()?;
+    Some(enabled.as_bool())
+}
+
 /// Whether `key` is down, from the thread's keyboard state.
 fn key_down(key: VIRTUAL_KEY) -> bool {
     // SAFETY: `GetKeyState` takes a plain integer and reads the calling thread's

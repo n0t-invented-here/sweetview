@@ -28,6 +28,12 @@ pub fn with_page_behaviour(builder: wry::WebViewBuilder<'_>) -> wry::WebViewBuil
     builder
 }
 
+/// The profile's general autofill preference. Not served on this platform yet.
+#[allow(unused_variables)]
+pub fn general_autofill(webview: &wry::WebView) -> Option<bool> {
+    None
+}
+
 /// Sets the colour painted behind the page. Not served on this platform yet.
 #[allow(unused_variables)]
 pub fn set_background_color(webview: &wry::WebView, r: u8, g: u8, b: u8, a: u8) -> ErrorCode {

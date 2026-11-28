@@ -117,6 +117,20 @@ thread_local! {
   static CALLBACK_DEPTH: Cell<u32> = const { Cell::new(0) };
   /// Webviews destroyed while a callback was on the stack, whose drop waits for a later turn.
   static UNDROPPED: RefCell<Vec<Weak<Inner>>> = const { RefCell::new(Vec::new()) };
+  /// The profile's general autofill preference as last read from one of its webviews, for
+  /// a webview made when none is left.
+  static AUTOFILL: Cell<Option<bool>> = const { Cell::new(None) };
+}
+
+/// The profile's general autofill preference as it is now: read from a live webview of
+/// this thread (they all share one environment, so one profile), or as last read.
+fn profile_autofill() -> Option<bool> {
+  let live: Vec<Rc<Inner>> = ENGINES.try_with(|engines| engines.borrow().values().cloned().collect()).unwrap_or_default();
+  let read = live.iter().find_map(|inner| inner.with_live(|live| sweetview_platform_webview::general_autofill(&live.webview)).flatten());
+  if read.is_some() {
+    AUTOFILL.with(|cell| cell.set(read));
+  }
+  read.or_else(|| AUTOFILL.with(Cell::get))
 }
 
 /// Destroys every webview of this thread that is still alive, and drops those whose drop was
@@ -248,7 +262,14 @@ impl Engine {
       });
     // The page takes the focus only in a window the engine makes itself, as under the C++
     // library (`owns_window()` in `win32_edge.hh`); `wry` would move it into every webview.
-    let builder = configure_for_platform(builder.with_focused(matches!(host, Host::Own)))?;
+    let builder = builder.with_focused(matches!(host, Host::Own));
+    // `wry` writes general autofill into the profile on every build (true unless told); the
+    // C++ library never set it, so the value written is the one the profile already has.
+    let builder = match profile_autofill() {
+      Some(enabled) => builder.with_general_autofill_enabled(enabled),
+      None => builder,
+    };
+    let builder = configure_for_platform(builder)?;
 
     let mount = |error: wry::Error| Error::os("the webview could not be created (is the WebView2 runtime installed?)", error);
     let no_window = || Error::state("sweetview: the window handle given for the webview names no window");
@@ -748,6 +769,9 @@ impl Inner {
     let taken = if in_callback { None } else { self.live.try_borrow_mut().ok().and_then(|mut live| live.take()) };
     match taken {
       Some(live) => {
+        if let Some(enabled) = sweetview_platform_webview::general_autofill(&live.webview) {
+          AUTOFILL.with(|cell| cell.set(Some(enabled)));
+        }
         let Live { extras, webview, window } = live;
         drop(extras);
         drop(webview);
