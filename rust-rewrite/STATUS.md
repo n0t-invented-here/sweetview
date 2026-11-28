@@ -2,6 +2,16 @@
 
 The Windows goal is **not complete**. This file says what is on the main branch, what sits on unmerged branches, what has not been started, and what a completion claim still needs. It is updated whenever a branch lands or work stops. Requirements: `REQUIREMENTS.md`. Order of work: `CHECKLIST-windows.md`. Findings this status is measured against: `evidence/goal-audit-windows.md` (15 findings and 28 places that teach the old way).
 
+## The owner's rulings that bind all remaining work
+
+- **Internals are never exposed for an application to call.** No `/internal`, `/win32/*` or other internal entry point is importable by an application, no document tells an application to use one, and no internal is turned into public API to close a gap.
+- **Agents make no tradeoff about the product.** Whether a capability gets a public call, its name and shape, and whether a capability reached through internals is kept, are the owner's decisions. Work that reaches such a choice leaves the item as it is and lists it for the owner with the facts.
+- **An upgrade is a migration.** An upgraded application uses 1.0 as designed: a closed window is destroyed and its memory given back, windows are revealed by the ready signal, and no old behaviour, workaround or internal is carried over.
+- **An application ends at its loop.** Nothing after `run()` is required of it.
+- **No copies of the owner's applications** are made anywhere; they are upgraded in place on branches. Their names, paths and behaviour never enter anything tracked here.
+- **Hosted CI is not used.**
+- **The orchestrating session writes no code**; it delegates, integrates and documents.
+
 ## Why the checklist reads complete and the goal is not
 
 Every box of `CHECKLIST-windows.md` is ticked and `bun rust-rewrite/verify.ts windows` printed `COMPLETE` at `c8dab02`. That claim was withdrawn. The verifier and the checklist were satisfied without any real application having been upgraded and run, and the goal audit then found the gaps listed below. The boxes stay ticked as records of what was run then; their evidence blocks are stale against the current tree and are produced again before any new claim.
