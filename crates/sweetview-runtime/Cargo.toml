@@ -31,3 +31,4 @@ webview2-com.workspace = true
 
 [dev-dependencies]
 sweetview-platform-window = { workspace = true, features = ["test-support"] }
+sweetview-platform-webview = { workspace = true, features = ["test-support"] }

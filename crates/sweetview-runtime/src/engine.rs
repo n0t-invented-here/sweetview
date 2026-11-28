@@ -791,8 +791,17 @@ fn wry_rect(bounds: Bounds) -> wry::Rect {
 thread_local! {
   /// The process's WebView2 environment, made once on the UI thread and shared
   /// by every webview, as the C++ library's webviews shared theirs.
-  static ENVIRONMENT: std::cell::OnceCell<webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Environment> =
-    const { std::cell::OnceCell::new() };
+  static ENVIRONMENT: RefCell<Option<webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Environment>> =
+    const { RefCell::new(None) };
+}
+
+/// Tests only: lets go of this thread's WebView2 environment once its webviews
+/// are gone, so it is released while the thread still runs. A test's thread
+/// ends right after its body, and WebView2 faults (`0xc000041d`) when an
+/// environment is released by the thread's own teardown.
+#[cfg(all(test, windows))]
+pub(crate) fn release_environment_for_tests() {
+  drop(ENVIRONMENT.with(|cell| cell.borrow_mut().take()));
 }
 
 /// The WebView2 environment, created the way the C++ library created it: the
@@ -803,14 +812,14 @@ thread_local! {
 fn configure_for_platform(builder: WebViewBuilder<'_>) -> Result<WebViewBuilder<'_>> {
   use wry::WebViewBuilderExtWindows;
   let environment = ENVIRONMENT.with(|cell| {
-    if let Some(environment) = cell.get() {
+    if let Some(environment) = cell.borrow().as_ref() {
       return Ok(environment.clone());
     }
     let folder = sweetview_platform_webview::default_user_data_folder();
     let environment = sweetview_platform_webview::create_environment(folder.as_deref()).map_err(|code| {
       Error::os("the WebView2 environment could not be created (is the WebView2 runtime installed?)", format!("webview_error_t {}", code.code()))
     })?;
-    Ok(cell.get_or_init(|| environment).clone())
+    Ok(cell.borrow_mut().get_or_insert(environment).clone())
   })?;
   Ok(builder.with_environment(environment))
 }
@@ -841,3 +850,7 @@ fn reparent(webview: &WebView, parent: &BorrowedWindow<'_>) -> std::result::Resu
 fn reparent(_webview: &WebView, _parent: &BorrowedWindow<'_>) -> std::result::Result<(), wry::Error> {
   Ok(())
 }
+
+#[cfg(all(test, windows))]
+#[path = "engine_tests.rs"]
+mod tests;

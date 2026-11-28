@@ -42,6 +42,8 @@ mod platform;
 
 #[cfg(windows)]
 pub use platform::{create_environment, default_user_data_folder};
+#[cfg(all(windows, any(test, feature = "test-support")))]
+pub use platform::test_support;
 pub use platform::{set_background_color, with_page_behaviour, UserScript, WebviewExtras};
 pub use shared::Responder;
 pub use sweetview_http::ErrorCode;

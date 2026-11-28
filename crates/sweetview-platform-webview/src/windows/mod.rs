@@ -7,6 +7,8 @@ mod environment;
 mod handlers;
 mod istream;
 mod pump;
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support;
 
 pub use self::environment::{create_environment, default_user_data_folder};
 
@@ -30,8 +32,8 @@ use windows::Win32::UI::Shell::SHCreateMemStream;
 use wry::WebViewExtWindows;
 
 use self::handlers::{
-    AcceleratorKeyPressed, ContentLoading, MessageReceived, NavigationCompleted, NavigationStarting, Registration,
-    RequestFilter, ResourceRequested, ScriptAdded,
+    AcceleratorKeyPressed, ContentLoading, DownloadStarting, MessageReceived, NavigationCompleted, NavigationStarting,
+    Registration, RequestFilter, ResourceRequested, ScriptAdded,
 };
 use self::istream::StreamingIStream;
 use crate::shared::{next_request_id, Job, Responder, Shared};
@@ -500,6 +502,22 @@ impl Inner {
                 }
             }),
         )?);
+        // Downloads are left to WebView2, which then shows its own download interface, as
+        // under the C++ fork (which never handled DownloadStarting). `wry` 0.58.2 registers a
+        // handler on every webview that marks each download handled, which hides that
+        // interface, and has no way to build a webview without it (`WebViewAttributes`,
+        // where the handler lives, is private); this handler runs after `wry`'s and marks
+        // the download unhandled again. A runtime before 92 has no download event to answer.
+        if let Ok(webview4) = self.webview.cast::<ICoreWebView2_4>() {
+            registrations.push(Registration::add_download_starting(
+                &webview4,
+                &DownloadStarting::create(|args| {
+                    // SAFETY: `args` is the live event args WebView2 passed to this handler;
+                    // the flag is passed by value.
+                    let _ = unsafe { args.SetHandled(false) };
+                }),
+            )?);
+        }
         *self.registrations.borrow_mut() = registrations;
         *self.filters.borrow_mut() = filters;
 

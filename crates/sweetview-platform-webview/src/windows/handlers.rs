@@ -126,6 +126,21 @@ impl ICoreWebView2AcceleratorKeyPressedEventHandler_Impl for AcceleratorKeyPress
     }
 }
 
+#[implement(ICoreWebView2DownloadStartingEventHandler, Agile = false)]
+pub(super) struct DownloadStarting(Box<dyn Fn(&ICoreWebView2DownloadStartingEventArgs)>);
+
+impl DownloadStarting {
+    pub(super) fn create(f: impl Fn(&ICoreWebView2DownloadStartingEventArgs) + 'static) -> ICoreWebView2DownloadStartingEventHandler {
+        Self(Box::new(f)).into()
+    }
+}
+
+impl ICoreWebView2DownloadStartingEventHandler_Impl for DownloadStarting_Impl {
+    fn Invoke(&self, _sender: Ref<ICoreWebView2>, args: Ref<ICoreWebView2DownloadStartingEventArgs>) -> windows::core::Result<()> {
+        invoke_with(args, |args| (self.0)(args))
+    }
+}
+
 /// The completion of `AddScriptToExecuteOnDocumentCreated`: the script's id,
 /// or `None` when WebView2 refused the script.
 #[implement(ICoreWebView2AddScriptToExecuteOnDocumentCreatedCompletedHandler, Agile = false)]
@@ -217,6 +232,7 @@ pub(super) enum Source {
     NavigationStarting(ICoreWebView2),
     NavigationCompleted(ICoreWebView2),
     AcceleratorKeyPressed(ICoreWebView2Controller),
+    DownloadStarting(ICoreWebView2_4),
 }
 
 /// One handler added with an `add_*` call. Holds a reference to the object it
@@ -291,6 +307,17 @@ impl Registration {
         unsafe { controller.add_AcceleratorKeyPressed(handler, &mut token) }?;
         Ok(Self { source: Source::AcceleratorKeyPressed(controller.clone()), token })
     }
+
+    /// Adds `handler` for `DownloadStarting` (`ICoreWebView2_4`, WebView2 Runtime 92 or later).
+    pub(super) fn add_download_starting(
+        webview: &ICoreWebView2_4,
+        handler: &ICoreWebView2DownloadStartingEventHandler,
+    ) -> windows::core::Result<Self> {
+        let mut token = 0i64;
+        // SAFETY: a live handler and a local token; removed in `Drop`.
+        unsafe { webview.add_DownloadStarting(handler, &mut token) }?;
+        Ok(Self { source: Source::DownloadStarting(webview.clone()), token })
+    }
 }
 
 impl Drop for Registration {
@@ -312,6 +339,8 @@ impl Drop for Registration {
             Source::NavigationCompleted(webview) => unsafe { webview.remove_NavigationCompleted(token) },
             // SAFETY: `token` came from `add_AcceleratorKeyPressed` on this `controller`.
             Source::AcceleratorKeyPressed(controller) => unsafe { controller.remove_AcceleratorKeyPressed(token) },
+            // SAFETY: `token` came from `add_DownloadStarting` on this `webview`.
+            Source::DownloadStarting(webview) => unsafe { webview.remove_DownloadStarting(token) },
         };
     }
 }
