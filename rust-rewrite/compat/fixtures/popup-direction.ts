@@ -10,7 +10,7 @@
 // closed with EndMenu from inside its modal loop; no input is injected. Prints one JSON line.
 
 import { Menu, Screen, Window } from "@n1h/sweetview-native";
-import { popupMenu, popupMenuAtCursor } from "@n1h/sweetview-native/win32/menu";
+import { popupMenu, popupMenuAtCursor } from "../../../packages/sweetview-native/src/win32/menu";
 import { binding } from "../../../packages/sweetview-native/src/binding";
 import { endMenu, openPopupMenu, windowRect } from "../../../packages/sweetview-native/test/win32-os";
 

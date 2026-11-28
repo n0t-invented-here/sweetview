@@ -9,7 +9,7 @@
 
 import { createApp } from "@n1h/sweetview";
 import { Window } from "@n1h/sweetview/native";
-import { isWindowDisposed } from "@n1h/sweetview-native/internal";
+import { isWindowDisposed } from "../../../packages/sweetview-native/src/internal";
 import { WM_CLOSE, isWindow, user32 } from "../../../packages/sweetview-native/test/win32-os";
 
 const report: Record<string, unknown> = {};

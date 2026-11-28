@@ -134,7 +134,7 @@ const style = (ctx: DesktopCtx, hwnd: bigint) => BigInt(ctx.os.user32.GetWindowL
 const hwndOf = (win: { handle: unknown }) => BigInt(win.handle as number | bigint);
 /** Runs `step` from native timeouts (they fire inside a modal loop) until it returns true or `ms` passed. */
 const inModal = async (step: () => boolean, ms = 8000) => {
-  const { scheduleNativeTimeout } = await import("@n1h/sweetview-native/internal");
+  const { scheduleNativeTimeout } = await import("../../../packages/sweetview-native/src/internal");
   const end = Date.now() + ms;
   const tick = () => {
     if (!step() && Date.now() < end) scheduleNativeTimeout(25, tick);
@@ -198,7 +198,7 @@ export const RUNNERS: Record<string, Runner> = {
   NEW_TAB_WIDTH: stripConstant("NEW_TAB_WIDTH"),
   STRIP_HEIGHT: desktop(async (value: number, ctx) => {
     must(value === (await stripScriptConstant("STRIP_HEIGHT")), "the strip script lays out STRIP_HEIGHT");
-    const { getTabFrame } = await import("@n1h/sweetview-native/win32/tab-window");
+    const { getTabFrame } = await import("../../../packages/sweetview-native/src/win32/tab-window");
     const win = ctx.window({ tabs: true });
     const frame = getTabFrame(hwndOf(win))!;
     must(frame.stripBounds().height === Math.round(value * frame.scale()), "the frame's strip is STRIP_HEIGHT high at its scale", frame.stripBounds());
@@ -207,7 +207,7 @@ export const RUNNERS: Record<string, Runner> = {
   TAB_MAX_WIDTH: stripConstant("TAB_MAX_WIDTH"),
   TAB_MIN_WIDTH: stripConstant("TAB_MIN_WIDTH"),
   LAST_TAB: here(async (value: number) => {
-    const { shortcutFor } = await import("@n1h/sweetview-native/win32/shortcuts");
+    const { shortcutFor } = await import("../../../packages/sweetview-native/src/win32/shortcuts");
     must(same(shortcutFor({ virtualKey: 0x39, control: true, shift: false, alt: false }), { select: value }), "Ctrl+9 selects LAST_TAB");
   }),
   WEBVIEW_VERSION: here((value: string) => {
@@ -485,7 +485,7 @@ export const RUNNERS: Record<string, Runner> = {
     await Bun.sleep(500);
     const file = join(ctx.tmp, "dropped on a webview.txt");
     writeFileSync(file, "drop");
-    const { engineOf } = await import("@n1h/sweetview-native/internal");
+    const { engineOf } = await import("../../../packages/sweetview-native/src/internal");
     for (const type of ["dragEnter", "dragOver", "drop"]) {
       engineOf(view)!.callDevToolsProtocolMethod("Input.dispatchDragEvent", JSON.stringify({ type, x: 30, y: 30, data: { items: [], files: [file], dragOperationsMask: 1 } }));
     }
@@ -834,11 +834,11 @@ export const RUNNERS: Record<string, Runner> = {
       must(same([...built.commands.keys()], [1, 2]) && same(built.bitmaps, []), "command ids from 1 in template order, no bitmaps to free", [...built.commands.keys()]);
       must(ctx.os.menuItemId(built.hmenu, 0) === 1 && ctx.os.menuItemId(built.hmenu, 2) === 2, "the OS items carry those ids", [ctx.os.menuItemId(built.hmenu, 0), ctx.os.menuItemId(built.hmenu, 2)]);
     } finally {
-      require("@n1h/sweetview-native/win32/menu").destroyMenu(built);
+      require("../../../packages/sweetview-native/src/win32/menu").destroyMenu(built);
     }
   }),
   destroyMenu: desktop((fn, ctx) => {
-    const built = require("@n1h/sweetview-native/win32/menu").buildMenu(MENU);
+    const built = require("../../../packages/sweetview-native/src/win32/menu").buildMenu(MENU);
     fn(built);
     must(ctx.os.user32.IsMenu(built.hmenu) === 0, "the menu is gone");
     fn(built); // safe twice
@@ -854,7 +854,7 @@ export const RUNNERS: Record<string, Runner> = {
     must(fn(template) === template && fn(() => template) === template && same(fn(undefined), []), "a template, a function of one, or nothing");
   }),
   createChildWebview: desktop((fn, ctx) => {
-    const { getTabFrame } = require("@n1h/sweetview-native/win32/tab-window");
+    const { getTabFrame } = require("../../../packages/sweetview-native/src/win32/tab-window");
     const tabbed = ctx.window({ tabs: true });
     const frame = getTabFrame(hwndOf(tabbed));
     const view = fn(false, frame.hwnd, frame.pageRect());
@@ -918,7 +918,7 @@ export const RUNNERS: Record<string, Runner> = {
       return typed;
     }, 10_000);
     // Never left open: closed from inside its loop after the limit.
-    const { scheduleNativeTimeout } = await import("@n1h/sweetview-native/internal");
+    const { scheduleNativeTimeout } = await import("../../../packages/sweetview-native/src/internal");
     const stop = scheduleNativeTimeout(12_000, () => void ctx.os.ownWindows("#32770", title).forEach((d) => ctx.os.post(d, ctx.os.WM_CLOSE)));
     const picked = fn(owner, title);
     stop();
@@ -990,7 +990,7 @@ export const RUNNERS: Record<string, Runner> = {
   emitWindowTabSelect: emitted((win, got) => win.onTabSelect((t: unknown) => got.push(t)), (fn, win) => fn(win, TAB), () => TAB),
   emitWindowTabClose: emitted((win, got) => win.onTabClose((t: unknown) => got.push(t)), (fn, win) => fn(win, TAB), () => TAB),
   forwardWindowTabEvents: desktop((fn, ctx) => {
-    const { emitWindowTabSelect } = require("@n1h/sweetview-native/internal");
+    const { emitWindowTabSelect } = require("../../../packages/sweetview-native/src/internal");
     const from = ctx.window({ tabs: true });
     const to = ctx.window({ tabs: true });
     const got: unknown[] = [];
@@ -1075,7 +1075,7 @@ export const RUNNERS: Record<string, Runner> = {
       must((await ctx.pageApp()).report.signalReady === "resolved", "the page's signalReady resolves");
       return;
     }
-    const { emitActivationUrl } = require("@n1h/sweetview-native/internal");
+    const { emitActivationUrl } = require("../../../packages/sweetview-native/src/internal");
     const { onOpenUrl: listen } = require("@n1h/sweetview-native");
     const got: string[] = [];
     const off = listen((url: string) => got.push(url));
@@ -1085,7 +1085,7 @@ export const RUNNERS: Record<string, Runner> = {
     must(same(got, ["sweetview-compat-row://buffered"]), "the URL waits for signalReady and is then delivered", got);
   }),
   onOpenUrl: desktop((fn) => {
-    const { emitActivationUrl } = require("@n1h/sweetview-native/internal");
+    const { emitActivationUrl } = require("../../../packages/sweetview-native/src/internal");
     const { signalReady } = require("@n1h/sweetview-native");
     signalReady();
     const got: string[] = [];

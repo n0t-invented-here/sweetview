@@ -6,7 +6,7 @@
 import { describe, expect, test } from "bun:test";
 import { createApp, WebView } from "./index";
 import { Window, closeToTrayOnLastWindow, onOpenUrl, pumpEvents } from "@n1h/sweetview-native";
-import { emitActivationUrl } from "@n1h/sweetview-native/internal";
+import { emitActivationUrl } from "../../sweetview-native/src/internal";
 import { _resetActivationForTest } from "../../sweetview-native/src/activation";
 
 const onWindows = process.platform === "win32";
@@ -254,7 +254,7 @@ describe.if(onWindows)("WebView & createApp (win32)", () => {
       pumpUntil(() => tabLoaded, 15_000);
       expect(tabLoaded).toBe(true);
       const size = clientSize(frame);
-      const { STRIP_HEIGHT } = await import("@n1h/sweetview-native/win32/strip-shared");
+      const { STRIP_HEIGHT } = await import("../../sweetview-native/src/win32/strip-shared");
       const strip = Math.round(STRIP_HEIGHT * tabbed.scale());
       let seen = "";
       const deadline = performance.now() + 5000;
@@ -321,7 +321,7 @@ describe.if(onWindows)("WebView & createApp (win32)", () => {
 
   test("WebView.attach preserves exact outer bounds and GWL_STYLE for framed, frameless-resizable, and Window.fromHandle windows", async () => {
     const { GWL_STYLE, user32 } = await import("../../sweetview-native/test/win32-os");
-    const { asHwnd } = await import("@n1h/sweetview-native/win32/window");
+    const { asHwnd } = await import("../../sweetview-native/src/win32/window");
 
     // 1. Owned framed window
     const target = { x: 120, y: 120, width: 640, height: 480 };
@@ -422,7 +422,7 @@ describe.if(onWindows)("WebView & createApp (win32)", () => {
 
   test("closing a tabbed Window via WM_CLOSE with no onClose disposes all child tab webviews", async () => {
     const { user32, WM_CLOSE } = await import("../../sweetview-native/test/win32-os");
-    const { asHwnd } = await import("@n1h/sweetview-native/win32/window");
+    const { asHwnd } = await import("../../sweetview-native/src/win32/window");
     const win = new Window({ title: "Close Tabs via WM_CLOSE", tabs: true, bounds: { x: 160, y: 160, width: 720, height: 500 } });
     const hwnd = asHwnd(win.handle);
     const t1 = await WebView.openTab(win, { title: "One", url: "about:blank" });

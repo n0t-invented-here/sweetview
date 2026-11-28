@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { WebView } from "@n1h/sweetview";
 import { Window } from "@n1h/sweetview/native";
-import { scheduleNativeTimeout } from "@n1h/sweetview-native/internal";
+import { scheduleNativeTimeout } from "../../../sweetview-native/src/internal";
 import { controllerOf, devTools } from "../../src/tabs/win-webview2";
 
 const path = join(process.env.WEBVIEW2_USER_DATA_FOLDER!, "dropped ü.txt");
