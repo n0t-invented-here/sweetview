@@ -89,10 +89,20 @@ export interface ScreenData {
   primary: boolean
 }
 
+/** A size in device-independent pixels: CSS pixels of the page. */
+export interface Size {
+  width: number
+  height: number
+}
+
 /** Everything a new window is made with. Bounds are the outer frame. */
 export interface WindowInit {
   title: string
   bounds?: Rect
+  /** The client area in device-independent pixels, centred on the primary work area; not with `bounds`. */
+  contentSize?: Size
+  /** `#rrggbb`: what the window shows where nothing has painted; not applied to a transparent window. */
+  backgroundColor?: string
   minWidth?: number
   minHeight?: number
   frame: boolean
@@ -346,6 +356,8 @@ export declare class Window {
   answerHit(seq: number, solid: boolean): void
   /** This wrapper's resize listener, with the outer bounds; `null` removes it. */
   onResize(listener?: ((arg0: number, arg1: number, arg2: number, arg3: number) => void) | undefined | null): void
+  /** This wrapper's maximise listener: `true` when the window becomes maximised, `false` when it is restored; `null` removes it. */
+  onMaximizeChange(listener?: ((arg: boolean) => void) | undefined | null): void
   /** This wrapper's move listener, with the outer bounds; `null` removes it. */
   onMove(listener?: ((arg0: number, arg1: number, arg2: number, arg3: number) => void) | undefined | null): void
   /** This wrapper's close listener; while any wrapper has one, the window stays open on a close request. */

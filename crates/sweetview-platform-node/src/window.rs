@@ -159,6 +159,12 @@ impl Window {
     self.0.on_resize(env, listener)
   }
 
+  /// This wrapper's maximise listener: `true` when the window becomes maximised, `false` when it is restored; `null` removes it.
+  #[napi(catch_unwind)]
+  pub fn on_maximize_change(&self, env: Env, listener: Option<Function<'_, bool, ()>>) -> napi::Result<()> {
+    self.0.on_maximize_change(env, listener)
+  }
+
   /// This wrapper's move listener, with the outer bounds; `null` removes it.
   // The callback types are spelled out so the generated declarations name their arguments.
   #[allow(clippy::type_complexity)]

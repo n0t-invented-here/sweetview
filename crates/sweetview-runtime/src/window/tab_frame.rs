@@ -21,11 +21,12 @@ use tao::dpi::{LogicalSize, PhysicalSize};
 use tao::window::Theme;
 
 use super::{core_of, screen, Appearance, Core, WINDOWS};
+use sweetview_window_logic::{self as logic, Dips};
 use crate::error::{Error, Result};
 use crate::{Point, Rect, ResizeEdge};
 
 /// The page the frame is sized for when no bounds are given, in device-independent pixels.
-const DEFAULT_PAGE: (f64, f64) = (1040.0, 720.0);
+pub(super) const DEFAULT_PAGE: Dips = Dips::new(1040.0, 720.0);
 /// The smallest page the frame can be resized to when no minimum is given.
 const DEFAULT_MIN_PAGE: (f64, f64) = (560.0, 420.0);
 
@@ -50,16 +51,18 @@ pub(super) struct TabState {
   /// [`finish`] installs them, or when they could not be installed (the frame
   /// then paints the page's colour only, through `tao`).
   messages: RefCell<Option<platform::FrameMessages>>,
+  /// The application's `backgroundColor`, which the page area shows in place of the light or dark one.
+  page: Option<(u8, u8, u8)>,
 }
 
 impl TabState {
-  pub(super) fn new(strip_height: u32, appearance: Appearance) -> Self {
+  pub(super) fn new(strip_height: u32, appearance: Appearance, page: Option<(u8, u8, u8)>) -> Self {
     let dark = match appearance {
       Appearance::System => platform::system_is_dark(),
       Appearance::Light => false,
       Appearance::Dark => true,
     };
-    Self { strip_height, appearance, dark: Cell::new(dark), activate: RefCell::new(None), messages: RefCell::new(None) }
+    Self { strip_height, appearance, dark: Cell::new(dark), activate: RefCell::new(None), messages: RefCell::new(None), page }
   }
 
   /// The page's colour, for `tao`'s background: what shows if the frame's own backdrop is not installed.
@@ -74,7 +77,7 @@ impl TabState {
     platform::Backdrop {
       strip_height: self.strip_height,
       strip: if dark { STRIP_DARK } else { STRIP_LIGHT },
-      page: if dark { PAGE_DARK } else { PAGE_LIGHT },
+      page: self.page.unwrap_or(if dark { PAGE_DARK } else { PAGE_LIGHT }),
     }
   }
 
@@ -87,20 +90,19 @@ impl TabState {
   }
 }
 
-/// Sizes a new frame: a default size from its page when no bounds were
-/// given, and its minimum. Bounds and minimums are the outer frame, as for
-/// every window; the frame's edges are measured, not assumed.
-pub(super) fn finish(core: &Rc<Core>, tab: &TabState, default_bounds: bool, min: (Option<i32>, Option<i32>)) {
+/// Sizes a new frame: from `page` (the page area below the strip, in
+/// device-independent pixels: `contentSize`, or the default when no bounds
+/// were given) centred on the primary work area, and its minimum. Bounds and
+/// minimums are the outer frame, as for every window; the frame's edges are
+/// measured, not assumed.
+pub(super) fn finish(core: &Rc<Core>, tab: &TabState, page: Option<Dips>, min: (Option<i32>, Option<i32>)) {
   let scale = core.with_tao(platform::dpi_scale).unwrap_or(1.0);
   let (edge_w, edge_h) = frame_edges(core);
   let strip = f64::from(tab.strip_height);
-  if default_bounds {
-    let width = (DEFAULT_PAGE.0 * scale).round() as i32 + edge_w;
-    let height = ((DEFAULT_PAGE.1 + strip) * scale).round() as i32 + edge_h;
+  if let Some(page) = page {
+    let (width, height) = logic::outer_size_for_content(Dips::new(page.width, page.height + strip), scale, (edge_w, edge_h));
     let area = screen::primary().map(|s| s.work_area).unwrap_or(Rect::new(0, 0, width, height));
-    let x = area.x + (area.width - width) / 2;
-    let y = area.y + ((area.height - height) / 2).max(0);
-    core.set_bounds(Rect::new(x, y, width, height));
+    core.set_bounds(logic::centred(width, height, area));
   }
   // `tao` enforces an undecorated window's minimum inner size plus the frame's
   // edges (outer less client) as the outer minimum the OS tracks.
@@ -130,7 +132,7 @@ pub(super) fn finish(core: &Rc<Core>, tab: &TabState, default_bounds: bool, min:
 }
 
 /// The outer frame less the client area: what the system's border takes.
-fn frame_edges(core: &Core) -> (i32, i32) {
+pub(super) fn frame_edges(core: &Core) -> (i32, i32) {
   let sizes = core.with_tao(|tao| (tao.outer_size(), tao.inner_size()));
   match sizes {
     Some((outer, inner)) => (outer.width.saturating_sub(inner.width) as i32, outer.height.saturating_sub(inner.height) as i32),
