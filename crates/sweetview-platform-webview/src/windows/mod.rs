@@ -10,7 +10,7 @@ mod pump;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
 
-pub use self::environment::{create_environment, default_user_data_folder};
+pub use self::environment::{create_environment, default_user_data_folder, release_shared as release_thread_environment};
 pub use self::host::{Layout, Webview};
 
 use std::cell::{Cell, RefCell};

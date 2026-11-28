@@ -17,7 +17,7 @@
 //!
 //! `wry` is not used on Windows: its creation path registers handlers and
 //! writes settings the fork never did, with no way to leave them out
-//! (DECISIONS D45).
+//! (DECISIONS D46).
 //!
 //! Dropping the [`WebviewExtras`] tears all of it down in the order of the C++
 //! fork's `deinit()`: answering calls are refused from then on, open streams are
@@ -45,7 +45,7 @@ mod platform;
 mod platform;
 
 #[cfg(windows)]
-pub use platform::{create_environment, default_user_data_folder};
+pub use platform::{create_environment, default_user_data_folder, release_thread_environment};
 #[cfg(all(windows, any(test, feature = "test-support")))]
 pub use platform::test_support;
 pub use platform::{Layout, PageMessageHandler, UserScript, Webview, WebviewExtras};

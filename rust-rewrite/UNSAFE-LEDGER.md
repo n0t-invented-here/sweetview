@@ -1,13 +1,13 @@
 # Unsafe ledger
 
-Rewritten by `bun rust-rewrite/verify.ts <platform> --ledger`. 360 uses in 23 files.
+Rewritten by `bun rust-rewrite/verify.ts <platform> --ledger`. 428 uses in 23 files.
 
 | File | Uses of `unsafe` |
 |---|---|
 | `crates/sweetview-platform-input/src/windows.rs` | 8 |
 | `crates/sweetview-platform-input/tests/windows_hooks.rs` | 7 |
 | `crates/sweetview-platform-loop/src/com.rs` | 4 |
-| `crates/sweetview-platform-loop/src/windows.rs` | 36 |
+| `crates/sweetview-platform-loop/src/windows.rs` | 41 |
 | `crates/sweetview-platform-notify/src/windows.rs` | 11 |
 | `crates/sweetview-platform-shell/src/clipboard.rs` | 13 |
 | `crates/sweetview-platform-shell/src/icons.rs` | 1 |
@@ -24,9 +24,9 @@ Rewritten by `bun rust-rewrite/verify.ts <platform> --ledger`. 360 uses in 23 fi
 | `crates/sweetview-platform-window/src/size_hint.rs` | 1 |
 | `crates/sweetview-platform-window/src/tab_frame.rs` | 16 |
 | `crates/sweetview-platform-window/src/tab_frame_tests.rs` | 12 |
-| `crates/sweetview-platform-window/src/test_support.rs` | 2 |
+| `crates/sweetview-platform-window/src/test_support.rs` | 70 |
 | `crates/sweetview-platform-window/src/windows.rs` | 39 |
-| `crates/sweetview-platform-window/src/windows_tests.rs` | 14 |
+| `crates/sweetview-platform-window/src/windows_tests.rs` | 9 |
 
 ## Reasons
 
@@ -106,7 +106,7 @@ The registry is `windows-registry` 0.6.1, and the message-only windows are `Mess
 
 ## sweetview-platform-webview
 
-On Windows this crate makes the webview itself (DECISIONS D45): `wry` 0.58.2, which the proposal chose for it, is not used, because its Windows creation path (`wry-0.58.2/src/webview2/mod.rs`, `new_in_hwnd`, `create_controller`, `init_webview`, `set_webview_settings`, `attach_handlers`) sets and registers what the C++ library never did and gives no way to leave it out (`WebViewAttributes`, where its handlers and settings live, is private: `src/lib.rs:538`). Everything reaches WebView2 through the typed interfaces of `webview2-com` 0.39.1 (https://docs.rs/webview2-com/0.39.1/webview2_com/), policy level 3, on the objects this crate's own `Webview` holds. Each COM object is held by a COM reference (a field, a frame's `cast`, the event args WebView2 holds for the handler's call); on a closed webview a call returns an error.
+On Windows this crate makes the webview itself (DECISIONS D46): `wry` 0.58.2, which the proposal chose for it, is not used, because its Windows creation path (`wry-0.58.2/src/webview2/mod.rs`, `new_in_hwnd`, `create_controller`, `init_webview`, `set_webview_settings`, `attach_handlers`) sets and registers what the C++ library never did and gives no way to leave it out (`WebViewAttributes`, where its handlers and settings live, is private: `src/lib.rs:538`). Everything reaches WebView2 through the typed interfaces of `webview2-com` 0.39.1 (https://docs.rs/webview2-com/0.39.1/webview2_com/), policy level 3, on the objects this crate's own `Webview` holds. Each COM object is held by a COM reference (a field, a frame's `cast`, the event args WebView2 holds for the handler's call); on a closed webview a call returns an error.
 
 ### `crates/sweetview-platform-webview/src/windows/host.rs` (33)
 

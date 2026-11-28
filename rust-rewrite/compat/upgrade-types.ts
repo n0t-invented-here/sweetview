@@ -76,7 +76,6 @@ import type { Icon as Icon__sweetview__native } from "@n1h/sweetview/native";
 import type { Icon as Icon__sweetview_native } from "@n1h/sweetview-native";
 import type { Id as Id__sweetview_native__darwin__objc } from "@n1h/sweetview-native/darwin/objc";
 import type { IndexHtmlOptions as IndexHtmlOptions__sweetview } from "@n1h/sweetview";
-import type { Key as Key__sweetview_native__win32__shortcuts } from "@n1h/sweetview-native/win32/shortcuts";
 import type { KeyHandler as KeyHandler__sweetview__native } from "@n1h/sweetview/native";
 import type { KeyHandler as KeyHandler__sweetview_native } from "@n1h/sweetview-native";
 import type { KeyMessage as KeyMessage__sweetview__native } from "@n1h/sweetview/native";
@@ -143,7 +142,6 @@ import type { SessionKind as SessionKind__sweetview_ipc } from "@n1h/sweetview-i
 import type { SettingsStoreOptions as SettingsStoreOptions__sweetview__settings_store } from "@n1h/sweetview/settings-store";
 import type { SettingsStoreOptions as SettingsStoreOptions__sweetview_settings } from "@n1h/sweetview-settings";
 import type { SettingsStoreOptions as SettingsStoreOptions__sweetview_settings__settings_store } from "@n1h/sweetview-settings/settings-store";
-import type { Shortcut as Shortcut__sweetview_native__win32__shortcuts } from "@n1h/sweetview-native/win32/shortcuts";
 import type { SingleInstanceLock as SingleInstanceLock__sweetview } from "@n1h/sweetview";
 import type { SingleInstanceLock as SingleInstanceLock__sweetview__native } from "@n1h/sweetview/native";
 import type { SingleInstanceLock as SingleInstanceLock__sweetview_native } from "@n1h/sweetview-native";
@@ -152,11 +150,6 @@ import type { SingleInstanceOptions as SingleInstanceOptions__sweetview__native 
 import type { SingleInstanceOptions as SingleInstanceOptions__sweetview_native } from "@n1h/sweetview-native";
 import type { Size as Size__sweetview__native } from "@n1h/sweetview/native";
 import type { Size as Size__sweetview_native } from "@n1h/sweetview-native";
-import type { StripEvents as StripEvents__sweetview_native__win32__strip_shared } from "@n1h/sweetview-native/win32/strip-shared";
-import type { StripMethods as StripMethods__sweetview_native__win32__strip_shared } from "@n1h/sweetview-native/win32/strip-shared";
-import type { StripPoint as StripPoint__sweetview_native__win32__strip_shared } from "@n1h/sweetview-native/win32/strip-shared";
-import type { StripState as StripState__sweetview_native__win32__strip_shared } from "@n1h/sweetview-native/win32/strip-shared";
-import type { StripTab as StripTab__sweetview_native__win32__strip_shared } from "@n1h/sweetview-native/win32/strip-shared";
 import type { Tab as Tab__sweetview } from "@n1h/sweetview";
 import type { TabHandle as TabHandle__sweetview__native } from "@n1h/sweetview/native";
 import type { TabHandle as TabHandle__sweetview_native } from "@n1h/sweetview-native";
@@ -213,9 +206,6 @@ import type { WsTransport as WsTransport__sweetview__ipc_ws } from "@n1h/sweetvi
 import type { WsTransport as WsTransport__sweetview__ipc_ws__client } from "@n1h/sweetview/ipc-ws/client";
 import type { WsTransport as WsTransport__sweetview_ipc_ws } from "@n1h/sweetview-ipc-ws";
 import type { WsTransport as WsTransport__sweetview_ipc_ws__client } from "@n1h/sweetview-ipc-ws/client";
-import type { FrameCallbacks as FrameCallbacks__sweetview_native__win32__tab_window } from "@n1h/sweetview-native/win32/tab-window";
-import type { FrameWindow as FrameWindow__sweetview_native__win32__tab_window } from "@n1h/sweetview-native/win32/tab-window";
-import type { NativeEngine as NativeEngine__sweetview_native__internal } from "@n1h/sweetview-native/internal";
 
 export type AppOptions__sweetview_bounds = AppOptions__sweetview["bounds"];
 export type AppOptions__sweetview_contentSize = AppOptions__sweetview["contentSize"];
@@ -297,19 +287,75 @@ export type Window__sweetview_native_startDrag = Window__sweetview_native["start
 export type Window__sweetview_native_toggleMaximize = Window__sweetview_native["toggleMaximize"];
 export type WsHost__sweetview__ipc_ws_dispose = WsHost__sweetview__ipc_ws["dispose"];
 export type WsTransport__sweetview__ipc_ws_dispose = WsTransport__sweetview__ipc_ws["dispose"];
-export type FrameCallbacks__sweetview_native__win32__tab_window_onActivate = FrameCallbacks__sweetview_native__win32__tab_window["onActivate"];
-export type FrameCallbacks__sweetview_native__win32__tab_window_onMoved = FrameCallbacks__sweetview_native__win32__tab_window["onMoved"];
-export type FrameCallbacks__sweetview_native__win32__tab_window_onResized = FrameCallbacks__sweetview_native__win32__tab_window["onResized"];
-export type FrameWindow__sweetview_native__win32__tab_window_pageRect = FrameWindow__sweetview_native__win32__tab_window["pageRect"];
-export type FrameWindow__sweetview_native__win32__tab_window_pageSize = FrameWindow__sweetview_native__win32__tab_window["pageSize"];
-export type FrameWindow__sweetview_native__win32__tab_window_stripBounds = FrameWindow__sweetview_native__win32__tab_window["stripBounds"];
-export type FrameWindow__sweetview_native__win32__tab_window_stripRect = FrameWindow__sweetview_native__win32__tab_window["stripRect"];
-export type NativeEngine__sweetview_native__internal_reparent = NativeEngine__sweetview_native__internal["reparent"];
-export type NativeEngine__sweetview_native__internal_setBounds = NativeEngine__sweetview_native__internal["setBounds"];
-export type NativeEngine__sweetview_native__internal_setVisible = NativeEngine__sweetview_native__internal["setVisible"];
 export type Tab__sweetview_window = Tab__sweetview["window"];
 export type Webview__sweetview_native_destroy = Webview__sweetview_native["destroy"];
 
 // Types an application declares in its own code (rows whose "Write now" is a declaration).
 export type MessageHandler = (message: number, wParam: bigint, lParam: bigint) => void;
 export type MessageWindow = { readonly hwnd: bigint; readonly destroy: () => void };
+
+// The types of the rows that say `no public call in 1.0` (D45): no public entry exports them.
+// @ts-expect-error no public call in 1.0
+import type { Key as NoPublic_Key___n1h_sweetview } from "@n1h/sweetview";
+// @ts-expect-error no public call in 1.0
+import type { Key as NoPublic_Key___n1h_sweetview_native } from "@n1h/sweetview-native";
+// @ts-expect-error no public call in 1.0
+import type { Shortcut as NoPublic_Shortcut___n1h_sweetview } from "@n1h/sweetview";
+// @ts-expect-error no public call in 1.0
+import type { Shortcut as NoPublic_Shortcut___n1h_sweetview_native } from "@n1h/sweetview-native";
+// @ts-expect-error no public call in 1.0
+import type { StripEvents as NoPublic_StripEvents___n1h_sweetview } from "@n1h/sweetview";
+// @ts-expect-error no public call in 1.0
+import type { StripEvents as NoPublic_StripEvents___n1h_sweetview_native } from "@n1h/sweetview-native";
+// @ts-expect-error no public call in 1.0
+import type { StripMethods as NoPublic_StripMethods___n1h_sweetview } from "@n1h/sweetview";
+// @ts-expect-error no public call in 1.0
+import type { StripMethods as NoPublic_StripMethods___n1h_sweetview_native } from "@n1h/sweetview-native";
+// @ts-expect-error no public call in 1.0
+import type { StripPoint as NoPublic_StripPoint___n1h_sweetview } from "@n1h/sweetview";
+// @ts-expect-error no public call in 1.0
+import type { StripPoint as NoPublic_StripPoint___n1h_sweetview_native } from "@n1h/sweetview-native";
+// @ts-expect-error no public call in 1.0
+import type { StripState as NoPublic_StripState___n1h_sweetview } from "@n1h/sweetview";
+// @ts-expect-error no public call in 1.0
+import type { StripState as NoPublic_StripState___n1h_sweetview_native } from "@n1h/sweetview-native";
+// @ts-expect-error no public call in 1.0
+import type { StripTab as NoPublic_StripTab___n1h_sweetview } from "@n1h/sweetview";
+// @ts-expect-error no public call in 1.0
+import type { StripTab as NoPublic_StripTab___n1h_sweetview_native } from "@n1h/sweetview-native";
+// @ts-expect-error no public call in 1.0
+import type { FrameCallbacks as NoPublic_FrameCallbacks___n1h_sweetview } from "@n1h/sweetview";
+// @ts-expect-error no public call in 1.0
+import type { FrameCallbacks as NoPublic_FrameCallbacks___n1h_sweetview_native } from "@n1h/sweetview-native";
+// @ts-expect-error no public call in 1.0
+import type { FrameWindow as NoPublic_FrameWindow___n1h_sweetview } from "@n1h/sweetview";
+// @ts-expect-error no public call in 1.0
+import type { FrameWindow as NoPublic_FrameWindow___n1h_sweetview_native } from "@n1h/sweetview-native";
+
+// The macOS types of the rows that say `no public call in 1.0` (D45): no public entry exports them.
+// @ts-expect-error no public call in 1.0
+import type { Id as NoPublic_Id___n1h_sweetview } from "@n1h/sweetview";
+// @ts-expect-error no public call in 1.0
+import type { Id as NoPublic_Id___n1h_sweetview_native } from "@n1h/sweetview-native";
+// @ts-expect-error no public call in 1.0
+import type { TargetMethod as NoPublic_TargetMethod___n1h_sweetview } from "@n1h/sweetview";
+// @ts-expect-error no public call in 1.0
+import type { TargetMethod as NoPublic_TargetMethod___n1h_sweetview_native } from "@n1h/sweetview-native";
+// @ts-expect-error no public call in 1.0
+import type { CocoaRect as NoPublic_CocoaRect___n1h_sweetview } from "@n1h/sweetview";
+// @ts-expect-error no public call in 1.0
+import type { CocoaRect as NoPublic_CocoaRect___n1h_sweetview_native } from "@n1h/sweetview-native";
+// @ts-expect-error no public call in 1.0
+import type { WindowTabs as NoPublic_WindowTabs___n1h_sweetview } from "@n1h/sweetview";
+// @ts-expect-error no public call in 1.0
+import type { WindowTabs as NoPublic_WindowTabs___n1h_sweetview_native } from "@n1h/sweetview-native";
+// @ts-expect-error no public call in 1.0
+import type { WindowTabsOptions as NoPublic_WindowTabsOptions___n1h_sweetview } from "@n1h/sweetview";
+// @ts-expect-error no public call in 1.0
+import type { WindowTabsOptions as NoPublic_WindowTabsOptions___n1h_sweetview_native } from "@n1h/sweetview-native";
+// @ts-expect-error no public call in 1.0
+import type { DarwinTabGroupController as NoPublic_DarwinTabGroupController___n1h_sweetview } from "@n1h/sweetview";
+// @ts-expect-error no public call in 1.0
+import type { DarwinTabGroupController as NoPublic_DarwinTabGroupController___n1h_sweetview_native } from "@n1h/sweetview-native";
+export type Window__sweetview_native_handle = Window__sweetview_native["handle"];
+export type Window__sweetview_native_startResize = Window__sweetview_native["startResize"];

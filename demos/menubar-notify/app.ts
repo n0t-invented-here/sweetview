@@ -11,7 +11,7 @@
 import { appendFileSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { createNotifier, createTray, Screen, setActivationPolicy, type MenuTemplate } from "@n1h/sweetview/native";
+import { closeToTrayOnLastWindow, createNotifier, createTray, Screen, setActivationPolicy, type MenuTemplate } from "@n1h/sweetview/native";
 import { demoWindowSize } from "../window-size";
 import { createApp, indexHtml, type App } from "@n1h/sweetview";
 import pageCss from "./build/frontend/main.css" with { type: "file" };
@@ -21,6 +21,9 @@ import { IDENTITY } from "./identity";
 import type { Events, LogEntry, Methods } from "./service";
 
 const APP_NAME = IDENTITY.appName;
+// Until the macOS goal of the Rust rewrite, macOS closes the window as it did at the tag
+// pre-rust-rewrite (D42): hidden by its own onClose. Elsewhere the 1.0 form below.
+const MAC_TAG_PATH = process.platform === "darwin";
 const DELAY_SECONDS = 5;
 const WINDOW_SIZE = { width: 480, height: 400 };
 
@@ -65,7 +68,7 @@ const app: App<Methods, Events> = await createApp<Methods, Events>({
     return { x: screen.x + Math.round((screen.width - WINDOW_SIZE.width) / 2), y: screen.y + Math.round((screen.height - WINDOW_SIZE.height) / 2), ...WINDOW_SIZE };
   }),
   icon: TRAY_ICON,
-  onClose: () => app.window.hide(),
+  ...(MAC_TAG_PATH ? { onClose: () => app.window.hide() } : {}),
   assets: {
     "index.html": indexHtml({
       title: APP_NAME,
@@ -86,6 +89,9 @@ const app: App<Methods, Events> = await createApp<Methods, Events>({
     },
   },
 });
+
+// A menu-bar application: the X hides the window, and Quit lives in the menu.
+if (!MAC_TAG_PATH) closeToTrayOnLastWindow(app.window);
 
 const tray = createTray({ tooltip: APP_NAME, icon: TRAY_ICON, menu: () => menu() });
 // The toasts carry the demo's name, not Sweetview's.

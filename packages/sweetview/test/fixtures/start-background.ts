@@ -5,7 +5,7 @@
 
 import { WebView } from "../../src/index";
 import { Window, pumpEvents } from "@n1h/sweetview-native";
-import { scheduleNativeTimeout } from "@n1h/sweetview-native/internal";
+import { scheduleNativeTimeout } from "../../../sweetview-native/src/internal";
 import { clientSize, clientToScreen, screenPixel } from "../../../sweetview-native/test/win32-os";
 
 const MARK = "#ff00ff";

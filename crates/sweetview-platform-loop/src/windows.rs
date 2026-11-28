@@ -1511,6 +1511,64 @@ mod tests {
     }
   }
 
+  /// What the process exit does to the tick thread (the third review's H2): Windows ends every
+  /// other thread before it runs the exiting thread's thread-local destructors, where the
+  /// runtime drops this window, so the tick thread will never answer and may hold the timers'
+  /// lock. Here it is suspended at a moment of its own, which leaves it the same: unable to
+  /// answer, perhaps with the lock. The drop must wait for nothing and join nothing (before, it
+  /// waited 500 ms and then joined). A watchdog resumes the thread after 2 s, so a drop that
+  /// waits or joins fails on its time instead of hanging.
+  #[test]
+  fn a_drop_waits_for_nothing_and_joins_nothing_when_the_tick_thread_can_no_longer_answer() {
+    use std::os::windows::io::AsRawHandle;
+    use windows::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows::Win32::System::Threading::{GetThreadId, OpenThread, ResumeThread, SuspendThread, THREAD_SUSPEND_RESUME};
+    let _serial = serial();
+    let window = SignalWindow::new(|_| {}).expect("signal window");
+    let _timer = window.set_timer(1).expect("timer");
+    // Let it tick for a while, so it is suspended wherever its work has taken it.
+    let deadline = Instant::now() + Duration::from_millis(50);
+    while Instant::now() < deadline {
+      dispatch_waiting();
+    }
+    let (returned, id) = {
+      let ticker = window.ticker.borrow();
+      let ticker = ticker.as_ref().expect("a tick thread");
+      // SAFETY: the join handle owns the thread's handle for this call; the OS reads the id from it.
+      (ticker.returned.clone(), unsafe { GetThreadId(HANDLE(ticker.thread.as_raw_handle())) })
+    };
+    // A handle of the test's own, since the drop closes the join handle's.
+    // SAFETY: a thread id and constant access rights; the handle it returns is closed below.
+    let thread = unsafe { OpenThread(THREAD_SUSPEND_RESUME, false, id) }.expect("the tick thread's handle");
+    // SAFETY: `thread` is the open handle above, with the right to suspend.
+    assert_ne!(unsafe { SuspendThread(thread) }, u32::MAX, "SuspendThread");
+    let resume = |thread: HANDLE| {
+      // SAFETY: as above, with the right to resume; resuming a thread that is not suspended does nothing.
+      let _count = unsafe { ResumeThread(thread) };
+    };
+    let thread_value = thread.0 as isize;
+    let (done, wait) = std::sync::mpsc::channel::<()>();
+    let watchdog = std::thread::spawn(move || {
+      if wait.recv_timeout(Duration::from_secs(2)).is_err() {
+        resume(HANDLE(thread_value as *mut core::ffi::c_void));
+      }
+    });
+    let started = Instant::now();
+    drop(window);
+    let took = started.elapsed();
+    let _ = done.send(());
+    watchdog.join().expect("watchdog");
+    resume(thread);
+    let deadline = Instant::now() + Duration::from_secs(1);
+    while !returned.load(Ordering::Acquire) && Instant::now() < deadline {
+      std::thread::sleep(Duration::from_millis(1));
+    }
+    // SAFETY: `thread` was opened above and is closed once, here.
+    let _closed = unsafe { CloseHandle(thread) };
+    assert!(took < Duration::from_millis(50), "the drop waited {took:?} for a tick thread that could not answer");
+    assert!(returned.load(Ordering::Acquire), "resumed, the thread left to end returned by itself");
+  }
+
   /// The stale owner's post target and a count of its closure's calls.
   type Planted = (Arc<PostTarget>, Rc<Cell<u32>>);
 

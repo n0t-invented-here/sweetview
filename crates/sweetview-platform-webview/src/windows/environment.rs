@@ -108,12 +108,11 @@ pub(super) fn shared() -> Result<ICoreWebView2Environment, ErrorCode> {
     Ok(environment)
 }
 
-/// Tests only: lets go of this thread's shared environment once its webviews
-/// are gone, so it is released while the thread still runs (a test's thread
-/// ends right after its body, and WebView2 faults with `0xc000041d` when an
-/// environment is released by the thread's own teardown).
-#[cfg(any(test, feature = "test-support"))]
-pub(super) fn release_shared() {
+/// Lets go of this thread's shared environment once its webviews are gone,
+/// so it is released while the thread (and its COM apartment) still runs: a
+/// test's thread ends right after its body, and WebView2 faults with
+/// `0xc000041d` when an environment is released by the thread's own teardown.
+pub fn release_shared() {
     drop(SHARED.with(|cell| cell.borrow_mut().take()));
 }
 

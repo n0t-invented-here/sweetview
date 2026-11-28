@@ -816,6 +816,15 @@ fn given_hint(hint: SizeHint) -> sweetview_platform_window::GivenWindowSizeHint 
   }
 }
 
+/// Lets go of this thread's WebView2 environment. Tests only, from
+/// `Runtime::shutdown_for_tests`, which leaves the thread's COM apartment: the
+/// environment is a COM object of that apartment and must be released while it
+/// is still entered, not by the thread-local's destructor when the thread ends.
+pub(crate) fn release_environment_for_tests() {
+  #[cfg(windows)]
+  sweetview_platform_webview::release_thread_environment();
+}
+
 #[cfg(windows)]
 fn window_value_of(window: &TaoWindow) -> isize {
   use tao::platform::windows::WindowExtWindows;

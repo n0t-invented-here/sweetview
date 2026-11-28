@@ -157,7 +157,7 @@ describe("refreshWindowsIcons", () => {
   test.if(process.platform === "win32")("tells the shell that icons changed and returns", async () => {
     const { refreshWindowsIcons } = await import("./build");
     // The binding the build package reaches is the native package's.
-    const { refreshShellIcons } = await import("@n1h/sweetview-native/shell-icons");
+    const { refreshShellIcons } = await import("../../sweetview-native/src/shell-icons");
     expect(typeof refreshShellIcons).toBe("function");
     expect(refreshWindowsIcons()).toBeUndefined();
   });

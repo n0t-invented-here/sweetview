@@ -3,7 +3,7 @@
 //! child of a given window: the tabs library's pages are such children), and
 //! what WebView2 then shows a person, read back from WebView2 itself
 //! (`sweetview_platform_webview::test_support`). The measure is the C++
-//! fork's webview (DECISIONS D45).
+//! fork's webview (DECISIONS D46).
 
 use std::cell::RefCell;
 use std::rc::Rc;
