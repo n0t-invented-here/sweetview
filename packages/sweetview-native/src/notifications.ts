@@ -3,6 +3,7 @@
 // Windows: WinRT toasts with per-notification Shell_NotifyIconW fallback.
 // macOS: UNUserNotificationCenter with eager delegate registration in constructor.
 
+import { releaseAtEnd } from "./lifetime";
 import { backend } from "./platform";
 import type { AppIdentity } from "@n1h/sweetview-settings";
 
@@ -45,19 +46,23 @@ const impl = backend<Backend>(
   () => require("./darwin/notifier"),
 );
 
+/** Shows notifications. Released when the application ends (see `run()`), or before that by `dispose()`. */
 export class Notifier {
   readonly #inner: NotifierBackend;
+  readonly #unregister: () => void;
 
   constructor(options: NotifierOptions = {}) {
     this.#inner = impl().createNotifier(options);
+    this.#unregister = releaseAtEnd("notifier", () => this.dispose());
   }
 
   notify(notification: NotificationOptions): boolean {
     return this.#inner.notify(notification);
   }
 
-  /** Safe to call twice. */
+  /** Releases the notifier now, before the application ends. Safe to call twice, and after the end. */
   dispose(): void {
+    this.#unregister();
     this.#inner.dispose();
   }
 }

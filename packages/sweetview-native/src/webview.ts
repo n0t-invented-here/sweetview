@@ -9,6 +9,7 @@
 
 import { binding } from "./binding";
 import type { Engine } from "../prebuilt/binding";
+import { releaseAtEnd } from "./lifetime";
 import type { WindowHandle } from "./types";
 
 /**
@@ -275,6 +276,8 @@ export class Webview {
   #handle: WebviewHandle | null = null;
   // True while this webview's run() is inside the loop; see destroy().
   #running = false;
+  // Takes back the destroy registered for the end of the application.
+  #unregister: (() => void) | undefined;
 
   /** The number that names this webview to the functions a `Worker` calls; `null` once destroyed. */
   get unsafeHandle(): WebviewHandle | null {
@@ -347,6 +350,8 @@ export class Webview {
     engines.set(this, this.#engine);
     if (size !== undefined && typeof debugOrHandle === "boolean") this.size = size;
     instances.add(this);
+    // Destroyed when the application ends, before the windows (see lifetime.ts).
+    this.#unregister = releaseAtEnd("webview", () => this.destroy());
   }
 
   // The engine, or the library's answer for a destroyed webview: WEBVIEW_ERROR_INVALID_STATE.
@@ -373,6 +378,7 @@ export class Webview {
     this.#handle = null;
     instances.delete(this);
     engines.delete(this);
+    this.#unregister?.();
     // Requests still open are released unanswered, open streams are aborted,
     // and every handler and binding goes with the webview.
     engine.destroy();

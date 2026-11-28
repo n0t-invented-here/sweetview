@@ -11,7 +11,7 @@ import { createFrameAssembler, type AnyEvent, type EventMap, type MethodMap, typ
 import { RequestResponseAssembler, requestError, runNativeRequest, type NativeRequestResponse, type StreamingResponseFrame } from "./request-response";
 import type { HttpRequestMessage, InitMessage, NativeRequest, NativeResponse, WorkerCrashFrame } from "./messages";
 import { RawWebview, SizeHint, Window, quitEventLoop, runEventLoop, signalReady, type Rect, type TabHandle, type WindowOptions } from "@n1h/sweetview-native";
-import { createChildWebview, discardQuit, emitWindowFileDrop, engineOf, getWindowMeta, holdWindowNativeDispose, isWindowDisposed, onWindowDispose, onWindowFileDropListenersChange, preserveWindowGeometry, scheduleNativeTimeout, windowFileDropCount } from "@n1h/sweetview-native/internal";
+import { createChildWebview, discardQuit, emitWindowFileDrop, engineOf, getWindowMeta, holdWindowNativeDispose, isWindowDisposed, onWindowDispose, onWindowFileDropListenersChange, preserveWindowGeometry, releaseAll, releaseAtEnd, scheduleNativeTimeout, windowFileDropCount } from "@n1h/sweetview-native/internal";
 import { Ring } from "./ring";
 import { webviewEngine, type WebviewHost, type WorkerWake } from "./webview-host";
 import { ASSET_ORIGIN } from "./webview-lib";
@@ -414,6 +414,8 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
       let workerFailure: string | undefined;
       const decoder = new TextDecoder();
       let down = false;
+      // Takes back the dispose registered for the end of the application.
+      let unregisterAtEnd: (() => void) | undefined;
       const isLive = () => !down && !isWindowDisposed(window) && raw.unsafeHandle !== null;
       const completeRequest = ({ id, status, headers, body }: NativeRequestResponse) => {
         pendingWorkerRequests.delete(BigInt(id));
@@ -500,6 +502,11 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
         workerDrain = undefined;
       };
       const worker = workerUrl === undefined ? undefined : new Worker(workerUrl.href);
+      // The worker never keeps the process alive by itself: the loop does while it runs, and once
+      // the application has quit the process ends with its script. The worker is terminated
+      // with the webview, by dispose() or at the end of the application.
+      // (Bun's Worker has `unref`, as Node's does; its DOM-shaped type does not declare it.)
+      (worker as (Worker & { unref(): void }) | undefined)?.unref();
       let requestHandlerSet = false;
       let isReady = false;
       let cancelWatchdog: (() => void) | undefined;
@@ -584,6 +591,7 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
       const shutdown = () => {
         if (down) return;
         down = true;
+        unregisterAtEnd?.();
         if (tabHooks) tabHooks.rebindFileDrop = undefined;
         unsubscribeWindowDispose();
         cancelStartup();
@@ -813,7 +821,7 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
         throw err;
       }
 
-      return new WebView<M, E>({
+      const webview = new WebView<M, E>({
         raw,
         window,
         emit,
@@ -843,6 +851,8 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
               releaseWindowDispose?.();
             }
             discardQuit();
+            // The application has quit: everything Sweetview made for it goes now.
+            releaseAll();
           }
         },
         quit,
@@ -856,6 +866,9 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
           discardQuit();
         },
       });
+      // Disposed when the application ends, before the windows: its worker stops and its webview goes.
+      unregisterAtEnd = releaseAtEnd("app", () => webview.dispose());
+      return webview;
     } catch (err) {
       if (raw.unsafeHandle !== null) {
         raw.destroy();
