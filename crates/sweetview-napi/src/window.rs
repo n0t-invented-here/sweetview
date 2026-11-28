@@ -143,6 +143,10 @@ impl Window {
     self.inner.is_maximized()
   }
 
+  pub fn is_minimized(&self) -> bool {
+    self.inner.is_minimized()
+  }
+
   pub fn set_topmost(&self, on: bool) {
     self.inner.set_topmost(on);
   }
@@ -182,6 +186,19 @@ impl Window {
 
   pub fn on_resize(&self, env: Env, function: Option<RectFn<'_>>) -> napi::Result<()> {
     self.inner.on_resize(rect_listener(env, function, "an onResize handler")?).or_throw()
+  }
+
+  pub fn on_maximize_change(&self, env: Env, function: Option<Function<'_, bool, ()>>) -> napi::Result<()> {
+    let listener: Option<rt::BoolListener> = match function {
+      Some(function) => {
+        let callback = JsCallback::new(env, &function, "an onMaximizeChange handler")?;
+        Some(Rc::new(move |maximized: bool| {
+          callback.call(maximized);
+        }))
+      }
+      None => None,
+    };
+    self.inner.on_maximize_change(listener).or_throw()
   }
 
   pub fn on_move(&self, env: Env, function: Option<RectFn<'_>>) -> napi::Result<()> {

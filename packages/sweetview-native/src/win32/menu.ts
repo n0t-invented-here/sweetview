@@ -7,7 +7,7 @@
 import type { IconBytes, MenuItemData } from "../../prebuilt/binding";
 import { binding } from "../binding";
 import type { Icon } from "../icon";
-import { isSeparator, isSubmenu, type MenuTemplate } from "../menu";
+import { isSeparator, isSubmenu, type MenuPopupOptions, type MenuTemplate } from "../menu";
 import type { Point, WindowHandle } from "../types";
 
 /** The part of an `Icon` the Windows binding reads: the .ico. */
@@ -82,12 +82,13 @@ function show(owner: bigint, template: MenuTemplate, at: Point | null, above: bo
 
 /**
  * Shows `template` at `at` (or the cursor when omitted), owned by `owner`, and
- * runs the chosen item's click handler. Blocks until the menu closes. Returns
- * whether an item was chosen.
+ * runs the chosen item's click handler. The menu's top-left corner is at the
+ * point, or its bottom-left corner with `above` (`TPM_BOTTOMALIGN`). Blocks
+ * until the menu closes. Returns whether an item was chosen.
  */
-export function popupMenu(owner: WindowHandle, template: MenuTemplate, at?: Point): boolean {
+export function popupMenu(owner: WindowHandle, template: MenuTemplate, at?: Point, options?: MenuPopupOptions): boolean {
   if (template.length === 0) return false;
-  return show(handleValue(owner), template, at ?? null, false);
+  return show(handleValue(owner), template, at ?? null, options?.above === true);
 }
 
 /**

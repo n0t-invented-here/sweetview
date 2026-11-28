@@ -274,6 +274,10 @@ function bindHostToWindow(window: Window, group: WindowTabs, initialBounds: Rect
       const cur = activeWin();
       return cur !== undefined ? pooled(() => Boolean(sendRetBool(cur, sel("isZoomed")))) : false;
     },
+    isMinimized() {
+      const cur = activeWin();
+      return cur !== undefined ? pooled(() => Boolean(sendRetBool(cur, sel("isMiniaturized")))) : false;
+    },
     dispose() {
       disposeMacHost(host);
     },

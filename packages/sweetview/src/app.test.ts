@@ -192,6 +192,85 @@ describe.if(liveDesktop)("desktop startup & deferred RPC", () => {
 });
 
 describe.if(onWindows)("WebView & createApp (win32)", () => {
+  test("a window's backgroundColor is what shows behind a page that paints nothing, and after its webview has gone; createApp takes contentSize and backgroundColor", async () => {
+    const { clientSize, clientToScreen, screenPixel } = await import("../../sweetview-native/test/win32-os");
+    const win = new Window({ title: "app.test background", backgroundColor: "#305070", topmost: true, noActivate: true, contentSize: { width: 360, height: 240 } });
+    const hwnd = BigInt(win.handle!);
+    const middle = () => {
+      const size = clientSize(hwnd);
+      return clientToScreen(hwnd, size.width >> 1, size.height >> 1);
+    };
+    const settle = (want: string) => {
+      let seen = "";
+      const deadline = performance.now() + 5000;
+      do {
+        pumpEvents();
+        const at = middle();
+        seen = screenPixel(at.x, at.y);
+        if (seen === want) break;
+        Bun.sleepSync(20);
+      } while (performance.now() < deadline);
+      return seen;
+    };
+    let loaded = false;
+    let view: WebView | undefined;
+    try {
+      // A page with no background of its own: what shows is the browser's background behind it.
+      view = await WebView.attach(win, {
+        assets: { "index.html": htmlBytes(`<style>html,body{background:transparent;margin:0}</style><script>window.__sweetview_rpc("loaded", null)</script>`) },
+        uiMethods: { loaded: () => { loaded = true; } },
+      });
+      win.show();
+      pumpUntil(() => loaded, 15_000);
+      expect(loaded).toBe(true);
+      expect(settle("#305070")).toBe("#305070");
+      view.dispose();
+      view = undefined;
+      expect(settle("#305070")).toBe("#305070");
+    } finally {
+      view?.dispose();
+      win.dispose();
+    }
+
+    const app = await createApp({ url: "about:blank", noActivate: true, contentSize: { width: 300, height: 200 }, backgroundColor: "#102030" });
+    try {
+      const scale = app.window.scale();
+      expect(clientSize(BigInt(app.window.handle!))).toEqual({ width: Math.round(300 * scale), height: Math.round(200 * scale) });
+    } finally {
+      app.dispose();
+    }
+
+    // A tab of a tabbed window takes the window's backgroundColor behind its page too.
+    const tabbed = new Window({ tabs: true, backgroundColor: "#507030", topmost: true, noActivate: true, contentSize: { width: 520, height: 340 } });
+    const frame = BigInt(tabbed.handle!);
+    let tabLoaded = false;
+    try {
+      await WebView.openTab(tabbed, {
+        title: "background",
+        assets: { "index.html": htmlBytes(`<style>html,body{background:transparent;margin:0}</style><script>window.__sweetview_rpc("loaded", null)</script>`) },
+        uiMethods: { loaded: () => { tabLoaded = true; } },
+      });
+      tabbed.show();
+      pumpUntil(() => tabLoaded, 15_000);
+      expect(tabLoaded).toBe(true);
+      const size = clientSize(frame);
+      const { STRIP_HEIGHT } = await import("@n1h/sweetview-native/win32/strip-shared");
+      const strip = Math.round(STRIP_HEIGHT * tabbed.scale());
+      let seen = "";
+      const deadline = performance.now() + 5000;
+      do {
+        pumpEvents();
+        const at = clientToScreen(frame, size.width >> 1, strip + ((size.height - strip) >> 1));
+        seen = screenPixel(at.x, at.y);
+        if (seen === "#507030") break;
+        Bun.sleepSync(20);
+      } while (performance.now() < deadline);
+      expect(seen).toBe("#507030");
+    } finally {
+      tabbed.dispose();
+    }
+  }, 90_000);
+
   test("close-to-tray can intercept the default close on a createApp window", async () => {
     const { WM_CLOSE, user32 } = await import("../../sweetview-native/test/win32-os");
     const app = await createApp({ url: "about:blank", noActivate: true });

@@ -107,6 +107,12 @@ impl Window {
     self.0.is_maximized()
   }
 
+  /// True while the OS has the window minimised (`IsIconic`).
+  #[napi(catch_unwind)]
+  pub fn is_minimized(&self) -> bool {
+    self.0.is_minimized()
+  }
+
   #[napi(catch_unwind)]
   pub fn set_topmost(&self, on: bool) {
     self.0.set_topmost(on)
@@ -151,6 +157,12 @@ impl Window {
   #[napi(catch_unwind)]
   pub fn on_resize(&self, env: Env, listener: Option<Function<'_, FnArgs<(i32, i32, i32, i32)>, ()>>) -> napi::Result<()> {
     self.0.on_resize(env, listener)
+  }
+
+  /// This wrapper's maximise listener: `true` when the window becomes maximised, `false` when it is restored; `null` removes it.
+  #[napi(catch_unwind)]
+  pub fn on_maximize_change(&self, env: Env, listener: Option<Function<'_, bool, ()>>) -> napi::Result<()> {
+    self.0.on_maximize_change(env, listener)
   }
 
   /// This wrapper's move listener, with the outer bounds; `null` removes it.

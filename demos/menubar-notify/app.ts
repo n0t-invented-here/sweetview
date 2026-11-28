@@ -11,7 +11,7 @@
 import { appendFileSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { createNotifier, createTray, Screen, setActivationPolicy, type MenuTemplate } from "@n1h/sweetview/native";
+import { createNotifier, createTray, setActivationPolicy, type MenuTemplate } from "@n1h/sweetview/native";
 import { createApp, indexHtml, type App } from "@n1h/sweetview";
 import pageCss from "./build/frontend/main.css" with { type: "file" };
 import pageJs from "./build/frontend/main.js" with { type: "file" };
@@ -55,17 +55,11 @@ const happened = (text: string) => {
 
 setActivationPolicy("accessory"); // macOS: no Dock tile; the status item and the window are the whole app
 
-const screen = Screen.primary().bounds;
-const bounds = {
-  x: screen.x + Math.round((screen.width - WINDOW_SIZE.width) / 2),
-  y: screen.y + Math.round((screen.height - WINDOW_SIZE.height) / 2),
-  ...WINDOW_SIZE,
-};
-
 const app: App<Methods, Events> = await createApp<Methods, Events>({
   identity: IDENTITY,
   title: APP_NAME,
-  bounds,
+  // The page's size in CSS pixels, centred on the primary screen at its scale.
+  contentSize: WINDOW_SIZE,
   icon: TRAY_ICON,
   onClose: () => app.window.hide(),
   assets: {
