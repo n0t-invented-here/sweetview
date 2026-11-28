@@ -467,8 +467,9 @@ fn a_maximise_listener_that_changes_the_state_every_time_does_not_hang() {
   });
 }
 /// Review round 2, M6: a frameless window whose minimum size is larger than the work area is
-/// maximised by `toggle_maximize` (at the work area's origin, at its minimum size), as at tag
-/// `pre-rust-rewrite`, and the next toggle gives back the bounds it had.
+/// maximised by `toggle_maximize`, as at tag `pre-rust-rewrite`, and the next toggle gives back the
+/// bounds it had. Not reproduced: the minimum applies to the OS's sizing, not to Sweetview's own
+/// `set_bounds`, so the maximised bounds are the work area.
 #[test]
 fn a_frameless_maximise_larger_than_the_work_area_is_still_a_maximise() {
   on_ui_thread(|_runtime| {
