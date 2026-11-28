@@ -81,6 +81,20 @@ this page: it imports each new form and checks that it is what the row says.
   `createApp({ …, onClose: () => app.window.hide() })` or
   `new Window({ …, onClose: () => win.hide() })`, and quit from your own menu
   (`app.quit()`, `quitEventLoop()`).
+- **The window's background.** On Windows a window with no
+  `backgroundColor`, neither `transparent` nor colour-keyed (`colorKey`),
+  paints the page colour of its `appearance` where nothing covers it
+  (`#15161a` dark, `#f9f9fb` light): before its page paints, and where its
+  webview was once it has gone. It painted white before. Pass
+  `backgroundColor` for another colour
+  ([`WindowOptions`](native/windows.md#windowoptions)).
+- **The window after `run()`.** As `run()` returns, the window is hidden
+  before its webview goes, and it stays a window: `isVisible()` is `false`
+  and it is not in `Window.visibleWindows()`, where it stayed on the screen
+  with its page gone before. The next webview attached to it that runs shows
+  it again, as does `show()`; a window the application hid itself stays
+  hidden ([`run()`](app.md#run-the-blocking-loop)). macOS keeps the behaviour
+  it had before 1.0 until the macOS goal of the rewrite.
 - **Showing and sizing a window.** `createApp` and `new Window` make the
   window hidden: call `app.window.show()` once it is wired, or pass
   `showOnReady: true`. (0.x's `createWebviewApp` without `window` showed the
