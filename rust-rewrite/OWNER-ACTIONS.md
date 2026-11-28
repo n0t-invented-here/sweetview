@@ -2,6 +2,8 @@
 
 What the Windows goal left for the owner, because requirement R7 reserves it or because only a person at the machine can do it. Nothing here blocks the checks of `bun rust-rewrite/verify.ts windows`.
 
+First on a Mac: paste `rust-rewrite/VERIFY-macos.md` into a fresh agent session in a checkout of this repository there; it verifies that macOS at this branch's head still does what it did at `pre-rust-rewrite`, and pushes its report on branch `rust-rewrite-macos-verify`.
+
 ## 1. Merge the branch
 
 `v1-rust-rewrite` is pushed with every commit of the Windows goal. Tag `pre-rust-rewrite` marks the tree before the first of them and was not moved. Merging the branch, into `main` or anywhere else, is the owner's decision; this branch was merged nowhere and no pull request was opened.
