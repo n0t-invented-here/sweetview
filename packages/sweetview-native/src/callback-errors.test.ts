@@ -76,7 +76,7 @@ describe("reportCallbackError", () => {
     ]);
   });
 
-  test("removing the last listener puts the lines back; a listener added twice is one listener", () => {
+  test("removing the last listener puts the lines back", () => {
     let calls = 0;
     const handler = () => void calls++;
     const offA = onCallbackError(handler);
@@ -90,7 +90,7 @@ describe("reportCallbackError", () => {
     } finally {
       log.restore();
     }
-    expect(calls).toBe(1);
+    expect(calls).toBe(2); // two registrations of the same function: each is called
     expect(log.calls.map((args) => [args[0], (args[1] as Error).message])).toEqual([["sweetview: UI dispatch failed:", "two"]]);
   });
 
@@ -174,5 +174,31 @@ describe("listeners changed during a dispatch (review N8)", () => {
     reportCallbackError("internal", new Error("first"), "sweetview: UI dispatch failed:");
     reportCallbackError("internal", new Error("second"), "sweetview: UI dispatch failed:");
     expect(heard).toEqual(["a: first", "b: first", "c: first", "c: second"]);
+  });
+});
+
+describe("an unsubscribe removes its own registration, once (review 2, item 7)", () => {
+  test("an old unsubscribe called again after the same function is registered anew leaves the new registration", () => {
+    const heard: string[] = [];
+    const fn = (error: Error) => void heard.push(error.message);
+    const offOld = onCallbackError(fn);
+    offOld();
+    const offNew = onCallbackError(fn);
+    offs.push(offNew);
+    offOld(); // the registration it made is gone already: this does nothing
+    reportCallbackError("internal", new Error("still heard"), "sweetview: UI dispatch failed:");
+    expect(heard).toEqual(["still heard"]);
+  });
+
+  test("the same function registered twice is two registrations: each unsubscribe removes one", () => {
+    const heard: string[] = [];
+    const fn = (error: Error) => void heard.push(error.message);
+    const offA = onCallbackError(fn);
+    const offB = onCallbackError(fn);
+    offs.push(offB);
+    reportCallbackError("internal", new Error("both"), "sweetview: UI dispatch failed:");
+    offA();
+    reportCallbackError("internal", new Error("one left"), "sweetview: UI dispatch failed:");
+    expect(heard).toEqual(["both", "both", "one left"]);
   });
 });

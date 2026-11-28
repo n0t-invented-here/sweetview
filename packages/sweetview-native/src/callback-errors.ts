@@ -64,7 +64,8 @@ export type CallbackErrorHandler = (error: Error, source: CallbackErrorSource) =
  */
 export type DefaultReport = string | ((error: unknown) => void) | null;
 
-const listeners = new Set<CallbackErrorHandler>();
+/** One entry per registration, so each unsubscribe removes its own, once, even for the same function. */
+const listeners = new Set<{ readonly handler: CallbackErrorHandler }>();
 
 /**
  * The key a listener of Sweetview's own carries to name its kind when it registers through a public
@@ -150,9 +151,9 @@ export function reportCallbackError(kind: CallbackKind, error: unknown, fallback
 let delivering = false;
 
 function deliver(wrapped: Error, source: CallbackErrorSource, kind: CallbackKind, error: unknown, fallback: DefaultReport): void {
-  for (const listener of [...listeners]) {
+  for (const { handler } of [...listeners]) {
     try {
-      listener(wrapped, source);
+      handler(wrapped, source);
     } catch (listenerError) {
       // A listener that throws never takes the application down: both errors are printed.
       try {
@@ -238,9 +239,10 @@ export function onCallbackError(handler: CallbackErrorHandler): () => void {
   // none. Decided before anything loads, so a Worker never becomes the binding's UI thread.
   if (!isMainThread) throw new Error("sweetview: this call must be made on the UI thread");
   setBindingSink(true);
-  listeners.add(handler);
+  const entry = { handler };
+  listeners.add(entry);
   return () => {
-    listeners.delete(handler);
+    if (!listeners.delete(entry)) return;
     if (listeners.size === 0) setBindingSink(false);
   };
 }
