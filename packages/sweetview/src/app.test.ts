@@ -6,7 +6,7 @@
 import { describe, expect, test } from "bun:test";
 import { createApp, WebView } from "./index";
 import { RawWebview, SizeHint, Window, closeToTrayOnLastWindow, onOpenUrl, pumpEvents } from "@n1h/sweetview-native";
-import { emitActivationUrl } from "@n1h/sweetview-native/internal";
+import { emitActivationUrl } from "../../sweetview-native/src/internal";
 import { _resetActivationForTest } from "../../sweetview-native/src/activation";
 
 const onWindows = process.platform === "win32";
@@ -283,7 +283,7 @@ describe.if(onWindows)("WebView & createApp (win32)", () => {
       pumpUntil(() => tabLoaded, 15_000);
       expect(tabLoaded).toBe(true);
       const size = clientSize(frame);
-      const { STRIP_HEIGHT } = await import("@n1h/sweetview-native/win32/strip-shared");
+      const { STRIP_HEIGHT } = await import("../../sweetview-native/src/win32/strip-shared");
       const strip = Math.round(STRIP_HEIGHT * tabbed.scale());
       let seen = "";
       const deadline = performance.now() + 5000;
@@ -304,8 +304,8 @@ describe.if(onWindows)("WebView & createApp (win32)", () => {
     // Review finding 5 and N4. Each page draws a green stripe at its top and leaves the rest
     // transparent: the stripe shows the webview is there, so the colour below it is the browser's.
     const { clientSize, clientToScreen, screenPixel } = await import("../../sweetview-native/test/win32-os");
-    const { getWindowMeta } = await import("@n1h/sweetview-native/internal");
-    const { STRIP_HEIGHT } = await import("@n1h/sweetview-native/win32/strip-shared");
+    const { getWindowMeta } = await import("../../sweetview-native/src/internal");
+    const { STRIP_HEIGHT } = await import("../../sweetview-native/src/win32/strip-shared");
     // Each page draws a stripe of its own colour (round 2's finding 9: the tab sampled is the one meant).
     const STRIPES = { wrapped: "#00ff00", home: "#0000ff", moved: "#ff00ff", second: "#00ffff" } as const;
     let MARK = "";
@@ -384,7 +384,7 @@ describe.if(onWindows)("WebView & createApp (win32)", () => {
     // Review N7 (the chrome only ever ran against stand-ins) and finding 1 (the system menu from
     // uiMethods, inside WebView2's message callback: the page's calls still arrive and are answered).
     const { openPopupMenu, pressKeys, VK } = await import("../../sweetview-native/test/win32-os");
-    const { scheduleNativeTimeout } = await import("@n1h/sweetview-native/internal");
+    const { scheduleNativeTimeout } = await import("../../sweetview-native/src/internal");
     const { windowChromeEvents, windowChromeMethods } = await import("./window-chrome");
     const win = new Window({ title: "app.test chrome", frame: false, transparent: true, noActivate: true, contentSize: { width: 420, height: 300 } });
     // The page's calls by number, and the answers it acknowledges having received.
@@ -457,8 +457,8 @@ describe.if(onWindows)("WebView & createApp (win32)", () => {
     // background (docs/native/windows.md says so). This runtime has ICoreWebView2ControllerOptions3,
     // which is when the colour is WebView2's from the moment it is made.
     const { clientSize, clientToScreen, screenPixel } = await import("../../sweetview-native/test/win32-os");
-    const { scheduleNativeTimeout } = await import("@n1h/sweetview-native/internal");
-    const { STRIP_HEIGHT } = await import("@n1h/sweetview-native/win32/strip-shared");
+    const { scheduleNativeTimeout } = await import("../../sweetview-native/src/internal");
+    const { STRIP_HEIGHT } = await import("../../sweetview-native/src/win32/strip-shared");
     const colour = "#304050";
     const STRIPE = "#ff00ff";
     const stripePage = (loaded: () => void) => ({
@@ -541,7 +541,7 @@ describe.if(onWindows)("WebView & createApp (win32)", () => {
     // webview's creation is given is read from the call itself: its own window, and no colour (the
     // binding reads a webview's start colour from the window it is made in, here one with none).
     // A pixel cannot show it: the second webview's page paints its own canvas there.
-    const { scheduleNativeTimeout } = await import("@n1h/sweetview-native/internal");
+    const { scheduleNativeTimeout } = await import("../../sweetview-native/src/internal");
     const { binding } = await import("../../sweetview-native/src/binding");
     const native = binding() as unknown as { Engine: Record<string, (...args: unknown[]) => unknown> };
     const RealEngine = native.Engine;
@@ -646,7 +646,7 @@ describe.if(onWindows)("WebView & createApp (win32)", () => {
     // into a new one) into a window with no backgroundColor, from a window with none, of a tab whose
     // application set its webview's background: the move carries the live webview with it.
     const { clientSize, clientToScreen, screenPixel } = await import("../../sweetview-native/test/win32-os");
-    const { STRIP_HEIGHT } = await import("@n1h/sweetview-native/win32/strip-shared");
+    const { STRIP_HEIGHT } = await import("../../sweetview-native/src/win32/strip-shared");
     const loaded = new Set<string>();
     // Each tab draws a stripe of its own colour, so the tab sampled is the one meant.
     const page = (name: string, stripe: string) => ({
@@ -765,7 +765,7 @@ describe.if(onWindows)("WebView & createApp (win32)", () => {
 
   test("WebView.attach preserves exact outer bounds and GWL_STYLE for framed, frameless-resizable, and Window.fromHandle windows", async () => {
     const { GWL_STYLE, user32 } = await import("../../sweetview-native/test/win32-os");
-    const { asHwnd } = await import("@n1h/sweetview-native/win32/window");
+    const { asHwnd } = await import("../../sweetview-native/src/win32/window");
 
     // 1. Owned framed window
     const target = { x: 120, y: 120, width: 640, height: 480 };
@@ -866,7 +866,7 @@ describe.if(onWindows)("WebView & createApp (win32)", () => {
 
   test("closing a tabbed Window via WM_CLOSE with no onClose disposes all child tab webviews", async () => {
     const { user32, WM_CLOSE } = await import("../../sweetview-native/test/win32-os");
-    const { asHwnd } = await import("@n1h/sweetview-native/win32/window");
+    const { asHwnd } = await import("../../sweetview-native/src/win32/window");
     const win = new Window({ title: "Close Tabs via WM_CLOSE", tabs: true, bounds: { x: 160, y: 160, width: 720, height: 500 } });
     const hwnd = asHwnd(win.handle);
     const t1 = await WebView.openTab(win, { title: "One", url: "about:blank" });

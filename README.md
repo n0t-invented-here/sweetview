@@ -255,7 +255,7 @@ false, and that is the only place it knows the difference.
 
 ```ts
 import { createBridge } from "@n1h/sweetview/ipc";
-import { webviewTransport } from "@n1h/sweetview/page";
+import { signalReady, webviewTransport } from "@n1h/sweetview/page";
 import type { Events, Methods } from "./protocol";
 
 const bridge = createBridge<Methods, Events>(webviewTransport());
@@ -265,6 +265,7 @@ bridge.on("tick", ({ count }) => {
 });
 
 document.getElementById("root")!.textContent = await bridge.rpc("greet", { name: "world" });
+signalReady(); // the page has rendered: the window appears now
 ```
 
 ### 5. Create the window in `app.ts`
@@ -284,8 +285,9 @@ you made and call `process.exit()` after `run()`, as before 1.0.
   `Bun.main`, which is this file. The same path works under `bun run` and
   inside an executable from `bun build --compile`.
 - `title` defaults to the page's `<title>`; `assets` adds files the page
-  fetches, such as models or images. Windows are created hidden so you can
-  wire trays, menus, or bounds before calling `app.window.show()`. All options:
+  fetches, such as models or images. Windows are created hidden; with
+  `showOnReady: true` the window appears when the page calls `signalReady()`
+  (or the ready watchdog fires), so it never shows a blank frame. All options:
   [`createApp`](docs/app.md#createapp).
 
 ```ts
@@ -296,9 +298,9 @@ import type { Events, Methods } from "./protocol";
 const app = await createApp<Methods, Events>({
   page: index,
   worker: "./worker.ts",
+  showOnReady: true,
 });
 
-app.window.show();
 app.run();
 ```
 
