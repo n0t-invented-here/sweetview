@@ -28,7 +28,7 @@ export type Sample = {
   visible: boolean;
   cloaked: boolean;
   iconic: boolean;
-  /** `WRY_WEBVIEW` windows anywhere under it: the webviews mounted in it. */
+  /** Webview containers anywhere under it (`WRY_WEBVIEW`, or `webview_widget`): the webviews mounted in it. */
   webviews: number;
   width: number;
   height: number;
@@ -63,6 +63,12 @@ export type Sample = {
    * (`ChildWindowFromPointEx`), each `class pid #handle left,top widthxheight`, outermost first.
    */
   owners?: { page: string[]; top: string[] };
+  /**
+   * Every window under this one when the read was made, only with `SWEETVIEW_WATCH_OWNERS=1`:
+   * each `class #handle visible|hidden`, in `EnumChildWindows` order. When each webview's windows
+   * appear, and when each is shown, is read from it.
+   */
+  tree?: string[];
   /** A read that cannot be judged: a call of the capture failed (`GetClientRect`, `ClientToScreen`, `BitBlt`, `GetDIBits`); what it failed at. */
   failed?: string;
   /** The display's refresh rate when the read was made, in hertz. */
@@ -238,9 +244,12 @@ if (import.meta.main) {
     { args: [u64, i64], returns: i32 },
   );
   let webviewCount = 0;
+  let tree: string[] | undefined;
   const enumChild = new JSCallback(
     (hwnd: bigint) => {
-      if (read(user32.GetClassNameW, hwnd) === "WRY_WEBVIEW") webviewCount++;
+      const name = read(user32.GetClassNameW, hwnd);
+      if (name === "WRY_WEBVIEW" || name === "webview_widget") webviewCount++;
+      tree?.push(`${name} #${hwnd.toString(16)} ${user32.IsWindowVisible(hwnd) !== 0 ? "visible" : "hidden"}`);
       return 1;
     },
     { args: [u64, i64], returns: i32 },
@@ -394,8 +403,10 @@ if (import.meta.main) {
         dwmapi.DwmGetWindowAttribute(hwnd, 14, ptr(cloakedBuf), 4); // DWMWA_CLOAKED
         sample.cloaked = cloakedBuf[0] !== 0;
         webviewCount = 0;
+        tree = process.env.SWEETVIEW_WATCH_OWNERS === "1" ? [] : undefined;
         user32.EnumChildWindows(hwnd, enumChild.ptr, 0n);
         sample.webviews = webviewCount;
+        if (tree) sample.tree = tree;
         if (sample.visible && !sample.cloaked && !sample.iconic) {
           // Whose pixels these are is asked before the screen is read and again after it.
           const origin = new Int32Array(2);
