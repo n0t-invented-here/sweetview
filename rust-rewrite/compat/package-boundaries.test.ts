@@ -11,7 +11,10 @@
 // entry that is gone.
 //
 // `./darwin/*` and the macOS files stay as they are until the macOS goal (D42): they are listed
-// with the entries and their importers, and the page checks do not cover them.
+// with the entries and their importers. The page checks leave the macOS entries out on purpose:
+// macOS runs the path of tag `pre-rust-rewrite` until its goal, which rewrites the guide's Darwin
+// rows. Those rows are pinned by name and by a digest of each (darwin-rows.ts), so a new or changed
+// Darwin row is seen.
 //
 // `scan(root)` reads a tree; the tests run it on this repository, and on small trees of their own
 // that each hold one way an internal could leak, to prove the scan sees it.
@@ -20,6 +23,8 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
+import { createHash } from "node:crypto";
+import { DARWIN_ROWS } from "./darwin-rows";
 import { PUBLIC } from "./public-entries";
 
 const root = join(import.meta.dir, "..", "..");
@@ -155,6 +160,7 @@ type Scan = {
   pendingImports: Record<string, string[]>;
   reexports: string[];
   scriptReach: Record<string, string[]>;
+  darwinRows: Record<string, string>;
   guideRows: string[];
   guideProse: string[];
   pageLines: string[];
@@ -170,7 +176,7 @@ function scan(base: string): Scan {
       return { name: pkg.name, dir, exports: new Map(Object.entries(pkg.exports).map(([k, t]) => [k, typeof target(t) === "string" ? resolve(dir, target(t) as string) : undefined])) };
     });
   const byName = new Map(packages.map((p) => [p.name, p]));
-  const out: Scan = { unlistedEntries: [], staleEntries: [], unexported: [], reached: [], pendingImports: {}, reexports: [], scriptReach: {}, guideRows: [], guideProse: [], pageLines: [] };
+  const out: Scan = { unlistedEntries: [], staleEntries: [], unexported: [], reached: [], pendingImports: {}, reexports: [], scriptReach: {}, darwinRows: {}, guideRows: [], guideProse: [], pageLines: [] };
 
   // Entries: the documented ones and the pending internal ones, nothing else.
   for (const p of packages) {
@@ -256,6 +262,11 @@ function scan(base: string): Scan {
         const cells = cellsOf(line.trim());
         if (cells.every((c) => /^:?-+:?$/.test(c)) || cells[0] === "Old") continue;
         const rest = cells.slice(1).join(" | ");
+        // A macOS row (D42): pinned, not checked.
+        if (section.includes("/darwin/") || rest.includes("/darwin/")) {
+          out.darwinRows[`${section} | ${cells[0]}`] = createHash("sha256").update(line).digest("hex").slice(0, 12);
+          continue;
+        }
         const named = internalMentions(rest, ctx);
         if (named.length > 0 || (/^`@n1h\/sweetview-native\/(internal|win32\/)/.test(section) && /\bof this subpath\b/.test(rest))) out.guideRows.push(`${section} | ${cells[0]}`);
         continue;
@@ -396,6 +407,31 @@ describe("internals are not public API (D44)", () => {
           // A demo script reaching into a package's source, not on the list.
           scripts: { "demos/d/scripts/drive.ts": ["../../../packages/sweetview-native/src/internal"] },
         });
+      },
+    );
+  });
+
+  test("the guide's macOS rows, left out of these checks until the macOS goal (D42), are exactly the pinned ones, unchanged", () => {
+    expect(here.darwinRows).toEqual(DARWIN_ROWS);
+  });
+
+  test("counter-example: a new macOS row and a changed one are seen", () => {
+    const first = Object.keys(DARWIN_ROWS)[0]!;
+    const [section, old] = first.split(" | ") as [string, string];
+    const added = `${section} | \`addedRow\``;
+    withTree(
+      {
+        "docs/upgrading.md": [
+          `### ${section}`,
+          "| Old | Write now | Change |",
+          "|---|---|---|",
+          `| ${old} | \`import { x } from "@n1h/sweetview-native/darwin/objc"\` | changed |`,
+          '| `addedRow` | `import { addedRow } from "@n1h/sweetview-native/darwin/objc"` | new |',
+        ].join("\n"),
+      },
+      (dir) => {
+        const found = scan(dir).darwinRows;
+        expect({ added: added in found && !(added in DARWIN_ROWS), changed: found[first] !== undefined && found[first] !== DARWIN_ROWS[first] }).toEqual({ added: true, changed: true });
       },
     );
   });
