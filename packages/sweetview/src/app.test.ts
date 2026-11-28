@@ -380,6 +380,34 @@ describe.if(onWindows)("WebView & createApp (win32)", () => {
     }
   }, 120_000);
 
+  test("windowChromeEvents for a tabbed application: given the tab's WebView, the tab's page is told each maximise change of its window", async () => {
+    // Round 4, P5: docs/window-chrome.md names the tab's WebView as the target for a tabbed App,
+    // whose own emit sends nothing (it logs that it is unavailable).
+    const { windowChromeEvents } = await import("./window-chrome");
+    const app = await createApp({ tabs: true, title: "app.test tabbed chrome", noActivate: true, contentSize: { width: 520, height: 340 } });
+    const told: unknown[] = [];
+    try {
+      const tab = await app.openTab({
+        title: "chrome",
+        uiMethods: { told: (payload: unknown) => void told.push(payload) } as never,
+        assets: {
+          "index.html": htmlBytes(`<script>
+            window.__sweetview_emit = (name, payload) => { if (name === "window.maximized") window.__sweetview_rpc("told", payload); };
+            window.__sweetview_rpc("told", "loaded");
+          </script>`),
+        },
+      });
+      app.window.show();
+      pumpUntil(() => told.includes("loaded"), 15_000);
+      windowChromeEvents(app.window, tab.webview as unknown as { emit(name: "window.maximized", payload: { maximized: boolean }): void });
+      app.window.toggleMaximize();
+      pumpUntil(() => told.length > 1, 10_000);
+      expect(told).toEqual(["loaded", { maximized: true }]);
+    } finally {
+      app.dispose();
+    }
+  }, 60_000);
+
   test("the documented window chrome on a real frameless window and page: window.maximize maximises, windowChromeEvents tells the page, and while window.systemMenu's menu is open a call the page starts is answered and the page acknowledges the answer", async () => {
     // Review N7 (the chrome only ever ran against stand-ins) and finding 1 (the system menu from
     // uiMethods, inside WebView2's message callback: the page's calls still arrive and are answered).
