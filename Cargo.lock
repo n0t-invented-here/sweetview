@@ -2174,6 +2174,7 @@ dependencies = [
  "raw-window-handle",
  "sweetview-platform-loop",
  "sweetview-shell-data",
+ "sweetview-window-logic",
  "windows",
  "windows-registry",
 ]

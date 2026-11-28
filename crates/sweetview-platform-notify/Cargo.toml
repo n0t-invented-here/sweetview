@@ -10,6 +10,7 @@ publish.workspace = true
 
 [dependencies]
 sweetview-shell-data.workspace = true
+sweetview-window-logic.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 sweetview-platform-loop.workspace = true
