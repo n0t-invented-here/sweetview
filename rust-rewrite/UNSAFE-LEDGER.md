@@ -1,6 +1,6 @@
 # Unsafe ledger
 
-Rewritten by `bun rust-rewrite/verify.ts <platform> --ledger`. 244 uses in 21 files.
+Rewritten by `bun rust-rewrite/verify.ts <platform> --ledger`. 265 uses in 23 files.
 
 | File | Uses of `unsafe` |
 |---|---|
@@ -16,7 +16,9 @@ Rewritten by `bun rust-rewrite/verify.ts <platform> --ledger`. 244 uses in 21 fi
 | `crates/sweetview-platform-webview/src/windows/environment.rs` | 1 |
 | `crates/sweetview-platform-webview/src/windows/handlers.rs` | 16 |
 | `crates/sweetview-platform-webview/src/windows/istream.rs` | 11 |
-| `crates/sweetview-platform-webview/src/windows/mod.rs` | 40 |
+| `crates/sweetview-platform-webview/src/windows/mod.rs` | 43 |
+| `crates/sweetview-platform-webview/tests/real_input.rs` | 1 |
+| `crates/sweetview-platform-webview/tests/settings.rs` | 17 |
 | `crates/sweetview-platform-window/src/metrics.rs` | 1 |
 | `crates/sweetview-platform-window/src/popup.rs` | 9 |
 | `crates/sweetview-platform-window/src/size_hint.rs` | 1 |
@@ -105,7 +107,9 @@ The registry is `windows-registry` 0.6.1, and the message-only windows are `Mess
 
 All of it reaches WebView2 through the objects `wry` 0.58.2 hands out (`WebViewExtWindows::controller`, `webview`, `environment`; https://docs.rs/wry/0.58.2/wry/trait.WebViewExtWindows.html) and the typed interfaces of `webview2-com` 0.39.1 (https://docs.rs/webview2-com/0.39.1/webview2_com/), policy level 3. Each COM object is held by a COM reference (`Inner`'s fields, a frame's `cast`, the event args WebView2 holds for the handler's call); on a closed webview a call returns an error. `wry` 0.58.2 was read for each behaviour (`wry-0.58.2/src/lib.rs`, `src/webview2/mod.rs`): what it offers is used (`WebView::focus` for focus, `webview_version` for the runtime check); the rest is in "What `wry` lacks" in `SWEETVIEW-RESTART-PROPOSAL.md`.
 
-### `crates/sweetview-platform-webview/src/windows/mod.rs` (40)
+### `crates/sweetview-platform-webview/src/windows/mod.rs` (43)
+
+- **Page behaviour** (3: `Settings`, `SetIsStatusBarEnabled`, `SetIsNonClientRegionSupportEnabled`; DECISIONS D44). `wry` 0.58.2 sets the status bar off and CSS `app-region` support on in `set_webview_settings` (`wry-0.58.2/src/webview2/mod.rs:682, 713`) with no builder option for either (https://docs.rs/wry/0.58.2/wry/struct.WebViewBuilder.html); zoom, pinch zoom and swipe navigation, which it also turns off, have options (`with_hotkeys_zoom`, `with_back_forward_navigation_gestures`) and go through those, at level 1. Both calls are on the settings object of the ICoreWebView2 `Inner` holds, once, in `attach`; `ICoreWebView2Settings9` is reached by `cast` and skipped on a runtime without it.
 
 - **Keys held** (1: `GetKeyState`). Looked for: `tao` 0.38.0 `ModifiersState` (https://docs.rs/tao/0.38.0/tao/keyboard/struct.ModifiersState.html) is delivered only to `tao`'s own event handler, which a WebView2 accelerator handler is not; `windows` 0.62.2 declares `GetKeyState` `unsafe` (`windows-0.62.2/src/Windows/Win32/UI/Input/KeyboardAndMouse/mod.rs`) and no other crate in the policy reads a key's state. Takes an integer and reads no memory of ours.
 - **Controller and webview settings** (6: `Stop`, `SetAllowExternalDrop`, `AllowExternalDrop`, `NotifyParentWindowPositionChanged`, `CallDevToolsProtocolMethod`, `Close`). Looked for in `wry` 0.58.2 `WebView` (https://docs.rs/wry/0.58.2/wry/struct.WebView.html) and `WebViewExtWindows` (https://docs.rs/wry/0.58.2/wry/trait.WebViewExtWindows.html): no stop, external-drop, devtools-protocol or parent-moved call; its own drop closes the controller after this crate's teardown needs it closed (`requests.md` order). The background colour goes through `wry`'s safe `WebView::set_background_color` (https://docs.rs/wry/0.58.2/wry/struct.WebView.html#method.set_background_color), with an alpha other than 0 and 255 refused by a comparison before the call.
@@ -127,6 +131,11 @@ All of it reaches WebView2 through the objects `wry` 0.58.2 hands out (`WebViewE
 - **The streamed body's `IStream`** (4: the two `pcbread` writes and the slice over `pv` in `Read`, the `STATSTG` write in `Stat`). Looked for: `wry` 0.58.2 `RequestAsyncResponder::respond` (https://docs.rs/wry/0.58.2/wry/struct.RequestAsyncResponder.html) takes a whole body, so it has no streamed body; the `windows` crate's `#[implement]` hands the implementation COM's raw out-pointers. The `ISequentialStream`/`IStream` contracts: each pointer is checked non-null and valid for the call, and the slice does not outlive it.
 - **Reading a stream** (1: `Read` in `read_into`), used for the request body. The buffer is lent for the call and its length bounds the read.
 - Tests (6): `Seek`, `Write`, `Clone`, `Stat` and two `Read`s with a null buffer, called through the COM interface so the vtable is what is tested.
+
+### `crates/sweetview-platform-webview/tests/settings.rs` (17) and `tests/real_input.rs` (1)
+
+- **Reading the page behaviour back** (17: `Settings` and the sixteen boolean getters of `ICoreWebView2Settings` to `ICoreWebView2Settings9`). The test reads WebView2's own settings objects, not this crate's code, so what it asserts is what WebView2 has; `wry` has no getter for any of them. Each getter fills a local `BOOL` owned by the helper for the call.
+- **The zoom factor** (1: `ICoreWebView2Controller::ZoomFactor`), read before and after real Ctrl+wheel and Ctrl+key input. `wry`'s `WebView::zoom` (https://docs.rs/wry/0.58.2/wry/struct.WebView.html#method.zoom) sets it and has no getter.
 
 ### `crates/sweetview-platform-webview/src/windows/environment.rs` (1)
 
