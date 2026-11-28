@@ -686,6 +686,7 @@ fn a_frameless_maximise_larger_than_the_work_area_is_still_a_maximise() {
     let start = window.bounds(); // the minimum applies from the start
     window.toggle_maximize().expect("maximise");
     assert!(window.is_maximized(), "maximised: {:?}", window.bounds());
+    assert_eq!(window.bounds(), area, "maximised to the work area");
     window.toggle_maximize().expect("restore");
     assert_eq!((window.is_maximized(), window.bounds()), (false, start));
     window.dispose();
