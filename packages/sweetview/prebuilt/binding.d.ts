@@ -337,11 +337,14 @@ export declare class Window {
   hide(): void
   /**
    * Shows a hidden window off the screen until `uncloak`: the webviews in it draw first (D49).
-   * True when it is cloaked; false when it was shown at once or was already visible.
+   * The number of this cloaked show, which `uncloak` takes; 0 when it was shown at once or was
+   * already visible. Shown without the activation, which `uncloak` gives it.
    */
-  showCloaked(): boolean
-  /** Puts a window `showCloaked` cloaked on the screen. */
-  uncloak(): void
+  showCloaked(): number
+  /** Puts a window cloaked by the show numbered `generation` on the screen; nothing for another. */
+  uncloak(generation: number): void
+  /** Whether a reveal keeps the window off the screen now (DWM's cloak, D49). */
+  isCloaked(): boolean
   /** The outer frame. */
   bounds(): Rect
   setBounds(rect: Rect): void
