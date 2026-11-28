@@ -88,7 +88,10 @@ module runs, it throws `sweetview: this call must be made on the UI thread`.
 - With a listener set, the listener is called in place of that line, and
   before the callback's fallback, which still applies: a hook lets the event
   through, a menu function that throws opens no menu, a close request is
-  still taken.
+  still taken. The `worker` kind is the exception: an `onEvent` listener's
+  exception is reported after the delivery it was thrown in has finished
+  (the other listeners and the page get the event, the frames still queued
+  are delivered), several thrown in one delivery as one `AggregateError`.
 - A listener that throws never takes the application down: Sweetview
   catches it, prints its own line for the original error and
   `sweetview: an onCallbackError handler threw:` for the listener's, and
@@ -119,7 +122,7 @@ exception leaves the bindings package as it always did.
 | `webview.bindRaw` | a function bound with `bindRaw` (caught by the binding itself; `name` is the name it was bound under) | `sweetview: a binding threw:` | the page's call is left unanswered |
 | `webview.setRequestHandler` | the raw webview class's request handler, which throws or whose promise rejects | nothing; for a returned value whose check for a Promise throws (its `then`, an `instanceof` trap), `sweetview: a request handler threw:`, as before | the request is answered `500` |
 | `webview.setFileDropHandler` | the raw webview class's file drop handler | nothing | none |
-| `worker` | an `onEvent` listener of a `createApp` application or a `WebView`, called as the worker's events are delivered on the UI thread | `sweetview: UI dispatch failed:` (several in one delivery: one `AggregateError`) | the other listeners and the page still get the event, and the delivery goes on. An event delivered while Sweetview cleans up after the worker failed is not reported: that cleanup prints `sweetview: draining the failed worker's replies threw:` |
+| `worker` | an `onEvent` listener of a `createApp` application or a `WebView`, called as the worker's events are delivered on the UI thread | `sweetview: UI dispatch failed:` (several in one delivery: one `AggregateError`) | the other listeners and the page still get the event, and the delivery goes on: the report comes after the delivery has finished, not before it. An event delivered while Sweetview cleans up after the worker failed is not reported: that cleanup prints `sweetview: draining the failed worker's replies threw:` |
 | `internal` | the native module's own code at a callback boundary (the tab frame's callbacks, a window's dispose hooks, its own native timeouts, intervals and deferred jobs, which no public call makes); a fault here is a defect of Sweetview's | its own line | that boundary's |
 
 What a listener is not told about, each handled as with no listener

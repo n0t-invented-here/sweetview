@@ -186,7 +186,10 @@ after them give every export its row.
   native loop (`run()` or `pumpEvents()`), which passes it on unless
   something there catches it. On Windows a hook handler's exception is now
   caught, logged and reported like the others, and the event is not
-  swallowed.
+  swallowed. One more changed: a function bound with the raw webview
+  class's `bind` that throws a value whose reading throws (a `Proxy` whose
+  `getPrototypeOf` trap throws) left the page's call pending for ever in
+  0.x; the call is now rejected.
 - **Window styles.** A frameless `Window` (`frame: false`) no longer has
   `WS_POPUP` in `GWL_STYLE`: it is an undecorated top-level window. An
   application that reads the style itself sees the difference;
