@@ -126,6 +126,11 @@ mod tests {
     let (width, height) = outer_size_for_content(Dips::new(3_000_000_000.0, 300.0), 1.0, EDGES);
     assert_eq!((width, height), (i32::MAX, 339));
     assert_eq!(centred(width, height, Rect::new(0, 0, 1920, 1040)), Rect::new(0, 350, 1920, 339));
+    // Review N3: JavaScript's largest safe integer and 1e10, on both sides, at 150 %.
+    for big in [9_007_199_254_740_991.0, 1e10] {
+      assert_eq!(outer_size_for_content(Dips::new(big, big), 1.5, (24, 58)), (i32::MAX, i32::MAX));
+      assert_eq!(centred(i32::MAX, i32::MAX, Rect::new(0, 0, 1920, 1040)), Rect::new(0, 0, 1920, 1040));
+    }
   }
 
   #[test]
