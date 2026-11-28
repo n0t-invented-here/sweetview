@@ -5,7 +5,9 @@
 //! Adding a user script does not wait here (as the C++ fork's
 //! `add_user_script_impl` did): WebView2 reports that completion only once a
 //! navigation in flight has its response, and the response may have to come
-//! from this thread's own JavaScript, which cannot run inside this pump.
+//! from this thread's own JavaScript, which cannot run inside this pump. The
+//! one script a new webview adds for itself, before any navigation, is waited
+//! for, as the fork's `embed` waits.
 
 use sweetview_platform_loop::{wait_message, Waited};
 
