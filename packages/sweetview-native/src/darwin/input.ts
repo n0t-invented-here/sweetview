@@ -7,7 +7,7 @@
 // `try`/`finally`). Until the macOS goal that stays so (D42): with no `onCallbackError`
 // listener set, the handler's exception is rethrown unchanged and leaves the library as it
 // did at the tag. Only while a listener is set is it reported there instead, and the event
-// is not swallowed (D43).
+// is not swallowed (D44).
 
 import { hasCallbackErrorListener, reportCallbackError, type CallbackKind } from "../callback-errors";
 import type { KeyHandler, KeyboardHook, MouseHandler, MouseHook } from "../input-hooks";

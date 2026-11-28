@@ -1172,6 +1172,8 @@ describe.if(onWindows)("onCallbackError", () => {
         "window.onMove: onMove boom",
         "window.onResize: onResize boom",
         "window.onClose: onClose boom",
+        "window.onMaximizeChange: onMaximizeChange boom",
+        "windowChromeEvents: window chrome emit boom",
         "window.onFileDrop: onFileDrop boom",
         "window.onNewTab: onNewTab boom",
         "window.onTabSelect: onTabSelect boom",

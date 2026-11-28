@@ -16,6 +16,14 @@ import type { Point, Rect, WindowHandle } from "./types";
 
 export type { Point, Rect, WindowHandle } from "./types";
 
+/** `#rrggbb` (the `#` optional, either case) as `#rrggbb`; throws for anything else. */
+function backgroundColorOf(text: string | undefined): string | undefined {
+  if (text === undefined) return undefined;
+  const hex = text.startsWith("#") ? text.slice(1) : text;
+  if (!/^[0-9a-fA-F]{6}$/.test(hex)) throw new Error(`sweetview: background color must be #rrggbb, got ${text}`);
+  return `#${hex.toLowerCase()}`;
+}
+
 /** A framed window's title bar and frame: light, dark, or following the system. */
 export type Appearance = "system" | "light" | "dark";
 
@@ -42,8 +50,20 @@ export type WindowOptions = {
   /** Supplies the default title and window icon. */
   identity?: AppIdentity;
   title?: string;
-  /** Outer frame bounds. Default: 320x240 centered on the primary work area. */
+  /**
+   * Outer frame bounds, in window units (physical pixels on Windows, points on
+   * macOS). Default: 320x240 centered on the primary work area. Not with
+   * `contentSize`.
+   */
   bounds?: Rect;
+  /**
+   * The page area's size in device-independent pixels (CSS pixels of the page),
+   * the window centered on the primary screen's work area: the frame is sized
+   * around it at that screen's scale, so the page is the same size to the eye
+   * on a screen of any scale. A tabbed window's page area is below its strip.
+   * Not with `bounds`.
+   */
+  contentSize?: { width: number; height: number };
   /** Minimum outer size (optional). */
   minWidth?: number;
   minHeight?: number;
@@ -75,6 +95,16 @@ export type WindowOptions = {
    *   `transparent: true` with a transparent page background instead.
    */
   colorKey?: string;
+  /**
+   * What the window shows where nothing has painted (`"#rrggbb"`): before its
+   * page paints, behind a loading page and after its webview has gone; the
+   * attached webview's own background before its page paints is the same
+   * color. Default: what the system or `appearance` gives. Not applied to a
+   * `transparent` window, which shows what is behind it.
+   * - Windows: the window's background and WebView2's default background.
+   * - macOS: accepted and ignored until the macOS goal of the Rust rewrite.
+   */
+  backgroundColor?: string;
   /** Whole-window opacity, 0..1. */
   opacity?: number;
   /** Keep above normal windows. Default: false. */
@@ -101,6 +131,8 @@ export type WindowOptions = {
   noActivate?: boolean;
   /** Declarative callbacks (used by createWindow; also accepted by new Window). */
   onResize?: (bounds: Rect) => void;
+  /** Called with `true` when the window becomes maximized and `false` when it is restored, by any means. */
+  onMaximizeChange?: (maximized: boolean) => void;
   onMove?: (bounds: Rect) => void;
   onClose?: () => void;
   onFileDrop?: (paths: string[]) => void;
@@ -115,6 +147,8 @@ export interface WindowMeta {
   /** Current topmost state (initial `WindowOptions.topmost`, updated by `Window.setTopmost`). */
   topmost?: boolean;
   readonly opacity?: number;
+  /** `WindowOptions.backgroundColor` as `#rrggbb`; absent when not given or the window is transparent. */
+  readonly backgroundColor?: string;
   readonly hideFromTaskbar?: boolean;
   readonly noActivate?: boolean;
   readonly frame: boolean;
@@ -150,12 +184,15 @@ export interface WindowBackend {
   minimize(): void;
   toggleMaximize(): void;
   isMaximized(): boolean;
+  isMinimized(): boolean;
+  showSystemMenu(): void;
   setTopmost(on: boolean): void;
   startDrag(): void;
   startResize(edge: ResizeEdge): void;
   setClickThrough(on: boolean): void;
   setHitRegions(polygons: HitPolygon[] | null, refine?: HitRefiner): void;
   onResize(handler: (bounds: Rect) => void): () => void;
+  onMaximizeChange(handler: (maximized: boolean) => void): () => void;
   onMove(handler: (bounds: Rect) => void): () => void;
   onClose(handler: () => void): () => void;
   onFileDrop(handler: (paths: string[]) => void): () => void;
@@ -372,10 +409,13 @@ export class Window {
       const transparent = options.transparent ?? false;
       const tabs = options.tabs ?? false;
       const appearance = options.appearance ?? "system";
+      if (options.bounds !== undefined && options.contentSize !== undefined) throw new Error("sweetview: bounds and contentSize cannot both be given");
+      const backgroundColor = backgroundColorOf(options.backgroundColor);
       this.#meta = {
         title: options.title ?? options.identity?.appName ?? "",
         topmost: options.topmost ?? false,
         opacity: options.opacity,
+        backgroundColor: transparent && !tabs ? undefined : backgroundColor,
         hideFromTaskbar: options.hideFromTaskbar ?? false,
         noActivate: options.noActivate ?? false,
         frame,
@@ -392,10 +432,12 @@ export class Window {
         ...options, frame, resizable, transparent, tabs, appearance,
         title: this.#meta.title,
         icon: this.#meta.icon,
+        backgroundColor,
       });
       this.#inner.setOwnerDispose?.(() => this.dispose());
       this.handle = this.#inner.handle;
       if (options.onResize) this.onResize(options.onResize);
+      if (options.onMaximizeChange) this.onMaximizeChange(options.onMaximizeChange);
       if (options.onMove) this.onMove(options.onMove);
       if (options.onClose) this.onClose(options.onClose);
       if (options.onFileDrop) this.onFileDrop(options.onFileDrop);
@@ -479,6 +521,23 @@ export class Window {
   isMaximized(): boolean {
     return this.#inner.isMaximized();
   }
+  /**
+   * True while the window is minimised (`IsIconic` on Windows, `isMiniaturized`
+   * on macOS). `isVisible()` stays true for a minimised window; a hidden window
+   * that is not minimised reads as false.
+   */
+  isMinimized(): boolean {
+    return this.#inner.isMinimized();
+  }
+  /**
+   * Shows the window's system menu (Restore, Move, Size, Minimize, Maximize,
+   * Close) at the cursor and carries out the chosen command, as a right click
+   * on an OS title bar does: for a page-drawn title bar's right click. Blocks
+   * until the menu closes. macOS has no such menu: does nothing.
+   */
+  showSystemMenu(): void {
+    this.#inner.showSystemMenu();
+  }
   setTopmost(on: boolean): void {
     this.#meta.topmost = on;
     this.#inner.setTopmost(on);
@@ -501,6 +560,16 @@ export class Window {
   // Event subscriptions (each returns an unsubscribe thunk)
   onResize(handler: (bounds: Rect) => void): () => void {
     return this.#inner.onResize(handler);
+  }
+  /**
+   * Called with `true` when the window becomes maximized and `false` when it
+   * is restored, by any means: the frame's button, a snap gesture, a double
+   * click on the title bar, `toggleMaximize()` (a frameless window: filling
+   * its work area). Minimizing and restoring to the same state reports
+   * nothing. Returns the function that removes this listener.
+   */
+  onMaximizeChange(handler: (maximized: boolean) => void): () => void {
+    return this.#inner.onMaximizeChange(handler);
   }
   onMove(handler: (bounds: Rect) => void): () => void {
     return this.#inner.onMove(handler);

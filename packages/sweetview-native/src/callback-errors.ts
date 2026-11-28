@@ -23,6 +23,8 @@ export type CallbackKind =
   | "window.onClose"
   | "window.onResize"
   | "window.onMove"
+  | "window.onMaximizeChange"
+  | "windowChromeEvents"
   | "window.onFileDrop"
   | "window.onNewTab"
   | "window.onTabSelect"
@@ -66,6 +68,17 @@ const listeners = new Set<CallbackErrorHandler>();
 /** Whether an `onCallbackError` listener is set: macOS's input hooks report only then (D42). */
 export const hasCallbackErrorListener = (): boolean => listeners.size > 0;
 
+/**
+ * A key an exception may carry to name the kind it came from, for code that cannot import this
+ * module (`windowChromeEvents` of `@n1h/sweetview/window-chrome`, which a page bundle loads too).
+ */
+const KIND_TAG = Symbol.for("sweetview.callbackKind");
+const KINDS_TAGGED: ReadonlySet<string> = new Set<CallbackKind>(["windowChromeEvents"]);
+const taggedKind = (error: unknown): CallbackKind | undefined => {
+  const tag = error !== null && typeof error === "object" ? (error as Record<symbol, unknown>)[KIND_TAG] : undefined;
+  return typeof tag === "string" && KINDS_TAGGED.has(tag) ? (tag as CallbackKind) : undefined;
+};
+
 const asError = (error: unknown): Error => (error instanceof Error ? error : new Error(String(error), { cause: error }));
 
 function printDefault(kind: CallbackKind, error: unknown, fallback: DefaultReport): void {
@@ -82,7 +95,8 @@ export function reportCallbackError(kind: CallbackKind, error: unknown, fallback
     if (fallback !== null) printDefault(kind, error, fallback);
     return;
   }
-  const source: CallbackErrorSource = name === undefined ? { kind } : { kind, name };
+  const reported = taggedKind(error) ?? kind;
+  const source: CallbackErrorSource = name === undefined ? { kind: reported } : { kind: reported, name };
   const wrapped = asError(error);
   for (const listener of [...listeners]) {
     try {
@@ -109,6 +123,7 @@ const BINDING_KINDS: Record<string, CallbackKind> = {
   "an onClose handler": "window.onClose",
   "an onResize handler": "window.onResize",
   "an onMove handler": "window.onMove",
+  "an onMaximizeChange handler": "window.onMaximizeChange",
   "an onFileDrop handler": "window.onFileDrop",
   "a file drop handler": "window.onFileDrop",
   "a hit-region refiner": "hitRegions.refine",

@@ -27,6 +27,7 @@ import { createNotifier, debugNativeNotifier } from "../../src/win32/notifier";
 import { currentTray } from "../../src/win32/tray";
 import { TRAY, VK, WM_CLOSE, doubleClickTime, handOffToInstance, isWindow, openPopupMenu, postTrayMouse, pressKeys, sendDrop, user32 } from "../win32-os";
 import { native, report, finish, watchdog } from "./kit";
+import { windowChromeEvents } from "../../../sweetview/src/window-chrome";
 
 const mode = process.argv[2] ?? "listener";
 watchdog(mode === "listener" ? 80_000 : 30_000);
@@ -98,8 +99,8 @@ steps.intervalKeptItsSchedule = intervalRuns >= 3;
 // Window listeners: a close request with a listener that throws is still taken (the window stays).
 const win = new Window({ title: "callback-errors", bounds: { x: 120, y: 120, width: 320, height: 240 }, noActivate: true });
 const hwnd = BigInt(win.handle!);
-win.onResize(boom("onResize"));
-win.onMove(boom("onMove"));
+const offResize = win.onResize(boom("onResize"));
+const offMove = win.onMove(boom("onMove"));
 win.onClose(boom("onClose"));
 win.onFileDrop(boom("onFileDrop"));
 win.setBounds({ x: 130, y: 130, width: 330, height: 250 }); // moves and resizes: one onMove, one onResize
@@ -114,6 +115,18 @@ win.onTabClose(boom("onTabClose"));
 emitWindowNewTab(win);
 emitWindowTabSelect(win, { title: "t", setTitle() {}, select() {}, close() {}, dispose() {} });
 emitWindowTabClose(win, { title: "t", setTitle() {}, select() {}, close() {}, dispose() {} });
+// One maximise: an onMaximizeChange listener, and the one windowChromeEvents installs, each throw once.
+offResize(); // the maximise below moves and resizes the window: those kinds arrived once above
+offMove();
+const offMaximize = win.onMaximizeChange(boom("onMaximizeChange"));
+const offChrome = windowChromeEvents(win, { emit: boom("window chrome emit") });
+win.show(); // noActivate: shown without taking the foreground
+win.toggleMaximize();
+await pumpUntil(() => arrivals.some((a) => a.kind === "windowChromeEvents") && arrivals.some((a) => a.kind === "window.onMaximizeChange"));
+offMaximize();
+offChrome();
+win.toggleMaximize();
+await pumpFor(100);
 onWindowDispose(win, boom("dispose hook"));
 
 // The refiner and the hooks, through the function Sweetview hands the binding.

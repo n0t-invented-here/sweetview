@@ -724,6 +724,8 @@ export const winTabsDriver: TabsDriver = {
       fileDropHost: () => logicalHost().window,
       // Hidden until present() shows it as the selected tab.
       mountChild: () => ({ window: host.frame.hwnd, bounds: host.frame.pageRect(), visible: false }),
+      // A tab's page area shows the tabbed window's backgroundColor until its page paints, as the frame's page area does.
+      backgroundColor: () => getWindowMeta(logicalHost().window).backgroundColor,
       revealWindow: () => {
         const h = logicalHost();
         if (!h.closed && !isWindowDisposed(h.window) && !h.window.isVisible()) h.window.show();

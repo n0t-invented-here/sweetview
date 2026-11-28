@@ -232,14 +232,17 @@ describe.skipIf(!onWindows)("Windows behaviour an application notices", () => {
     });
   }, 120_000);
 
-  test("popupMenuAtCursor opens the menu upward from the cursor; Menu.popup and popupMenu open it downward from the point and take no alignment", async () => {
+  test("popupMenuAtCursor opens the menu upward from the cursor; Menu.popup and popupMenu open it downward from the point, and Menu.popup with { above: true } upward", async () => {
     expect(await runChild(fixture("popup-direction.ts"))).toEqual({
       atCursorAsks: { at: null, above: true },
       menuPopupAtCursorAsks: { at: null, above: false },
       menuPopupAtPointAsks: true,
       popupMenuAtPointAsks: true,
+      menuPopupAboveAtCursorAsks: { at: null, above: true },
+      menuPopupAboveAtPointAsks: true,
       aboveOpensUpward: true,
       menuPopupOpensDownward: true,
+      menuPopupAboveOpensUpward: true,
     });
   }, 60_000);
 

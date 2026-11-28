@@ -26,6 +26,7 @@ use crate::screen;
 use crate::{Point, Rect, ResizeEdge};
 
 pub use platform::{Chrome, GeometrySnapshot};
+pub use sweetview_window_logic::Dips;
 
 pub mod tab_frame;
 use tab_frame::TabState;
@@ -59,6 +60,14 @@ pub struct WindowInit {
   pub title: String,
   /// Default: 320 x 240, centred on the primary monitor's work area.
   pub bounds: Option<Rect>,
+  /// The client area (a tab frame's: the page below the strip) in
+  /// device-independent pixels, at the scale of the screen the window opens
+  /// on; the window is centred on the primary monitor's work area. Not with
+  /// `bounds`.
+  pub content_size: Option<logic::Dips>,
+  /// `#rrggbb`: what the window shows where nothing has painted. `None`: what
+  /// the system or `appearance` gives. Not applied to a transparent window.
+  pub background_color: Option<String>,
   pub min_width: Option<i32>,
   pub min_height: Option<i32>,
   pub frame: bool,
@@ -84,6 +93,8 @@ pub struct WindowInit {
 pub type RectListener = Rc<dyn Fn(Rect)>;
 pub type Listener = Rc<dyn Fn()>;
 pub type DropListener = Rc<dyn Fn(Vec<String>)>;
+/// Called with `true` when the window becomes maximised, `false` when it is restored.
+pub type BoolListener = Rc<dyn Fn(bool)>;
 /// Asked whether the window-local point `(x, y)` is solid; answered through
 /// [`Window::answer_hit`] with the same sequence number.
 pub type Refiner = Rc<dyn Fn(i32, i32, u32)>;
@@ -94,14 +105,16 @@ struct Listeners {
   moved: Vec<(u64, RectListener)>,
   close: Vec<(u64, Listener)>,
   drop: Vec<(u64, DropListener)>,
+  maximize: Vec<(u64, BoolListener)>,
 }
 
 impl Listeners {
   fn len(&self) -> usize {
-    self.resize.len() + self.moved.len() + self.close.len() + self.drop.len()
+    self.resize.len() + self.moved.len() + self.close.len() + self.drop.len() + self.maximize.len()
   }
 
   fn remove_wrapper(&mut self, wrapper: u64) {
+    self.maximize.retain(|(w, _)| *w != wrapper);
     self.resize.retain(|(w, _)| *w != wrapper);
     self.moved.retain(|(w, _)| *w != wrapper);
     self.close.retain(|(w, _)| *w != wrapper);
@@ -154,6 +167,8 @@ struct Core {
   gesture: RefCell<Option<Gesture>>,
   gesture_timer: Cell<Option<TimeoutId>>,
   restore: Cell<Option<Rect>>,
+  /// Whether the window was maximised when that was last looked at, for `on_maximize_change`.
+  maximized: Cell<bool>,
   icons: RefCell<Option<WindowIcons>>,
   /// Live wrappers of this window.
   wrappers: Cell<usize>,
@@ -203,6 +218,7 @@ impl Core {
       gesture: RefCell::new(None),
       gesture_timer: Cell::new(None),
       restore: Cell::new(None),
+      maximized: Cell::new(false),
       icons: RefCell::new(None),
       wrappers: Cell::new(0),
       tab,
@@ -216,6 +232,31 @@ impl Core {
     let subclass = installed.ok_or_else(|| Error::state("sweetview: the window is gone"))?.map_err(Error::state)?;
     *self.subclass.borrow_mut() = Some(subclass);
     Ok(())
+  }
+
+  /// Whether the window is maximised now: the OS's own state for a framed
+  /// window, the work-area toggle for a frameless one.
+  fn maximized_now(&self) -> bool {
+    if self.chrome.frame {
+      self.with_native(|window| platform::is_zoomed(window)).unwrap_or(false)
+    } else {
+      self.restore.get().is_some()
+    }
+  }
+
+  /// Tells the maximise listeners when the window's maximised state changed
+  /// since it was last looked at. A minimised window is not looked at: it
+  /// keeps the state it is restored to.
+  fn note_maximized(&self) {
+    if !self.alive.get() || self.with_native(|window| platform::is_minimized(window)).unwrap_or(true) {
+      return;
+    }
+    let now = self.maximized_now();
+    if self.maximized.replace(now) == now {
+      return;
+    }
+    let listeners: Vec<BoolListener> = self.listeners.borrow().maximize.iter().map(|(_, l)| l.clone()).collect();
+    listeners.iter().for_each(|l| l(now));
   }
 
   /// Calls `f` with the `tao` window of an owned window. No borrow is held
@@ -447,6 +488,7 @@ fn on_event(weak: &Weak<Core>, event: &WindowEvent) -> bool {
     WindowEvent::Resized(bounds) => {
       let listeners: Vec<RectListener> = core.listeners.borrow().resize.iter().map(|(_, l)| l.clone()).collect();
       listeners.iter().for_each(|l| l(*bounds));
+      core.note_maximized();
       false
     }
     WindowEvent::Moved(bounds) => {
@@ -513,14 +555,20 @@ impl Window {
   pub fn create(init: WindowInit) -> Result<Window> {
     let runtime = Runtime::get()?;
     let color_key = init.color_key.as_deref().map(logic::parse_color_key).transpose().map_err(Error::state)?;
+    if init.bounds.is_some() && init.content_size.is_some() {
+      return Err(Error::state("sweetview: bounds and contentSize cannot both be given"));
+    }
+    let background = init.background_color.as_deref().map(logic::parse_background_color).transpose().map_err(Error::state)?;
     let tabbed = init.tab_strip_height.is_some();
+    // A transparent window shows what is behind it; its background colour does not apply.
+    let background = if init.transparent && !tabbed { None } else { background };
     let bounds = init.bounds.unwrap_or_else(default_bounds);
     // A tab frame is framed: the system keeps its border, shadow, snap and
     // maximise; only the caption goes, to the strip.
     let frame = init.frame || tabbed;
     let resizable = frame && init.resizable;
     let color_key = if tabbed { None } else { color_key };
-    let tab = init.tab_strip_height.map(|strip| TabState::new(strip, init.appearance));
+    let tab = init.tab_strip_height.map(|strip| TabState::new(strip, init.appearance, background));
     let theme = match init.appearance {
       Appearance::System => None,
       Appearance::Light => Some(Theme::Light),
@@ -541,6 +589,7 @@ impl Window {
         .with_position(PhysicalPosition::new(bounds.x, bounds.y))
         .with_inner_size(PhysicalSize::new(bounds.width.max(1) as u32, bounds.height.max(1) as u32)),
       tab.as_ref(),
+      background,
     );
     let tao = runtime.with_target(|target| builder.build(target))?.map_err(|e| Error::os("the window could not be made", e))?;
     let handle = platform::handle_value(&tao);
@@ -584,8 +633,18 @@ impl Window {
     // The frame is measured again after the style changes, in the band the window asked for.
     let band = if init.topmost { ZOrder::Topmost } else { ZOrder::NotTopmost };
     core.place(Placement { z: band, frame_changed: true, ..Placement::default() });
+    if core.tab.is_none() {
+      if let Some(content) = init.content_size {
+        // The frame's edges and the scale are the window's own, measured where it was made: on the primary monitor.
+        let scale = core.with_tao(platform::dpi_scale).unwrap_or(1.0);
+        let (width, height) = logic::outer_size_for_content(content, scale, tab_frame::frame_edges(core));
+        let area = screen::primary().map(|s| s.work_area).unwrap_or(Rect::new(0, 0, width, height));
+        core.set_bounds(logic::centred(width, height, area));
+      }
+    }
     if let Some(tab) = &core.tab {
-      tab_frame::finish(core, tab, init.bounds.is_none(), min);
+      let page = if init.bounds.is_none() { Some(init.content_size.unwrap_or(tab_frame::DEFAULT_PAGE)) } else { None };
+      tab_frame::finish(core, tab, page, min);
     } else if min.0.is_some() || min.1.is_some() {
       core.with_tao(|tao| {
         // `tao` takes an inner minimum; the frame is what separates it from the outer one.
@@ -765,6 +824,8 @@ impl Window {
     let (next, restore) = logic::toggle_frameless_maximize(core.restore.get(), core.bounds(), work_area);
     core.restore.set(restore);
     core.set_bounds(next);
+    // The bounds may not have changed size (no resize to notice it by).
+    core.note_maximized();
     Ok(())
   }
 
@@ -780,6 +841,19 @@ impl Window {
       }
     } else {
       core.restore.get().is_some()
+    }
+  }
+
+  /// True while the OS has the window minimised (`IsIconic`), framed or
+  /// frameless; a hidden window that is not minimised reads as false.
+  pub fn is_minimized(&self) -> bool {
+    if !self.live() {
+      return false;
+    }
+    let core = &self.core;
+    match core.with_tao(|tao| tao.is_minimized()) {
+      Some(minimized) => minimized,
+      None => core.with_native(|window| platform::is_minimized(window)).unwrap_or(false),
     }
   }
 
@@ -894,6 +968,24 @@ impl Window {
     Ok(())
   }
 
+  /// This wrapper's maximise listener: `true` when the window becomes
+  /// maximised (a frameless one: fills its work area through
+  /// `toggle_maximize`), `false` when it is restored, by any means. A window
+  /// minimised and restored to the state it had reports nothing. `None` removes it.
+  pub fn on_maximize_change(&self, listener: Option<BoolListener>) -> Result<()> {
+    if !self.live() {
+      return Ok(());
+    }
+    if listener.is_some() {
+      self.require_subclass()?;
+      if self.core.listeners.borrow().maximize.is_empty() {
+        self.core.maximized.set(self.core.maximized_now());
+      }
+    }
+    set_listener(&mut self.core.listeners.borrow_mut().maximize, self.id, listener);
+    Ok(())
+  }
+
   /// This wrapper's move listener, with the outer bounds; `None` removes it.
   pub fn on_move(&self, listener: Option<RectListener>) -> Result<()> {
     if !self.live() {
@@ -998,22 +1090,26 @@ impl Drop for Window {
 }
 
 #[cfg(windows)]
-fn platform_builder(builder: WindowBuilder, tab: Option<&TabState>) -> WindowBuilder {
+fn platform_builder(builder: WindowBuilder, tab: Option<&TabState>, background: Option<(u8, u8, u8)>) -> WindowBuilder {
   use tao::platform::windows::WindowBuilderExtWindows;
   // Drops arrive through the subclass, as `WM_DROPFILES`; `tao`'s OLE drop
   // target would take them first. A frameless window has no shadow, as before;
   // a tab frame keeps the system's border and shadow with its caption removed,
   // and paints the page's colour wherever no webview covers it.
   let builder = builder.with_drag_and_drop(false).with_undecorated_shadow(tab.is_some());
-  match tab {
-    Some(tab) => builder.with_background_color(tab.backdrop()),
-    None => builder,
+  match (tab, background) {
+    (Some(tab), _) => builder.with_background_color(tab.backdrop()),
+    (None, Some((red, green, blue))) => builder.with_background_color((red, green, blue, 0xff)),
+    (None, None) => builder,
   }
 }
 
 #[cfg(not(windows))]
-fn platform_builder(builder: WindowBuilder, _tab: Option<&TabState>) -> WindowBuilder {
-  builder
+fn platform_builder(builder: WindowBuilder, _tab: Option<&TabState>, background: Option<(u8, u8, u8)>) -> WindowBuilder {
+  match background {
+    Some((red, green, blue)) => builder.with_background_color((red, green, blue, 0xff)),
+    None => builder,
+  }
 }
 
 /// The number of things kept for the window `handle`: its record, each

@@ -1,4 +1,4 @@
-//! Colour keys.
+//! Colour keys and background colours.
 
 /// `#rrggbb` (the `#` optional, either case) to a `COLORREF`, `0x00bbggrr`.
 /// Anything else is an error carrying the message applications see.
@@ -12,9 +12,26 @@ pub fn parse_color_key(text: &str) -> Result<u32, String> {
   Ok(((n & 0xff) << 16) | (n & 0xff00) | ((n >> 16) & 0xff))
 }
 
+/// A window's background colour, `#rrggbb` (the `#` optional, either case),
+/// as red, green and blue. Anything else is an error carrying the message
+/// applications see.
+pub fn parse_background_color(text: &str) -> Result<(u8, u8, u8), String> {
+  let rgb = parse_color_key(text).map_err(|_| format!("sweetview: background color must be #rrggbb, got {text}"))?;
+  Ok(((rgb & 0xff) as u8, ((rgb >> 8) & 0xff) as u8, ((rgb >> 16) & 0xff) as u8))
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn a_background_color_is_red_green_blue() {
+    assert_eq!(parse_background_color("#1e1e2e"), Ok((0x1e, 0x1e, 0x2e)));
+    assert_eq!(parse_background_color("FFFFFF"), Ok((255, 255, 255)));
+    assert_eq!(parse_background_color("#ff8000"), Ok((255, 128, 0)));
+    assert_eq!(parse_background_color("#fff"), Err("sweetview: background color must be #rrggbb, got #fff".into()));
+    assert!(parse_background_color("rgb(0,0,0)").is_err());
+  }
 
   #[test]
   fn swaps_rrggbb_into_colorref() {

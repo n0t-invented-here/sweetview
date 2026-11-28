@@ -191,6 +191,70 @@ fn frameless_maximise_uses_the_work_area_of_its_own_screen() {
 }
 
 #[test]
+fn is_minimized_follows_the_os_for_an_owned_and_an_adopted_window() {
+  on_ui_thread(|runtime| {
+    let window = Window::create(WindowInit { bounds: Some(Rect::new(-2000, -2000, 200, 200)), ..init("rt minimized") }).expect("window");
+    assert!(!window.is_minimized(), "a hidden window is not minimised");
+    window.show().expect("show");
+    runtime.pump();
+    assert!(!window.is_minimized());
+    window.minimize();
+    assert!(window.is_minimized() && native(&window, |w| platform::is_minimized(w)));
+    window.show().expect("restore");
+    assert!(!window.is_minimized() && !native(&window, |w| platform::is_minimized(w)));
+    window.dispose();
+    assert!(!window.is_minimized(), "a disposed window is not minimised");
+
+    // The application's own window, which `tao` made outside `Window::create`: read through the OS.
+    let own = runtime
+      .with_target(|target| tao::window::WindowBuilder::new().with_visible(false).with_title("rt own minimized").build(target))
+      .expect("target")
+      .expect("window");
+    let adopted = Window::adopt(platform::handle_value(&own)).expect("adopt");
+    assert!(!adopted.is_minimized());
+    adopted.minimize();
+    assert!(adopted.is_minimized() && platform::is_minimized(&own));
+    adopted.show().expect("restore");
+    assert!(!adopted.is_minimized() && !platform::is_minimized(&own));
+    adopted.dispose();
+    drop(own);
+  });
+}
+
+#[test]
+fn content_size_is_the_client_area_at_the_windows_scale_and_a_maximise_change_is_reported_once() {
+  on_ui_thread(|runtime| {
+    let window = Window::create(WindowInit { content_size: Some(Dips::new(500.0, 300.0)), ..init("rt content size") }).expect("window");
+    let scale = window.scale();
+    let inner = window.core.with_tao(|tao| tao.inner_size()).expect("a tao window");
+    assert_eq!((inner.width, inner.height), ((500.0 * scale).round() as u32, (300.0 * scale).round() as u32));
+    let area = screen::primary().expect("primary").work_area;
+    let bounds = window.bounds();
+    assert_eq!(bounds, logic::centred(bounds.width, bounds.height, area));
+
+    let both = Window::create(WindowInit { bounds: Some(Rect::new(0, 0, 100, 100)), content_size: Some(Dips::new(100.0, 100.0)), ..init("rt both") });
+    assert!(matches!(both, Err(e) if e.to_string().contains("bounds and contentSize cannot both be given")));
+    let bad = Window::create(WindowInit { background_color: Some("teal".into()), ..init("rt bad colour") });
+    assert!(matches!(bad, Err(e) if e.to_string().contains("background color must be #rrggbb, got teal")));
+
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    let sink = seen.clone();
+    window.on_maximize_change(Some(Rc::new(move |maximized| sink.borrow_mut().push(maximized)))).expect("listener");
+    window.show().expect("show");
+    runtime.pump();
+    window.toggle_maximize().expect("maximise");
+    window.minimize();
+    window.show().expect("restore, maximised");
+    window.toggle_maximize().expect("restore");
+    assert_eq!(*seen.borrow(), vec![true, false]);
+    window.on_maximize_change(None).expect("removed");
+    window.toggle_maximize().expect("maximise again");
+    assert_eq!(*seen.borrow(), vec![true, false]);
+    window.dispose();
+  });
+}
+
+#[test]
 fn adopting_a_handle_that_is_not_a_window_fails() {
   on_ui_thread(|_runtime| {
     assert!(Window::adopt(0).is_err());

@@ -2,7 +2,7 @@
 // `menuAction:` looks the sender up in a map, so item handlers never need
 // their own Objective-C class.
 
-import { isSeparator, isSubmenu, type MenuTemplate } from "../menu";
+import { isSeparator, isSubmenu, type MenuPopupOptions, type MenuTemplate } from "../menu";
 import type { Point, WindowHandle } from "../types";
 import { applyImage, makeImage } from "./image";
 import {
@@ -91,8 +91,12 @@ export function buildMenu(template: MenuTemplate): BuiltMenu {
   };
 }
 
-/** Opens a native popup menu at `at` (default: current cursor position). Returns true when an item was chosen. */
-export function popupMenu(_owner: WindowHandle, template: MenuTemplate, at?: Point): boolean {
+/**
+ * Opens a native popup menu at `at` (default: current cursor position). Returns true when an item was chosen.
+ * `options.above` is accepted and has no effect until the macOS goal of the Rust rewrite: the menu's
+ * top-left corner is at the point (rust-rewrite/HANDOFF-macos.md).
+ */
+export function popupMenu(_owner: WindowHandle, template: MenuTemplate, at?: Point, _options?: MenuPopupOptions): boolean {
   if (template.length === 0) return false;
   sharedApp();
   const pt = at ?? cursorPoint() ?? { x: 0, y: 0 };

@@ -21,7 +21,7 @@ export { setAppMenu, type AppMenuOptions } from "./app-menu";
 export { setAppIcon } from "./app-icon";
 export { Clipboard } from "./clipboard";
 export { readTextFile, readFileBytes, openFileHandle, readFileChunk, closeFileHandle, closeAllFileHandles } from "./fs";
-export { Menu, resolveMenu, type MenuItem, type MenuSource, type MenuTemplate } from "./menu";
+export { Menu, resolveMenu, type MenuItem, type MenuPopupOptions, type MenuSource, type MenuTemplate } from "./menu";
 export {
   decodePng,
   dotIcns,
