@@ -15,15 +15,15 @@ Rewritten by `bun rust-rewrite/verify.ts <platform> --ledger`. 461 uses in 25 fi
 | `crates/sweetview-platform-shell/src/win.rs` | 2 |
 | `crates/sweetview-platform-webview/src/windows/environment.rs` | 2 |
 | `crates/sweetview-platform-webview/src/windows/handlers.rs` | 22 |
-| `crates/sweetview-platform-webview/src/windows/host.rs` | 33 |
+| `crates/sweetview-platform-webview/src/windows/host.rs` | 34 |
 | `crates/sweetview-platform-webview/src/windows/istream.rs` | 13 |
 | `crates/sweetview-platform-webview/src/windows/mod.rs` | 45 |
-| `crates/sweetview-platform-webview/src/windows/test_support.rs` | 60 |
+| `crates/sweetview-platform-webview/src/windows/test_support.rs` | 62 |
 | `crates/sweetview-platform-window/src/folder_dialog.rs` | 9 |
 | `crates/sweetview-platform-window/src/metrics.rs` | 1 |
 | `crates/sweetview-platform-window/src/popup.rs` | 9 |
 | `crates/sweetview-platform-window/src/size_hint.rs` | 1 |
-| `crates/sweetview-platform-window/src/tab_frame.rs` | 16 |
+| `crates/sweetview-platform-window/src/tab_frame.rs` | 13 |
 | `crates/sweetview-platform-window/src/tab_frame_tests.rs` | 12 |
 | `crates/sweetview-platform-window/src/test_support.rs` | 86 |
 | `crates/sweetview-platform-window/src/windows.rs` | 41 |
@@ -112,7 +112,7 @@ The registry is `windows-registry` 0.6.1, and the message-only windows are `Mess
 
 On Windows this crate makes the webview itself (DECISIONS D48): `wry` 0.58.2, which the proposal chose for it, is not used, because its Windows creation path (`wry-0.58.2/src/webview2/mod.rs`, `new_in_hwnd`, `create_controller`, `init_webview`, `set_webview_settings`, `attach_handlers`) sets and registers what the C++ library never did and gives no way to leave it out (`WebViewAttributes`, where its handlers and settings live, is private: `src/lib.rs:538`). Everything reaches WebView2 through the typed interfaces of `webview2-com` 0.39.1 (https://docs.rs/webview2-com/0.39.1/webview2_com/), policy level 3, on the objects this crate's own `Webview` holds. Each COM object is held by a COM reference (a field, a frame's `cast`, the event args WebView2 holds for the handler's call); on a closed webview a call returns an error.
 
-### `crates/sweetview-platform-webview/src/windows/host.rs` (33)
+### `crates/sweetview-platform-webview/src/windows/host.rs` (34)
 
 What `wry::WebViewBuilder::build` and `wry::WebView`'s methods did, done as `win32_edge.hh` does it; each call replaces the `wry` call named.
 
@@ -124,6 +124,7 @@ What `wry::WebViewBuilder::build` and `wry::WebView`'s methods did, done as `win
 - **Bounds, focus, moving, colour, the end** (6: `SetBounds` in the widget's `WM_SIZE`, `MoveFocus`, `SetParent`, `NotifyParentWindowPositionChanged`, `SetDefaultBackgroundColor`, `Close`); replace `wry`'s parent subclass and `focus`, `reparent` (which re-attached its subclass), `set_background_color` and its drop.
 - **Telling WebView2 its window moved** (5: `GetCurrentThreadId`, `SetWinEventHook`, `UnhookWinEvent`, `IsChild`, `NotifyParentWindowPositionChanged`): an out-of-context WinEvent hook on this thread's windows' location changes, held by `MoveWatch` (unhooked in `Drop`, kept from the thread's first widget on, since hooking again with each webview cost a kernel handle each time); on a move of a window holding a widget, that widget's controller is told. Replaces `wry`'s subclass of the parent, which told WebView2 from the parent's moves; nothing is attached to a window the application gave. The procedure runs inside `catch_unwind` and calls no controller while the widget table is borrowed.
 - **A filling widget follows its window** (2: `GetParent` in `window_moved`, one `MoveWindow` in `fill`): on each location change of a window, a widget filling it is sized to its client area again, whoever resized it, so a page filling a window an application made, an adopted one, a Sweetview one or its own follows it; nothing is attached to the window.
+- **Tests only: the widget of a failed creation** (1: `FindWindowExW` in `a_creation_that_fails_after_the_controller_exists_closes_it`), which looks for the widget under the test's window. `Close` on the controller is in `Controller::drop`, the owning type the controller has from the moment WebView2 hands it over (it was in `Webview::drop`).
 - **Tests only: the colour at first show** (1: `DefaultBackgroundColor` in `note_first_shown`), compiled only for tests and the `test-support` feature: the widget's `WM_SHOWWINDOW` reads the controller's default background the first time it is shown, so a test proves a window's start colour is set before anything is shown. The out-value is a local for the call to fill.
 
 ### `crates/sweetview-platform-webview/src/windows/mod.rs` (45)
@@ -156,9 +157,9 @@ What `wry::WebViewBuilder::build` and `wry::WebView`'s methods did, done as `win
 - **Creating the environment** (1: `CreateCoreWebView2EnvironmentWithOptions`), with null options as the fork passes; replaces `wry`'s `create_environment`, whose browser arguments, language and extensions flag cannot share a profile with the fork's (D15). The folder is an `HSTRING` that outlives the call; the handler is a COM object WebView2 holds until it completes.
 - **Whether a runtime is installed** (1: `GetAvailableCoreWebView2BrowserVersionString` with a null folder, as the fork asks); replaces `wry::webview_version`. The out-string is freed by `take_pwstr`.
 
-### `crates/sweetview-platform-webview/src/windows/test_support.rs` (60)
+### `crates/sweetview-platform-webview/src/windows/test_support.rs` (62)
 
-- **Reading back what a person would see**, compiled only for tests and the `test-support` feature, which only dev-dependencies enable, so none of it is in the binding: `Settings` and the sixteen boolean getters (17); `SetIsGeneralAutofillEnabled` (1); `ParentWindow`, `IsWindow`, `GetFocus` twice, `IsChild`, `SetFocus` on a borrowed window (6); `GetWindowLongPtrW` for the widget's extended style, `FindWindowExW` and `GetParent` to count widgets (3); the download watch's `Handled` and `ResultFilePath`, read and never set (2); `Profile`, `DefaultDownloadFolderPath` and `SetDefaultDownloadFolderPath` to point a test's downloads at a scratch folder and back (3); `IsDefaultDownloadDialogOpen`, `CloseDefaultDownloadDialog` (2); `DocumentTitle` (1); `GetAvailableCoreWebView2BrowserVersionString` (1); `SendMessageW` with `WM_ACTIVATE` (1); `ZoomFactor`, `ClientToScreen`, `GetAncestor`, `GetWindowRect`, `GetSystemMetrics` (5); and for keeping a real-input test's window clear of other programs' windows `GetAncestor`, `SetWindowPos` (topmost), `WindowFromPoint`, `GetAncestor`, `GetWindowTextW` (5); and to count the process's visible top-level windows (a popup opened or not) `FindWindowExW`, `GetWindowThreadProcessId`, `IsWindowVisible` (3); and to move a test's top-level window as dragging it would `GetAncestor`, `GetWindowRect`, `SetWindowPos` (3); a bare window of the test's own, as an application makes one, and its resize (`CreateWindowExW`, `SetWindowPos`, `DestroyWindow`, 3); and the sizes of a container, its window's client area and the controller's bounds (`GetClientRect` twice, `GetParent`, `Bounds`, 4). Each reads WebView2's or the OS's own state, so a test asserts what WebView2 has; out-values are locals for the call to fill. No raw handle is in a signature: windows come in as `BorrowedWindow`.
+- **Reading back what a person would see**, compiled only for tests and the `test-support` feature, which only dev-dependencies enable, so none of it is in the binding: `Settings` and the sixteen boolean getters (17); `SetIsGeneralAutofillEnabled` (1); `ParentWindow`, `IsWindow`, `GetFocus` twice, `IsChild`, `SetFocus` on a borrowed window (6); `GetWindowLongPtrW` for the widget's extended style, `FindWindowExW` and `GetParent` to count widgets (3); the download watch's `Handled` and `ResultFilePath`, read and never set (2); `Profile`, `DefaultDownloadFolderPath` and `SetDefaultDownloadFolderPath` to point a test's downloads at a scratch folder and back (3); `IsDefaultDownloadDialogOpen`, `CloseDefaultDownloadDialog` (2); `DocumentTitle` (1); `GetAvailableCoreWebView2BrowserVersionString` (1); `SendMessageW` with `WM_ACTIVATE` (1); `ZoomFactor`, `ClientToScreen`, `GetAncestor`, `GetWindowRect`, `GetSystemMetrics` (5); and for keeping a real-input test's window clear of other programs' windows `GetAncestor`, `SetWindowPos` (topmost), `WindowFromPoint`, `GetAncestor`, `GetWindowTextW` (5); and to count the process's visible top-level windows (a popup opened or not) `FindWindowExW`, `GetWindowThreadProcessId`, `IsWindowVisible` (3); and to move a test's top-level window as dragging it would `GetAncestor`, `GetWindowRect`, `SetWindowPos` (3); a bare window of the test's own, as an application makes one, and its resize (`CreateWindowExW`, `SetWindowPos`, `DestroyWindow`, 3); and the sizes of a container, its window's client area and the controller's bounds (`GetClientRect` twice, `GetParent`, `Bounds`, 4); and whether a test's window is in front of the person, for the download dialog (`GetForegroundWindow`, `GetWindowTextW`, 2). Each reads WebView2's or the OS's own state, so a test asserts what WebView2 has; out-values are locals for the call to fill. No raw handle is in a signature: windows come in as `BorrowedWindow`.
 
 `pump.rs` and the integration tests have none: the pump is the loop's `wait_message`, and the tests read back through `test_support`.
 
