@@ -73,6 +73,7 @@ function wrap(native: NativeWindow, owned: boolean, tabbed = false): WindowBacke
   const toRect = (fn: (r: Rect) => void) => (x: number, y: number, width: number, height: number) => fn({ x, y, width, height });
 
   const resize = subscription<Rect>((l) => native.onResize(l && toRect(l)), "onResize");
+  const maximize = subscription<boolean>((l) => native.onMaximizeChange(l), "onMaximizeChange");
   const move = subscription<Rect>((l) => native.onMove(l && toRect(l)), "onMove");
   const close = subscription<void>((l) => native.onCloseRequest(l && (() => l())), "onClose");
   const fileDrop = subscription<string[]>((l) => native.onFileDrop(l), "onFileDrop");
@@ -118,6 +119,10 @@ function wrap(native: NativeWindow, owned: boolean, tabbed = false): WindowBacke
       if (live()) native.toggleMaximize();
     },
     isMaximized: () => live() && native.isMaximized(),
+    isMinimized: () => live() && native.isMinimized(),
+    showSystemMenu: () => {
+      if (live()) binding().windowMenu(native.handle);
+    },
     setTopmost: (on) => {
       if (live()) native.setTopmost(on);
     },
@@ -156,6 +161,7 @@ function wrap(native: NativeWindow, owned: boolean, tabbed = false): WindowBacke
     },
 
     onResize: (handler: RectHandler) => (live() ? resize.add(handler) : () => {}),
+    onMaximizeChange: (handler: (maximized: boolean) => void) => (live() ? maximize.add(handler) : () => {}),
     onMove: (handler: RectHandler) => (live() ? move.add(handler) : () => {}),
     onClose: (handler: () => void) => (live() ? close.add(handler) : () => {}),
     onFileDrop: (handler: (paths: string[]) => void) => (live() ? fileDrop.add(handler) : () => {}),
@@ -174,7 +180,7 @@ function wrap(native: NativeWindow, owned: boolean, tabbed = false): WindowBacke
     dispose() {
       if (disposed) return;
       disposed = true;
-      for (const s of [resize, move, close, fileDrop]) s.clear();
+      for (const s of [resize, maximize, move, close, fileDrop]) s.clear();
       native.dispose();
     },
   };
@@ -198,6 +204,8 @@ export function createWindow(options: WindowOptions): WindowBackend {
     const native = binding().Window.create({
       title: options.title ?? "",
       bounds: options.bounds,
+      contentSize: options.contentSize,
+      backgroundColor: options.backgroundColor,
       minWidth: options.minWidth,
       minHeight: options.minHeight,
       frame: true,
@@ -217,6 +225,8 @@ export function createWindow(options: WindowOptions): WindowBackend {
   const native = binding().Window.create({
     title: options.title ?? "",
     bounds: options.bounds,
+    contentSize: options.contentSize,
+    backgroundColor: options.backgroundColor,
     minWidth: options.minWidth,
     minHeight: options.minHeight,
     frame,

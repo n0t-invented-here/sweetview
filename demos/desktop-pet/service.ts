@@ -3,7 +3,7 @@
 
 import { defineService } from "@n1h/sweetview/ipc";
 import type { HitProbe, Point, Rect } from "@n1h/sweetview/native";
-import type { WindowChromeMethods } from "@n1h/sweetview/window-chrome";
+import type { WindowChromeEvents, WindowChromeMethods } from "@n1h/sweetview/window-chrome";
 import { isBird, type Pet } from "./pets";
 import type { Settings } from "./settings";
 
@@ -60,7 +60,7 @@ export type UiMethods = WindowChromeMethods & {
 
 export type Methods = WorkerMethods & UiMethods;
 
-export type Events = {
+export type Events = WindowChromeEvents & {
   /** The worker changed its mind. */
   "pet.command": Command;
   /** The tray menu picked another pet. */

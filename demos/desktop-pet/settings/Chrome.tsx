@@ -18,15 +18,15 @@ const HANDLES = resizeHandles(6); // px of the window's edge that resizes it
 
 export function Chrome({ children }: { children: ReactNode }) {
   const [info, setInfo] = useState<WindowChromeInfo>({ chrome: "os", maximized: false });
-  const refresh = () => void chrome.info().then(setInfo);
-  useEffect(refresh, []);
+  useEffect(() => {
+    void chrome.info().then(setInfo);
+    // Every change, by the title bar's double click, a snap gesture or the button, arrives here.
+    return chrome.onMaximizeChange((maximized) => setInfo((current) => ({ ...current, maximized })));
+  }, []);
 
   if (info.chrome === "os") return <>{children}</>;
 
-  const maximize = () => {
-    chrome.toggleMaximize();
-    setTimeout(refresh, 50);
-  };
+  const maximize = () => chrome.toggleMaximize();
 
   return (
     <Box
@@ -51,6 +51,10 @@ export function Chrome({ children }: { children: ReactNode }) {
         style={{ flex: "none", background: "var(--mantine-color-dark-8)", borderBottom: "1px solid var(--mantine-color-dark-4)", cursor: "default", userSelect: "none" }}
         onPointerDown={chrome.onTitlePointerDown}
         onDoubleClick={maximize}
+        onContextMenu={(e) => {
+          e.preventDefault(); // the window's own system menu, as an OS title bar has
+          chrome.showSystemMenu();
+        }}
       >
         <Box w={10} h={10} style={{ borderRadius: 5, background: "var(--mantine-color-violet-5)", flex: "none" }} />
         <Text size="sm" fw={600} style={{ flex: 1 }}>
