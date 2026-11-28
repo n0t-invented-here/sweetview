@@ -850,7 +850,7 @@ impl Window {
     }
     let core = &self.core;
     // Shown the way `show()` always has: `tao`'s own show activates the window (D9).
-    core.with_native(|window| platform::show(window, core.no_activate, core.topmost.get()));
+    core.with_native(|window| platform::show(window, core.no_activate, core.topmost.get(), core.tab.is_some()));
     core.with_tao(|tao| {
       // `tao` learns the window is visible and not minimised, so its later
       // style rewrites agree; the subclass keeps those from touching `WS_VISIBLE`.
