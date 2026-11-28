@@ -43,7 +43,7 @@ Note, 2026-11-28: the owner has ruled out copies. No copy of an application is m
 
 ## 4. Things only a person at the desk can do
 
-- Click the tray icon of `demos/menubar-only` and `demos/menubar-notify` by hand, and a toast with it. What was done instead (checklist item W5.5, `rust-rewrite/evidence/w5-demos-real-clicks.txt`): real mouse input injected with `SendInput` onto the icon that Explorer shows, found through UI Automation, so the click travels through the shell as a hand's does; the same for the toast banner. The scripts are `rust-rewrite/checks/tray-real-click.ps1` and `toast-real-click.ps1`.
+- Click the tray icon of `demos/menubar-only` and `demos/menubar-notify` by hand, and a toast with it. What was done instead (checklist item W5.5, whose run output is kept on the machine, outside git): real mouse input injected with `SendInput` onto the icon that Explorer shows, found through UI Automation, so the click travels through the shell as a hand's does; the same for the toast banner. The scripts are `rust-rewrite/checks/tray-real-click.ps1` and `toast-real-click.ps1`.
 - Drag a file from Explorer onto a webview window. The drop path is tested with a real file driven through DevTools and through `WM_DROPFILES` (checklist items W2.6 and W4.5); a drag out of Explorer itself needs a hand.
 - Look at tabbed windows and `demos/desktop-pet` on a second monitor with a different scale factor. This machine has one monitor at one scale: the tab frame's handling of a DPI change is tested by sending it the message, not by a real change of scale (checklist item W7.1).
 
