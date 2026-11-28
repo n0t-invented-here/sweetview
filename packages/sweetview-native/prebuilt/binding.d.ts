@@ -20,14 +20,6 @@ export interface IconBytes {
   template?: boolean
 }
 
-/** An accelerator key pressed while a page has focus. */
-export interface KeyData {
-  virtualKey: number
-  control: boolean
-  shift: boolean
-  alt: boolean
-}
-
 /** One line of a popup menu: an item with a label, or a separator. */
 export interface MenuEntryData {
   /** The item's text; `	` separates a shortcut shown at the right. Absent for a separator. */
@@ -59,18 +51,6 @@ export interface Point {
 export interface Point {
   x: number
   y: number
-}
-
-/** A request handed to the request handler. */
-export interface RawRequest {
-  /** Pass to `completeRequest` or `beginResponse`. */
-  id: bigint
-  method: string
-  url: string
-  /** The request headers: the JSON text of an array of `[name, value]` pairs. */
-  headersJson: string
-  /** The request body, or null when there is none. */
-  body?: Uint8Array
 }
 
 /** A rectangle in screen coordinates: physical pixels on Windows. */
@@ -121,80 +101,6 @@ export interface WindowInit {
    * many device-independent pixels tall where the caption was.
    */
   tabStripHeight?: number
-}
-
-/**
- * One webview: on Windows WebView2, made as the C++ library made it, plus Sweetview's request handling.
- * Numeric results are `webview_error_t` codes.
- */
-export declare class Engine {
-  /**
-   * Fills `window` with a webview; with `null`, in a window of the webview's own. In a
-   * Sweetview window with a `backgroundColor`, the browser has that colour before it is first shown (see `docs/native/windows.md`).
-   */
-  static create(debug: boolean, window?: bigint | undefined | null): Engine
-  /**
-   * A child of `window`, at a rectangle of its client area in physical pixels. With
-   * `pageBackground`, a page of the window (a tab) has the window's `backgroundColor` before it is first shown (see `docs/native/windows.md`).
-   */
-  static createChild(debug: boolean, window: bigint, bounds: Rect, pageBackground?: boolean | undefined | null): Engine
-  /** The live webview a handle names, or null. */
-  static fromHandle(handle: number): Engine | null
-  /** The number that names this webview to the functions a Worker calls. */
-  get handle(): number
-  /** The native window the webview lives in: the `HWND` on Windows. */
-  get windowHandle(): bigint
-  get destroyed(): boolean
-  setTitle(title: string): void
-  /** Sizes the webview's window, in device-independent pixels; `hint` is a `SizeHint`. A window the webview was given is restyled and resized but not shown. */
-  setSize(width: number, height: number, hint: number): void
-  /** Moves a child webview inside its host window. */
-  setBounds(bounds: Rect): void
-  setVisible(visible: boolean): void
-  /** Gives the page the keyboard focus. */
-  moveFocus(): void
-  /**
-   * From now on, each activation of the window this webview fills gives the page the
-   * keyboard focus (what `createApp` asks for the window it makes itself).
-   */
-  followWindowActivation(): void
-  /** Tells the webview its host window moved, so its popups follow. */
-  notifyMoved(): void
-  /** Test hook: how many times `notifyMoved` reached the live webview. */
-  movesTold(): number
-  /** Moves the webview into another window without reloading it. */
-  reparent(window: bigint): void
-  navigate(url: string): void
-  setHtml(html: string): void
-  /** Runs `source` at the start of every document the webview opens from now on. */
-  init(source: string): void
-  /** Runs `source` in the current document. The result is discarded. */
-  eval(source: string): void
-  /** Makes `name` a global async function of the page; `callback(seq, params)` runs for each call. */
-  bind(name: string, callback: (arg0: string, arg1: string) => void): number
-  unbind(name: string): number
-  /** Settles the page's promise for call `seq`. */
-  returnValue(seq: string, status: number, result: string): void
-  /** Serves bytes at a path of the page's own origin. */
-  setAsset(path: string, mime: string, data: Uint8Array): number
-  setBackgroundColor(r: number, g: number, b: number, a: number): number
-  setAllowExternalDrop(allow: boolean): number
-  /** Hands every request no asset answers to `handler`. `null` removes it. */
-  setRequestHandler(handler?: ((arg: RawRequest) => void) | undefined | null): number
-  /** Hands the paths of files dropped from the OS to `handler`. `null` removes it. */
-  setFileDropHandler(handler?: ((arg: Array<string>) => void) | undefined | null): number
-  /** `handler` returns true to mark the key handled. `null` removes it. */
-  onAcceleratorKey(handler?: ((arg: KeyData) => boolean) | undefined | null): number
-  /** With a handler set, a popup is reported with its URL and not opened. `null` removes it. */
-  onNewWindowRequested(handler?: ((arg: string) => void) | undefined | null): void
-  /** Called with the URL and a sentence for the user when a top-level navigation fails. `null` removes it. */
-  onNavigationFailed(handler?: ((arg0: string, arg1: string) => void) | undefined | null): number
-  /** Sends a DevTools Protocol command to the webview; `paramsJson` is the JSON text of its parameters. */
-  callDevToolsProtocolMethod(method: string, paramsJson: string): number
-  /** Blocks in the loop until it is asked to quit or this webview's own window is closed. */
-  run(): void
-  /** Destroys the webview. It counts as destroyed at once. */
-  destroy(): void
 }
 
 /**
@@ -399,9 +305,6 @@ export declare class Window {
   dispose(): void
 }
 
-/** Starts a streamed answer to a request of webview `handle`. Callable from any thread. */
-export declare function beginResponse(handle: number, id: bigint, status: number, headersJson?: string | undefined | null): number
-
 /**
  * Builds `menu` and returns its popup menu handle (`HMENU`) for the application's own
  * `TrackPopupMenu`. Each item's command id is its `id`. The menu, its submenus and its item
@@ -412,6 +315,12 @@ export declare function buildMenu(menu: Array<MenuItemData>): bigint
 /** Cancels a timeout or an interval. Cancelling one that is gone does nothing. */
 export declare function cancelTimeout(id: number): void
 
+/**
+ * The file of the binding that owns this process: `file` when this is the process's first claim,
+ * else the file the first claim recorded, which the loader then uses on every thread (D50).
+ */
+export declare function claimProcess(file: string): string
+
 /** Empties the clipboard. UI thread. */
 export declare function clipboardClear(): void
 
@@ -420,9 +329,6 @@ export declare function clipboardReadText(): string | null
 
 /** Replaces the whole clipboard with `text`. UI thread. */
 export declare function clipboardWriteText(text: string): void
-
-/** Answers a request of webview `handle`. Callable from any thread. */
-export declare function completeRequest(handle: number, id: bigint, status: number, headersJson?: string | undefined | null, body?: Uint8Array | undefined | null): number
 
 /** The cursor's position on the screen. */
 export declare function cursor(): Point
@@ -447,9 +353,6 @@ export declare function destroyMenu(handle: bigint): boolean
  * Returns at once when none was made and nothing waits. Returns whether one was taken back.
  */
 export declare function discardQuit(): boolean
-
-/** Ends a streamed answer. Callable from any thread. */
-export declare function endResponse(handle: number, id: bigint): number
 
 /** The permissions a feature needs, as a bit mask. An unknown feature needs none. */
 export declare function featurePermissions(feature: number): number
@@ -596,6 +499,3 @@ export declare function windowMenu(owner: bigint): void
 
 /** How many things Sweetview keeps for the window `handle`. For tests that check nothing leaks. */
 export declare function windowTrackedCount(handle: bigint): number
-
-/** Appends body bytes to a streamed answer. Callable from any thread. */
-export declare function writeResponseChunk(handle: number, id: bigint, chunk: Uint8Array): number

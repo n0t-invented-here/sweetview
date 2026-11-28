@@ -4,7 +4,7 @@
 // moved here unchanged in behaviour. On Windows nothing here is loaded.
 
 import { CString, FFIType, JSCallback, toArrayBuffer, type Pointer } from "bun:ffi";
-import type { RawWebview } from "@n1h/sweetview-native";
+import type { RawWebview } from "./raw-webview";
 import {
   allowExternalDropCall,
   backgroundColorCall,

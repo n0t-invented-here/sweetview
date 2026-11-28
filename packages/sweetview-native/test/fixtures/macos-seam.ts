@@ -90,7 +90,9 @@ try {
 const result: Record<string, unknown> = { platform: process.platform, importError: imported };
 
 if (native && internal) {
-  const { RawWebview, SizeHint, installMouseHook, installKeyboardHook, permissions, completeWebviewRequest } = native;
+  const { installMouseHook, installKeyboardHook, permissions } = native;
+  // The webview is @n1h/sweetview's (D50).
+  const { RawWebview, SizeHint, completeWebviewRequest } = await import("../../../sweetview/src/raw-webview");
   const size = { width: 300, height: 200, hint: SizeHint.NONE };
 
   // The release at exit: nothing is registered on macOS and no `exit` listener is added.

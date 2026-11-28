@@ -102,6 +102,9 @@ pub struct TrayInit {
   pub menu_chosen: Rc<dyn Fn(u32)>,
 }
 
+/// The error's wording when the tray menu's hidden owner cannot be made, as it always was.
+const TRAY_MENU_OWNER_FAILURE: &str = "the tray menu's window could not be made";
+
 struct TrayState {
   icon: RefCell<Option<TrayIcon>>,
   has_menu: Cell<bool>,
@@ -393,7 +396,7 @@ impl TrayState {
   /// The hidden window that owns the menu, made on first use.
   fn menu_owner(&self) -> Result<isize> {
     if self.menu_owner.borrow().is_none() {
-      let window = menu::hidden_menu_owner("sweetview.tray-menu")?;
+      let window = menu::hidden_menu_owner("sweetview.tray-menu", TRAY_MENU_OWNER_FAILURE)?;
       *self.menu_owner.borrow_mut() = Some(window);
     }
     let handle = self.menu_owner.borrow().as_ref().map_or(0, menu::window_handle_value);
@@ -405,6 +408,14 @@ impl TrayState {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  // Review round 2 of the popup rework, G1: the shared constructor of hidden menu owners is given
+  // the tray's own wording, the text it had before the constructor was shared.
+  #[test]
+  fn the_tray_menu_owner_s_failure_keeps_its_wording() {
+    assert_eq!(TRAY_MENU_OWNER_FAILURE, "the tray menu's window could not be made");
+    assert_eq!(Error::os(TRAY_MENU_OWNER_FAILURE, "no window").to_string(), "sweetview: the tray menu's window could not be made: no window");
+  }
 
   /// Feeds the rule the shell's left-button messages and timer expiries; returns the handlers called.
   fn replay(steps: &[&str]) -> Vec<ClickAction> {

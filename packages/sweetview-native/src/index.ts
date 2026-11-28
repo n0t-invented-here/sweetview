@@ -56,25 +56,7 @@ export {
   type SingleInstanceOptions,
 } from "./activation";
 export { defineAppIdentity, type AppIdentity, type AppIdentityInput } from "@n1h/sweetview-settings";
-export {
-  beginWebviewResponse,
-  completeWebviewRequest,
-  endWebviewResponse,
-  SizeHint,
-  unload,
-  Webview,
-  Webview as RawWebview,
-  WebviewError,
-  WEBVIEW_VERSION,
-  writeWebviewResponseChunk,
-  type FileDropHandler,
-  type RequestHandler,
-  type Size,
-  type WebviewHandle,
-  type WebviewRequest,
-  type WebviewResponse,
-  type WebviewResponseHead,
-} from "./webview";
+export { unload } from "./unload";
 export {
   installKeyboardHook,
   installMouseHook,

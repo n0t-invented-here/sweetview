@@ -35,7 +35,7 @@ import {
 import { STRIP_BODY, STRIP_CSS, STRIP_JS } from "./win-strip-assets";
 import { loadFailedPage } from "./load-failed";
 import { controllerOf, moveFocus, notifyMoved, onAcceleratorKey, onNavigationFailed, onNewWindowRequested, setVisible, type Controller } from "./win-webview2";
-import type { RawWebview } from "@n1h/sweetview-native";
+import type { RawWebview } from "../raw-webview";
 
 const FOLLOW_TITLE = `(() => {
   const report = () => {

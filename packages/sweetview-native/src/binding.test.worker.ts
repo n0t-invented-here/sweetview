@@ -1,5 +1,7 @@
 // Worker side of binding.test.ts: loads the binding a second time, on a thread that is not the UI thread.
 
+// The test process's binding is @n1h/sweetview's (bunfig.toml): a worker loads the same one (D50).
+import "../../sweetview/src/binding";
 import { binding } from "./binding";
 import { Ring } from "../../sweetview/src/ring";
 import { pureAnswers } from "../test/pure-answers";

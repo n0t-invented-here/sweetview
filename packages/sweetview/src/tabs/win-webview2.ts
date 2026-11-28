@@ -4,8 +4,8 @@
 // on the Rust engine; the hand-built COM vtables this file once held are gone.
 // Lives in src/tabs/ (webview layer), never in the native package.
 
-import type { RawWebview } from "@n1h/sweetview-native";
-import { engineOf, type NativeEngine } from "@n1h/sweetview-native/internal";
+import type { Engine as NativeEngine } from "../../prebuilt/binding";
+import { engineOf, type RawWebview } from "../raw-webview";
 import type { Key } from "@n1h/sweetview-native/win32/shortcuts";
 
 /** A live webview's engine: what the tab driver holds for as long as the tab's webview exists. */

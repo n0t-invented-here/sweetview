@@ -8,7 +8,7 @@
 // Each optional member is `undefined` when the engine underneath does not have
 // that feature (an older webview library on macOS); the Rust binding has all.
 
-import { RawWebview, WebviewError } from "@n1h/sweetview-native";
+import { RawWebview, WebviewError } from "./raw-webview";
 import { deferNative, openNativeDrain, quitNativeLoop, runNativeLoop } from "@n1h/sweetview-native/internal";
 import type { NativeRequest } from "./messages";
 

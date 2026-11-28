@@ -13,6 +13,7 @@
 #![allow(clippy::type_complexity)]
 
 pub mod diagnostics;
+#[cfg(feature = "webview")]
 pub mod engine;
 pub mod event_loop;
 pub mod input;
@@ -32,6 +33,13 @@ use napi_derive::napi;
 pub fn on_load(_exports: napi::bindgen_prelude::Object, env: napi::Env) -> napi::Result<()> {
   std::panic::catch_unwind(sweetview_napi::on_load).map_err(|_| napi::Error::from_reason("sweetview: the binding panicked while it was loading"))?;
   sweetview_napi::prepare_environment(env)
+}
+
+/// The file of the binding that owns this process: `file` when this is the process's first claim,
+/// else the file the first claim recorded, which the loader then uses on every thread (D50).
+#[napi(catch_unwind)]
+pub fn claim_process(file: String) -> napi::Result<String> {
+  sweetview_napi::claim_process(&file)
 }
 
 /// True on the thread that loaded the binding first.

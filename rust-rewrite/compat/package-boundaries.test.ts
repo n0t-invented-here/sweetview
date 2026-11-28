@@ -55,7 +55,9 @@ const PENDING_IMPORTS: Record<string, string[]> = {
   "packages/sweetview/src/webview-host.ts": ["@n1h/sweetview-native/internal"],
   "packages/sweetview/src/worker-wake.ts": ["@n1h/sweetview-native/internal"],
   "packages/sweetview/src/tabs/win-tabs.ts": ["@n1h/sweetview-native/internal", "@n1h/sweetview-native/win32/shortcuts", "@n1h/sweetview-native/win32/strip-shared", "@n1h/sweetview-native/win32/tab-window", "@n1h/sweetview-native/win32/window"],
-  "packages/sweetview/src/tabs/win-webview2.ts": ["@n1h/sweetview-native/internal", "@n1h/sweetview-native/win32/shortcuts"],
+  "packages/sweetview/src/tabs/win-webview2.ts": ["@n1h/sweetview-native/win32/shortcuts"],
+  "packages/sweetview/src/binding.ts": ["@n1h/sweetview-native/internal"],
+  "packages/sweetview/src/raw-webview.ts": ["@n1h/sweetview-native/internal"],
   "packages/sweetview-build/src/build.ts": ["@n1h/sweetview-native/shell-icons"],
   // macOS files (D42).
   "packages/sweetview/src/tabs/darwin-tabs.ts": ["@n1h/sweetview-native/darwin/objc", "@n1h/sweetview-native/darwin/screen", "@n1h/sweetview-native/darwin/tabs", "@n1h/sweetview-native/darwin/window", "@n1h/sweetview-native/internal"],

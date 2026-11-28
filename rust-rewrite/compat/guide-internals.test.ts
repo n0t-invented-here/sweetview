@@ -26,7 +26,7 @@ describe("an internal the guide now says the true thing about", () => {
     const said = (line: string) => ({
       writeNow: line.split(" | ")[1],
       appAndWebView: /`App#dispose\(\)`, and `WebView#dispose\(\)`, take back the quit/.test(line),
-      rawGap: /for a raw `Webview#destroy\(\)` under `runEventLoop` there is no public call in 1\.0/.test(line),
+      rawGap: /for a raw `RawWebview#destroy\(\)` under `runEventLoop` there is no public call in 1\.0/.test(line),
     });
     const want = { writeNow: '`import type { App } from "@n1h/sweetview"`; `App#dispose`', appAndWebView: true, rawGap: true };
     expect({ partA: said(partA), partB: said(partB) }).toEqual({ partA: want, partB: want });

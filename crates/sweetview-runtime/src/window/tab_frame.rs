@@ -353,7 +353,9 @@ impl TabFrame {
     if let Some(messages) = tab.messages.borrow().as_ref() {
       let _ = messages.set_backdrop(tab.colours());
     }
-    // The tabs' widgets that took the frame's page colour take the new one (D49).
+    // The tabs' widgets that took the frame's page colour take the new one (D49). The native
+    // package's binding has no webview (D50).
+    #[cfg(feature = "webview")]
     crate::engine::follow_window_colour(self.core.handle, tab.colours().page);
   }
 }

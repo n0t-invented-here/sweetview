@@ -2,7 +2,7 @@
 // request and answers another as fast as it can, from a Worker, while the UI
 // thread destroys the webview. Records each result code in order.
 
-import { beginWebviewResponse, completeWebviewRequest, WebviewError, writeWebviewResponseChunk } from "../../src/webview";
+import { beginWebviewResponse, completeWebviewRequest, WebviewError, writeWebviewResponseChunk } from "../../../sweetview/src/raw-webview";
 
 declare var self: Worker;
 
