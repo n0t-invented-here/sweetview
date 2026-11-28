@@ -151,6 +151,7 @@ impl Runtime {
   #[doc(hidden)]
   pub fn shutdown_for_tests() {
     // The webviews go while the thread is still in its apartment.
+    #[cfg(feature = "webview")]
     crate::engine::release_all();
     crate::window::destroy_all();
     *WAKER.lock().unwrap_or_else(PoisonError::into_inner) = None;

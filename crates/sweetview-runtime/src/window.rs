@@ -593,7 +593,7 @@ impl Core {
     // inside a webview callback) goes first: the window is hidden now and destroyed after it, by
     // a job queued behind the webview's own (D49, R3 of its first review).
     let tao = match tao {
-      Some(tao) if crate::engine::drop_waits_in(self.handle) => match Runtime::existing() {
+      Some(tao) if webview_drop_waits_in(self.handle) => match Runtime::existing() {
         Some(runtime) => {
           tao.set_visible(false);
           let _ = UNDESTROYED.try_with(|pending| pending.borrow_mut().push(tao));
@@ -1431,6 +1431,18 @@ pub fn tracked_count(handle: isize) -> usize {
     + usize::from(core.hit.borrow().is_some())
     + usize::from(core.gesture.borrow().is_some());
   count
+}
+
+/// Whether a webview made in the window `handle` names waits for a later turn to drop; never, in
+/// the native package's binding, which has no webview (D50).
+fn webview_drop_waits_in(handle: isize) -> bool {
+  #[cfg(feature = "webview")]
+  return crate::engine::drop_waits_in(handle);
+  #[cfg(not(feature = "webview"))]
+  {
+    let _ = handle;
+    false
+  }
 }
 
 /// Lends the window `handle` names to `f` for the length of the call, for
