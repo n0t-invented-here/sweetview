@@ -169,6 +169,15 @@ struct Core {
   restore: Cell<Option<Rect>>,
   /// Whether the window was maximised when that was last looked at, for `on_maximize_change`.
   maximized: Cell<bool>,
+  /// How many changes of the maximised state have been noticed: a delivery stops
+  /// once a later change has been told in its place.
+  maximize_changes: Cell<u64>,
+  /// How many deliveries of a maximise change are on the stack: 1 while the
+  /// listeners hear a change, 2 while they hear one a listener made then.
+  maximize_telling: Cell<u32>,
+  /// The window's `backgroundColor` (red, green, blue); `None` without one, or for a transparent
+  /// window. A webview made in the window starts with it (`background_of`).
+  background: Cell<Option<(u8, u8, u8)>>,
   icons: RefCell<Option<WindowIcons>>,
   /// Live wrappers of this window.
   wrappers: Cell<usize>,
@@ -186,6 +195,21 @@ thread_local! {
   /// for a later turn to be destroyed.
   static UNDESTROYED: RefCell<Vec<Rc<tao::window::Window>>> = const { RefCell::new(Vec::new()) };
   static NEXT_WRAPPER: Cell<u64> = const { Cell::new(1) };
+}
+
+/// The `backgroundColor` of the Sweetview window `handle` names (a wrapper of
+/// one shares it), for a webview made in it to start with; `None` for any
+/// other window, or one without a colour.
+pub fn background_of(handle: isize) -> Option<(u8, u8, u8)> {
+  core_of(handle).and_then(|core| core.background.get())
+}
+
+/// Shows the system menu of the window `handle` names when it is one of
+/// Sweetview's own (see `Core::show_system_menu`); `None` for any other window.
+pub(crate) fn show_own_system_menu(handle: isize, at: Point) -> Option<Result<()>> {
+  // Only a window Sweetview made: a wrapper of any other window (of this thread or not) is in the
+  // registry too, and its menu is the OS's, read from its own state and styles on its own thread.
+  core_of(handle).filter(|core| core.owned).map(|core| core.show_system_menu(at))
 }
 
 fn core_of(handle: isize) -> Option<Rc<Core>> {
@@ -222,6 +246,9 @@ impl Core {
       gesture_timer: Cell::new(None),
       restore: Cell::new(None),
       maximized: Cell::new(false),
+      maximize_changes: Cell::new(0),
+      maximize_telling: Cell::new(0),
+      background: Cell::new(None),
       icons: RefCell::new(None),
       page_focus: RefCell::new(None),
       wrappers: Cell::new(0),
@@ -249,18 +276,121 @@ impl Core {
   }
 
   /// Tells the maximise listeners when the window's maximised state changed
-  /// since it was last looked at. A minimised window is not looked at: it
-  /// keeps the state it is restored to.
+  /// since it was last looked at (`onMaximizeChange`'s sentences, in
+  /// `docs/native/windows.md`). A minimised window is not looked at: it keeps
+  /// the state it is restored to.
+  ///
+  /// 1. A change is told to each listener once, after it happened. One a
+  ///    listener makes while being told is told at once, from inside that call,
+  ///    and the older change is told to no one after it: so the last value each
+  ///    listener heard is the window's state.
+  /// 2. A change goes to the listeners subscribed when it happened: one removed,
+  ///    or the window disposed, during delivery hears nothing more.
+  /// 3. A change made while the listeners are told of one a listener made is a
+  ///    fault, as re-entry is everywhere in the package (D40, D44): it is
+  ///    printed and not told, and the window keeps its state.
   fn note_maximized(&self) {
-    if !self.alive.get() || self.with_native(|window| platform::is_minimized(window)).unwrap_or(true) {
+    let minimized = self.with_native(|window| platform::is_minimized(window)).unwrap_or(true);
+    if !self.alive.get() || minimized {
       return;
     }
     let now = self.maximized_now();
     if self.maximized.replace(now) == now {
       return;
     }
-    let listeners: Vec<BoolListener> = self.listeners.borrow().maximize.iter().map(|(_, l)| l.clone()).collect();
-    listeners.iter().for_each(|l| l(now));
+    let change = self.maximize_changes.get() + 1;
+    self.maximize_changes.set(change);
+    if self.maximize_telling.get() >= 2 {
+      eprintln!("sweetview: an onMaximizeChange listener changed the window's maximised state while being told of a change a listener made; that change is not told");
+      return;
+    }
+    let _depth = telling(&self.maximize_telling);
+    let subscribed: Vec<(u64, BoolListener)> = self.listeners.borrow().maximize.clone();
+    for (wrapper, listener) in subscribed {
+      // Disposed, or told a later change already: nothing more of this one.
+      if !self.alive.get() || self.maximize_changes.get() != change {
+        return;
+      }
+      let still = self.listeners.borrow().maximize.iter().any(|(w, _)| *w == wrapper);
+      if still {
+        listener(now);
+      }
+    }
+  }
+
+  /// Puts a minimised window back where it was, synchronously: `tao`'s own
+  /// for a window it made, so its flags agree; the OS's for any other.
+  fn restore_from_minimized(&self) {
+    if self.with_tao(|tao| tao.set_minimized(false)).is_none() {
+      self.with_native(|window| platform::show_as(window, ShowAs::Restored));
+    }
+  }
+
+  /// A frameless window's maximise: between its bounds and the work area of
+  /// the screen it is on, the bounds kept to go back to.
+  fn toggle_frameless_maximize(&self) -> Result<()> {
+    let work_area = screen::of_window(self.handle)?.work_area;
+    let (next, restore) = logic::toggle_frameless_maximize(self.restore.get(), self.bounds(), work_area);
+    self.restore.set(restore);
+    self.set_bounds(next);
+    // The bounds may not have changed size (no resize to notice it by).
+    self.note_maximized();
+    Ok(())
+  }
+
+  /// Shows the window's system menu at `at`, its items enabled for the
+  /// window's state as Sweetview knows it, and carries out the chosen command:
+  /// a frameless window is maximised and restored by its own work-area toggle,
+  /// which the OS's `WM_SYSCOMMAND` knows nothing of; everything else goes to
+  /// the OS, as the title bar's own menu sends it.
+  fn show_system_menu(&self, at: Point) -> Result<()> {
+    if !self.alive.get() {
+      return Ok(());
+    }
+    let minimized = self.with_native(|window| platform::is_minimized(window)).unwrap_or(false);
+    // A minimised window keeps the state it is restored to.
+    let maximized = if minimized { self.maximized.get() } else { self.maximized_now() };
+    let state = platform::SystemMenuState {
+      maximized,
+      minimized,
+      can_size: self.chrome.resizable,
+      // A frameless window's maximise is Sweetview's toggle, which any frameless window has.
+      can_maximize: !self.chrome.frame || self.chrome.resizable,
+    };
+    let Some(command) = self.with_native(|window| platform::track_system_menu(window, at, state)).flatten() else { return Ok(()) };
+    if !self.alive.get() {
+      return Ok(());
+    }
+    // The menu's loop ran page calls and timers while it tracked: a command means what its label
+    // says for the window as it is now, not as it was when the menu opened.
+    let minimized_now = self.with_native(|window| platform::is_minimized(window)).unwrap_or(false);
+    match command {
+      // A frameless window's maximise is Sweetview's toggle: the OS's would fill the screen behind it.
+      platform::SystemCommand::Maximize if !self.chrome.frame => {
+        if minimized_now {
+          self.restore_from_minimized();
+          // Un-minimising ran the resize listeners, which may have disposed the window.
+          if !self.alive.get() {
+            return Ok(());
+          }
+        }
+        if !self.maximized_now() {
+          self.toggle_frameless_maximize()?;
+        }
+        Ok(())
+      }
+      platform::SystemCommand::Restore if !self.chrome.frame && !minimized_now => {
+        if self.maximized_now() {
+          self.toggle_frameless_maximize()?;
+        }
+        Ok(())
+      }
+      command => {
+        // The OS carries out a framed window's Maximize and Restore for the window as it is.
+        self.with_native(|window| platform::post_system_command(window, command));
+        Ok(())
+      }
+    }
   }
 
   /// Calls `f` with the `tao` window of an owned window. No borrow is held
@@ -482,6 +612,18 @@ fn cursor_position() -> Result<Point> {
   screen::cursor()
 }
 
+/// Counts one more delivery on the stack for as long as it lives, an unwind included.
+fn telling(depth: &Cell<u32>) -> impl Drop + '_ {
+  struct Depth<'a>(&'a Cell<u32>);
+  impl Drop for Depth<'_> {
+    fn drop(&mut self) {
+      self.0.set(self.0.get().saturating_sub(1));
+    }
+  }
+  depth.set(depth.get() + 1);
+  Depth(depth)
+}
+
 /// The subclass procedure's handler: runs inside whichever message loop
 /// dispatched the message. Returns whether a close request was taken.
 fn on_event(weak: &Weak<Core>, event: &WindowEvent) -> bool {
@@ -490,9 +632,13 @@ fn on_event(weak: &Weak<Core>, event: &WindowEvent) -> bool {
   // or dispose the window, from inside its own call.
   match event {
     WindowEvent::Resized(bounds) => {
+      // The maximised state is looked at before a resize listener can change it (restore the
+      // window, say), so the change this resize made is told, and then the one the listener made.
+      core.note_maximized();
+      // As at the tag: the bounds of this resize, to every listener there was when it came; one a
+      // listener raises is delivered in full from inside that call, and this one then goes on.
       let listeners: Vec<RectListener> = core.listeners.borrow().resize.iter().map(|(_, l)| l.clone()).collect();
       listeners.iter().for_each(|l| l(*bounds));
-      core.note_maximized();
       false
     }
     WindowEvent::Moved(bounds) => {
@@ -606,6 +752,7 @@ impl Window {
     let min = MinSize::from_options(init.min_width, init.min_height);
     let min_options = (init.min_width, init.min_height);
     let core = Core::new(handle, Some(tao), Chrome { frame, resizable }, init.no_activate, min, init.topmost, tab);
+    core.background.set(background);
     WINDOWS.with(|w| w.borrow_mut().insert(core.handle, core.clone()));
     // From here on a failure must not leave a half-made window behind.
     let made = Self::finish(&core, &init, color_key, bounds, min_options);
@@ -654,7 +801,7 @@ impl Window {
     }
     if let Some(tab) = &core.tab {
       let page = if init.bounds.is_none() { Some(init.content_size.unwrap_or(tab_frame::DEFAULT_PAGE)) } else { None };
-      tab_frame::finish(core, tab, page, min);
+      tab_frame::finish(core, tab, page, init.content_size.is_some(), min);
     } else if min.0.is_some() || min.1.is_some() {
       core.with_tao(|tao| {
         // `tao` takes an inner minimum; the frame is what separates it from the outer one.
@@ -690,6 +837,19 @@ impl Window {
     let (chrome, on_this_thread) = BorrowedWindow::with_handle_value(handle, |window| (platform::chrome(window), platform::is_on_this_thread(window)))
       .ok_or_else(|| Error::state(format!("sweetview: not a window: {handle:#x}")))?;
     let core = Core::new(handle, None, chrome, false, logic::DEFAULT_MIN_SIZE, false, None);
+    // The state a window Sweetview did not make is in when it is wrapped, kept from then on by its
+    // resizes. A framed one's is the OS's: a minimised one's is the state it is restored to, which
+    // its placement keeps. A frameless one's is Sweetview's own toggle, which a wrapper starts
+    // without, as at the tag (its isMaximized read the saved rectangle).
+    let minimized = core.with_native(|window| platform::is_minimized(window)).unwrap_or(false);
+    let maximized = if !core.chrome.frame {
+      false
+    } else if minimized {
+      core.with_native(|window| platform::restores_maximized(window)).unwrap_or(false)
+    } else {
+      core.maximized_now()
+    };
+    core.maximized.set(maximized);
     if on_this_thread {
       core.subclass()?;
     }
@@ -830,13 +990,7 @@ impl Window {
       }
       return Ok(());
     }
-    let work_area = screen::of_window(core.handle)?.work_area;
-    let (next, restore) = logic::toggle_frameless_maximize(core.restore.get(), core.bounds(), work_area);
-    core.restore.set(restore);
-    core.set_bounds(next);
-    // The bounds may not have changed size (no resize to notice it by).
-    core.note_maximized();
-    Ok(())
+    core.toggle_frameless_maximize()
   }
 
   pub fn is_maximized(&self) -> bool {
@@ -987,10 +1141,9 @@ impl Window {
       return Ok(());
     }
     if listener.is_some() {
+      // The state is kept from every resize, listened to or not, so a listener starts from it as
+      // it is: read again now, a minimised window would read as not maximised (review N5).
       self.require_subclass()?;
-      if self.core.listeners.borrow().maximize.is_empty() {
-        self.core.maximized.set(self.core.maximized_now());
-      }
     }
     set_listener(&mut self.core.listeners.borrow_mut().maximize, self.id, listener);
     Ok(())

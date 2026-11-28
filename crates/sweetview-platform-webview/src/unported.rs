@@ -45,7 +45,7 @@ pub struct Webview {
 #[allow(clippy::unused_self, unused_variables)]
 impl Webview {
     /// Not served on this platform yet.
-    pub fn create(parent: &BorrowedWindow<'_>, layout: Layout, devtools: bool) -> Result<Self, ErrorCode> {
+    pub fn create(parent: &BorrowedWindow<'_>, layout: Layout, devtools: bool, background: Option<(u8, u8, u8)>) -> Result<Self, ErrorCode> {
         Err(ErrorCode::Unspecified)
     }
 

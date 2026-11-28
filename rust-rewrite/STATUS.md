@@ -12,6 +12,7 @@ The Windows goal is **not complete**. This file says what is on the main branch,
 - **Reviews and audits judge the intent**, not literal readings that serve nobody.
 - **An upgrade is a migration.** An upgraded application uses 1.0 as designed: a closed window is destroyed and its memory given back, windows are revealed by the ready signal, and no old behaviour, workaround or internal is carried over.
 - **An application ends at its loop.** Nothing after `run()` is required of it.
+- **The packages stay as organised.** No package is merged into another and no code moves between packages.
 - **No copies of the owner's applications** are made anywhere; they are upgraded in place on branches. Their names, paths and behaviour never enter anything tracked here.
 - **Hosted CI is not used.**
 - **The orchestrating session writes no code**; it delegates, integrates and documents.
@@ -58,6 +59,12 @@ Two real applications are being upgraded in place, each on a branch of its own r
 - Both are linked to this checkout and need the public calls of `rust-rewrite-api-gaps` on the main branch before they build against it.
 - The `dependents` check of `verify.ts` still passes with "nothing to verify", because `rust-rewrite/local/dependents.txt` was never written. `OWNER-ACTIONS.md` section 3 and decision D19 still describe upgrading a copy in the temp directory, which the owner has since ruled out: the applications are upgraded in place on branches and no copy is made.
 
+## Found: the rewrite put the webview inside the native package
+
+The packages are organised so that an application takes only what it uses: a tray application takes the native package and no webview. The rewrite broke that. At tag `pre-rust-rewrite` the native package's index exported no webview and the package depended on the settings package only; the webview was reached by the facade through the separate bindings package. Now the native package's index exports the webview class, the input hooks and `permissions`, and the one Rust binding it ships contains the webview engine. A tray-only application (`demos/menubar-only`), run on Windows, starts no WebView2 process and loads no WebView2 module, but its package, its bundle and its binary carry the webview code; on macOS, importing the native package evaluates the old bindings package when it is installed. The rewrite followed the proposal's "Packaging" section in this; the owner's organisation of the packages outranks it.
+
+To do: the webview leaves the native package, so that an application importing only the native package installs, bundles, loads and ships no webview code, with the eight packages exactly as organised. A read-only design for it is being written (which package holds the webview, how two bindings share one UI thread and loop, what moves in TypeScript); implementation follows the design.
+
 ## Not started
 
 | Audit finding | What |
@@ -86,9 +93,20 @@ Two real applications are being upgraded in place, each on a branch of its own r
 4. The evidence files and checklist blocks produced again on the final tree.
 5. The three printouts of `GOAL-windows.md` after the last commit, ending `SWEETVIEW-REWRITE WINDOWS: COMPLETE mode=full`.
 
-## Owner's decisions outstanding
+## Defaults taken, by the owner's word that nothing is asked
 
-- **How internals are sealed.** `@n1h/sweetview` reaches about thirty internals of `@n1h/sweetview-native` through `/internal` and `/win32/*`, so those entries cannot leave the `exports` map while the two are separate packages. The ways out: one package with its internals sealed; or `createApp`, `WebView`, the tabs and the worker wake moved into the native package; or the entries kept, with the guard test and no document naming them.
+Each is a choice made so the work goes on; the owner overturns any of them with a word.
+
+- **The eight packages stay exactly as they are organised. This is the owner's ruling, not a default: no package is merged into another, and no code moves between packages.** (A default written here earlier, to make Sweetview one package, was wrong and is withdrawn; nothing was done under it.) So the entries the packages use to reach one another (`/internal`, `/win32/*`) stay, for Sweetview's own packages only: no document, guide row, demo or example sends an application to one, a guard test pins the list by name, and none is turned into public API. That is what branch `rust-rewrite-no-win32-subpaths` delivers.
+- **`onCallbackError` reports the native package's callbacks and the raw webview's; the facade's own catches are not reported**, and the pages say so. Its name and shape stay as built.
+- **A capability that was reachable only through internals gets no public call**, and the guide says so for each.
+- **Where `wry` and the old library differ, the old library's behaviour wins** (zoom, pinch and swipe on; no bound on a streamed body's backlog; focus only for a window Sweetview owns).
+- **A call that existed before the rewrite keeps its behaviour**: `showOnReady` stays opt-in, the page chrome's close button still hides, a pumped loop does not end by itself. The demos use `showOnReady`.
+- **A window with no `backgroundColor` shows its `appearance` colour, not white**, where nothing has painted: the white window at start and at Quit is the defect being fixed.
+- **The binding stays built on demand** (D34), and checklist item W0.6 stays as recorded (D33).
+
+## Decisions the owner can still make
+
 - **Capabilities that were reachable only through internals and have no public call** (`evidence/api-audit.md`, rows I1 to I4 and K1 to K10): an `HMENU` for an application's own `TrackPopupMenu`; the strip and page rectangles of a tabbed frame; a timer or job that runs inside the native and modal loops; whether the system is in dark mode; a webview at given bounds inside an application's own window; an activation event and a foreground query; a close request as the title bar's button makes it; the navigation-failed event, the new-window handler and the DevTools protocol; the strip height. By the ruling that internals are never exposed, none gets a public call unless the owner names it.
 
 - Finding 12: track the prebuilt binding in git, or keep building it on demand (D34).

@@ -175,7 +175,7 @@ dispatch gate before it destroys the webview.
 | Outcome | Frame |
 |---|---|
 | A call resolves, `seq` set | `{ kind: "reply", seq, ok: true, result }` |
-| A call rejects, `seq` set | `{ kind: "reply", seq, ok: false, error }`, `error` being the error's `message` or `String(err)` |
+| A call rejects, `seq` set | `{ kind: "reply", seq, ok: false, error }`, `error` being the error's `message` or `String(err)`; for a value neither can be read from, its `Object.prototype.toString` tag (such as `[object Object]`) |
 | A call rejects, `seq` is `null` | none; logged as `"<method> failed:"` |
 | The Service emits with no `to`, or `to: "webview"` | `{ kind: "event", name, payload }` |
 | The Service emits to any other session | none; dropped |

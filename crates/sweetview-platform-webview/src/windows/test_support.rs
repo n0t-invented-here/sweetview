@@ -380,7 +380,7 @@ pub fn covered_at(webview: &Webview, x: i32, y: i32) -> Option<String> {
 
 /// A webview made on `environment` instead of the thread's shared one.
 pub fn webview_on(environment: &ICoreWebView2Environment, parent: &BorrowedWindow<'_>, layout: super::host::Layout) -> Result<Webview, sweetview_http::ErrorCode> {
-    Webview::create_on(environment, parent, layout, false)
+    Webview::create_on(environment, parent, layout, false, None)
 }
 
 /// The title of the document in `webview` (`ICoreWebView2::DocumentTitle`).
@@ -401,3 +401,12 @@ pub fn runtime_version() -> String {
     // `version` was filled by the call just above (or left null, which reads as empty).
     webview2_com::take_pwstr(version)
 }
+
+/// The colour (alpha, red, green, blue) WebView2's controller had as its
+/// default background when `webview`'s container window was first shown:
+/// `None` when it has not been shown, `Some(None)` when it had no controller
+/// then. Read by the container's own `WM_SHOWWINDOW`.
+pub fn background_when_first_shown(webview: &Webview) -> Option<Option<(u8, u8, u8, u8)>> {
+    super::host::background_when_first_shown(webview)
+}
+

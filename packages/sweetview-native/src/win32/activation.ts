@@ -5,6 +5,7 @@
 // the JSON `{ args, cwd, url? }`. No administrator rights required.
 
 import { validateUrlScheme } from "@n1h/sweetview-settings";
+import { reportCallbackError } from "../callback-errors";
 import { binding } from "../binding";
 import { parseSecondInstanceEvent, type RegisterUrlSchemeOptions, type SecondInstanceEvent, type SingleInstanceLock } from "../activation";
 
@@ -32,7 +33,7 @@ export async function acquireSingleInstance(params: {
       const event = parseSecondInstanceEvent(json);
       if (event !== undefined) params.onSecondInstance(event);
     } catch (err) {
-      console.error("sweetview: singleInstance WM_COPYDATA handler threw:", err);
+      reportCallbackError("singleInstance.onSecondInstance", err, "sweetview: singleInstance WM_COPYDATA handler threw:");
     }
   });
   const isPrimary = lock.isPrimary;

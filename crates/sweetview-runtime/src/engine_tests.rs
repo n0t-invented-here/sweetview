@@ -120,23 +120,23 @@ fn make_debug(host: &str, debug: bool, before: impl FnOnce(Option<&Window>)) -> 
   match host {
     "own window" => {
       before(None);
-      let engine = Engine::create(debug, Host::Own).expect("own");
+      let engine = Engine::create(debug, Host::Own, None).expect("own");
       engine.set_size(480, 360, SizeHint::None);
       (engine, Vec::new())
     }
     "given window" => {
       let window = host_window("engine test: filled");
       before(Some(&window));
-      (Engine::create(debug, Host::Fill(window.handle())).expect("fill"), vec![window])
+      (Engine::create(debug, Host::Fill(window.handle()), None).expect("fill"), vec![window])
     }
     "child" => {
       let window = host_window("engine test: child");
       before(Some(&window));
-      (Engine::create(debug, Host::Child(window.handle(), bounds)).expect("child"), vec![window])
+      (Engine::create(debug, Host::Child(window.handle(), bounds), None).expect("child"), vec![window])
     }
     _ => {
       let first = host_window("engine test: child before the move");
-      let engine = Engine::create(debug, Host::Child(first.handle(), bounds)).expect("child");
+      let engine = Engine::create(debug, Host::Child(first.handle(), bounds), None).expect("child");
       let window = host_window("engine test: reparented");
       before(Some(&window));
       engine.reparent(window.handle()).expect("reparent");
@@ -324,8 +324,8 @@ fn the_container_is_a_control_parent_and_goes_with_its_webview() {
       let handle = window.handle();
       let life = || {
         let engine = match host {
-          "given window" => Engine::create(false, Host::Fill(handle)).expect("fill"),
-          _ => Engine::create(false, Host::Child(handle, Bounds { x: 0, y: 0, width: 200, height: 100 })).expect("child"),
+          "given window" => Engine::create(false, Host::Fill(handle), None).expect("fill"),
+          _ => Engine::create(false, Host::Child(handle, Bounds { x: 0, y: 0, width: 200, height: 100 }), None).expect("child"),
         };
         load(&runtime, &engine, PAGE);
         let style = webview_of(&engine, test_support::widget_ex_style);
@@ -687,3 +687,48 @@ fn real_input() {
     assert!(not_run.is_empty(), "not run: {not_run:?}");
   });
 }
+
+#[test]
+fn the_window_s_start_colour_is_webview2_s_background_before_the_webview_is_first_shown() {
+  on_ui_thread(|runtime| {
+    let _finish = Finish(&runtime);
+    // A window's `backgroundColor`, read by the binding where the webview is made
+    // (`window::background_of`), is WebView2's default background before the container is first
+    // shown, so WebView2's own white never shows while the page starts: read by the container's
+    // own `WM_SHOWWINDOW`, for a window of the engine's own, a given window and a child.
+    let colour = "#304050";
+    let want = Some(Some((0xff, 0x30, 0x40, 0x50)));
+    let window = Window::create(WindowInit {
+      title: "engine test: start colour".into(),
+      frame: true,
+      bounds: Some(crate::Rect::new(80, 80, 520, 420)),
+      background_color: Some(colour.into()),
+      ..Default::default()
+    })
+    .expect("window");
+    window.show().expect("show");
+    let handle = window.handle();
+    let read = crate::window::background_of(handle);
+    assert_eq!(read, Some((0x30, 0x40, 0x50)), "the binding reads the window's colour");
+    for (host, made) in [
+      ("own window", Engine::create(false, Host::Own, read)),
+      ("given window", Engine::create(false, Host::Fill(handle), read)),
+      ("child", Engine::create(false, Host::Child(handle, Bounds { x: 0, y: 0, width: 200, height: 100 }), read)),
+    ] {
+      let engine = made.expect(host);
+      let seen = webview_of(&engine, test_support::background_when_first_shown);
+      eprintln!("-- {host}: background when first shown {seen:?}");
+      assert_eq!(seen, want, "{host}: the window's colour before the webview is first shown");
+      engine.destroy();
+      settle(&runtime, Duration::from_millis(100));
+    }
+    // With no colour, WebView2's own default stays (not the colour of another window).
+    let plain = Engine::create(false, Host::Child(handle, Bounds { x: 0, y: 0, width: 200, height: 100 }), None).expect("plain child");
+    let seen = webview_of(&plain, test_support::background_when_first_shown);
+    eprintln!("-- no colour: background when first shown {seen:?}");
+    assert!(matches!(seen, Some(Some(_))) && seen != want, "no colour given: WebView2's own: {seen:?}");
+    plain.destroy();
+    drop(window);
+  });
+}
+

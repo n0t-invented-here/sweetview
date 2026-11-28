@@ -208,7 +208,12 @@ pub struct Engine {
 impl Engine {
   /// Makes a webview. `debug` enables the developer tools; the context menu is
   /// on either way, as the C++ library left it.
-  pub fn create(debug: bool, host: Host) -> Result<Engine> {
+  ///
+  /// `background` is what the browser paints before a page does (red, green,
+  /// blue): WebView2's default background, set on the controller before the
+  /// webview is first shown, so it never shows WebView2's own white while it
+  /// starts. `None` leaves WebView2's.
+  pub fn create(debug: bool, host: Host, background: Option<(u8, u8, u8)>) -> Result<Engine> {
     let runtime = Runtime::get()?;
     let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
     let slot: Rc<RefCell<Weak<Inner>>> = Rc::new(RefCell::new(Weak::new()));
@@ -227,7 +232,7 @@ impl Engine {
         let window = runtime
           .with_target(|target| WindowBuilder::new().with_visible(false).with_inner_size(LogicalSize::new(640.0, 480.0)).build(target))?
           .map_err(|e| Error::os("the webview's window could not be created", e))?;
-        let webview = Webview::create(&BorrowedWindow::of(&window), Layout::Fill, debug).map_err(mount)?;
+        let webview = Webview::create(&BorrowedWindow::of(&window), Layout::Fill, debug, background).map_err(mount)?;
         // The C++ library focused the page of a window it made itself, at creation and on
         // each activation of that window (`owns_window()`, `WM_ACTIVATE`), and kept the page
         // the size of the window (`WM_SIZE`).
@@ -256,12 +261,12 @@ impl Engine {
         (webview, HostWindow::Own { window, listener }, value)
       }
       Host::Fill(value) => {
-        let webview = crate::window::with_mount_target(value, |parent| Webview::create(parent, Layout::Fill, debug)).ok_or_else(no_window)?.map_err(mount)?;
+        let webview = crate::window::with_mount_target(value, |parent| Webview::create(parent, Layout::Fill, debug, background)).ok_or_else(no_window)?.map_err(mount)?;
         (webview, HostWindow::Filled(value), value)
       }
       Host::Child(value, bounds) => {
         let layout = Layout::Bounds { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height };
-        let built = crate::window::with_mount_target(value, |parent| Webview::create(parent, layout, debug));
+        let built = crate::window::with_mount_target(value, |parent| Webview::create(parent, layout, debug, background));
         (built.ok_or_else(no_window)?.map_err(mount)?, HostWindow::Foreign(value), value)
       }
     };

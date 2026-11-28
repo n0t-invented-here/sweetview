@@ -204,6 +204,7 @@ fn bare_life(ctx: &mut Ctx) {
         &sweetview_platform_window::BorrowedWindow::of(&window),
         sweetview_platform_webview::Layout::Fill,
         false,
+        None,
     )
     .expect("webview");
     assert_eq!(webview.navigate_to_string("<script>document.title = 'ready'</script>").code(), 0);

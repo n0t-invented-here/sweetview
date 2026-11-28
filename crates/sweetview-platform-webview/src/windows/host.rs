@@ -73,6 +73,39 @@ thread_local! {
     /// handle value the system may have given to another window since.
     static WIDGETS: RefCell<HashMap<isize, (u64, Option<ICoreWebView2Controller>)>> = RefCell::new(HashMap::new());
     static NEXT_WIDGET: Cell<u64> = const { Cell::new(1) };
+    /// Tests only: each widget's controller's default background (alpha, red,
+    /// green, blue) when the widget was first shown, read in its
+    /// `WM_SHOWWINDOW`; `None` inside when it had no controller then.
+    #[cfg(any(test, feature = "test-support"))]
+    static FIRST_SHOWN: RefCell<HashMap<isize, Option<Argb>>> = RefCell::new(HashMap::new());
+}
+
+/// A colour as WebView2 gives it: alpha, red, green, blue.
+#[cfg(any(test, feature = "test-support"))]
+pub(crate) type Argb = (u8, u8, u8, u8);
+
+/// Tests only: what [`FIRST_SHOWN`] holds for `webview`'s widget.
+#[cfg(any(test, feature = "test-support"))]
+pub(crate) fn background_when_first_shown(webview: &Webview) -> Option<Option<Argb>> {
+    FIRST_SHOWN.with(|shown| shown.borrow().get(&key(webview.widget.hwnd)).copied())
+}
+
+/// Tests only: records the controller's default background the first time
+/// the widget is shown.
+#[cfg(any(test, feature = "test-support"))]
+fn note_first_shown(hwnd: HWND) {
+    use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Controller2;
+    if FIRST_SHOWN.with(|shown| shown.borrow().contains_key(&key(hwnd))) {
+        return;
+    }
+    let controller = WIDGETS.try_with(|widgets| widgets.borrow().get(&key(hwnd)).and_then(|(_, c)| c.clone())).ok().flatten();
+    let colour = controller.and_then(|c| c.cast::<ICoreWebView2Controller2>().ok()).and_then(|c| {
+        let mut colour = webview2_com::Microsoft::Web::WebView2::Win32::COREWEBVIEW2_COLOR::default();
+        // SAFETY: `c` is a COM reference this frame holds (from `cast`); `colour` is a local for
+        // the call to fill.
+        unsafe { c.DefaultBackgroundColor(&mut colour) }.ok().map(|()| (colour.A, colour.R, colour.G, colour.B))
+    });
+    FIRST_SHOWN.with(|shown| shown.borrow_mut().insert(key(hwnd), colour));
 }
 
 fn key(hwnd: HWND) -> isize {
@@ -88,8 +121,14 @@ extern "system" fn widget_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPA
             size_controller(hwnd);
             return LRESULT(0);
         }
+        #[cfg(any(test, feature = "test-support"))]
+        if msg == windows::Win32::UI::WindowsAndMessaging::WM_SHOWWINDOW && wparam.0 != 0 {
+            note_first_shown(hwnd);
+        }
         if msg == WM_NCDESTROY {
             let _ = WIDGETS.try_with(|widgets| widgets.borrow_mut().remove(&key(hwnd)));
+            #[cfg(any(test, feature = "test-support"))]
+            let _ = FIRST_SHOWN.try_with(|shown| shown.borrow_mut().remove(&key(hwnd)));
         }
         // SAFETY: the arguments are the ones the system called this procedure with, for this window.
         unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
@@ -252,13 +291,21 @@ impl Webview {
     /// [`ErrorCode::MissingDependency`] without a WebView2 Runtime,
     /// [`ErrorCode::Canceled`] when a `WM_QUIT` arrives meanwhile (it is
     /// consumed, as in the fork), [`ErrorCode::InvalidState`] when WebView2
-    /// cannot make it.
-    pub fn create(parent: &BorrowedWindow<'_>, layout: Layout, devtools: bool) -> Result<Self, ErrorCode> {
-        Self::create_on(&super::environment::shared()?, parent, layout, devtools)
+    /// cannot make it. `background` (red, green, blue), when given, is
+    /// WebView2's default background from before the webview is first shown,
+    /// so it never shows WebView2's own white while the page starts.
+    pub fn create(parent: &BorrowedWindow<'_>, layout: Layout, devtools: bool, background: Option<(u8, u8, u8)>) -> Result<Self, ErrorCode> {
+        Self::create_on(&super::environment::shared()?, parent, layout, devtools, background)
     }
 
     /// [`create`](Self::create) on `environment`.
-    pub(crate) fn create_on(environment: &ICoreWebView2Environment, parent: &BorrowedWindow<'_>, layout: Layout, devtools: bool) -> Result<Self, ErrorCode> {
+    pub(crate) fn create_on(
+        environment: &ICoreWebView2Environment,
+        parent: &BorrowedWindow<'_>,
+        layout: Layout,
+        devtools: bool,
+        background: Option<(u8, u8, u8)>,
+    ) -> Result<Self, ErrorCode> {
         let parent = HWND(sweetview_platform_window::handle_value(parent) as *mut _);
         let widget = Widget::create(parent)?;
         let controller = create_controller(environment, widget.hwnd)?;
@@ -272,6 +319,13 @@ impl Webview {
         unsafe { settings.SetIsStatusBarEnabled(false) }.map_err(|_| ErrorCode::Unspecified)?;
         let made = Self { controller, webview, environment: environment.clone(), widget };
         made.widget.set_controller(&made.controller);
+        // Before the widget is first shown (it is made without `WS_VISIBLE`), so nothing is
+        // painted in WebView2's own white first.
+        if let Some((r, g, b)) = background {
+            if made.set_background_color(r, g, b, 255) != ErrorCode::Ok {
+                return Err(ErrorCode::Unspecified);
+            }
+        }
         match layout {
             Layout::Fill => made.fill_parent(),
             Layout::Bounds { x, y, width, height } => made.set_bounds(x, y, width, height),

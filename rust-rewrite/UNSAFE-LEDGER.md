@@ -1,6 +1,6 @@
 # Unsafe ledger
 
-Rewritten by `bun rust-rewrite/verify.ts <platform> --ledger`. 337 uses in 23 files.
+Rewritten by `bun rust-rewrite/verify.ts <platform> --ledger`. 339 uses in 23 files.
 
 | File | Uses of `unsafe` |
 |---|---|
@@ -15,7 +15,7 @@ Rewritten by `bun rust-rewrite/verify.ts <platform> --ledger`. 337 uses in 23 fi
 | `crates/sweetview-platform-shell/src/win.rs` | 2 |
 | `crates/sweetview-platform-webview/src/windows/environment.rs` | 2 |
 | `crates/sweetview-platform-webview/src/windows/handlers.rs` | 22 |
-| `crates/sweetview-platform-webview/src/windows/host.rs` | 25 |
+| `crates/sweetview-platform-webview/src/windows/host.rs` | 26 |
 | `crates/sweetview-platform-webview/src/windows/istream.rs` | 13 |
 | `crates/sweetview-platform-webview/src/windows/mod.rs` | 44 |
 | `crates/sweetview-platform-webview/src/windows/test_support.rs` | 47 |
@@ -25,7 +25,7 @@ Rewritten by `bun rust-rewrite/verify.ts <platform> --ledger`. 337 uses in 23 fi
 | `crates/sweetview-platform-window/src/tab_frame.rs` | 16 |
 | `crates/sweetview-platform-window/src/tab_frame_tests.rs` | 12 |
 | `crates/sweetview-platform-window/src/test_support.rs` | 2 |
-| `crates/sweetview-platform-window/src/windows.rs` | 38 |
+| `crates/sweetview-platform-window/src/windows.rs` | 39 |
 | `crates/sweetview-platform-window/src/windows_tests.rs` | 14 |
 
 ## Reasons
@@ -108,7 +108,7 @@ The registry is `windows-registry` 0.6.1, and the message-only windows are `Mess
 
 On Windows this crate makes the webview itself (DECISIONS D45): `wry` 0.58.2, which the proposal chose for it, is not used, because its Windows creation path (`wry-0.58.2/src/webview2/mod.rs`, `new_in_hwnd`, `create_controller`, `init_webview`, `set_webview_settings`, `attach_handlers`) sets and registers what the C++ library never did and gives no way to leave it out (`WebViewAttributes`, where its handlers and settings live, is private: `src/lib.rs:538`). Everything reaches WebView2 through the typed interfaces of `webview2-com` 0.39.1 (https://docs.rs/webview2-com/0.39.1/webview2_com/), policy level 3, on the objects this crate's own `Webview` holds. Each COM object is held by a COM reference (a field, a frame's `cast`, the event args WebView2 holds for the handler's call); on a closed webview a call returns an error.
 
-### `crates/sweetview-platform-webview/src/windows/host.rs` (25)
+### `crates/sweetview-platform-webview/src/windows/host.rs` (26)
 
 What `wry::WebViewBuilder::build` and `wry::WebView`'s methods did, done as `win32_edge.hh` does it; each call replaces the `wry` call named.
 
@@ -118,6 +118,7 @@ What `wry::WebViewBuilder::build` and `wry::WebView`'s methods did, done as `win
 - **Showing it** (2: `SetIsVisible`, `UpdateWindow`), as `embed` shows it.
 - **Content** (3: `Navigate`, `NavigateToString`, `ExecuteScript`); replaces `wry`'s `load_url`, `load_html`, `evaluate_script`.
 - **Bounds, focus, moving, colour, the end** (6: `SetBounds` in the widget's `WM_SIZE`, `MoveFocus`, `SetParent`, `NotifyParentWindowPositionChanged`, `SetDefaultBackgroundColor`, `Close`); replace `wry`'s parent subclass and `focus`, `reparent` (which re-attached its subclass), `set_background_color` and its drop.
+- **Tests only: the colour at first show** (1: `DefaultBackgroundColor` in `note_first_shown`), compiled only for tests and the `test-support` feature: the widget's `WM_SHOWWINDOW` reads the controller's default background the first time it is shown, so a test proves a window's start colour is set before anything is shown. The out-value is a local for the call to fill.
 
 ### `crates/sweetview-platform-webview/src/windows/mod.rs` (44)
 
@@ -159,10 +160,10 @@ What `wry::WebViewBuilder::build` and `wry::WebView`'s methods did, done as `win
 
 `tao` 0.38.0 (https://docs.rs/tao/0.38.0/tao/window/struct.Window.html, `WindowExtWindows`) has an API for some of these on windows it made; this crate serves every window of the thread through `NativeWindow`, an application's own included (lent as a `BorrowedWindow`), which `tao` cannot wrap, and DECISIONS D8 and D9 say why even `tao`'s own windows go through some of them (events held back, `SW_SHOW` activating, style rewrites). Where `tao` makes the same call for its own windows, the runtime uses `tao` for those and this crate only for adopted windows: `is_visible`, `set_title`, the show states (`show_as`: `tao`'s `set_visible`, `set_minimized`, `set_maximized`), the topmost band and `start_drag` (`drag_window`). Every window function validates its handle and fails on one that is gone. No window handle is kept outside an owning type: a window Sweetview did not make is kept by the runtime as its handle value and lent for each call (`BorrowedWindow::with_handle_value`).
 
-### `crates/sweetview-platform-window/src/windows.rs` (38)
+### `crates/sweetview-platform-window/src/windows.rs` (39)
 
 - **Naming a window** (5: `WindowHandle::borrow_raw`, `IsWindow`, `GetWindowThreadProcessId`, `GetCurrentThreadId`, `PostMessageW`). `raw-window-handle` 0.6.2 `borrow_raw` (https://docs.rs/raw-window-handle/0.6.2/raw_window_handle/struct.WindowHandle.html#method.borrow_raw) is `unsafe`. A `BorrowedWindow` is lent for one call by `with_handle_value` (after `IsWindow`) or for the borrow of a `tao` window by `of`; it carries that lifetime, is not `Send`, and its handle is checked with `IsWindow` again when lent through `HasWindowHandle`. What holds is what the OS gives: it validates the handle on every call, so a window destroyed meanwhile makes the calls fail, and no memory is read through the handle. Identity is checked where an action could land on a later window with the same value: the subclass and the frame procedure compare the state they installed. A handle that crosses to JavaScript is an integer validated each time it is lent.
-- **Reading a window** (7: `IsWindowVisible`, `GetActiveWindow`, one `IsIconic` in `is_iconic`, `IsZoomed`, `GetWindowRect`, one `GetDpiForWindow` in `dpi_of`, `GetWindowLongPtrW`). `tao`'s readers exist only for its own windows; its `outer_position` and `outer_size` read the rectangle twice and panic when the window was destroyed by other code, and its `is_maximized` and `scale_factor` read its own flags, not the OS's state. Out-structs are locals.
+- **Reading a window** (8: `IsWindowVisible`, `GetActiveWindow`, one `IsIconic` in `is_iconic`, `IsZoomed`, one `GetWindowPlacement` in `restores_maximized`, `GetWindowRect`, one `GetDpiForWindow` in `dpi_of`, `GetWindowLongPtrW`). `restores_maximized` is whether a minimised window goes back to maximised (`WPF_RESTORETOMAXIMIZED`), which a window Sweetview wraps while it is minimised needs (review round 2, finding 5): `IsZoomed` reads false while it is iconic, `tao`'s `is_maximized` exists only for its own windows, and `windows` 0.62.2 has no safe wrapper of `GetWindowPlacement` (https://docs.rs/windows/0.62.2/windows/Win32/UI/WindowsAndMessaging/fn.GetWindowPlacement.html). `tao`'s readers exist only for its own windows; its `outer_position` and `outer_size` read the rectangle twice and panic when the window was destroyed by other code, and its `is_maximized` and `scale_factor` read its own flags, not the OS's state. Out-structs are locals.
 - **Changing a window** (11: one `SetWindowLongPtrW` in `set_style_of`, which writes `GWL_STYLE` or `GWL_EXSTYLE` only, one `SetWindowPos` in `set_window_pos` (behind `set_placement`, which replaces the five near-identical position, size and band functions), `ShowWindow` (behind `show` and `show_as`, which replaces three), one `SetForegroundWindow` in `set_foreground`, `SetWindowTextW`, `ReleaseCapture` and `SendMessageW` for the frame press in `press_frame` (the caption or any edge; it replaces three), `GetWindow`, one `GetClientRect` in `client_size`, `MoveWindow`, `SetLayeredWindowAttributes`). `tao` sets an outer position (with `SWP_ASYNCWINDOWPOS`) and an inner size as two calls, shows with `SW_SHOW`, rewrites the extended style from its own flags, posts its drag press instead of waiting for the move loop, and has no layered attributes (README of this crate).
 - **Destroying a `tao` window now** (1: `DestroyWindow` in `destroy_now`): `tao` destroys later, from its own loop. `destroy_now` takes the `tao` window by value and drops it, so nothing names the handle through it afterwards.
 - **Window icons** (6: `CreateIconFromResourceEx`, `LoadIconW`, `DestroyIcon`, one `GetSystemMetrics` in `metric`, one `SendMessageW` in `icon_message`, for `WM_SETICON` and `WM_GETICON`, and one `SendMessageTimeoutW` in `shown_icon`, the parked windows' `WM_GETICON`, with `SMTO_ABORTIFHUNG | SMTO_BLOCK` and 100 ms, so a parked window of another process that stops answering holds nothing up and keeps its icons parked, D41). Looked for: `tao` 0.38.0 `Window::set_window_icon` sets `ICON_SMALL` and `WindowExtWindows::set_taskbar_icon` sets `ICON_BIG` (https://docs.rs/tao/0.38.0/tao/platform/windows/trait.WindowExtWindows.html#tymethod.set_taskbar_icon; `tao-0.38.0/src/platform_impl/windows/window.rs`), each from a `tao::window::Icon`, which is made from RGBA pixels at one size (`Icon::from_rgba`, drawn with `CreateIcon`) or from a file or resource (`IconExtWindows::from_path`, `from_resource`), not from `.ico` bytes. Using them for `tao`'s windows would mean decoding each `.ico` entry (PNG, or a bitmap with its mask) and scaling the picked one in this project where `CreateIconFromResourceEx` does both now, and `None` would clear the icons where Sweetview sets the stock one; an adopted window has no `tao` window, so the calls here stay for it in any case. Contained by `OwnedIcon` (destroyed in `Drop`) and `WindowIcons`, whose `Drop` destroys only icons no live window shows (`IsWindow`, then `WM_GETICON`); icons a window still shows (an adopted window that is released) are parked by handle value and destroyed at the next `WindowIcons::set` after the window is gone or shows others.

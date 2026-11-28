@@ -11,6 +11,7 @@ import type { CallFrame, ChunkFrame, EventMap, Frame, MethodMap, ReplyFrame, Ser
 import { requestError, writeRequestResponse, writeStreamingResponse } from "./request-response";
 import { WEBVIEW_SESSION, type HttpRequestMessage, type WorkerCrashFrame, type WorkerMessage } from "./messages";
 import { Ring } from "./ring";
+import { messageOfThrown } from "./thrown-text";
 import { workerWake } from "./worker-wake";
 
 declare const self: Worker;
@@ -283,7 +284,8 @@ export function hostService<M extends MethodMap, E extends EventMap>(service: Se
       const result = await service.call(frame.method as keyof M & string, frame.params as never, ctx);
       if (frame.seq !== null) host.send({ kind: "reply", seq: frame.seq, ok: true, result });
     } catch (err) {
-      const error = err instanceof Error ? err.message : String(err);
+      // Read without letting an exception out, so the reply is sent whatever was thrown.
+      const error = messageOfThrown(err);
       if (frame.seq !== null) host.send({ kind: "reply", seq: frame.seq, ok: false, error });
       else console.error(`${frame.method} failed:`, error);
     }

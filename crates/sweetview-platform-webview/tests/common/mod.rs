@@ -119,7 +119,7 @@ impl Ctx {
             .with_inner_size(LogicalSize::new(480.0, 360.0))
             .build(&self.el)
             .expect("window");
-        let webview = Webview::create(&BorrowedWindow::of(&window), Layout::Fill, devtools).expect("webview");
+        let webview = Webview::create(&BorrowedWindow::of(&window), Layout::Fill, devtools, None).expect("webview");
         let messages = Rc::new(RefCell::new(Vec::new()));
         let wakes = Arc::new(AtomicUsize::new(0));
         let counter = wakes.clone();

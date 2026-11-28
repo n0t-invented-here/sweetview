@@ -13,6 +13,7 @@ import type { HttpRequestMessage, InitMessage, NativeRequest, NativeResponse, Wo
 import { RawWebview, SizeHint, Window, quitEventLoop, runEventLoop, signalReady, type Rect, type TabHandle, type WindowOptions } from "@n1h/sweetview-native";
 import { createChildWebview, discardQuit, emitWindowFileDrop, engineOf, getWindowMeta, holdWindowNativeDispose, isWindowDisposed, macosKeepsTagPath, onWindowDispose, onWindowFileDropListenersChange, preserveWindowGeometry, releaseAtEnd, scheduleNativeTimeout, windowFileDropCount } from "@n1h/sweetview-native/internal";
 import { Ring } from "./ring";
+import { messageOfThrown } from "./thrown-text";
 import { webviewEngine, type WebviewHost, type WorkerWake } from "./webview-host";
 import { ASSET_ORIGIN } from "./webview-lib";
 
@@ -123,9 +124,8 @@ export type TabAttachHooks = {
    * the window's title, styles and bounds alone. The strip and the tabs of a
    * tabbed window are such children of its frame.
    */
-  mountChild?(): { window: bigint; bounds: Rect; visible: boolean };
-  /** The browser's background before the page paints, in place of the window's own `backgroundColor`: a tab's, from its tabbed window. */
-  backgroundColor?(): string | undefined;
+  mountChild?(): { window: bigint; bounds: Rect; visible: boolean; pageBackground?: boolean };
+
 };
 
 /** Internal options key for `TabAttachHooks` (not exported from the package entry). */
@@ -358,8 +358,10 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
       // either kept or destroyed, so it is never created on, or left bound to, a dead HWND.
       const releaseCreateHold = meta.owned ? holdWindowNativeDispose(window) : undefined;
       try {
+        // On Windows the binding gives the webview the backgroundColor of the window it is made in
+        // (a tab's: its tabbed window's) from the moment WebView2 makes it.
         const created = child
-          ? createChildWebview(options.debug ?? false, child.window, child.bounds)
+          ? createChildWebview(options.debug ?? false, child.window, child.bounds, child.pageBackground === true)
           : new RawWebview(options.debug ?? false, { width: widthDips, height: heightDips, hint }, host);
         // A tab is shown by its driver once it is selected, never over the tab on show while it loads.
         if (child && !child.visible) engineOf(created)?.setVisible(false);
@@ -401,11 +403,6 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
         } else if (err !== 0) {
           throw new Error(`sweetview: webview_set_background_color failed (${err})`);
         }
-      } else if ((tabHooks?.backgroundColor?.() ?? meta.backgroundColor) !== undefined && process.platform === "win32") {
-        // The window's backgroundColor is also what the browser paints before the page does (macOS: until its goal, nothing).
-        const rgb = Number.parseInt((tabHooks?.backgroundColor?.() ?? meta.backgroundColor)!.slice(1), 16);
-        const err = engineHost.setBackgroundColor((rgb >> 16) & 0xff, (rgb >> 8) & 0xff, rgb & 0xff, 255);
-        if (err !== undefined && err !== 0) throw new Error(`sweetview: webview_set_background_color failed (${err})`);
       }
       if (options.allowExternalDrop !== undefined) {
         const error = engineHost.setAllowExternalDrop(options.allowExternalDrop);
@@ -469,6 +466,9 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
       const drain = () => {
         ring.acknowledgeWakeup();
         let crashed: string | undefined;
+        // What onEvent listeners threw: each listener and the page still get every event, the drain
+        // goes on, and the errors are thrown once it has finished.
+        const listenerErrors: unknown[] = [];
         for (const bytes of ring.drain()) {
           if (!isLive()) break;
           if (bytes[0] === 0) {
@@ -494,14 +494,27 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
             if (frame.ok) raw.return(frame.seq, 0, JSON.stringify(frame.result ?? null));
             else raw.return(frame.seq, 1, JSON.stringify({ message: frame.error }));
           } else if (frame.kind === "event") {
-            for (const fn of taps) fn({ name: frame.name, payload: frame.payload });
+            for (const fn of taps) {
+              try {
+                fn({ name: frame.name, payload: frame.payload });
+              } catch (err) {
+                listenerErrors.push(err);
+              }
+            }
             if (isLive()) emit(frame.name, frame.payload);
           }
         }
-        if (crashed !== undefined) {
-          console.error("sweetview: the worker failed:", crashed);
-          failWorker(`worker crashed: ${crashed}`);
-        }
+        if (crashed !== undefined) workerFailed(`worker crashed: ${crashed}`, ["sweetview: the worker failed:", crashed]);
+        // One listener's error is thrown as it is, so it is printed as it was; several, together.
+        if (listenerErrors.length === 1) throw listenerErrors[0];
+        if (listenerErrors.length > 1) throw new AggregateError(listenerErrors, `sweetview: ${listenerErrors.length} onEvent listeners threw`);
+      };
+      // The worker ended. The first path to see it (its crash frame in the drain, Worker.onerror,
+      // Worker.onmessageerror) prints the line and fails the worker; the others print nothing.
+      const workerFailed = (reason: string, line: unknown[]) => {
+        if (workerFailure !== undefined || down) return;
+        console.error(...line);
+        failWorker(reason);
       };
 
       const workerUrl =
@@ -640,7 +653,7 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
         if (isLive()) raw.return(seq, status, JSON.stringify(value ?? null));
       };
       const replyError = (seq: string, error: unknown) => {
-        respond(seq, 1, { message: error instanceof Error ? error.message : String(error) });
+        respond(seq, 1, { message: messageOfThrown(error) });
       };
       // The worker is gone (an uncaught error, or a message it sent could not be read): fail
       // everything waiting on it, then refuse new work for it instead of letting it hang.
@@ -734,12 +747,10 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
           const init: InitMessage = { kind: "init", ring: sab, wake: workerDrain.wake };
           worker.postMessage(init);
           worker.onerror = (e) => {
-            console.error("sweetview: the worker failed:", e.message ?? e);
-            failWorker(`worker crashed: ${e.message ?? String(e)}`);
+            workerFailed(`worker crashed: ${e.message ?? String(e)}`, ["sweetview: the worker failed:", e.message ?? e]);
           };
           worker.onmessageerror = () => {
-            console.error("sweetview: the worker sent a message that could not be deserialized");
-            failWorker("worker crashed: a message from the worker could not be deserialized");
+            workerFailed("worker crashed: a message from the worker could not be deserialized", ["sweetview: the worker sent a message that could not be deserialized"]);
           };
         }
         if (onRequest !== undefined && engine.hasRequests) {
