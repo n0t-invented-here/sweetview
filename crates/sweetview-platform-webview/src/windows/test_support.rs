@@ -551,3 +551,18 @@ thread_local! {
 pub fn fail_next_attach() {
     FAIL_NEXT_ATTACH.with(|fail| fail.set(true));
 }
+
+/// Whether this thread holds a WebView2 environment now.
+pub fn environment_cached() -> bool {
+    super::environment::cached()
+}
+
+thread_local! {
+    pub(super) static REFUSE_NEXT_DROP_SCRIPT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Makes WebView2's answer to this thread's next drop-script registration a
+/// refusal, as WebView2 reports one (no script id).
+pub fn refuse_next_drop_script() {
+    REFUSE_NEXT_DROP_SCRIPT.with(|refuse| refuse.set(true));
+}

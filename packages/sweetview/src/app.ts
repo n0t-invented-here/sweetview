@@ -1028,6 +1028,9 @@ export async function createApp<M extends MethodMap = MethodMap, E extends Event
 
   try {
     const webview = await WebView.attach<M, E>(window, options);
+    // At the tag the window createApp showed was the webview's own, whose page took the focus
+    // on each activation; a window the application gives gets nothing (as under the C++ library).
+    engineOf(webview.raw)?.followWindowActivation();
     // Quit after disposal so a close handler can still hide the window.
     const unsubAutoQuit = options.onClose ? undefined : onWindowDispose(window, () => {
       if (Window.visibleWindows().length === 0) webview.quit();

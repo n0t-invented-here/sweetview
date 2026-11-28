@@ -33,7 +33,7 @@ mod window_os_tests;
 mod menu_tray_os_tests;
 #[cfg(all(test, windows))]
 mod reentry_tests;
-#[cfg(all(test, windows))]
+#[cfg(all(test, windows, feature = "webview"))]
 mod person_tests;
 
 pub use error::{Error, Result};

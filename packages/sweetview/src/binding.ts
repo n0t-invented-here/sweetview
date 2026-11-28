@@ -22,7 +22,8 @@ function load(): WebviewBinding {
     // The process's one runtime is the first binding loaded in it (D50).
     const owner = own.claimProcess(file);
     if (owner.toLowerCase() === file.toLowerCase()) return own;
-    return require(owner) as WebviewBinding;
+    // Owned by the native package's binding, which has no webview: a native call ran first.
+    throw new Error("@n1h/sweetview-native's binding, which has no webview, was loaded first in this process; import @n1h/sweetview before the first native call");
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
     const missing = (err as { code?: unknown } | null)?.code === "MODULE_NOT_FOUND";

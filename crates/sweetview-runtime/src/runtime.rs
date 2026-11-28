@@ -280,7 +280,7 @@ impl Runtime {
   }
 
   /// Tests only: how many listeners the loop has.
-  #[cfg(test)]
+  #[cfg(all(test, feature = "webview"))]
   pub(crate) fn listener_count(&self) -> usize {
     self.listeners.borrow().len()
   }

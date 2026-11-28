@@ -1751,7 +1751,10 @@ application imports instead. The webview and its companions are exported by
 `@n1h/sweetview`, so that an application of `@n1h/sweetview-native` alone takes
 no webview (D50); the input hooks, `permissions` and `unload` by
 `@n1h/sweetview-native`, and by `@n1h/sweetview/native` for an application that
-depends on `@n1h/sweetview`.
+depends on `@n1h/sweetview`. An application that uses both imports
+`@n1h/sweetview` before its first native call: a process whose first call
+loaded the native package's binding has no webview, and `@n1h/sweetview` then
+throws saying so.
 
 ### `@n1h/sweetview-webview-bun`
 
