@@ -461,6 +461,33 @@ mod tests {
         assert_eq!(seen.borrow_mut().take().map(|outcome| outcome.err()), Some(Some(E_POINTER)));
     }
 
+    // The widget is an owning type: made and dropped in a loop, every USER, GDI and kernel
+    // count comes back to its start, and a widget its parent destroyed first is not destroyed
+    // again.
+    #[test]
+    fn a_widget_gives_back_every_handle() {
+        use tao::event_loop::EventLoopBuilder;
+        use tao::platform::windows::EventLoopBuilderExtWindows;
+        let event_loop = EventLoopBuilder::new().with_any_thread(true).build();
+        let parent = tao::window::WindowBuilder::new().with_visible(false).build(&event_loop).expect("parent");
+        let parent_hwnd = HWND(sweetview_platform_window::handle_value(&BorrowedWindow::of(&parent)) as *mut _);
+        sweetview_platform_loop::testing::assert_gives_back_every_handle(50, || {
+            let widget = Widget::create(parent_hwnd).expect("widget");
+            assert!(widget.alive());
+            widget.move_to(0, 0, 100, 50);
+            drop(widget);
+        });
+        // Destroyed with its own parent first: the value knows, and its drop does nothing.
+        let other = tao::window::WindowBuilder::new().with_visible(false).build(&event_loop).expect("other parent");
+        let other_hwnd = HWND(sweetview_platform_window::handle_value(&BorrowedWindow::of(&other)) as *mut _);
+        let orphan = Widget::create(other_hwnd).expect("widget");
+        assert!(orphan.alive());
+        sweetview_platform_window::destroy_now(other);
+        assert!(!orphan.alive(), "its WM_NCDESTROY came with its parent's destruction");
+        // Does nothing: the handle value may name another window by now.
+        drop(orphan);
+    }
+
     #[test]
     fn the_two_failures_the_fork_gives_up_on() {
         assert!(gives_up(windows::core::HRESULT::from_win32(ERROR_INVALID_STATE.0)));
