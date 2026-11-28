@@ -4,6 +4,18 @@
 //! hosts them to be in a single-threaded apartment. Sweetview's TypeScript
 //! entered one before it made its first window; the runtime does it when it
 //! starts, so a webview can be mounted in any window the runtime makes.
+//!
+//! The process also keeps COM itself loaded for as long as it lives, whatever
+//! apartments come and go (D46). The `windows` crate caches every agile WinRT
+//! activation factory it loads in a process-wide static, for good
+//! (`FactoryCache` in `windows-core`): `UISettings` (the system theme),
+//! `ToastNotificationManager`. When the last apartment of the process is left,
+//! COM unloads the DLLs those factories live in (measured: `Windows.UI.dll` is
+//! gone the moment the only STA is left), and the next call through a cached
+//! factory runs freed code: an access violation. The process's MTA usage
+//! (`CoIncrementMTAUsage`), taken once and never given back, is the documented
+//! way to keep COM loaded with no thread in an apartment, and what
+//! `windows-core` itself does when it finds COM not initialised.
 
 use std::fmt;
 use std::marker::PhantomData;
@@ -42,8 +54,23 @@ impl ComApartment {
     if result.is_err() {
       return Err(ComError(format!("sweetview: CoInitializeEx failed: HRESULT {:#010x}", result.0)));
     }
+    hold_com_for_the_process();
     Ok(Self { _not_send: PhantomData })
   }
+}
+
+/// Keeps COM loaded in this process until it ends, once, so no factory the `windows` crate has
+/// cached outlives the DLL it lives in (see the module's header). A failure leaves COM as it was:
+/// the process then depends, as before, on an apartment staying entered.
+#[cfg(windows)]
+fn hold_com_for_the_process() {
+  static HELD: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+  HELD.get_or_init(|| {
+    // SAFETY: one call with no arguments. The usage it takes is kept on purpose for the rest
+    // of the process (its cookie is dropped unused and never passed to `CoDecrementMTAUsage`),
+    // which is what keeps the factories the `windows` crate caches for the process valid.
+    let _cookie = unsafe { windows::Win32::System::Com::CoIncrementMTAUsage() };
+  });
 }
 
 #[cfg(windows)]
