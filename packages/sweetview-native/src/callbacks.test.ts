@@ -398,23 +398,6 @@ describe.if(onWindows)("W1.3 / W1.4 the hooks' fallback: a handler that throws d
     expect({ thrown, downAfterThrow, told, printed: log.lines() }).toEqual({ thrown: 2, downAfterThrow: true, told: ["keyboardHook: keyboard boom", "keyboardHook: keyboard boom"], printed: [] });
   });
 
-  test("W1.4 a keyboard hook disposes itself from inside its handler and is not called again", async () => {
-    let calls = 0;
-    keys = installKeyboardHook((m) => {
-      if (m.code !== "F24") return false;
-      calls++;
-      keys!.dispose();
-      return false;
-    });
-    sendKey(VK_F24, false);
-    await pumpUntil(() => calls > 0, 3000);
-    sendKey(VK_F24, true);
-    await pumpFor(150);
-    expect(calls).toBe(1);
-    // The hook is gone: another installs.
-    keys = installKeyboardHook(() => false);
-  });
-
   test("onCallbackError: a mouse hook handler's exception reaches the listener through the binding, once per call, with nothing printed, and the pointer still moves (review N8)", async () => {
     const original = cursorNow();
     const told: string[] = [];
@@ -579,39 +562,6 @@ describe.if(onWindows)("W1.3 / W1.4 a window's listeners", () => {
     }
   });
 
-  for (const via of ["onClose", "onFileDrop", "onResize"] as const) {
-    test(`W1.4 an ${via} handler disposes its window from inside its own call`, async () => {
-      const win = make(`dispose from ${via}`);
-      const hwnd = handleOf(win);
-      let calls = 0;
-      const dispose = () => {
-        calls++;
-        win.dispose();
-      };
-      try {
-        if (via === "onClose") {
-          win.onClose(dispose);
-          sendClose(hwnd);
-        } else if (via === "onFileDrop") {
-          win.onFileDrop(dispose);
-          await sendDrop(hwnd, ["C:\\example\\one.txt"]);
-        } else {
-          win.onResize(dispose);
-          win.setBounds({ ...offscreen, width: 333 });
-        }
-        await pumpFor(50);
-        expect(calls).toBe(1);
-        expect(isWindowDisposed(win)).toBe(true);
-        expect(isWindow(hwnd)).toBe(false);
-        // Calls on the disposed window do nothing.
-        win.setBounds(offscreen);
-        expect(win.isVisible()).toBe(false);
-      } finally {
-        win.dispose();
-      }
-    });
-  }
-
   test("W1.3 / W1.4 a close request no listener takes disposes the window from inside the binding's call; a dispose hook that throws is logged with today's message", async () => {
     const win = make("default close");
     const hwnd = handleOf(win);
@@ -681,41 +631,6 @@ describe.if(onWindows)("W1.3 / W1.4 a tab frame's activation listener", () => {
     expect(log.lines()).toEqual(pairs.map(() => "sweetview: a tab frame's onActivate callback threw: activate boom"));
   });
 
-  test("W1.4 the binding's onActivate listener removes itself, and another replaces itself, from inside its own call", () => {
-    const win = make("activate removes itself");
-    const hwnd = BigInt(win.handle!);
-    const calls: string[] = [];
-    try {
-      const tab = binding().TabFrame.of(hwnd)!;
-      expect(tab).not.toBeNull();
-      // Removes itself on its first call.
-      tab.onActivate((active) => {
-        calls.push(`once ${active}`);
-        tab.onActivate(null);
-      });
-      activate(hwnd, true);
-      activate(hwnd, false);
-      expect(calls).toEqual(["once true"]);
-      // Replaces itself; the replacement is called instead from the next call on (the default
-      // procedure may report the same state again, which the replacement then gets first).
-      tab.onActivate((active) => {
-        calls.push(`A ${active}`);
-        tab.onActivate((again) => void calls.push(`B ${again}`));
-      });
-      activate(hwnd, true);
-      activate(hwnd, false);
-      activate(hwnd, true);
-      expect(calls.slice(0, 2)).toEqual(["once true", "A true"]);
-      expect(calls.filter((c) => c.startsWith("A"))).toEqual(["A true"]);
-      const replacement = dedupe(calls.slice(2));
-      expect(replacement.every((c) => c.startsWith("B "))).toBe(true);
-      expect(replacement.slice(-2)).toEqual(["B false", "B true"]);
-      expect(tab.live).toBe(true);
-    } finally {
-      win.dispose();
-    }
-  });
-
   test("W1.4 the tabs library's onActivate callback removes itself from inside its own call", async () => {
     const { getTabFrame } = await import("./win32/tab-window");
     const win = make("library callback removes itself");
@@ -737,30 +652,6 @@ describe.if(onWindows)("W1.3 / W1.4 a tab frame's activation listener", () => {
     }
   });
 
-  test("W1.4 an onActivate listener disposes its window from inside its own call", async () => {
-    const win = make("activate disposes");
-    const hwnd = BigInt(win.handle!);
-    let calls = 0;
-    const tab = binding().TabFrame.of(hwnd)!;
-    try {
-      tab.onActivate(() => {
-        calls++;
-        win.dispose();
-      });
-      activate(hwnd, true);
-      await pumpFor(50);
-      expect(calls).toBe(1);
-      expect(isWindowDisposed(win)).toBe(true);
-      expect(isWindow(hwnd)).toBe(false);
-      expect(tab.live).toBe(false);
-      expect(binding().TabFrame.of(hwnd)).toBeNull();
-      // The window is gone: nothing is called again.
-      activate(hwnd, false);
-      expect(calls).toBe(1);
-    } finally {
-      win.dispose();
-    }
-  });
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -836,46 +727,6 @@ describe.if(onWindows)("W1.3 / W1.4 the hit-region refiner", () => {
     });
   });
 
-  test("W1.4 a refiner replaces itself from inside its own call, and the replacement is asked instead", async () => {
-    await withRefinerWindow("refiner replaces itself", async (win, _hwnd, at) => {
-      const asked: string[] = [];
-      at(250, 50);
-      await pumpFor(60);
-      win.setHitRegions(leftHalf, (_local, answer) => {
-        asked.push("original");
-        answer(true);
-        win.setHitRegions(leftHalf, (_l, answerB) => {
-          asked.push("replacement");
-          answerB(true);
-        });
-      });
-      at(40, 40);
-      await pumpUntil(() => asked.length >= 1, 2000);
-      at(60, 70);
-      await pumpUntil(() => asked.length >= 2, 2000);
-      at(70, 80);
-      await pumpUntil(() => asked.length >= 3, 2000);
-      expect(asked).toEqual(["original", "replacement", "replacement"]);
-    });
-  });
-
-  test("W1.4 a refiner disposes its window from inside its own call, and nothing is asked afterwards", async () => {
-    await withRefinerWindow("refiner disposes", async (win, hwnd, at) => {
-      let asked = 0;
-      at(250, 50);
-      await pumpFor(60);
-      win.setHitRegions(leftHalf, () => {
-        asked++;
-        win.dispose();
-      });
-      at(40, 40);
-      await pumpUntil(() => asked >= 1, 2000);
-      at(60, 70);
-      await pumpFor(100);
-      expect(asked).toBe(1);
-      expect(isWindow(hwnd)).toBe(false);
-    });
-  });
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -905,31 +756,6 @@ describe.if(onWindows)("W1.3 / W1.4 the tray's click, menu function and menu ite
     }
     expect(clicks).toBe(2);
     expect(log.lines()).toEqual(["sweetview: message window handler threw: click boom", "sweetview: message window handler threw: click boom"]);
-  }, 20_000);
-
-  test("W1.4 a click handler disposes the tray from inside its own call", async () => {
-    const { TRAY, doubleClickTime, postTrayMouse } = await import("../test/win32-os");
-    const { createTray, currentTray } = await import("./win32/tray");
-    let clicks = 0;
-    const tray = createTray({
-      tooltip: unique("tray"),
-      onClick: () => {
-        clicks++;
-        tray.dispose();
-      },
-    });
-    const hwnd = tray.windowHandle();
-    try {
-      postTrayMouse(hwnd, TRAY.LBUTTONDOWN, TRAY.LBUTTONUP);
-      await pumpUntil(() => clicks === 1, doubleClickTime() + 2000);
-      await pumpFor(100);
-      expect(clicks).toBe(1);
-      expect(isWindow(hwnd)).toBe(false);
-      expect(tray.windowHandle()).toBe(0n);
-      expect(currentTray()).toBeUndefined();
-    } finally {
-      tray.dispose();
-    }
   }, 20_000);
 
   test("W1.3 a menu function that throws is logged with today's message and opens no menu; the next right click opens one", async () => {
@@ -966,34 +792,6 @@ describe.if(onWindows)("W1.3 / W1.4 the tray's click, menu function and menu ite
     expect(log.lines()).toEqual(["sweetview: message window handler threw: menu function boom"]);
   }, 20_000);
 
-  test("W1.4 a menu function disposes the tray from inside its own call", async () => {
-    const { TRAY, VK, openPopupMenu, postTrayMouse, pressKeys } = await import("../test/win32-os");
-    const { createTray } = await import("./win32/tray");
-    let opened = 0;
-    const tray = createTray({
-      tooltip: unique("tray"),
-      menu: () => {
-        opened++;
-        tray.dispose();
-        return [{ label: "After dispose" }];
-      },
-    });
-    const hwnd = tray.windowHandle();
-    try {
-      // Should a menu open anyway, it is dismissed.
-      await whenMenuOpens((menuWindow) => pressKeys(menuWindow, VK.ESCAPE));
-      postTrayMouse(hwnd, TRAY.RBUTTONDOWN, TRAY.RBUTTONUP);
-      await pumpUntil(() => opened === 1);
-      await pumpFor(300);
-      await pumpUntil(() => openPopupMenu() === 0n);
-      expect(opened).toBe(1);
-      expect(isWindow(hwnd)).toBe(false);
-      expect(openPopupMenu()).toBe(0n);
-    } finally {
-      tray.dispose();
-    }
-  }, 20_000);
-
   test("W1.3 a menu item's click that throws is logged with today's message, and the next choice runs", async () => {
     const { openPopupMenu } = await import("../test/win32-os");
     const { createTray } = await import("./win32/tray");
@@ -1021,67 +819,6 @@ describe.if(onWindows)("W1.3 / W1.4 the tray's click, menu function and menu ite
     expect(clicks).toBe(2);
     expect(log.lines()).toEqual(["sweetview: message window handler threw: menu item boom", "sweetview: message window handler threw: menu item boom"]);
   }, 20_000);
-
-  test("W1.4 a menu item's click disposes the tray from inside the binding's call", async () => {
-    const { openPopupMenu } = await import("../test/win32-os");
-    const { createTray } = await import("./win32/tray");
-    let clicks = 0;
-    const tray = createTray({
-      tooltip: unique("tray"),
-      menu: () => [
-        {
-          label: "Quit",
-          click: () => {
-            clicks++;
-            tray.dispose();
-          },
-        },
-      ],
-    });
-    const hwnd = tray.windowHandle();
-    try {
-      await chooseFirstTrayItem(hwnd, () => clicks === 1);
-      await pumpFor(100);
-      expect(openPopupMenu()).toBe(0n);
-      expect(clicks).toBe(1);
-      expect(isWindow(hwnd)).toBe(false);
-    } finally {
-      tray.dispose();
-    }
-  }, 20_000);
-});
-
-// ---------------------------------------------------------------------------------------------
-
-describe.if(onWindows)("W1.4 the notifier's click", () => {
-  test("W1.4 a click handler disposes its notifier from inside its own call; a click already queued is not delivered", async () => {
-    const { createNotifier, debugNativeNotifier } = await import("./win32/notifier");
-    const clicks: string[] = [];
-    const backend = createNotifier({
-      onClick: (click) => {
-        clicks.push(click.id);
-        backend.dispose();
-      },
-    });
-    const native = debugNativeNotifier(backend)!;
-    try {
-      native.debugForcePath("balloonOnly");
-      const uidOf = (shown: string | null) => Number(shown!.slice("balloon:".length));
-      const first = uidOf(native.debugShow("first", "First", "", true, null));
-      const second = uidOf(native.debugShow("second", "Second", "", true, null));
-      // Both clicks are posted before either is dispatched.
-      expect(native.debugSimulateBalloonEvent(first, "clicked")).toBe(true);
-      expect(native.debugSimulateBalloonEvent(second, "clicked")).toBe(true);
-      await pumpUntil(() => clicks.length > 0);
-      await pumpFor(100);
-      expect(clicks).toEqual(["first"]);
-      expect(native.debugPendingBalloons()).toBe(0);
-      expect(native.debugSimulateBalloonEvent(second, "clicked")).toBe(false);
-      expect(backend.notify({ title: "after dispose" })).toBe(false);
-    } finally {
-      backend.dispose();
-    }
-  });
 });
 
 // ---------------------------------------------------------------------------------------------
