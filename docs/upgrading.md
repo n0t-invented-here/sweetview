@@ -107,8 +107,8 @@ this page: it imports each new form and checks that it is what the row says.
   called from a `Worker` throw `sweetview: this call must be made on the UI thread`.
   `Window.fromHandle(h)` with an `h` that names no window throws
   `sweetview: not a window: 0x…` (it used to wrap it silently), and
-  subscribing to events (`onClose`, `onResize`, `onMove`, `onFileDrop`) on a
-  wrapper of a window that belongs to another thread throws
+  subscribing to events (`onClose`, `onResize`, `onMaximizeChange`, `onMove`,
+  `onFileDrop`) on a wrapper of a window that belongs to another thread throws
   `sweetview: a window of another thread cannot be observed`.
 - **Window styles.** A frameless `Window` (`frame: false`) no longer has
   `WS_POPUP` in `GWL_STYLE`: it is an undecorated top-level window. An

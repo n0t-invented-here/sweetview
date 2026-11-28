@@ -20,7 +20,7 @@ if (mode === "hold") {
 
 const wrapped = Window.fromHandle(BigInt(handle!));
 const report: Record<string, unknown> = { boundsPositive: wrapped.bounds().width > 0 };
-for (const event of ["onClose", "onResize", "onMove", "onFileDrop"] as const) {
+for (const event of ["onClose", "onResize", "onMaximizeChange", "onMove", "onFileDrop"] as const) {
   try {
     (wrapped[event] as (fn: () => void) => () => void)(() => {});
     report[event] = "no error";

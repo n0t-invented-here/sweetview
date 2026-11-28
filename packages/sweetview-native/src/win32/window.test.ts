@@ -430,6 +430,13 @@ describe.if(onWindows)("win32 Window", () => {
     }
   });
 
+  test("the probe's screenPixel throws for a point no screen shows, rather than reading it as white", async () => {
+    // Review N10: GetPixel's CLR_INVALID became "#ffffff".
+    const { screenPixel } = await import("../../test/win32-os");
+    const far = Screen.bounds();
+    expect(() => screenPixel(far.x - 10_000, far.y - 10_000)).toThrow("GetPixel");
+  });
+
   test("Window.fromHandle intercepts events non-mutatingly and dispose does not destroy the external HWND", async () => {
     const { ownWindow, user32, WM_CLOSE } = await import("../../test/win32-os");
     const msg = ownWindow();
