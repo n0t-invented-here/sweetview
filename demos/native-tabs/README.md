@@ -41,10 +41,10 @@ On macOS a tab **is** a window. AppKit's window tabbing puts `NSWindow`s that sh
 identifier behind one tab bar, and draws the bar, the `+`, reordering and tear-off itself. So "one
 webview per tab" is the platform's own model:
 
-| Piece | File | What it does |
+| Piece | Where | What it does |
 | --- | --- | --- |
-| Window tabbing primitives | [`packages/sweetview-native/src/darwin/tabs.ts`](../../packages/sweetview-native/src/darwin/tabs.ts) | makes a framed `NSWindow` set up for tabbing, joins it to the tab bar (`addTabbedWindow:ordered:`), reports "the user asked for a tab" and "this tab closed" |
-| Tab webview coordinator | [`packages/sweetview/src/tabs/darwin-tabs.ts`](../../packages/sweetview/src/tabs/darwin-tabs.ts), [`packages/sweetview/src/tabs/darwin-webview.ts`](../../packages/sweetview/src/tabs/darwin-webview.ts) | `WebView.attach` hosts a webview in each tab window; manages `WKWebView` load-error hooks, message-handler detachment, and `Tab` lifecycle |
+| Window tabbing primitives | `@n1h/sweetview-native`, its macOS backend | makes a framed `NSWindow` set up for tabbing, joins it to the tab bar (`addTabbedWindow:ordered:`), reports "the user asked for a tab" and "this tab closed" |
+| Tab webview coordinator | `@n1h/sweetview`, its tabs library on macOS | `WebView.attach` hosts a webview in each tab window; manages `WKWebView` load-error hooks, message-handler detachment, and `Tab` lifecycle |
 
 What the code does that is not obvious:
 
@@ -72,7 +72,7 @@ What the code does that is not obvious:
   `window.open()` opens the address as a new tab after the current one; any other scheme is
   dropped.
 - **A site that cannot be loaded** shows a "This site did not open" page with the address, the
-  system's reason and a Try Again link (`onLoadFailed`, [`load-failed.ts`](../../packages/sweetview/src/tabs/load-failed.ts)),
+  system's reason and a Try Again link (`onLoadFailed`, in the tabs library),
   not a blank page.
 
 ### Windows
@@ -86,12 +86,12 @@ the frame        a normal resizable window, minus its caption
 └─ a tab         a webview below it, a child of the frame; one shown at a time
 ```
 
-| Piece | File | What it does |
+| Piece | Where | What it does |
 | --- | --- | --- |
-| The frame | [`crates/sweetview-runtime/src/window/tab_frame.rs`](../../crates/sweetview-runtime/src/window/tab_frame.rs), [`crates/sweetview-platform-window/src/tab_frame.rs`](../../crates/sweetview-platform-window/src/tab_frame.rs), [`packages/sweetview-native/src/win32/tab-window.ts`](../../packages/sweetview-native/src/win32/tab-window.ts), [`shortcuts.ts`](../../packages/sweetview-native/src/win32/shortcuts.ts), [`strip-shared.ts`](../../packages/sweetview-native/src/win32/strip-shared.ts) | a `tao` window with its caption taken off and the system's border and shadow kept; reports where the strip and the page go, hands drags to the window manager, shows the system menu and the tab menu |
-| The embedded strip | [`packages/sweetview/src/tabs/win-strip-assets.ts`](../../packages/sweetview/src/tabs/win-strip-assets.ts) | self-contained HTML/CSS/JS tab strip page drawing the tabs, `+`, and window buttons (no build step required) |
-| The tabs coordinator | [`packages/sweetview/src/tabs/win-tabs.ts`](../../packages/sweetview/src/tabs/win-tabs.ts) | which tabs are in which window, in what order, and which is shown; `WebView.attach` per tab, as a child webview of the frame |
-| WebView2 helpers | [`packages/sweetview/src/tabs/win-webview2.ts`](../../packages/sweetview/src/tabs/win-webview2.ts) | what the tabs need of a webview beyond `RawWebview`, through the Rust engine: hide a tab's page, give one the keyboard, hear accelerator keys, take over "open a new window", hear a failed load |
+| The frame | [`crates/sweetview-runtime/src/window/tab_frame.rs`](../../crates/sweetview-runtime/src/window/tab_frame.rs), [`crates/sweetview-platform-window/src/tab_frame.rs`](../../crates/sweetview-platform-window/src/tab_frame.rs), and `@n1h/sweetview-native`'s Windows backend | a `tao` window with its caption taken off and the system's border and shadow kept; reports where the strip and the page go, hands drags to the window manager, shows the system menu and the tab menu |
+| The embedded strip | `@n1h/sweetview`, its tabs library on Windows | self-contained HTML/CSS/JS tab strip page drawing the tabs, `+`, and window buttons (no build step required) |
+| The tabs coordinator | `@n1h/sweetview`, its tabs library on Windows | which tabs are in which window, in what order, and which is shown; `WebView.attach` per tab, as a child webview of the frame |
+| WebView2 helpers | `@n1h/sweetview`, its tabs library on Windows | what the tabs need of a webview beyond `RawWebview`, through the Rust engine: hide a tab's page, give one the keyboard, hear accelerator keys, take over "open a new window", hear a failed load |
 
 What the code does that is not obvious:
 

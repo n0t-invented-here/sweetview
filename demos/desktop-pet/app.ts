@@ -165,8 +165,13 @@ const uiMethods: { [K in keyof UiMethods]: (params: UiMethods[K][0]) => UiMethod
   "pet.quit": () => petView.quit(),
 };
 
+// Until the macOS goal of the Rust rewrite, macOS shows the pet at once, as it did at the tag
+// pre-rust-rewrite (D42). Elsewhere it appears when its page has drawn the pet (signalReady()).
+const MAC_TAG_PATH = process.platform === "darwin";
 const petView: WebView<Methods, Events> = await WebView.attach<Methods, Events>(overlay, {
   title: APP_NAME,
+  // If the page fails before it signals, the watchdog shows the window with Sweetview's start-up error page.
+  ...(MAC_TAG_PATH ? {} : { showOnReady: true, readyTimeoutMs: 15_000 }),
   assets: petAssets,
   worker: new URL("./app-worker.ts", import.meta.url),
   debug: DEBUG,
@@ -184,7 +189,7 @@ const settingsView: WebView<Methods, Events> = await WebView.attach<Methods, Eve
 // its goal, keeps the tag's path: no event, the page asks again after its own toggle (Chrome.tsx).
 if (process.platform !== "darwin") windowChromeEvents(settingsWindow, settingsView);
 
-overlay.show();
+if (MAC_TAG_PATH) overlay.show();
 hits.apply();
 if (process.env.PET_SETTINGS === "1") settingsWindow.show();
 

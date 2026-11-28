@@ -1,4 +1,4 @@
 {
   "extends": "../../tsconfig.json",
-  "include": ["../../packages", "../../demos", "../../packages/sweetview/file-imports.d.ts", "upgrade-types.ts", "upgrade-guide.test.ts", "behaviour.test.ts", "package-boundaries.test.ts", "guide-internals.test.ts", "public-entries.ts", "darwin-rows.ts", "module-identity.test.ts", "fixtures/*.ts"]
+  "include": ["../../packages", "../../demos", "../../packages/sweetview/file-imports.d.ts", "upgrade-types.ts", "upgrade-guide.test.ts", "behaviour.test.ts", "package-boundaries.test.ts", "guide-internals.test.ts", "public-entries.ts", "module-identity.test.ts", "demo-macos-start.test.ts", "fixtures/*.ts"]
 }
