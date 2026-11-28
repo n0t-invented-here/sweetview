@@ -377,7 +377,7 @@ cover old types and classes whose members have new names.
 | `windowChromeMethods` | `import { windowChromeMethods } from "@n1h/sweetview"`; `windowChromeMethods(window, options)` | takes the `Window`; the `close` option is `onClose` |
 | `ActivationPolicy` (0.2.x only) | `import type { ActivationPolicy } from "@n1h/sweetview"` | unchanged |
 | `EventLoopOptions` (0.2.x only) | `import type { EventLoopOptions } from "@n1h/sweetview"` | unchanged |
-| `pumpEvents` (0.2.x only) | `import { pumpEvents } from "@n1h/sweetview"`; `pumpEvents()` | unchanged for a loop of the application's own; called from inside a running loop (a handler under `app.run()` or `runEventLoop`) it does nothing, so a long handler no longer keeps its windows painting by pumping: run the work off the UI thread |
+| `pumpEvents` (0.2.x only) | `import { pumpEvents } from "@n1h/sweetview"`; `pumpEvents()` | On Windows, unchanged for a loop of the application's own, and called from inside a running loop (a handler under `app.run()` or `runEventLoop`) it does nothing, so a long handler no longer keeps its windows painting by pumping: run the work off the UI thread; on macOS, until the macOS goal, it pumps as it did, inside a running loop too |
 | `quitEventLoop` (0.2.x only) | `import { quitEventLoop } from "@n1h/sweetview"`; `quitEventLoop()` | unchanged |
 | `runEventLoop` (0.2.x only) | `import { runEventLoop } from "@n1h/sweetview"`; `runEventLoop(options)` | unchanged |
 | `setActivationPolicy` (0.2.x only) | `import { setActivationPolicy } from "@n1h/sweetview"`; `setActivationPolicy(policy)` | does nothing on Windows, which has no process-wide policy: taskbar and Alt+Tab presence is per window (`WindowOptions#hideFromTaskbar`); on macOS it sets the policy as before |
@@ -542,7 +542,7 @@ cover old types and classes whose members have new names.
 | `Appearance` (0.2.x only) | `import type { Appearance } from "@n1h/sweetview/native"` | unchanged |
 | `EventLoopOptions` (0.2.x only) | `import type { EventLoopOptions } from "@n1h/sweetview/native"` | unchanged |
 | `NotificationClick` (0.2.x only) | `import type { NotificationClick } from "@n1h/sweetview/native"` | unchanged |
-| `pumpEvents` (0.2.x only) | `import { pumpEvents } from "@n1h/sweetview/native"`; `pumpEvents()` | unchanged for a loop of the application's own; called from inside a running loop (a handler under `app.run()` or `runEventLoop`) it does nothing, so a long handler no longer keeps its windows painting by pumping: run the work off the UI thread |
+| `pumpEvents` (0.2.x only) | `import { pumpEvents } from "@n1h/sweetview/native"`; `pumpEvents()` | On Windows, unchanged for a loop of the application's own, and called from inside a running loop (a handler under `app.run()` or `runEventLoop`) it does nothing, so a long handler no longer keeps its windows painting by pumping: run the work off the UI thread; on macOS, until the macOS goal, it pumps as it did, inside a running loop too |
 | `quitEventLoop` (0.2.x only) | `import { quitEventLoop } from "@n1h/sweetview/native"`; `quitEventLoop()` | unchanged |
 | `runEventLoop` (0.2.x only) | `import { runEventLoop } from "@n1h/sweetview/native"`; `runEventLoop(options)` | unchanged |
 | `setActivationPolicy` (0.2.x only) | `import { setActivationPolicy } from "@n1h/sweetview/native"`; `setActivationPolicy(policy)` | does nothing on Windows, which has no process-wide policy: taskbar and Alt+Tab presence is per window (`WindowOptions#hideFromTaskbar`); on macOS it sets the policy as before |
@@ -810,7 +810,7 @@ Windows and macOS alike, nothing tells an application to keep importing it.
 | `indexHtml` | `import { indexHtml } from "@n1h/sweetview"`; `indexHtml({ title, js = "main.js", css = "main.css", head = "", body = '<div id="root"></div>' })` | unchanged |
 | `indexHtmlText` | `import { indexHtmlText } from "@n1h/sweetview"`; `indexHtmlText({ title, js = "main.js", css = "main.css", head = "", body = '<div id="root"></div>' })` | unchanged |
 | `onOpenUrl` | `import { onOpenUrl } from "@n1h/sweetview"`; `onOpenUrl(handler)` | unchanged |
-| `pumpEvents` | `import { pumpEvents } from "@n1h/sweetview"`; `pumpEvents()` | unchanged for a loop of the application's own; called from inside a running loop (a handler under `app.run()` or `runEventLoop`) it does nothing, so a long handler no longer keeps its windows painting by pumping: run the work off the UI thread |
+| `pumpEvents` | `import { pumpEvents } from "@n1h/sweetview"`; `pumpEvents()` | On Windows, unchanged for a loop of the application's own, and called from inside a running loop (a handler under `app.run()` or `runEventLoop`) it does nothing, so a long handler no longer keeps its windows painting by pumping: run the work off the UI thread; on macOS, until the macOS goal, it pumps as it did, inside a running loop too |
 | `quitEventLoop` | `import { quitEventLoop } from "@n1h/sweetview"`; `quitEventLoop()` | unchanged |
 | `registerUrlScheme` | `import { registerUrlScheme } from "@n1h/sweetview"`; `registerUrlScheme(scheme, options)` | unchanged |
 | `runEventLoop` | `import { runEventLoop } from "@n1h/sweetview"`; `runEventLoop(options)` | unchanged |
@@ -1002,7 +1002,7 @@ Windows and macOS alike, nothing tells an application to keep importing it.
 | `openFileHandle` | `import { openFileHandle } from "@n1h/sweetview/native"`; `openFileHandle(path)` | unchanged |
 | `packRegions` | `import { packRegions } from "@n1h/sweetview/native"`; `packRegions(polygons)` | unchanged |
 | `pickFolder` | `import { pickFolder } from "@n1h/sweetview/native"`; `pickFolder(owner, title)` | unchanged |
-| `pumpEvents` | `import { pumpEvents } from "@n1h/sweetview/native"`; `pumpEvents()` | unchanged for a loop of the application's own; called from inside a running loop (a handler under `app.run()` or `runEventLoop`) it does nothing, so a long handler no longer keeps its windows painting by pumping: run the work off the UI thread |
+| `pumpEvents` | `import { pumpEvents } from "@n1h/sweetview/native"`; `pumpEvents()` | On Windows, unchanged for a loop of the application's own, and called from inside a running loop (a handler under `app.run()` or `runEventLoop`) it does nothing, so a long handler no longer keeps its windows painting by pumping: run the work off the UI thread; on macOS, until the macOS goal, it pumps as it did, inside a running loop too |
 | `quitEventLoop` | `import { quitEventLoop } from "@n1h/sweetview/native"`; `quitEventLoop()` | unchanged |
 | `readFileBytes` | `import { readFileBytes } from "@n1h/sweetview/native"`; `readFileBytes(path, options)` | unchanged |
 | `readFileChunk` | `import { readFileChunk } from "@n1h/sweetview/native"`; `readFileChunk(handleId, offset, length)` | unchanged |
@@ -1173,7 +1173,7 @@ Windows and macOS alike, nothing tells an application to keep importing it.
 | `openFileHandle` | `import { openFileHandle } from "@n1h/sweetview-native"`; `openFileHandle(path)` | unchanged |
 | `packRegions` | `import { packRegions } from "@n1h/sweetview-native"`; `packRegions(polygons)` | unchanged |
 | `pickFolder` | `import { pickFolder } from "@n1h/sweetview-native"`; `pickFolder(owner, title)` | unchanged |
-| `pumpEvents` | `import { pumpEvents } from "@n1h/sweetview-native"`; `pumpEvents()` | unchanged for a loop of the application's own; called from inside a running loop (a handler under `app.run()` or `runEventLoop`) it does nothing, so a long handler no longer keeps its windows painting by pumping: run the work off the UI thread |
+| `pumpEvents` | `import { pumpEvents } from "@n1h/sweetview-native"`; `pumpEvents()` | On Windows, unchanged for a loop of the application's own, and called from inside a running loop (a handler under `app.run()` or `runEventLoop`) it does nothing, so a long handler no longer keeps its windows painting by pumping: run the work off the UI thread; on macOS, until the macOS goal, it pumps as it did, inside a running loop too |
 | `quitEventLoop` | `import { quitEventLoop } from "@n1h/sweetview-native"`; `quitEventLoop()` | unchanged |
 | `readFileBytes` | `import { readFileBytes } from "@n1h/sweetview-native"`; `readFileBytes(path, options)` | unchanged |
 | `readFileChunk` | `import { readFileChunk } from "@n1h/sweetview-native"`; `readFileChunk(handleId, offset, length)` | unchanged |
@@ -1217,8 +1217,8 @@ Windows and macOS alike, nothing tells an application to keep importing it.
 | `emitWindowTabSelect` | no public call in 1.0 | raising a window's tab-select event from the application's own code: no public call in 1.0; `Window#onTabSelect(handler)` observes the tabs the strip selects |
 | `forwardWindowTabEvents` | no public call in 1.0 | forwarding one window's tab events to another window's listeners: no public call in 1.0; `Window#onNewTab(handler)`, `Window#onTabSelect(handler)` and `Window#onTabClose(handler)` observe each window's own |
 | `getWindowBackend` | no public call in 1.0 | a window's platform backend object: no public call in 1.0; the `Window` methods are what an application calls |
-| `getWindowMeta` | no public call in 1.0 | the options a `Window` was made with, as Sweetview keeps them: no public call in 1.0; of those, a `Window` gives whether it is tabbed (its `tabs` field) and its bounds (`Window#bounds()`) |
-| `holdWindowNativeDispose` | no public call in 1.0 | keeping a window's native window after `Window#dispose()` until a hold is released: no public call in 1.0; `Window#dispose()` releases it at once |
+| `getWindowMeta` | no public call in 1.0 | the options a `Window` was made with, as Sweetview keeps them: no public call in 1.0; of those, a `Window` gives its bounds (`Window#bounds()`) |
+| `holdWindowNativeDispose` | no public call in 1.0 | keeping a window's native window after `Window#dispose()` until a hold is released: no public call in 1.0; `Window#dispose()` releases it at once, except while a `WebView#run()` of the window is in progress, when the release waits until that loop has unwound |
 | `isWindowDisposed` | no public call in 1.0 | whether `Window#dispose()` has run: no public call in 1.0 |
 | `onWindowDispose` | no public call in 1.0 | a function run just before a window is disposed: no public call in 1.0; `Window#onClose(handler)` observes a close request |
 | `onWindowFileDropListenersChange` | no public call in 1.0 | notice that a window's file-drop listeners changed: no public call in 1.0; `Window#onFileDrop(handler)` returns the function that removes its own listener |
@@ -1639,7 +1639,7 @@ Windows toasts are made by the binding; `Notifier` is the public form.
 
 #### `packages/sweetview-native/src/win32/tray.ts`
 
-The balloon a tray icon showed is a notification: `Notifier` shows it itself, with the active tray's icon. The tray itself is the public `Tray`, made with `createTray(options)` from `@n1h/sweetview/native`: its icon, tooltip, menu and click handler, each settable while it lives (`setIcon`, `setTooltip`, `setMenu`).
+The balloon a tray icon showed is a notification: `Notifier` shows it itself, with the active tray's icon. The tray itself is the public `Tray`, made with `createTray(options)` from `@n1h/sweetview/native`: its icon, tooltip and menu, each settable while it lives (`setIcon`, `setTooltip`, `setMenu`), and its click handler, given when it is made (`onClick`).
 
 | Old | Write now | Change |
 |---|---|---|

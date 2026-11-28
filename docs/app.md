@@ -234,7 +234,7 @@ view.run();
 
 `WebView.attach(window, options: WebViewOptions<M>): Promise<WebView<M, E>>`
 
-Mounts a webview inside an existing `Window` created by `new Window(...)` or `Window.fromHandle(...)`. Geometry (the window's own: its client area, in physical pixels on Windows and points on macOS), DPI scale, `resizable`, `transparent`, `backgroundColor`, and default `title` are read directly from `window`, so callers never duplicate window options. The window stays hidden until the page calls `signalReady()` with `showOnReady` set, or, when `readyTimeoutMs` is given, until the ready watchdog fires (without `readyTimeoutMs` there is no watchdog); without `showOnReady`, call `win.show()` when it is to appear.
+Mounts a webview inside an existing `Window` created by `new Window(...)` or `Window.fromHandle(...)`. Geometry (the window's own: its client area, in physical pixels on Windows and points on macOS), DPI scale, `resizable`, `transparent`, `backgroundColor`, and default `title` are read directly from `window`, so callers never duplicate window options. The window's visibility is left as it is: a hidden window stays hidden until the page calls `signalReady()` with `showOnReady` set, or, when `readyTimeoutMs` is given, until the ready watchdog fires (without `readyTimeoutMs` there is no watchdog); without `showOnReady`, call `win.show()` when it is to appear. A window already shown stays shown.
 
 What `WebView.attach` does, in order:
 

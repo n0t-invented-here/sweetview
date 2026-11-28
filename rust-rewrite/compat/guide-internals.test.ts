@@ -100,6 +100,25 @@ describe("one recipe for each thing", () => {
   });
 });
 
+describe("rows and paragraphs say what the code does, no more", () => {
+  test("getWindowMeta offers no public tabs field, holdWindowNativeDispose says when dispose waits, the tray's click handler is a construction option, pumpEvents' rule is Windows', and WebView.attach leaves a shown window shown", () => {
+    const meta = row("`@n1h/sweetview-native/internal`", "`getWindowMeta`");
+    const hold = row("`@n1h/sweetview-native/internal`", "`holdWindowNativeDispose`");
+    const trayAt = guideLines.indexOf("#### `packages/sweetview-native/src/win32/tray.ts`");
+    const tray = guideLines.slice(trayAt + 1, trayAt + 4).join(" ");
+    const pumps = guideLines.filter((l) => /^\| `pumpEvents`/.test(l));
+    const attach = read("docs/app.md").replace(/\s+/g, " ");
+    const attachPara = attach.slice(attach.indexOf("Mounts a webview inside an existing `Window`"), attach.indexOf("Mounts a webview inside an existing `Window`") + 900);
+    expect({
+      metaTabsField: /`tabs` field/.test(meta),
+      holdSaysWhenItWaits: /while a `WebView#run\(\)`/.test(hold) && !/releases it at once \|/.test(hold),
+      trayClickAtConstruction: /click handler, given when it is made/.test(tray),
+      pumpsSayWindows: pumps.length === 5 && pumps.every((l) => /On Windows/.test(l) && /on macOS/.test(l)),
+      attachKeepsShown: /already shown stays shown/.test(attachPara),
+    }).toEqual({ metaTabsField: false, holdSaysWhenItWaits: true, trayClickAtConstruction: true, pumpsSayWindows: true, attachKeepsShown: true });
+  });
+});
+
 describe("internals named in passing", () => {
   test("docs/app.md's list of what the end of the application releases names no internal call", () => {
     const list = read("docs/app.md").replace(/\s+/g, " ");
