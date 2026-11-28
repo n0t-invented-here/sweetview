@@ -62,8 +62,72 @@ const PENDING_IMPORTS: Record<string, string[]> = {
   "demos/native-tabs/scripts/mac-drive.ts": ["@n1h/sweetview-native/darwin/objc", "@n1h/sweetview-native/internal"],
 };
 
-/** An internal subpath of either package, as a page would name it. `/darwin/` is left to the macOS goal (D42). */
-const INTERNAL_SPEC = /@n1h\/sweetview(?:-native\/(?:internal|shell-icons|win32\/[\w*-]+)|\/native\/(?:internal|win32\/[\w*-]+))/;
+/** The demos' scripts that reach into another package's or demo's files by relative path, by file: each named, so none is added unseen. */
+const SCRIPT_REACH: Record<string, string[]> = {
+  "demos/web-app-electron/scripts/write-icon.ts": ["../../web-app/icon"],
+  "demos/web-app-tauri/scripts/write-icon.ts": ["../../web-app/icon"],
+};
+
+const SWEETVIEW = new Set(Object.keys(PUBLIC));
+/**
+ * Each place `text` names an internal entry for an application: a subpath of a Sweetview package
+ * that is not one of its public entry points (so a newly named internal entry is caught without
+ * naming it here), a shorthand subpath with no package name (`./internal`, `/win32/window`,
+ * `./win32/*`), or a package's source file that is not a public entry's file. The macOS
+ * (`/darwin/`) entries are left to the macOS goal (D42).
+ */
+type MentionContext = { base: string; publicFiles: Set<string>; dirOf: Map<string, string> };
+/** Whether `file` (repository-relative) is a source file an application has no entry to: present, under a package's `src/`, not a test, and not the file of a public entry. */
+const internalSource = (file: string, ctx: MentionContext) => /\/src\//.test(file) && !/\.test(\.worker)?\.tsx?$/.test(file) && [file, `${file}.ts`, `${file}.tsx`].some((f) => existsSync(join(ctx.base, f)) && !ctx.publicFiles.has(f));
+/**
+ * Each place `text` names an internal entry for an application:
+ * - a subpath of a Sweetview package that is not one of its public entry points, so a newly named
+ *   internal entry is caught without naming it here (`@n1h/sweetview/native/shell-icons` too); a
+ *   path to a file in the package counts when it is a source file there that is no public entry's
+ *   (a path the package no longer has is the old side of the guide);
+ * - a shorthand subpath with no package name (`./internal`, `/win32/window`, `./win32/*`);
+ * - a package's source file given to import or to run (`from "…/packages/<pkg>/src/…"`,
+ *   `bun packages/<pkg>/src/…`) that is no public entry's file.
+ * The macOS (`/darwin/`) entries are left to the macOS goal (D42).
+ */
+function internalMentions(text: string, ctx: MentionContext): string[] {
+  const found: string[] = [];
+  for (const m of text.matchAll(/@n1h\/(sweetview(?:-[a-z]+)*)((?:\/[\w*.-]+)+)?/g)) {
+    const pkg = `@n1h/${m[1]}`;
+    if (!SWEETVIEW.has(pkg)) continue; // not a package of this repository
+    const sub = (m[2] ?? "").replace(/\.+$/, "");
+    if (sub.startsWith("/darwin/")) continue;
+    if (/\.\w+$/.test(sub)) {
+      const dir = ctx.dirOf.get(pkg);
+      if (dir !== undefined && internalSource(`${dir}${sub}`, ctx)) found.push(`${pkg}${sub}`);
+    } else if (!PUBLIC[pkg]!.includes(`.${sub}`)) found.push(`${pkg}${sub}`);
+  }
+  for (const m of text.matchAll(/(?:^|[\s`"'(\[])(\.?\/(?:internal|shell-icons|win32\/[\w*.-]+))(?![\w/-])/g)) found.push(m[1]!);
+  for (const m of text.matchAll(/(?:(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*)["'][^"']*?|\bbun\s+(?:run\s+)?)(packages\/[\w-]+\/src\/[\w/.-]*\w)/g)) {
+    if (internalSource(m[1]!, ctx)) found.push(m[1]!);
+  }
+  return found;
+}
+
+/** The cells of a markdown table row, with or without spaces around its bars, a bar inside code kept. */
+function cellsOf(line: string): string[] {
+  const cells: string[] = [];
+  let cur = "";
+  let inCode = false;
+  for (let i = 1; i < line.length; i++) {
+    const c = line[i]!;
+    if (c === "`") inCode = !inCode;
+    if (c === "\\" && line[i + 1] === "|") {
+      cur += "|";
+      i++;
+    } else if (c === "|" && !inCode) {
+      cells.push(cur.trim());
+      cur = "";
+    } else cur += c;
+  }
+  if (cur.trim()) cells.push(cur.trim());
+  return cells;
+}
 
 function walk(dir: string, keep: (name: string) => boolean, out: string[] = []): string[] {
   if (!existsSync(dir)) return out;
@@ -90,6 +154,7 @@ type Scan = {
   reached: string[];
   pendingImports: Record<string, string[]>;
   reexports: string[];
+  scriptReach: Record<string, string[]>;
   guideRows: string[];
   guideProse: string[];
   pageLines: string[];
@@ -105,7 +170,7 @@ function scan(base: string): Scan {
       return { name: pkg.name, dir, exports: new Map(Object.entries(pkg.exports).map(([k, t]) => [k, typeof target(t) === "string" ? resolve(dir, target(t) as string) : undefined])) };
     });
   const byName = new Map(packages.map((p) => [p.name, p]));
-  const out: Scan = { unlistedEntries: [], staleEntries: [], unexported: [], reached: [], pendingImports: {}, reexports: [], guideRows: [], guideProse: [], pageLines: [] };
+  const out: Scan = { unlistedEntries: [], staleEntries: [], unexported: [], reached: [], pendingImports: {}, reexports: [], scriptReach: {}, guideRows: [], guideProse: [], pageLines: [] };
 
   // Entries: the documented ones and the pending internal ones, nothing else.
   for (const p of packages) {
@@ -120,14 +185,16 @@ function scan(base: string): Scan {
     while (!existsSync(join(d, "package.json")) && d !== dirname(d)) d = dirname(d);
     return d;
   };
-  const mayReachSource = (rel: string) => /\.test(\.worker)?\.tsx?$/.test(rel) || /^packages\/[^/]+\/test\//.test(rel) || /^demos\/.+\/scripts\//.test(rel);
+  const isTest = (rel: string) => /\.test(\.worker)?\.tsx?$/.test(rel) || /^packages\/[^/]+\/test\//.test(rel);
   const pending = new Set(Object.entries(PENDING_ENTRIES).flatMap(([name, entries]) => Object.keys(entries).map((key) => `${name}${key.slice(1)}`)));
   for (const file of [...walk(join(base, "packages"), code), ...walk(join(base, "demos"), code)]) {
     const rel = posix(relative(base, file));
     for (const m of readFileSync(file, "utf8").matchAll(SPEC)) {
       const spec = m[1]!;
       if (spec.startsWith(".")) {
-        if (!resolve(dirname(file), spec).startsWith(ownPackage(file) + sep) && !mayReachSource(rel)) out.reached.push(`${rel}: ${spec}`);
+        if (resolve(dirname(file), spec).startsWith(ownPackage(file) + sep) || isTest(rel)) continue;
+        if (/^demos\/.+\/scripts\//.test(rel)) (out.scriptReach[rel] ??= []).includes(spec) || out.scriptReach[rel]!.push(spec);
+        else out.reached.push(`${rel}: ${spec}`);
         continue;
       }
       const s = /^(@n1h\/[^/]+)(\/.+)?$/.exec(spec);
@@ -169,44 +236,56 @@ function scan(base: string): Scan {
     }
   }
 
-  // The guide: no row or prose line names an internal import.
+  // The source files of public entries, which a page may name (a script run by path).
+  const publicFiles = new Set(packages.flatMap((p) => (PUBLIC[p.name] ?? []).map((k) => p.exports.get(k)).filter((f): f is string => f !== undefined).map((f) => posix(relative(base, f)))));
+
+  const ctx: MentionContext = { base, publicFiles, dirOf: new Map(packages.map((p) => [p.name, posix(relative(base, p.dir))])) };
+
+  // The guide: no table cell but an Old one, no heading but a section's name, and no prose line names an internal entry.
   const guidePath = join(base, "docs", "upgrading.md");
   if (existsSync(guidePath)) {
     let section = "";
-    let inTable = false;
     for (const line of readFileSync(guidePath, "utf8").split(/\r?\n/)) {
-      if (/^#{2,4} /.test(line)) {
+      if (/^#{1,6} /.test(line)) {
         section = line.replace(/^#+ /, "");
-        inTable = false;
+        // A section is named by its Old entry or file, alone in backticks: that is the Old side.
+        if (!/^`[^`]+`$/.test(section.trim())) for (const m of internalMentions(section, ctx)) out.guideProse.push(`heading "${section}": ${m}`);
         continue;
       }
-      if (/^\| Old \| Write now \| Change \|/.test(line)) {
-        inTable = true;
-        continue;
-      }
-      if (inTable && line.startsWith("|")) {
-        const cells = line.split(" | ");
-        const old = cells[0]!.replace(/^\| /, "");
+      if (line.trimStart().startsWith("|")) {
+        const cells = cellsOf(line.trim());
+        if (cells.every((c) => /^:?-+:?$/.test(c)) || cells[0] === "Old") continue;
         const rest = cells.slice(1).join(" | ");
-        if (INTERNAL_SPEC.test(rest) || (INTERNAL_SPEC.test(section) && /\bof this subpath\b/.test(rest))) out.guideRows.push(`${section} | ${old}`);
+        const named = internalMentions(rest, ctx);
+        if (named.length > 0 || (/^`@n1h\/sweetview-native\/(internal|win32\/)/.test(section) && /\bof this subpath\b/.test(rest))) out.guideRows.push(`${section} | ${cells[0]}`);
         continue;
       }
-      inTable = false;
-      if (INTERNAL_SPEC.test(line)) out.guideProse.push(line.trim());
+      for (const m of internalMentions(line, ctx)) out.guideProse.push(`${line.trim()}: ${m}`);
     }
   }
 
-  // The other pages, README.md, the demos' pages and the demos' code other than its imports.
-  const pages = [...walk(join(base, "docs"), (n) => n.endsWith(".md")).filter((f) => !f.endsWith(`${sep}upgrading.md`)), ...[join(base, "README.md")].filter(existsSync), ...walk(join(base, "demos"), (n) => n.endsWith(".md"))];
+  // The other pages, README.md, the packages' and the demos' pages: every line, headings included.
+  const pages = [
+    ...walk(join(base, "docs"), (n) => n.endsWith(".md")).filter((f) => !f.endsWith(`${sep}upgrading.md`)),
+    ...[join(base, "README.md")].filter(existsSync),
+    ...walk(join(base, "packages"), (n) => n.endsWith(".md")),
+    ...walk(join(base, "demos"), (n) => n.endsWith(".md")),
+  ];
   for (const page of pages) {
     const rel = posix(relative(base, page));
-    for (const line of readFileSync(page, "utf8").split(/\r?\n/)) if (INTERNAL_SPEC.test(line)) out.pageLines.push(`${rel}: ${line.trim()}`);
+    for (const line of readFileSync(page, "utf8").split(/\r?\n/)) for (const m of internalMentions(line, ctx)) out.pageLines.push(`${rel}: ${m}`);
   }
+  // The demos' code: each line without its import specifiers (the import checks above cover those).
+  const IMPORT_STRING = /(\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*|^\s*import\s+)(["'])[^"']*\2/g;
   for (const file of walk(join(base, "demos"), code)) {
     const rel = posix(relative(base, file));
-    for (const line of readFileSync(file, "utf8").split(/\r?\n/)) {
-      if (INTERNAL_SPEC.test(line) && !/(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*)["']@n1h\//.test(line)) out.pageLines.push(`${rel}: ${line.trim()}`);
-    }
+    for (const line of readFileSync(file, "utf8").split(/\r?\n/)) for (const m of internalMentions(line.replace(IMPORT_STRING, "$1"), ctx)) out.pageLines.push(`${rel}: ${m}`);
+  }
+  // The packages' doc comments (JSDoc), which an application reads in its editor.
+  for (const file of walk(join(base, "packages"), code)) {
+    const rel = posix(relative(base, file));
+    if (/\.test(\.worker)?\.tsx?$/.test(rel) || /^packages\/[^/]+\/test\//.test(rel)) continue;
+    for (const [block] of readFileSync(file, "utf8").matchAll(/\/\*\*[\s\S]*?\*\//g)) for (const m of internalMentions(block, ctx)) out.pageLines.push(`${rel} (doc comment): ${m}`);
   }
   return out;
 }
@@ -269,11 +348,63 @@ describe("internals are not public API (D44)", () => {
     );
   });
 
+  test("the demos' scripts that reach into another package's or demo's files are exactly the listed ones", () => {
+    expect(sorted(here.scriptReach)).toEqual(sorted(SCRIPT_REACH));
+  });
+
+  test("counter-examples: each way a page, a doc comment or a demo could name an internal entry is found", () => {
+    withTree(
+      {
+        "packages/sweetview-native/package.json": { name: "@n1h/sweetview-native", exports: { ".": "./src/index.ts", "./hit-regions": "./src/hit-regions.ts" } },
+        "packages/sweetview-native/src/index.ts": "/** Reach the timer through `@n1h/sweetview-native/win32/menu`. */\nexport const x = 1;\n",
+        "packages/sweetview-native/src/hit-regions.ts": "export const y = 1;\n",
+        "packages/sweetview-native/src/win32/menu.ts": "export const buildMenu = () => {};\n",
+        "packages/sweetview-native/README.md": "Import `@n1h/sweetview-native/internal` for the hooks.\n",
+        "docs/upgrading.md": [
+          "## Part B",
+          "### `@n1h/sweetview-native/hit-regions`",
+          "| Old | Write now | Change |",
+          "|---|---|---|",
+          '|`a`|`import { a } from "@n1h/sweetview-native/win32/window"`|packed|',
+          "#### Using the `@n1h/sweetview-native/internal` entry",
+          "Keep importing `./win32/window` as before.",
+        ].join("\n"),
+        "docs/page.md": ["## Using `./internal`", "Import `@n1h/sweetview/native/shell-icons`, or `@n1h/sweetview-native/secret-entry`.", "Copy it: `import { buildMenu } from \"../packages/sweetview-native/src/win32/menu\"`."].join("\n"),
+        "demos/d/package.json": { name: "d" },
+        "demos/d/app.ts": 'import { Menu } from "@n1h/sweetview-native"; // the menu handle is in @n1h/sweetview-native/win32/menu\n',
+        "demos/d/scripts/drive.ts": 'import { wakeNative } from "../../../packages/sweetview-native/src/internal";\n',
+      },
+      (dir) => {
+        const found = scan(dir);
+        expect({ rows: found.guideRows, prose: found.guideProse, pages: [...found.pageLines].sort(), scripts: found.scriptReach }).toEqual({
+          // A table row written without spaces around its bars.
+          rows: ["`@n1h/sweetview-native/hit-regions` | `a`"],
+          // A heading that is not a section's name, and a shorthand spelling with no package name.
+          prose: ['heading "Using the `@n1h/sweetview-native/internal` entry": @n1h/sweetview-native/internal', "Keep importing `./win32/window` as before.: ./win32/window"],
+          pages: [
+            // A demo line with a public import and an internal mention.
+            "demos/d/app.ts: @n1h/sweetview-native/win32/menu",
+            // A heading, the facade's spelling, an entry no list names, and a source path.
+            "docs/page.md: ./internal",
+            "docs/page.md: @n1h/sweetview-native/secret-entry",
+            "docs/page.md: @n1h/sweetview/native/shell-icons",
+            "docs/page.md: packages/sweetview-native/src/win32/menu",
+            // A package's README and a doc comment of its source.
+            "packages/sweetview-native/README.md: @n1h/sweetview-native/internal",
+            "packages/sweetview-native/src/index.ts (doc comment): @n1h/sweetview-native/win32/menu",
+          ],
+          // A demo script reaching into a package's source, not on the list.
+          scripts: { "demos/d/scripts/drive.ts": ["../../../packages/sweetview-native/src/internal"] },
+        });
+      },
+    );
+  });
+
   test("no row or prose line of docs/upgrading.md names an internal import", () => {
     expect({ rows: here.guideRows, prose: here.guideProse }).toEqual({ rows: [], prose: [] });
   });
 
-  test("no other page, README.md or demo names an internal subpath", () => {
+  test("no other page, README.md, package README, doc comment or demo names an internal entry", () => {
     expect(here.pageLines).toEqual([]);
   });
 });
