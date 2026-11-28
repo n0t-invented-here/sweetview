@@ -150,6 +150,37 @@ pub fn first_child(window: &impl NativeWindow) -> Option<isize> {
   Some(child.0 as isize)
 }
 
+/// The colour `window` erases its background with (red, green, blue): its `WM_ERASEBKGND` sent
+/// with a memory bitmap's device context, and the bitmap's pixel read; magenta when it painted
+/// nothing. No screen is read.
+pub fn erased_colour(window: &impl NativeWindow) -> Option<(u8, u8, u8)> {
+  use windows::Win32::Graphics::Gdi::{CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, SelectObject, SetPixel};
+  use windows::Win32::Foundation::COLORREF;
+  // SAFETY: the screen's device context, released below.
+  let screen = unsafe { GetDC(None) };
+  // SAFETY: a memory device context compatible with the screen's, deleted below.
+  let dc = unsafe { CreateCompatibleDC(Some(screen)) };
+  // SAFETY: a bitmap compatible with the screen's, deleted below.
+  let bitmap = unsafe { CreateCompatibleBitmap(screen, 8, 8) };
+  // SAFETY: the context taken above.
+  let _ = unsafe { ReleaseDC(None, screen) };
+  // SAFETY: the bitmap and context made above; the previous object is put back below.
+  let previous = unsafe { SelectObject(dc, bitmap.into()) };
+  // SAFETY: a pixel of the bitmap selected into `dc`.
+  let _ = unsafe { SetPixel(dc, 2, 2, COLORREF(0x00ff_00ff)) };
+  // SAFETY: a message to a window the OS validates, with the memory context for its erase.
+  let _ = unsafe { SendMessageW(window.hwnd(), windows::Win32::UI::WindowsAndMessaging::WM_ERASEBKGND, Some(WPARAM(dc.0 as usize)), Some(LPARAM(0))) };
+  // SAFETY: as above.
+  let bgr = unsafe { GetPixel(dc, 2, 2) };
+  // SAFETY: the object `dc` held before, put back.
+  unsafe { SelectObject(dc, previous) };
+  // SAFETY: the bitmap made above, no longer selected, deleted once.
+  let _ = unsafe { DeleteObject(bitmap.into()) };
+  // SAFETY: the context made above, deleted once.
+  let _ = unsafe { DeleteDC(dc) };
+  (bgr.0 != CLR_INVALID).then_some(((bgr.0 & 0xff) as u8, ((bgr.0 >> 8) & 0xff) as u8, ((bgr.0 >> 16) & 0xff) as u8))
+}
+
 /// Whether DWM keeps the window off the screen (`DWMWA_CLOAKED` reads any reason: this process's
 /// cloak, the shell's, or another desktop's).
 pub fn is_cloaked(window: &impl NativeWindow) -> bool {

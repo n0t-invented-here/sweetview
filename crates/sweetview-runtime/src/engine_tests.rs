@@ -1167,3 +1167,28 @@ fn a_webview_whose_drop_script_is_refused_is_a_failed_setup() {
     }
   });
 }
+
+/// S3 of D49's first review: a webview's widget paints its start colour until WebView2 has drawn,
+/// follows its tab frame's page colour when the frame follows the system's theme, and keeps a
+/// colour the application set. Read from the widget's own erase, not the screen.
+#[test]
+fn a_webviews_widget_paints_its_start_colour_and_follows_its_frames_theme() {
+  on_ui_thread(|runtime| {
+    let _finish = Finish(&runtime);
+    let window = Window::create(WindowInit { title: "rt s3".into(), frame: true, resizable: true, no_activate: true, appearance: crate::window::Appearance::Dark, ..Default::default() }).expect("window");
+    let handle = window.handle();
+    let engine = Engine::create(false, Host::Fill(handle), crate::window::background_of(handle)).expect("webview");
+    let erased = |engine: &Engine| {
+      let widget = engine.inner.with_live(|live| live.webview.widget_value()).expect("live");
+      BorrowedWindow::with_handle_value(widget, |w| sweetview_platform_window::test_support::erased_colour(w)).flatten()
+    };
+    assert_eq!(erased(&engine), Some((0x15, 0x16, 0x1a)), "the dark page colour it started with");
+    follow_window_colour(handle, (0xf9, 0xf9, 0xfb));
+    assert_eq!(erased(&engine), Some((0xf9, 0xf9, 0xfb)), "the window's new colour");
+    assert_eq!(engine.set_background_color(0x30, 0x40, 0x50, 0xff), ErrorCode::Ok);
+    follow_window_colour(handle, (0x15, 0x16, 0x1a));
+    assert_eq!(erased(&engine), Some((0x30, 0x40, 0x50)), "the application's colour stays");
+    engine.destroy();
+    window.dispose();
+  });
+}

@@ -97,9 +97,47 @@ enum HostWindow {
 /// What exists only while the webview does. Fields drop in this order: what
 /// was added to the webview, the webview, then its own window.
 struct Live {
+  /// What the webview's widget paints until WebView2 has drawn: the colour it started with
+  /// (D49). Dropped first.
+  widget_backdrop: Option<WidgetBackdrop>,
   extras: WebviewExtras,
   webview: Webview,
   window: HostWindow,
+}
+
+/// The widget's backdrop and whether its colour is the window's, which then follows the window's
+/// (a tab frame that follows the system's theme); a colour the application set does not.
+struct WidgetBackdrop {
+  messages: sweetview_platform_window::FrameMessages,
+  follows_window: Cell<bool>,
+}
+
+fn one_colour((red, green, blue): (u8, u8, u8)) -> sweetview_platform_window::Backdrop {
+  let colour = (red, green, blue);
+  sweetview_platform_window::Backdrop { strip_height: 0, strip: colour, page: colour }
+}
+
+/// Makes `webview`'s widget paint `colour` where WebView2 has not drawn yet: the widget's class
+/// has no brush, and a parent that clips its children (a tab frame) paints nothing there, so the
+/// unpainted surface would show (D49).
+fn widget_backdrop(webview: &Webview, colour: (u8, u8, u8), follows_window: bool) -> Option<WidgetBackdrop> {
+  let messages = BorrowedWindow::with_handle_value(webview.widget_value(), |widget| sweetview_platform_window::FrameMessages::install(widget, one_colour(colour)).ok()).flatten()?;
+  Some(WidgetBackdrop { messages, follows_window: Cell::new(follows_window) })
+}
+
+/// The webviews in the window `handle` whose widget took its colour from the window paint
+/// `colour` from now on, and WebView2 starts their next page with it: the window's page colour
+/// changed (a tab frame that follows the system's theme, D49).
+pub(crate) fn follow_window_colour(handle: isize, (red, green, blue): (u8, u8, u8)) {
+  let engines: Vec<Rc<Inner>> = ENGINES.try_with(|all| all.borrow().values().cloned().collect()).unwrap_or_default();
+  for inner in engines.iter().filter(|inner| inner.window_value.get() == handle) {
+    inner.with_live(|live| {
+      if let Some(backdrop) = live.widget_backdrop.as_ref().filter(|backdrop| backdrop.follows_window.get()) {
+        let _ = backdrop.messages.set_backdrop(one_colour((red, green, blue)));
+        let _ = live.webview.set_background_color(red, green, blue, 0xff);
+      }
+    });
+  }
 }
 
 static NEXT_ID: AtomicU32 = AtomicU32::new(1);
@@ -310,7 +348,7 @@ impl Engine {
     let inner = Rc::new(Inner {
       id,
       runtime: runtime.clone(),
-      live: RefCell::new(Some(Live { extras, webview, window })),
+      live: RefCell::new(Some(Live { widget_backdrop: background.and_then(|colour| widget_backdrop(&webview, colour, true)), extras, webview, window })),
       destroyed: Cell::new(false),
       window_value: Cell::new(window_value),
       own_window_shown: Cell::new(false),
@@ -576,7 +614,18 @@ impl Engine {
   }
 
   pub fn set_background_color(&self, r: u8, g: u8, b: u8, a: u8) -> ErrorCode {
-    self.inner.with_live(|live| live.webview.set_background_color(r, g, b, a)).unwrap_or(ErrorCode::InvalidState)
+    self.inner
+      .with_live(|live| {
+        // The application's colour from now on: the widget paints it, and no longer follows the
+        // window's. A colour that is not opaque (a transparent page) shows what is behind, so
+        // the widget paints nothing.
+        if let Some(backdrop) = &live.widget_backdrop {
+          backdrop.follows_window.set(false);
+          let _ = backdrop.messages.set_backdrop(one_colour((r, g, b)));
+        }
+        live.webview.set_background_color(r, g, b, a)
+      })
+      .unwrap_or(ErrorCode::InvalidState)
   }
 
   pub fn set_allow_external_drop(&self, allow: bool) -> ErrorCode {
@@ -823,7 +872,8 @@ impl Inner {
     let taken = if in_callback { None } else { self.live.try_borrow_mut().ok().and_then(|mut live| live.take()) };
     match taken {
       Some(live) => {
-        let Live { extras, webview, window } = live;
+        let Live { widget_backdrop, extras, webview, window } = live;
+        drop(widget_backdrop);
         if let HostWindow::Filled(value) = window {
           crate::window::set_page_focus(value, None);
         }

@@ -1,6 +1,6 @@
 # Unsafe ledger
 
-Rewritten by `bun rust-rewrite/verify.ts <platform> --ledger`. 469 uses in 25 files.
+Rewritten by `bun rust-rewrite/verify.ts <platform> --ledger`. 480 uses in 25 files.
 
 | File | Uses of `unsafe` |
 |---|---|
@@ -25,7 +25,7 @@ Rewritten by `bun rust-rewrite/verify.ts <platform> --ledger`. 469 uses in 25 fi
 | `crates/sweetview-platform-window/src/size_hint.rs` | 1 |
 | `crates/sweetview-platform-window/src/tab_frame.rs` | 13 |
 | `crates/sweetview-platform-window/src/tab_frame_tests.rs` | 12 |
-| `crates/sweetview-platform-window/src/test_support.rs` | 86 |
+| `crates/sweetview-platform-window/src/test_support.rs` | 97 |
 | `crates/sweetview-platform-window/src/windows.rs` | 42 |
 | `crates/sweetview-platform-window/src/windows_tests.rs` | 11 |
 | `crates/sweetview-platform-window/tests/winrt_own_apartments.rs` | 2 |
@@ -211,7 +211,7 @@ Compiled only for tests (this crate's, and the runtime's through the `test-suppo
 - **The application's own modal loops**: `message_box`, `own_popup_menu`.
 - **A window of the application's own**: `OwnWindow`, a window class and window the test registers and makes itself.
 - **The test process**: `keep_com_loaded_for_the_test_process`.
-- **The order a teardown runs in and DWM's cloak** (D49): `watch_destroy` (`SetWindowSubclass`, and `RemoveWindowSubclass` in `Drop` and on `WM_NCDESTROY`) runs a test's closure inside a window's `WM_DESTROY`; `first_child` (`GetWindow` with `GW_CHILD`) finds WebView2's own window under a webview's widget; `post_close` posts `WM_CLOSE`; `is_cloaked` (`DwmGetWindowAttribute` with `DWMWA_CLOAKED`) reads whether DWM keeps a window off the screen.
+- **The order a teardown runs in and DWM's cloak** (D49): `watch_destroy` (`SetWindowSubclass`, and `RemoveWindowSubclass` in `Drop` and on `WM_NCDESTROY`) runs a test's closure inside a window's `WM_DESTROY`; `first_child` (`GetWindow` with `GW_CHILD`) finds WebView2's own window under a webview's widget; `post_close` posts `WM_CLOSE`; `is_cloaked` (`DwmGetWindowAttribute` with `DWMWA_CLOAKED`) reads whether DWM keeps a window off the screen. `erased_colour` (`GetDC`, `CreateCompatibleDC`, `CreateCompatibleBitmap`, `ReleaseDC`, `SelectObject`, `SetPixel`, `SendMessageW` with `WM_ERASEBKGND`, `GetPixel`, `DeleteObject`, `DeleteDC`) reads the colour a window erases its background with into a memory bitmap, without the screen, for the test of a webview widget's backdrop (S3 of D49's first review).
 - **Read back from the OS**: `send`, `title_of`, `client_size`, `client_to_screen`, `min_track_size`, `uses_dark_title_bar`, `screen_pixel`, `in_move_size`, `this_thread_sees_left_down`, `move_cursor_as_input`, `shell_drop`, `send_file_drop`.
 - **Menus**: `popup_menus_open`, `open_popup_menu`, `menu_of_window`, `read_menu` (each line a `MenuEntry`), `press_keys`, `menu_item_rect`, `menu_item_id`, `sub_menu`, `is_menu`, `track_menu`, `send_right_button`, `registered_message`, `dpi_of`, `frame_edge`.
 

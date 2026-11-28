@@ -525,9 +525,9 @@ impl Webview {
         &self.environment
     }
 
-    /// The widget's handle value, for the tests' read-back.
-    #[cfg(any(test, feature = "test-support"))]
-    pub(crate) fn widget_value(&self) -> isize {
+    /// The widget's handle value: for the tests' read-back, and for the backdrop the runtime
+    /// installs on it, which paints the widget until WebView2 has drawn (DECISIONS D49).
+    pub fn widget_value(&self) -> isize {
         key(self.widget.hwnd)
     }
 
