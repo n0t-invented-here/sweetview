@@ -10,8 +10,8 @@
 import { fileURLToPath } from "node:url";
 import { createApp, WebView } from "@n1h/sweetview";
 import { Window } from "@n1h/sweetview-native";
-import { createChildWebview, engineOf, isWindowDisposed } from "@n1h/sweetview-native/internal";
-import { getTabFrame, showTabPopupMenu, windowMenu } from "@n1h/sweetview-native/win32/tab-window";
+import { createChildWebview, engineOf, isWindowDisposed } from "../../../packages/sweetview-native/src/internal";
+import { getTabFrame, showTabPopupMenu, windowMenu } from "../../../packages/sweetview-native/src/win32/tab-window";
 
 const report: Record<string, unknown> = {};
 const positive = (r: { width: number; height: number }) => r.width > 0 && r.height > 0;

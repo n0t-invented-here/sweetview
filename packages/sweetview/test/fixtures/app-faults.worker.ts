@@ -11,6 +11,7 @@ type Methods = {
   "crash.afterEvent": [null, null];
   "throws.unreadable": [null, null];
   "throws.noPrototype": [null, null];
+  "notify.throws": [null, null];
 };
 type Events = { tick: number };
 
@@ -41,6 +42,10 @@ hostService(
       "throws.noPrototype": () => {
         throw Object.create(null);
       },
+      // Called with notify: no reply, the worker prints it (what the pages say of a fault in the worker).
+      "notify.throws": () => {
+        throw new Error("notified method throws");
+      },
       // An event, then the worker's own uncaught exception: the event is queued before the crash.
       "crash.afterEvent": () => {
         emit("tick", 99);
@@ -57,4 +62,10 @@ hostService(
       },
     },
   })),
+  {
+    // The route handler (onRequest: "worker"): its exception answers 500 and is printed nowhere.
+    onRequest: () => {
+      throw new Error("worker route throws");
+    },
+  },
 );

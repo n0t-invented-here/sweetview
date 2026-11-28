@@ -13,7 +13,7 @@
 import { FFIType, dlopen } from "bun:ffi";
 import { createApp } from "@n1h/sweetview";
 import { quitEventLoop, runEventLoop } from "@n1h/sweetview-native";
-import { scheduleNativeTimeout } from "@n1h/sweetview-native/internal";
+import { scheduleNativeTimeout } from "../../../packages/sweetview-native/src/internal";
 
 const mode = process.argv[2] === "pumped" ? "pumped" : "blocking";
 const user32 = dlopen("user32.dll", {
