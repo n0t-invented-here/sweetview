@@ -766,7 +766,17 @@ export const winTabsDriver: TabsDriver = {
         const h = logicalHost();
         if (h.closed || isWindowDisposed(h.window) || h.window.isVisible()) return;
         if (!drawn) h.window.show();
-        else revealWhenDrawn(h.window, () => Promise.all([drawn(), h.strip ? afterNextDraw(h.strip.raw) : undefined]), fallbackMs);
+        else
+          revealWhenDrawn(
+            h.window,
+            (done) => {
+              let left = h.strip ? 2 : 1;
+              const one = () => void (--left === 0 && done());
+              drawn(one);
+              if (h.strip) afterNextDraw(h.strip.raw, one);
+            },
+            fallbackMs,
+          );
       },
       // A disposed window abandons the attach before it touches the frame again.
       isCancelled: () => host.closed,

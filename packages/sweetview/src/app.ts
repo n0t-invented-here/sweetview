@@ -91,11 +91,11 @@ export type TabAttachHooks = {
   fileDropHost(): Window;
   /**
    * Replaces `window.show()` on the borrowed child window for `showOnReady` and the ready
-   * watchdog. `drawn`, for the ready signal's reveal, settles once the tab's page has drawn a
-   * frame since it was asked (D46); `fallbackMs` is the tab's `readyTimeoutMs`. The watchdog's
-   * reveal passes neither, and shows at once.
+   * watchdog. `drawn`, for the ready signal's reveal, calls its argument once the tab's page has
+   * drawn a frame since it was asked (D46); `fallbackMs` is the tab's `readyTimeoutMs`. The
+   * watchdog's reveal passes neither, and shows at once.
    */
-  revealWindow?(drawn?: () => Promise<void>, fallbackMs?: number): void;
+  revealWindow?(drawn?: (done: () => void) => void, fallbackMs?: number): void;
   /**
    * Set by `WebView.attach`: re-subscribes file-drop demand to the current
    * `fileDropHost()`. The driver calls it after the tab's logical host
@@ -137,24 +137,27 @@ export type TabAttachHooks = {
 export const tabAttachHooks: unique symbol = Symbol("sweetview.tabAttachHooks");
 
 /**
- * Asks a webview's page for the frame after next and settles once it is drawn: two animation
- * frames, the second of which runs once the first has been composed. Settles at once for a
- * webview with no RPC binding, and when the webview goes first. Inside the package only.
+ * Asks a webview's page for the frame after next and calls `done` once it is drawn: two
+ * animation frames, the second of which runs once the first has been composed. At once for a
+ * webview with no RPC binding, and when the webview goes first. A callback, not a promise: a
+ * blocking `run()` turns no promise continuation until it returns. Inside the package only.
  */
-const drawnRequests = new WeakMap<RawWebview, () => Promise<void>>();
-export function afterNextDraw(raw: RawWebview): Promise<void> {
-  return drawnRequests.get(raw)?.() ?? Promise.resolve();
+const drawnRequests = new WeakMap<RawWebview, (done: () => void) => void>();
+export function afterNextDraw(raw: RawWebview, done: () => void): void {
+  const request = drawnRequests.get(raw);
+  if (request) request(done);
+  else done();
 }
 
 /**
  * Sweetview's reveal of a window whose page has to draw first (D46): the window is shown cloaked
  * (visible to its webviews, so they draw, and off the screen) and put on the screen once
- * `drawn` settles: WebView2's render window is otherwise on the screen before its first frame,
+ * `drawn` calls back: WebView2's render window is otherwise on the screen before its first frame,
  * which shows light. `fallbackMs` (the page's `readyTimeoutMs`) puts it on the screen if that
  * never comes. Where DWM refuses the cloak, and on macOS (D42), it is shown at once, as
  * `show()` shows it. An application's own `show()` is never this.
  */
-export function revealWhenDrawn(window: Window, drawn: () => Promise<unknown>, fallbackMs: number | undefined): void {
+export function revealWhenDrawn(window: Window, drawn: (done: () => void) => void, fallbackMs: number | undefined): void {
   const backend = getWindowBackend(window);
   if (macosKeepsTagPath() || backend.showCloaked === undefined) {
     window.show();
@@ -168,7 +171,7 @@ export function revealWhenDrawn(window: Window, drawn: () => Promise<unknown>, f
     backend.uncloak?.();
   };
   if (fallbackMs !== undefined && fallbackMs > 0) stopFallback = scheduleNativeTimeout(fallbackMs, uncloak);
-  drawn().then(uncloak, uncloak);
+  drawn(uncloak);
 }
 
 type InternalWebViewOptions<M extends MethodMap> = WebViewOptions<M> & { [tabAttachHooks]?: TabAttachHooks };
@@ -614,14 +617,13 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
       // The page's frames asked for since the last one drawn (afterNextDraw).
       const drawnWaiters: (() => void)[] = [];
       const settleDrawn = () => {
-        for (const resolve of drawnWaiters.splice(0)) resolve();
+        for (const done of drawnWaiters.splice(0)) done();
       };
-      const requestDrawn = () =>
-        new Promise<void>((resolve) => {
-          if (!isLive()) return resolve();
-          drawnWaiters.push(resolve);
-          if (drawnWaiters.length === 1) raw.eval(`requestAnimationFrame(() => requestAnimationFrame(() => window.__sweetview_rpc("__sweetview.drawn", null)))`);
-        });
+      const requestDrawn = (done: () => void) => {
+        if (!isLive()) return done();
+        drawnWaiters.push(done);
+        if (drawnWaiters.length === 1) raw.eval(`requestAnimationFrame(() => requestAnimationFrame(() => window.__sweetview_rpc("__sweetview.drawn", null)))`);
+      };
       const clearDispatches = () => {
         queue.length = 0;
         cancelDispatch?.();
