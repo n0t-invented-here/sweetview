@@ -119,6 +119,9 @@ pub fn mouse_buttons_down() -> bool {
 pub fn left_button_down() -> bool {
   false
 }
+pub fn monitor_of(_window: &impl NativeWindow, _monitors: impl IntoIterator<Item = tao::monitor::MonitorHandle>) -> Option<tao::monitor::MonitorHandle> {
+  None
+}
 pub fn work_area(_monitor: &tao::monitor::MonitorHandle) -> Option<Rect> {
   None
 }
