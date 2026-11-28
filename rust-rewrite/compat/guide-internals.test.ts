@@ -155,10 +155,12 @@ describe("what the guide says its test does", () => {
   test("the guide says a row with a new form is run, and what is checked of a row that says no public call in 1.0", () => {
     const text = guideLines.join(" ").replace(/\s+/g, " ");
     expect({
-      everyRowIsRun: /Every row is run by/.test(text),
-      newFormRun: /A row with a new form is run by `rust-rewrite\/compat\/upgrade-guide\.test\.ts`/.test(text),
+      everyRowIsRun: /Every row is run by/.test(text) || /A row with a new form is run by/.test(text),
+      valueRun: /A row whose new form is a value is imported, checked against what the row says, and run once on Windows/.test(text),
+      typeNotRun: /A row whose new form is a type is checked by the TypeScript compiler and not run/.test(text),
+      macosNotRun: /A row of a module that loads only on macOS is checked from its source and not run on Windows/.test(text),
       noPublicChecked: /A row that says `no public call in 1\.0` is checked by name/.test(text),
-    }).toEqual({ everyRowIsRun: false, newFormRun: true, noPublicChecked: true });
+    }).toEqual({ everyRowIsRun: false, valueRun: true, typeNotRun: true, macosNotRun: true, noPublicChecked: true });
   });
 });
 

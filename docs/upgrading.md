@@ -365,9 +365,11 @@ Each row has three columns:
 - **Change**: what is different, in a few words. `unchanged` means the
   import and the call stay as they are.
 
-A row with a new form is run by `rust-rewrite/compat/upgrade-guide.test.ts`,
-which reads this page: it imports each new form, checks that it is what the
-row says, and runs it. A row that says `no public call in 1.0` is checked by
+`rust-rewrite/compat/upgrade-guide.test.ts` reads this page and checks each
+row by its kind. A row whose new form is a value is imported, checked against what the row says, and run once on Windows.
+A row whose new form is a type is checked by the TypeScript compiler and not run.
+A row of a module that loads only on macOS is checked from its source and not run on Windows.
+A row that says `no public call in 1.0` is checked by
 name: the test pins the list of those rows, checks that no public entry point
 exports what each names, and that each public call its Change column names
 exists.
