@@ -779,11 +779,23 @@ describe.if(onWindows)("a fault in one callback of createApp stays in that callb
 
   test("an onEvent listener that throws: the other listeners and the page still get each event, the reply behind them arrives, and the error is printed as before", async () => {
     const { seen, tapped, stderr } = await faults();
-    expect(tapped).toEqual(["tick 1", "tick 2"]);
-    expect(seen?.events).toEqual(["tick 1", "tick 2"]);
+    expect(tapped).toEqual(["tick 1", "tick 2", "tick 7"]);
+    expect(seen?.events).toEqual(["tick 1", "tick 2", "tick 7"]);
     expect(seen?.ticks).toBe("resolved: ticked");
     expect(stderr).toMatch(/^sweetview: UI dispatch failed:/m);
     expect(stderr).toContain("onEvent listener");
+  }, LIVE_TEST_MS * 3);
+
+  // Several onEvent listeners throwing in one delivery (review 3, Q4): one AggregateError holding
+  // each, printed once with no listener and told once with one.
+  test("two onEvent listeners that throw on one event: both errors, together, printed once with no onCallbackError listener and told once with one", async () => {
+    const without = await faults();
+    expect(without.stderr.match(/^sweetview: UI dispatch failed:/gm)?.length).toBe(2);
+    expect(without.stderr).toContain("error: onEvent listener 7");
+    expect(without.stderr).toContain("error: another onEvent listener 7");
+    const withListener = await faults("listen");
+    expect(withListener.told.filter((t) => t.includes("7"))).toEqual(["worker: sweetview: 2 onEvent listeners threw [onEvent listener 7, another onEvent listener 7]"]);
+    expect(withListener.seen?.tock).toBe("resolved: tocked");
   }, LIVE_TEST_MS * 3);
 
   test("a worker that crashes is printed once", async () => {
@@ -797,9 +809,9 @@ describe.if(onWindows)("a fault in one callback of createApp stays in that callb
   test("with an onCallbackError listener, an onEvent listener's throw is told as the worker kind and not printed; a UI-thread method's throw and the worker's crash are not told", async () => {
     const { exitCode, seen, tapped, told, stderr } = await faults("listen");
     expect(exitCode).toBe(0);
-    expect(told).toEqual(["worker: onEvent listener 1"]);
+    expect(told).toEqual(["worker: onEvent listener 1", "worker: sweetview: 2 onEvent listeners threw [onEvent listener 7, another onEvent listener 7]"]);
     expect(stderr).not.toMatch(/^sweetview: UI dispatch failed:/m);
-    expect(tapped).toEqual(["tick 1", "tick 2"]);
+    expect(tapped).toEqual(["tick 1", "tick 2", "tick 7"]);
     expect(seen?.deferredUnreadable).toBe("rejected: [object Object]");
     expect(stderr.match(/^sweetview: the worker failed:/gm)?.length).toBe(1);
   }, LIVE_TEST_MS * 3);

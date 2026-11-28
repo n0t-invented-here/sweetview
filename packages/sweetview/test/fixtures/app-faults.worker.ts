@@ -6,6 +6,7 @@ import { hostService } from "@n1h/sweetview/worker";
 
 type Methods = {
   ticks: [null, string];
+  tock: [null, string];
   crash: [null, null];
   "crash.afterEvent": [null, null];
   "throws.unreadable": [null, null];
@@ -20,6 +21,11 @@ hostService(
         emit("tick", 1);
         emit("tick", 2);
         return "ticked";
+      },
+      // One event, on which two listeners throw (review 3, Q4).
+      tock: () => {
+        emit("tick", 7);
+        return "tocked";
       },
       // Values that cannot be read the usual way (review 3, item 5): each call still gets its error reply.
       "throws.unreadable": () => {

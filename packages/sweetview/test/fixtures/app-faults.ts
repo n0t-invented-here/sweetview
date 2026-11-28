@@ -49,7 +49,10 @@ const page = `<!doctype html><title>app faults</title><script>
     // Then the crash: the worker's own crash frame and Worker.onerror both see it.
     rpc("crash", null);
   };
-  note("ticks", rpc("ticks", null)).then(() => setTimeout(sent, 1000));
+  // tock after the ticks' reply: its one event has a delivery of its own, in which two listeners throw.
+  note("ticks", rpc("ticks", null))
+    .then(() => note("tock", rpc("tock", null)))
+    .then(() => setTimeout(sent, 1000));
   setTimeout(() => seen.ticks === undefined && sent(), 10000);
   rpc("__sweetview.ready", null);
 </script>`;
@@ -59,7 +62,9 @@ const tapped: string[] = [];
 const told: string[] = [];
 const mode = process.argv[2] ?? "";
 const crashEvent = mode === "crash-event";
-if (mode === "listen" || crashEvent) onCallbackError((error, source) => void told.push(`${source.kind}: ${error.message}`));
+// An AggregateError is told with the messages of the errors it holds.
+const inner = (error: Error) => (error instanceof AggregateError ? ` [${error.errors.map((e: Error) => e.message).join(", ")}]` : "");
+if (mode === "listen" || crashEvent) onCallbackError((error, source) => void told.push(`${source.kind}: ${error.message}${inner(error)}`));
 const app = await createApp({
   title: `sweetview app faults ${process.pid}`,
   noActivate: true,
@@ -81,11 +86,15 @@ const app = await createApp({
     },
   },
 });
-// Throws for the first event only, so what is printed or told is the same however the events are drained.
+// Throws for the first tick only, so what is printed or told is the same however the ticks are
+// drained; for tock's event, as the listener after the next does.
 app.onEvent((event) => {
-  if (event.payload === 1 || event.payload === 99) throw new Error(`onEvent listener ${String(event.payload)}`);
+  if (event.payload === 1 || event.payload === 99 || event.payload === 7) throw new Error(`onEvent listener ${String(event.payload)}`);
 });
 app.onEvent((event) => void tapped.push(`${event.name} ${String(event.payload)}`));
+app.onEvent((event) => {
+  if (event.payload === 7) throw new Error("another onEvent listener 7");
+});
 
 async function pumpUntil(done: () => boolean, ms: number) {
   const deadline = Date.now() + ms;
