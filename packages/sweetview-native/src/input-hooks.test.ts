@@ -32,13 +32,8 @@ const onWindows = process.platform === "win32";
 const user32 = onWindows
   ? dlopen("user32.dll", {
       SendInput: { args: [FFIType.u32, FFIType.ptr, FFIType.i32], returns: FFIType.u32 },
-      // Read back what reached the system: the key's state.
-      GetAsyncKeyState: { args: [FFIType.i32], returns: FFIType.i16 },
     }).symbols
   : undefined;
-
-/** The system's state of a key: down when the last event of it that reached the system was a press. */
-const keyIsDown = (virtualKey: number) => user32!.GetAsyncKeyState(virtualKey) < 0;
 
 const INPUT_SIZE = 40; // sizeof(INPUT) on x64
 const VK_F24 = 0x87;
@@ -133,7 +128,9 @@ describe.if(onWindows)("installMouseHook (W3.1)", () => {
 });
 
 describe.if(onWindows)("installKeyboardHook (W3.2)", () => {
-  test("down, repeat and up arrive with the DOM code and the raw code, and a swallowed key is swallowed per event", () => {
+  // That a swallowed press never reaches the system, and the same hook lets the next one through,
+  // is proven in Rust (crates/sweetview-platform-input/tests/windows_hooks.rs).
+  test("down and up arrive with the DOM code, the raw code and the modifiers; a second hook is refused; dispose is idempotent", () => {
     const seen: KeyMessage[] = [];
     keys = installKeyboardHook((m) => {
       if (m.code === "F24") seen.push(m);
@@ -143,12 +140,8 @@ describe.if(onWindows)("installKeyboardHook (W3.2)", () => {
     expect(() => installKeyboardHook(() => false)).toThrow("webview_keyboard_hook_install failed: a keyboard hook is already installed");
     sendKey(VK_F24, false);
     pumpUntil(() => seen.length >= 1);
-    pumpUntil(() => false, 30);
-    // Swallowed: the press never reached the system, whose key state stays up.
-    const downAfterSwallowedPress = keyIsDown(VK_F24);
     sendKey(VK_F24, true);
     pumpUntil(() => seen.length >= 2);
-    expect(downAfterSwallowedPress).toBe(false);
     expect(seen.map((m) => m.event)).toEqual([KeyEvent.Down, KeyEvent.Up]);
     expect(seen[0]!.code).toBe("F24");
     expect(seen[0]!.raw).toBe(VK_F24);
