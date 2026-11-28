@@ -30,26 +30,50 @@ const quiet = { bounds: { x: 120, y: 120, width: 400, height: 280 }, noActivate:
 const report: Record<string, unknown> = { mode };
 
 createTray({ tooltip: "sweetview app-loops fixture" });
-const balloons = notifierOfTheBinding();
+const clicked = new Set<string>();
+const balloons = notifierOfTheBinding({ onClick: (click) => void clicked.add(click.id) });
 const debug = debugNativeNotifier(balloons)!;
 debug.debugForcePath("balloonOnly");
 const balloonUid = Number((debug.debugShow("app-loops", "Sweetview test", "app-loops fixture", true, null) ?? "").split(":")[1] ?? -1);
 const trayWindow = currentTray()!.windowHandle();
 const trayUid = [1, 2, 3, 4, 5, 6, 7, 8].find((uid) => shellHoldsIcon(trayWindow, uid)) ?? -1;
-const notifierWindow = ownMessageWindows("SweetviewNotifierWindow").find((hwnd) => shellHoldsIcon(hwnd, balloonUid)) ?? 0n;
+// The notifier's own window, found by its class: not through the shell, which may already have
+// ended the balloon (another notification, quiet hours, a full-screen application in front: D20).
+const notifierWindow = ownMessageWindows("SweetviewNotifierWindow")[0] ?? 0n;
 
 /** What the application made before its blocking run(), read back from the OS and the binding. */
 const outer = () => ({
   trayHeld: shellHoldsIcon(trayWindow, trayUid),
   trayWindow: isWindow(trayWindow),
-  balloonHeld: shellHoldsIcon(notifierWindow, balloonUid),
+  notifierWindow: isWindow(notifierWindow),
   // A notifier that is still alive keeps showing: a second balloon is accepted.
   notifierShows: debug.debugShow("app-loops-2", "Sweetview test", "app-loops fixture, again", true, null)?.startsWith("balloon:") ?? false,
   lockWindows: ownMessageWindows("SweetviewSingleInstanceWindow").length,
 });
 
+let round = 0;
+/**
+ * Whether the notifier still works, by what it reports itself, whatever the shell did with its
+ * balloons: a new balloon is accepted, and its click, posted to the notifier's window as the
+ * shell posts it, comes back to the notifier's onClick from the loop. Answers from a native
+ * timeout, which either loop runs.
+ */
+const notifierAnswers = (done: (answers: boolean) => void) => {
+  const id = `app-loops-click-${++round}`;
+  const shown = debug.debugShow(id, "Sweetview test", "app-loops fixture, a click", true, null);
+  const uid = shown?.startsWith("balloon:") ? Number(shown.slice("balloon:".length)) : -1;
+  if (uid < 0 || !debug.debugSimulateBalloonEvent(uid, "clicked")) return done(false);
+  const deadline = Date.now() + 3000;
+  const check = () => {
+    if (clicked.has(id) || Date.now() > deadline) done(clicked.has(id));
+    else scheduleNativeTimeout(20, check);
+  };
+  scheduleNativeTimeout(20, check);
+};
+
 process.on("exit", () => {
-  report.atExit = outer();
+  // At the end the released notifier's balloon icon is gone too, whatever the shell did before.
+  report.atExit = { ...outer(), balloonHeld: shellHoldsIcon(notifierWindow, balloonUid) };
   console.log("RESULT " + JSON.stringify(report));
 });
 
@@ -63,7 +87,7 @@ if (mode === "nested") {
     inner.window.show();
     scheduleNativeTimeout(800, () => inner.quit());
     inner.run();
-    report.afterInnerRun = {
+    const after = {
       ...outer(),
       outerWindow: isWindow(BigInt(win.handle ?? 0)),
       outerWebview: view.raw.unsafeHandle !== null,
@@ -71,7 +95,10 @@ if (mode === "nested") {
       innerWebview: inner.webview!.raw.unsafeHandle !== null,
       innerWindow: isWindow(innerWindow),
     };
-    quitEventLoop();
+    notifierAnswers((answers) => {
+      report.afterInnerRun = { ...after, notifierAnswers: answers };
+      quitEventLoop();
+    });
   }, 1000);
   await runEventLoop();
 } else {
@@ -82,14 +109,20 @@ if (mode === "nested") {
   first.window.show();
   scheduleNativeTimeout(800, () => first.quit());
   first.run();
-  report.afterFirstRun = outer();
+  const afterFirst = outer();
+  report.afterFirstRun = afterFirst;
+  // Its answer comes from the second run's loop, which runs the native timeouts.
+  notifierAnswers((answers) => void (report.afterFirstRun = { ...afterFirst, notifierAnswers: answers }));
   const next = await createApp({ ...quiet, title: "app-loops second", assets: page("second") });
   next.window.show();
   const started = Date.now();
   const wait = () => {
     if (seconds.length > 0 || Date.now() - started > 20_000) {
-      report.duringSecondRun = { ...outer(), secondInstances: seconds.map((event) => event.args.at(-1)) };
-      next.quit();
+      const during = { ...outer(), secondInstances: seconds.map((event) => event.args.at(-1)) };
+      notifierAnswers((answers) => {
+        report.duringSecondRun = { ...during, notifierAnswers: answers };
+        next.quit();
+      });
       return;
     }
     scheduleNativeTimeout(50, wait);
