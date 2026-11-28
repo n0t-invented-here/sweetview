@@ -99,7 +99,28 @@ Items name today's API members to say which behaviour is meant. The API may chan
     Ran 487 tests across 45 files. [211.19s]
     ```
 
-- [ ] W0.6 A GitHub Actions workflow builds the binding and runs `cargo test`, `cargo clippy`, `bun run typecheck` and `bun test` on `windows-latest`.
+- [x] W0.6 A GitHub Actions workflow builds the binding and runs `cargo test`, `cargo clippy`, `bun run typecheck` and `bun test` on `windows-latest`.
+
+    `.github/workflows/windows.yml` (workflow `windows`, job `check`, on every push to `v1-rust-rewrite` and `main`) runs on `windows-latest`: it installs Bun, the stable Rust toolchain and `just`, builds the binding with `just native`, then runs `cargo test --workspace`, `cargo clippy`, `bun run typecheck` and `bun test`, each as its own step, and a later step still runs when an earlier one failed. Run 46088815542, on commit `c744c56`, the last commit that changed code or tests:
+
+    ```
+    job: check | completed success | runner: windows-latest | head: c744c56
+       7 Install JavaScript dependencies          success
+       8 Build the binding                        success
+       9 cargo test                               success
+      10 cargo clippy                             success
+      11 bun run typecheck                        success
+      12 bun test                                 success
+    cargo test: 236 passed, 0 failed
+    bun test:
+      462 pass
+      25 skip
+      0 fail
+     Ran 487 tests across 45 files.
+    ```
+
+    The 25 skips on the runner are the 15 that skip on any Windows machine (14 macOS-only tests and the unsupported-OS test) and 10 gesture checks that need the OS to run a move loop for an injected mouse press, which the runner's session does not (the control for that prints its reason in the run; decision D20). They run and pass on a desktop: `rust-rewrite/evidence/w7-native-tabs.txt` and `rust-rewrite/evidence/w4-windows.txt`. Earlier runs on this branch, with what each failed on and the correction made, are in decision D20; one of them, on commit `0118832`, failed three start-up tests on their time limits and passed when the same commit was run again.
+
 
 ## W1. The boundary
 
