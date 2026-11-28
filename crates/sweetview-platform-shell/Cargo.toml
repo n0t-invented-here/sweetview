@@ -10,6 +10,7 @@ publish.workspace = true
 
 [dependencies]
 serde_json.workspace = true
+sweetview-shell-data.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 sweetview-platform-loop.workspace = true

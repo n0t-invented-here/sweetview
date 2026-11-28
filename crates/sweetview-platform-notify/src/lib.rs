@@ -102,16 +102,7 @@ pub enum ForcedPath {
 }
 
 /// Why a notifier could not be made or configured.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct NotifyError(pub String);
-
-impl std::fmt::Display for NotifyError {
-  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    f.write_str(&self.0)
-  }
-}
-
-impl std::error::Error for NotifyError {}
+pub use sweetview_shell_data::NotifyError;
 
 /// Tests in this crate count the process's handles and share the desktop, so
 /// they run one at a time.
