@@ -21,7 +21,9 @@ const messageOf = (error: Error) => {
 };
 // Two raw bindings throw the same error (review 2, item 5): each arrives with its own name, as that object.
 const shared = new Error("shared");
-onCallbackError((error, source) => void told.push(`${source.kind}${source.name ? ` (${source.name})` : ""}: ${messageOf(error)}${error === shared ? " [the thrown object]" : ""}`));
+// `bun webview-errors.ts none`: no listener, for the lines printed with none (review 4, C1).
+const listening = process.argv[2] !== "none";
+if (listening) onCallbackError((error, source) => void told.push(`${source.kind}${source.name ? ` (${source.name})` : ""}: ${messageOf(error)}${error === shared ? " [the thrown object]" : ""}`));
 
 const webview = new Webview(false, { width: 360, height: 240, hint: SizeHint.NONE });
 webview.title = `sweetview webview-errors ${process.pid}`;
@@ -55,7 +57,7 @@ let lateAdded = false;
 const addsListener = new Error("placeholder");
 Object.defineProperty(addsListener, "message", {
   get() {
-    if (!lateAdded) {
+    if (!lateAdded && listening) {
       lateAdded = true;
       onCallbackError((_error, source) => {
         if (source.name === "bindAddsListener") lateTold.push(`${source.kind} (${source.name})`);
@@ -177,7 +179,7 @@ await Bun.write(file, "dropped");
 for (const type of ["dragEnter", "dragOver", "drop"]) {
   engine.callDevToolsProtocolMethod("Input.dispatchDragEvent", JSON.stringify({ type, x: 40, y: 40, data: { items: [], files: [file], dragOperationsMask: 1 } }));
 }
-await pumpUntil(() => dropped && told.some((t) => t.startsWith("webview.setFileDropHandler")), 10_000);
+await pumpUntil(() => dropped && (!listening || told.some((t) => t.startsWith("webview.setFileDropHandler"))), 10_000);
 await pumpUntil(() => false, 200);
 
 report.page = page;

@@ -726,7 +726,9 @@ error's message is the page's text: an `Error`'s `message`, else the value's
 `String()` form. A thrown value neither can be read from (a `Proxy` whose
 traps throw, an object with no prototype) still rejects its call, with its
 `Object.prototype.toString` tag, such as `[object Object]`; the worker sends
-its error reply and lives on.
+its error reply and lives on. A deferred method's such value also prints
+`sweetview: UI dispatch failed:` with what its reading threw, once for the
+calls answered together, as before.
 
 In an application made with `createApp`, on Windows, an
 [`onCallbackError`](native.md#exceptions-thrown-by-your-callbacks) listener
