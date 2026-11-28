@@ -8,7 +8,7 @@
 
 import { createApp } from "@n1h/sweetview";
 import { HitRelay, Screen, Window, createHitRelay } from "@n1h/sweetview/native";
-import { getWindowMeta } from "@n1h/sweetview-native/internal";
+import { getWindowMeta } from "../../../packages/sweetview-native/src/internal";
 
 const report: Record<string, unknown> = {};
 const bounds = { x: 120, y: 120, width: 320, height: 240 };

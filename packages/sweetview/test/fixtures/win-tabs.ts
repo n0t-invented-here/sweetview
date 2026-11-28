@@ -12,12 +12,12 @@ import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { WebView, type Tab } from "../../src/index";
 import { Screen, Window, dotIco, quitEventLoop, runEventLoop, type TabHandle } from "@n1h/sweetview-native";
-import { getTabFrame } from "@n1h/sweetview-native/win32/tab-window";
-import { engineOf, getWindowMeta, scheduleNativeTimeout } from "@n1h/sweetview-native/internal";
+import { getTabFrame } from "../../../sweetview-native/src/win32/tab-window";
+import { engineOf, getWindowMeta, scheduleNativeTimeout } from "../../../sweetview-native/src/internal";
 import { writeSync } from "node:fs";
 import { buttonsDown, endMenu, injectCursorMove, injectLeftButton, openPopupMenu } from "../../../sweetview-native/test/win32-os";
-import type { Key } from "@n1h/sweetview-native/win32/shortcuts";
-import { STRIP_HEIGHT } from "@n1h/sweetview-native/win32/strip-shared";
+import type { Key } from "../../../sweetview-native/src/win32/shortcuts";
+import { STRIP_HEIGHT } from "../../../sweetview-native/src/win32/strip-shared";
 import { _debugWinTabs, mergeAllWindows } from "../../src/tabs/win-tabs";
 
 const { u64, u32, i32 } = FFIType;

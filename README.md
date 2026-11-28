@@ -265,7 +265,7 @@ bridge.on("tick", ({ count }) => {
 });
 
 document.getElementById("root")!.textContent = await bridge.rpc("greet", { name: "world" });
-await signalReady(); // the first screen is drawn: the window appears now
+signalReady(); // the page has rendered: the window appears now
 ```
 
 ### 5. Create the window in `app.ts`
@@ -285,12 +285,10 @@ you made and call `process.exit()` after `run()`, as before 1.0.
   `Bun.main`, which is this file. The same path works under `bun run` and
   inside an executable from `bun build --compile`.
 - `title` defaults to the page's `<title>`; `assets` adds files the page
-  fetches, such as models or images.
-- `showOnReady`: windows are created hidden; this one appears when the page
-  calls `signalReady()` after drawing its first screen, so it is never seen
-  blank or white. `readyTimeoutMs` shows an error page in it if the page
-  never does. To show it yourself instead, call `app.window.show()`. All
-  options: [`createApp`](docs/app.md#createapp).
+  fetches, such as models or images. Windows are created hidden; with
+  `showOnReady: true` the window appears when the page calls `signalReady()`
+  (or the ready watchdog fires), so it never shows a blank frame. All options:
+  [`createApp`](docs/app.md#createapp).
 
 ```ts
 import { createApp } from "@n1h/sweetview";
@@ -301,7 +299,6 @@ const app = await createApp<Methods, Events>({
   page: index,
   worker: "./worker.ts",
   showOnReady: true,
-  readyTimeoutMs: 15_000,
 });
 
 app.run();
