@@ -104,6 +104,32 @@ struct Live {
   extras: WebviewExtras,
   webview: WebView,
   window: HostWindow,
+  /// The backdrop the container window `wry` made for the webview paints until WebView2 draws
+  /// over it; dropped before the webview. `None` with no backdrop (D46).
+  container_backdrop: Option<ContainerBackdrop>,
+}
+
+#[cfg(windows)]
+type ContainerBackdrop = sweetview_platform_window::FrameMessages;
+#[cfg(not(windows))]
+type ContainerBackdrop = ();
+
+/// Makes the container window `wry` made for `webview` paint `colour` where WebView2 has not
+/// drawn yet. `wry`'s container has no background brush, and a parent that clips its children
+/// (a tab frame) does not paint under it, so until WebView2 presents its first frame there that
+/// part of the window is unpainted, and shows white (measured on a tab's first reveal, D46).
+#[cfg(windows)]
+fn paint_container(webview: &WebView, (red, green, blue): (u8, u8, u8)) -> Option<ContainerBackdrop> {
+  use wry::WebViewExtWindows;
+  let container = webview.hwnd().0 as isize;
+  let colour = (red, green, blue);
+  let backdrop = sweetview_platform_window::Backdrop { strip_height: 0, strip: colour, page: colour };
+  BorrowedWindow::with_handle_value(container, |window| sweetview_platform_window::FrameMessages::install(window, backdrop).ok()).flatten()
+}
+
+#[cfg(not(windows))]
+fn paint_container(_webview: &WebView, _colour: (u8, u8, u8)) -> Option<ContainerBackdrop> {
+  None
 }
 
 static NEXT_ID: AtomicU32 = AtomicU32::new(1);
@@ -299,7 +325,7 @@ impl Engine {
     let inner = Rc::new(Inner {
       id,
       runtime: runtime.clone(),
-      live: RefCell::new(Some(Live { extras, webview, window })),
+      live: RefCell::new(Some(Live { container_backdrop: backdrop.and_then(|colour| paint_container(&webview, colour)), extras, webview, window })),
       destroyed: Cell::new(false),
       window_value: Cell::new(window_value),
       own_window_shown: Cell::new(false),
@@ -754,7 +780,8 @@ impl Inner {
     let taken = if in_callback { None } else { self.live.try_borrow_mut().ok().and_then(|mut live| live.take()) };
     match taken {
       Some(live) => {
-        let Live { extras, webview, window } = live;
+        let Live { extras, webview, window, container_backdrop } = live;
+        drop(container_backdrop);
         drop(extras);
         match window {
           // `wry` leaves the container of a webview that fills its window; it goes now (D46).
