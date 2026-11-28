@@ -233,6 +233,21 @@ What an application cannot choose today (no public option): zoom on or off (an a
 
 `docs/upgrading.md` ("The page behaves as it did") and `docs/webview-library.md` ("Page behaviour") say this.
 
+Real input (`crates/sweetview-platform-webview/tests/real_input.rs`, run with `--ignored`; the mouse and keyboard injected with `SendInput` by `rust-rewrite/checks/webview-real-input.ps1`, so they travel through the OS input queue; under the shared desktop's input lock), on a webview built as the runtime builds it:
+
+| Step | Seen |
+|---|---|
+| Ctrl+wheel one notch up over the page | `ZoomFactor` 1 to 1.1; the page's `devicePixelRatio` 1 to 1.1, `innerWidth` 480 to 436 |
+| Ctrl+0, Ctrl+plus, Ctrl+0 | `ZoomFactor` 1, 1.1, 1; the page resized each time |
+| A press on a `-webkit-app-region: drag` area, moved 80 px, released | the page got the `mousedown`; the window did not move (0, 0) |
+| An HTML drag of a `draggable` element onto a drop zone in the page, with the file drop handler set | the page got `dragstart` and `drop` with its `text/plain` data; no file was involved |
+
+The same steps on a webview `wry` built on its own: the press on the `app-region` area moved the window by (82, 2) and the page got no `mousedown`; Ctrl+wheel left `ZoomFactor` at 1 and the page unchanged. That is the behaviour change the fix removes.
+
+### 13, the Explorer drop (this branch's part)
+
+Driven for real: an Explorer window opened on a scratch folder with one file, its item found through UI Automation, the left button pressed on the icon, the cursor moved in 40 steps onto the Sweetview webview in another process, the button released, all with `SendInput`. OLE drag and drop ran between the two processes: the file drop handler received exactly the file's real path (`...\sweetview-real-drop-<pid>\sweetview real drop.txt`), once. The Explorer window was closed afterwards. Not driven: a drop onto a part of a native window that the webview does not cover (`Window.onFileDrop` through `WM_DROPFILES`): in this test the webview fills the window.
+
 ### 7
 
 Measured, then changed, on WebView2 Runtime 158.0.4370.45 (`crates/sweetview-platform-webview/tests/streaming.rs`, `packages/sweetview/src/request-handler.test.ts` "pace"):
