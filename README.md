@@ -258,7 +258,10 @@ document.getElementById("root")!.textContent = await bridge.rpc("greet", { name:
 ### 5. Create the window in `app.ts`
 
 The UI-thread entry point. `run()` blocks in the OS loop until the window
-closes or `quit()` is called.
+closes or `quit()` is called. It is the last line: when it returns,
+Sweetview releases the window, the webview and its worker, and anything else
+it made (trays, notifiers, hooks), and the process ends by itself. Nothing
+after `run()` is needed ([the end of the application](docs/app.md#the-end-of-the-application)).
 
 - `page`: the HTML import. Bun bundles the page's scripts and styles, and
   the host serves every output at the page's own origin.

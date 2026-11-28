@@ -68,12 +68,7 @@ registerUrlScheme(
 onOpenUrl(openNote); // buffered until signalReady()
 signalReady();       // this app has no page, so it signals ready itself
 
-try {
-  await runEventLoop();
-} finally {
-  tray.dispose();
-  lock.dispose(); // a later launch becomes the primary
-}
+await runEventLoop(); // when the script ends, the tray goes and the lock is released: a later launch becomes the primary
 ```
 
 A shared [`AppIdentity`](../settings-store.md#defineappidentity) supplies
@@ -159,7 +154,7 @@ The lock:
 |---|---|
 | `isPrimary` | Whether this process holds the lock. |
 | `handedOff` | Secondary only: the payload was delivered over the native transport. Always `false` on the primary. |
-| `dispose()` | Primary: releases the lock and listener, so a later launch becomes primary. A no-op on a secondary. |
+| `dispose()` | Primary: releases the lock and listener, so a later launch becomes primary. A no-op on a secondary. The lock is released when the application ends anyway ([the end of the application](../app.md#the-end-of-the-application)). |
 
 `handedOff` reports transport delivery (Windows `WM_COPYDATA` returned
 success; macOS `CFMessagePortSendRequest` succeeded), not that the primary's

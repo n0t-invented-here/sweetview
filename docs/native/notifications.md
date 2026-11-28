@@ -40,17 +40,15 @@ const tray = new Tray({
 });
 
 sendExportDone();
-try {
-  await runEventLoop(); // clicks arrive while the loop runs
-} finally {
-  tray.dispose();
-  notifier.dispose();
-}
+await runEventLoop(); // clicks arrive while the loop runs; the tray and notifier go when the script ends
 ```
 
 `createNotifier(options)` is the same as `new Notifier(options)`.
 `dispose()` releases the notifier's native resources and is safe to call
-twice. Clicks route to the notifier that sent the notification, so several
+twice: its pending toasts are hidden and its hidden notification icons
+removed. Sweetview does the same for every notifier still alive when the
+application ends ([the end of the application](../app.md#the-end-of-the-application)),
+so call it only for a notifier that should go before that. Clicks route to the notifier that sent the notification, so several
 notifiers in one process stay independent. The one exception is a click on a
 notification a previous process sent, covered under [macOS](#macos).
 

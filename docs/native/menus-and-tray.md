@@ -122,8 +122,10 @@ title bar's own menu does.
 ## Tray
 
 A complete tray app, runnable as `bun run tray.ts`: a status item with a
-menu, a settings window it opens, and a Quit that ends the loop and cleans
-up. The settings window is a bare native window here; attach a page to it
+menu, a settings window it opens, and a Quit that ends the loop. Nothing
+follows the loop: when the script ends, Sweetview removes the tray and closes
+the window ([the end of the application](../app.md#the-end-of-the-application)).
+The settings window is a bare native window here; attach a page to it
 with [`WebView.attach`](../app.md#webviewattach) for real content.
 
 ```ts
@@ -158,12 +160,7 @@ const tray = new Tray({
   onDoubleClick: openSettings, // Windows only: macOS opens the menu instead
 });
 
-try {
-  await runEventLoop();
-} finally {
-  tray.dispose();
-  settings.dispose();
-}
+await runEventLoop(); // after Quit the script ends: Sweetview removes the tray and closes the window
 ```
 
 A `Tray` is an icon in the Windows notification area, or a status item in the
@@ -182,7 +179,7 @@ macOS menu bar. `createTray(options)` is the same as `new Tray(options)`.
 | `setTooltip(text)` | Changes the tooltip. |
 | `setIcon(icon)` | Changes the icon. |
 | `setMenu(menu)` | Replaces the menu; `undefined` removes it. |
-| `dispose()` | Removes the icon. Safe to call twice. |
+| `dispose()` | Removes the icon now. The icon is removed when the application ends anyway ([the end of the application](../app.md#the-end-of-the-application)); call it for a tray that should go before that. Safe to call twice. |
 
 Without an icon, Windows shows the stock application icon (`IDI_APPLICATION`)
 and macOS shows the text `●` in the menu bar, so a tray is never invisible.

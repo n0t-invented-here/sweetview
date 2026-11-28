@@ -34,11 +34,10 @@ const tray = new Tray({
   icon: { windows: { ico: dotIco() }, macos: { symbol: "clock" } },
   menu: [{ label: "Quit", click: () => quitEventLoop() }],
 });
-const timer = setInterval(() => tray.setTooltip(new Date().toLocaleTimeString()), 1000);
+// unref(): the application's own timer does not keep the process alive after Quit.
+setInterval(() => tray.setTooltip(new Date().toLocaleTimeString()), 1000).unref();
 
-await runEventLoop(); // resolves after Quit
-clearInterval(timer); // a live timer or tray would keep Bun running
-tray.dispose();
+await runEventLoop(); // resolves after Quit; the script ends, and Sweetview removes the tray
 ```
 
 `runEventLoop(options?: { intervalMs?: number }): Promise<void>` and

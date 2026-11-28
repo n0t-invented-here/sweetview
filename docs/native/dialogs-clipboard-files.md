@@ -36,8 +36,7 @@ const view = await WebView.attach<Methods>(win, {
   },
 });
 win.show();
-view.run();   // blocks until the window closes, then tears the webview down
-win.dispose(); // already disposed when closing ended the loop; safe to repeat
+view.run(); // blocks until the window closes, then tears the webview down
 ```
 
 ```html

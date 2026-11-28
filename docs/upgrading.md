@@ -39,6 +39,20 @@ this page: it imports each new form and checks that it is what the row says.
 
 ## What changed for every application
 
+- **The end of the application.** An application's last line is its loop:
+  `app.run()` (or `webview.run()`), or under `runEventLoop` the end of its
+  script. When it ends (`run()` returns, the script ends, `process.exit`, an
+  uncaught exception), Sweetview releases everything it made that is still
+  alive: input hooks first, then webviews and their workers, trays,
+  notifiers, single-instance locks and windows. A webview's worker no longer
+  keeps the process alive, so the process ends by itself with the exit code
+  the application set. The teardown lines an older application has after its
+  loop (`notifier.dispose()`, `tray.dispose()`, `app.dispose()`,
+  `win.dispose()`, `lock.dispose()`, `process.exit(0)`) are no longer needed
+  and are harmless if left: `dispose()` is idempotent and nothing is released
+  twice. Keep `dispose()` for what should go before the end. A timer or
+  server of the application's own still keeps the process running after
+  Quit: `unref()` or clear it ([the end of the application](app.md#the-end-of-the-application)).
 - **The engine on Windows.** The webview is WebView2 driven by Rust (`wry`
   and Sweetview's own additions), and windows, the tray, menus, dialogs,
   notifications, input hooks and the event loop are Rust too. The native

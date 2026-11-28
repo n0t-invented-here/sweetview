@@ -48,7 +48,10 @@ Every call gets the same `ctx`: `{ session: { id: "webview", kind: "webview" } }
 Each webview has its own worker, so there is one session per worker.
 `hostService` never calls the Service's `endSession` or `dispose`; the UI
 thread terminates the worker when `run()` returns, when the webview is
-disposed, or when `WebView.attach` fails after starting it.
+disposed, when the application ends, or when `WebView.attach` fails after
+starting it. The worker never keeps the process alive by itself: a timer or
+watcher inside it does not hold the process open after the application has
+quit ([the end of the application](app.md#the-end-of-the-application)).
 
 ## hostRequestHandler
 
