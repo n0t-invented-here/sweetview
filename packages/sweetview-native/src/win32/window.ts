@@ -118,6 +118,7 @@ function wrap(native: NativeWindow, owned: boolean, tabbed = false): WindowBacke
       if (live()) native.toggleMaximize();
     },
     isMaximized: () => live() && native.isMaximized(),
+    isMinimized: () => live() && native.isMinimized(),
     setTopmost: (on) => {
       if (live()) native.setTopmost(on);
     },

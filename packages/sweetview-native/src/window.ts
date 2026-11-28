@@ -149,6 +149,7 @@ export interface WindowBackend {
   minimize(): void;
   toggleMaximize(): void;
   isMaximized(): boolean;
+  isMinimized(): boolean;
   setTopmost(on: boolean): void;
   startDrag(): void;
   startResize(edge: ResizeEdge): void;
@@ -477,6 +478,14 @@ export class Window {
   }
   isMaximized(): boolean {
     return this.#inner.isMaximized();
+  }
+  /**
+   * True while the window is minimised (`IsIconic` on Windows, `isMiniaturized`
+   * on macOS). `isVisible()` stays true for a minimised window; a hidden window
+   * that is not minimised reads as false.
+   */
+  isMinimized(): boolean {
+    return this.#inner.isMinimized();
   }
   setTopmost(on: boolean): void {
     this.#meta.topmost = on;

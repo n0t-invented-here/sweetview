@@ -261,6 +261,43 @@ describe.if(onWindows)("win32 Window", () => {
     }
   });
 
+  test("isMinimized follows the OS (IsIconic) for created, frameless, tabbed and wrapped windows; a hidden window is not minimised", async () => {
+    const { ownWindow, user32 } = await import("../../test/win32-os");
+    const iconic = (win: Window) => user32.IsIconic(BigInt(win.handle!)) !== 0;
+    const framed = new Window({ title: "isMinimized framed", noActivate: true, bounds: { x: 140, y: 140, width: 320, height: 240 } });
+    const frameless = new Window({ frame: false, noActivate: true, bounds: { x: 160, y: 160, width: 320, height: 240 } });
+    const tabbed = new Window({ tabs: true, noActivate: true });
+    // A window Sweetview did not make (`tao` did not create it), and a wrapper of Sweetview's own.
+    const own = ownWindow();
+    const wrapped = Window.fromHandle(own.hwnd);
+    const wrapperOfOwned = Window.fromHandle(framed.handle);
+    try {
+      for (const [name, win] of [["framed", framed], ["frameless", frameless], ["tabbed", tabbed], ["wrapped", wrapped]] as const) {
+        expect({ name, visible: win.isVisible(), minimized: win.isMinimized(), iconic: iconic(win) }).toEqual({ name, visible: false, minimized: false, iconic: false });
+        win.minimize();
+        // isVisible() stays true for a minimised window; isMinimized() tells the two apart.
+        expect({ name, visible: win.isVisible(), minimized: win.isMinimized(), iconic: iconic(win) }).toEqual({ name, visible: true, minimized: true, iconic: true });
+        win.show();
+        expect({ name, visible: win.isVisible(), minimized: win.isMinimized(), iconic: iconic(win) }).toEqual({ name, visible: true, minimized: false, iconic: false });
+        win.hide();
+        expect({ name, visible: win.isVisible(), minimized: win.isMinimized() }).toEqual({ name, visible: false, minimized: false });
+      }
+      framed.minimize();
+      expect(wrapperOfOwned.isMinimized()).toBe(true);
+      framed.show();
+      expect(wrapperOfOwned.isMinimized()).toBe(false);
+      framed.dispose();
+      expect(framed.isMinimized()).toBe(false);
+    } finally {
+      wrapperOfOwned.dispose();
+      wrapped.dispose();
+      own.destroy();
+      tabbed.dispose();
+      frameless.dispose();
+      framed.dispose();
+    }
+  });
+
   test("Window.fromHandle intercepts events non-mutatingly and dispose does not destroy the external HWND", async () => {
     const { ownWindow, user32, WM_CLOSE } = await import("../../test/win32-os");
     const msg = ownWindow();

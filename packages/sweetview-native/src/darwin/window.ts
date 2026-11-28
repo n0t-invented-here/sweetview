@@ -576,6 +576,7 @@ export type DarwinTabGroupController = {
   minimize(): void;
   toggleMaximize(): void;
   isMaximized(): boolean;
+  isMinimized(): boolean;
   dispose(): void;
   setFileDropEnabled(enabled: boolean): void;
   /** Sets the window level of every tab NSWindow in the group. */
@@ -744,6 +745,7 @@ function createVirtualTabbedWindow(options: WindowOptions): WindowBackend {
     minimize: () => controller()?.minimize(),
     toggleMaximize: () => controller()?.toggleMaximize(),
     isMaximized: () => controller()?.isMaximized() ?? false,
+    isMinimized: () => controller()?.isMinimized() ?? false,
     setTopmost: (on) => {
       if (state.disposed) return;
       state.topmost = on;
@@ -923,6 +925,11 @@ function buildWindow(win: Id, options: WindowOptions, framed: boolean, owned: bo
     isMaximized() {
       if (disposed) return false;
       return Boolean(sendRetBool(win, sel("isZoomed")));
+    },
+
+    isMinimized() {
+      if (disposed) return false;
+      return Boolean(sendRetBool(win, sel("isMiniaturized")));
     },
 
     setTopmost(on) {
