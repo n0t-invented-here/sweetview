@@ -76,13 +76,13 @@ async function until(test: () => boolean, ms: number, what: string): Promise<voi
   }
 }
 
-/** The `WRY_WEBVIEW` containers under `hwnd`: one per webview mounted in it. */
+/** The webview widgets under `hwnd` (`webview_widget`, the window the platform crate makes for each webview, D48): one per webview mounted in it. */
 function webviewContainers(hwnd: bigint): bigint[] {
   const found: bigint[] = [];
   const name = new Uint16Array(64);
   for (let child = user32.FindWindowExW(hwnd, 0n, null, null); child !== 0n; child = user32.FindWindowExW(hwnd, child, null, null)) {
     const n = user32.GetClassNameW(child, ptr(name), name.length);
-    if (String.fromCharCode(...name.subarray(0, n)) === "WRY_WEBVIEW") found.push(child);
+    if (String.fromCharCode(...name.subarray(0, n)) === "webview_widget") found.push(child);
   }
   return found;
 }
