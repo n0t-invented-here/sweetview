@@ -120,7 +120,8 @@ runs after the menu has closed, inside `Menu.popup`, so its exception comes
 out of `Menu.popup` to the code that called it. On Windows, a fault the
 binding itself catches past these (its `sweetview: <kind> threw:` line on
 stderr) reaches the listener too, with the binding's name for the callback as
-`name`.
+`name` and the binding's text of the exception (such as `Error: boom`) as the
+message.
 
 A shipped application has no console: an executable compiled with
 `--windows-hide-console` has no stderr, so without a listener these lines

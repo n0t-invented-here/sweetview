@@ -1162,7 +1162,8 @@ describe.if(onWindows)("onCallbackError", () => {
       [
         "deferred: deferred boom",
         "timeout: timeout boom",
-        "interval (a native interval): interval boom",
+        // The binding caught this one itself: its reason, the exception as a string, is the message.
+        "interval (a native interval): Error: interval boom",
         "worker: drain boom",
         "window.onMove: onMove boom",
         "window.onResize: onResize boom",
@@ -1203,9 +1204,9 @@ describe.if(onWindows)("onCallbackError", () => {
     expect(r.arrivalsWithoutListener).toBe(0);
     // The binding's own lines: none while Sweetview's sink was set; both when a raw sink threw; today's line once nothing is set.
     expect(stderr.split(/\r?\n/).filter((line) => line.startsWith("sweetview:"))).toEqual([
-      "sweetview: a native interval threw: raw interval boom",
-      "sweetview: the callback error sink threw: raw sink boom",
-      "sweetview: a native interval threw: interval without listener",
+      "sweetview: a native interval threw: Error: raw interval boom",
+      "sweetview: the callback error sink threw: Error: raw sink boom",
+      "sweetview: a native interval threw: Error: interval without listener",
     ]);
   }, 120_000);
 
