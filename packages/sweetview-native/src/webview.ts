@@ -518,8 +518,8 @@ export class Webview {
         try {
           result = handler(request);
         } catch (err) {
-          this.#completeQuietly(request.id, { status: 500 });
           reportCallbackError("webview.setRequestHandler", err, null);
+          this.#completeQuietly(request.id, { status: 500 });
           return;
         }
         // As the main branch: a Promise is awaited, through its own `then`, and anything else
@@ -755,11 +755,13 @@ export class Webview {
         // "" is the page's undefined; JSON.stringify gives undefined for a function or a symbol.
         reply(0, json ?? "");
       };
-      // The bound function's own failure (it throws, or its promise rejects) rejects the page's
-      // call and is told to an onCallbackError listener; an unreadable request only rejects.
+      // The bound function's own failure (it throws, or its promise rejects) is told to an
+      // onCallbackError listener and rejects the page's call; an unreadable request only rejects.
+      // Reported first, as every catch of the package does: the reply's text reads the value
+      // (its `message`, its `toJSON`), which can add or remove a listener.
       const failed = (err: unknown) => {
-        reject(err);
         reportCallbackError("webview.bind", err, null, name);
+        reject(err);
       };
       let args: unknown[];
       try {

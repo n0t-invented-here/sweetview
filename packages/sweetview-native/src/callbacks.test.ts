@@ -1434,6 +1434,7 @@ describe.if(onWindows)("onCallbackError and the raw webview class", () => {
       bindRejects: "rejected",
       bindProxy: "rejected",
       bindBadMessage: "rejected",
+      bindAddsListener: "rejected: adds a listener",
       bindThenGetter: "rejected",
       bindThenThrows: "rejected",
       throws: 500,
@@ -1449,6 +1450,7 @@ describe.if(onWindows)("onCallbackError and the raw webview class", () => {
         "webview.bind (bindRejects): bind rejects",
         "webview.bind (bindProxy): [object Object]",
         "webview.bind (bindBadMessage): (its message throws)",
+        "webview.bind (bindAddsListener): adds a listener",
         "webview.bind (bindThenGetter): then getter",
         "webview.bind (bindThenThrows): then throws",
         "webview.setRequestHandler: returned getPrototypeOf trap",
@@ -1462,5 +1464,8 @@ describe.if(onWindows)("onCallbackError and the raw webview class", () => {
         "webview.setFileDropHandler: drop throws",
       ].sort(),
     );
+    // A listener added while the page's reply read the thrown value does not hear that fault
+    // (review 3, item 3): the listeners were taken before the reply.
+    expect(r.lateTold).toEqual([]);
   }, 90_000);
 });

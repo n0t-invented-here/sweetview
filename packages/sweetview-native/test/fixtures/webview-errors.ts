@@ -47,6 +47,26 @@ Object.defineProperty(badMessage, "message", {
   },
 });
 webview.bind("bindBadMessage", () => Promise.reject(badMessage));
+// A thrown Error whose `message` getter adds a listener the first time it is read (review 3,
+// item 3). The page's reply reads `message`; the listeners are taken before it is, so the added
+// listener does not hear the fault it was added during.
+const lateTold: string[] = [];
+let lateAdded = false;
+const addsListener = new Error("placeholder");
+Object.defineProperty(addsListener, "message", {
+  get() {
+    if (!lateAdded) {
+      lateAdded = true;
+      onCallbackError((_error, source) => {
+        if (source.name === "bindAddsListener") lateTold.push(`${source.kind} (${source.name})`);
+      });
+    }
+    return "adds a listener";
+  },
+});
+webview.bind("bindAddsListener", () => {
+  throw addsListener;
+});
 // A returned value whose `then` cannot be read, and a Promise whose `then` throws (review 3,
 // item 1): as on the main branch, each fails the call and the page's call is rejected.
 webview.bind("bindThenGetter", () => ({
@@ -126,6 +146,7 @@ webview.setAsset(
       try { await bindRejects(); seen.bindRejects = "resolved"; } catch (e) { seen.bindRejects = "rejected"; }
       try { await bindProxy(); seen.bindProxy = "resolved"; } catch (e) { seen.bindProxy = "rejected"; }
       try { await bindBadMessage(); seen.bindBadMessage = "resolved"; } catch (e) { seen.bindBadMessage = "rejected"; }
+      try { await bindAddsListener(); seen.bindAddsListener = "resolved"; } catch (e) { seen.bindAddsListener = "rejected: " + e; }
       try { await bindThenGetter(); seen.bindThenGetter = "resolved"; } catch (e) { seen.bindThenGetter = "rejected"; }
       try { await bindThenThrows(); seen.bindThenThrows = "resolved"; } catch (e) { seen.bindThenThrows = "rejected"; }
       rawThrows();
@@ -161,5 +182,6 @@ await pumpUntil(() => false, 200);
 
 report.page = page;
 report.told = [...told].sort();
+report.lateTold = lateTold;
 webview.destroy();
 finish();
