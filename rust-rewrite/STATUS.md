@@ -6,6 +6,10 @@ The Windows goal is **not complete**. This file says what is on the main branch,
 
 - **Internals are never exposed for an application to call.** No `/internal`, `/win32/*` or other internal entry point is importable by an application, no document tells an application to use one, and no internal is turned into public API to close a gap.
 - **Agents make no tradeoff about the product.** Whether a capability gets a public call, its name and shape, and whether a capability reached through internals is kept, are the owner's decisions. Work that reaches such a choice leaves the item as it is and lists it for the owner with the facts.
+- **No workaround, and excellent code only.** A problem is fixed at its cause.
+- **Everything slated for 1.0 is in scope and is delivered**: every feature `docs/` describes, every `v1-drafting` feature in `reference/`, and what an application needs to migrate without internals. Nothing is dropped because older releases lacked it. No time goes to a capability that none of those call for.
+- **Nothing is announced as done without several rounds of adversarial review.** The required reviewers are Codex (GPT-6.2 Sol, high) and Antigravity (Gemini 4 Neon, high). A final completion needs a full review by Neon.
+- **Reviews and audits judge the intent**, not literal readings that serve nobody.
 - **An upgrade is a migration.** An upgraded application uses 1.0 as designed: a closed window is destroyed and its memory given back, windows are revealed by the ready signal, and no old behaviour, workaround or internal is carried over.
 - **An application ends at its loop.** Nothing after `run()` is required of it.
 - **No copies of the owner's applications** are made anywhere; they are upgraded in place on branches. Their names, paths and behaviour never enter anything tracked here.
