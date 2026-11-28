@@ -17,6 +17,8 @@ use crate::runtime::testing::on_ui_thread;
 use crate::runtime::{Runtime, TimeoutId};
 use crate::screen;
 use crate::tray::{Tray, TrayInit};
+use crate::window::{Window, WindowInit};
+use crate::Rect;
 
 const VK_RETURN: u16 = 0x0d;
 const VK_ESCAPE: u16 = 0x1b;
@@ -188,6 +190,75 @@ fn an_ordinary_owner_is_the_foreground_window_after_its_dismissed_menu() {
     let data = vec![item(1, "Open")];
     assert_eq!(menu::popup(owner.handle_value(), &data, Some((260.0, 280.0)), PopupCorner::TopLeft).expect("popup"), None);
     assert_eq!(os::foreground(), owner.handle_value(), "the owner holds the foreground after its menu");
+  });
+}
+
+/// `Menu.popup` with a `noActivate` owner (review of `2a0b808`, F1 and F3): the overlay never holds
+/// the foreground, while its menu is open or after it. A hidden stand-in owns the menu; the window
+/// that was in front gets the foreground back at once when nothing is chosen, after the loop's next
+/// turn when an item is chosen (its handler runs first), not at all when the handler showed a window
+/// of its own; and when that window is destroyed while the menu is open, the overlay is still neither
+/// the foreground nor active. Read while the menu is open, from inside its loop.
+#[test]
+fn a_no_activate_owner_never_takes_the_foreground_for_its_menu() {
+  on_ui_thread(|runtime| {
+    let bounds = Rect { x: 300, y: 300, width: 240, height: 160 };
+    let overlay = Window::create(WindowInit { title: "rt os no-activate overlay".into(), bounds: Some(bounds), no_activate: true, topmost: true, ..Default::default() }).expect("overlay");
+    overlay.show().expect("shown");
+    let overlay_handle = overlay.handle();
+    let data = vec![item(1, "Open"), item(2, "Close")];
+    let popup = || menu::popup(overlay_handle, &data, Some((320.0, 320.0)), PopupCorner::TopLeft).expect("popup");
+    let in_front = |window: isize| {
+      if !os::take_foreground(window) {
+        panic!("not run: this desktop's foreground could not be given to the test's window");
+      }
+    };
+    let while_open = Rc::new(Cell::new(0isize));
+    let open_then = |keys: &'static [u16]| {
+      let seen = while_open.clone();
+      when_menu_opens(&runtime, move |menu_window| {
+        seen.set(os::foreground());
+        os::press_keys(menu_window, keys);
+      });
+    };
+    let front = os::OwnWindow::new("rt os window in front", (40, 260, 160, 100), |_| {}).expect("front");
+
+    // Dismissed: the earlier window is in front again at once.
+    in_front(front.handle_value());
+    open_then(&[VK_ESCAPE]);
+    assert_eq!(popup(), None);
+    assert_ne!(while_open.get(), overlay_handle, "dismissed: the overlay never held the foreground while its menu was open");
+    assert_eq!((os::foreground(), os::active() != overlay_handle), (front.handle_value(), true), "dismissed: the earlier window is in front");
+
+    // Chosen, and the handler shows nothing: the earlier window is in front once the loop turns.
+    in_front(front.handle_value());
+    open_then(&[VK_DOWN, VK_RETURN]);
+    assert_eq!(popup(), Some(1));
+    assert_ne!(while_open.get(), overlay_handle, "chosen: the overlay never held the foreground while its menu was open");
+    pump_until(&runtime, 1000, || os::foreground() == front.handle_value());
+    assert_eq!((os::foreground(), os::active() != overlay_handle), (front.handle_value(), true), "chosen: the earlier window is in front after the handler");
+
+    // Chosen, and the handler shows a window of its own: that window stays in front.
+    let settings = os::OwnWindow::new("rt os window a handler shows", (40, 400, 160, 100), |_| {}).expect("settings");
+    in_front(front.handle_value());
+    open_then(&[VK_DOWN, VK_RETURN]);
+    assert_eq!(popup(), Some(1));
+    BorrowedWindow::with_handle_value(settings.handle_value(), |window| platform::show(window, false, false, false)); // the handler
+    pump_until(&runtime, 300, || false);
+    assert_eq!(os::foreground(), settings.handle_value(), "the window the handler showed is in front");
+
+    // The earlier window destroyed while the menu was open: the overlay is neither foreground nor active.
+    let doomed = Rc::new(RefCell::new(os::OwnWindow::new("rt os window destroyed", (40, 540, 160, 100), |_| {})));
+    in_front(doomed.borrow().as_ref().expect("doomed").handle_value());
+    let gone = doomed.clone();
+    when_menu_opens(&runtime, move |menu_window| {
+      drop(gone.borrow_mut().take());
+      os::press_keys(menu_window, &[VK_ESCAPE]);
+    });
+    assert_eq!(popup(), None);
+    pump_until(&runtime, 300, || false);
+    assert!(os::foreground() != overlay_handle && os::active() != overlay_handle, "the overlay is not left foreground or active");
+    overlay.dispose();
   });
 }
 
@@ -544,10 +615,17 @@ fn a_tray_menu_items_handler_that_shows_a_window_gets_it_to_the_foreground() {
     when_menu_opens(&runtime, |menu_window| os::press_keys(menu_window, &[VK_DOWN, VK_RETURN]));
     post_tray(&tray, &[WM_RBUTTONDOWN, WM_RBUTTONUP]);
     pump_until(&runtime, 5000, || chosen.get());
-    tray.dispose();
     assert!(chosen.get(), "the item was chosen");
     assert_ne!(at_handler.get(), front.handle_value(), "the foreground was not given back before the handler ran");
     assert_eq!(os::foreground(), settings.handle_value(), "the window the handler showed is in front");
+    // A second menu after that choice is chosen too: a choice is not lost to a foreground given
+    // away by the menu before it (reentry_tests.rs, the tray that disposes itself, failed so).
+    chosen.set(false);
+    when_menu_opens(&runtime, |menu_window| os::press_keys(menu_window, &[VK_DOWN, VK_RETURN]));
+    post_tray(&tray, &[WM_RBUTTONDOWN, WM_RBUTTONUP]);
+    pump_until(&runtime, 5000, || chosen.get());
+    tray.dispose();
+    assert!(chosen.get(), "the second menu's item was chosen");
   });
 }
 
