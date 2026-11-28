@@ -250,7 +250,12 @@ pub struct Engine {
 impl Engine {
   /// Makes a webview. `debug` enables the developer tools; the context menu is
   /// on either way, as the C++ library left it.
-  pub fn create(debug: bool, host: Host) -> Result<Engine> {
+  ///
+  /// `background` is what the browser paints before a page does (red, green,
+  /// blue): given to `wry`'s builder, it is WebView2's default background from
+  /// the moment the controller exists, so the webview never shows WebView2's
+  /// own white while it starts. `None` leaves WebView2's.
+  pub fn create(debug: bool, host: Host, background: Option<(u8, u8, u8)>) -> Result<Engine> {
     let runtime = Runtime::get()?;
     let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
     let slot: Rc<RefCell<Weak<Inner>>> = Rc::new(RefCell::new(Weak::new()));
@@ -281,13 +286,7 @@ impl Engine {
           _ => NewWindowResponse::Allow,
         }
       });
-    // Until its page paints, a webview shows its default background: the colour the window it is
-    // made in paints there (its appearance's, or a tab frame's page colour), not WebView2's white (D46).
-    let backdrop = match &host {
-      Host::Own => None,
-      Host::Fill(value) | Host::Child(value, _) => crate::window::backdrop_of(*value),
-    };
-    let builder = match backdrop {
+    let builder = match background {
       Some((red, green, blue)) => builder.with_background_color((red, green, blue, 0xff)),
       None => builder,
     };
@@ -336,7 +335,7 @@ impl Engine {
     let inner = Rc::new(Inner {
       id,
       runtime: runtime.clone(),
-      live: RefCell::new(Some(Live { container_backdrop: backdrop.and_then(|colour| paint_container(&webview, colour)), extras, webview, window })),
+      live: RefCell::new(Some(Live { container_backdrop: background.and_then(|colour| paint_container(&webview, colour)), extras, webview, window })),
       destroyed: Cell::new(false),
       window_value: Cell::new(window_value),
       own_window_shown: Cell::new(false),
@@ -923,7 +922,7 @@ mod tests {
   /// on the screen at the moment the webview went, read inside the `WM_DESTROY` of WebView2's own
   /// window under `wry`'s container (`Chrome_WidgetWin_0`), which closing the controller destroys.
   fn on_screen_as_it_goes(runtime: &Rc<Runtime>, end: fn(&Engine, isize)) -> Option<bool> {
-    let engine = Engine::create(false, Host::Own).expect("a standalone webview");
+    let engine = Engine::create(false, Host::Own, None).expect("a standalone webview");
     engine.show_own_window();
     let (window, container) = engine
       .inner
@@ -978,7 +977,7 @@ mod tests {
     on_ui_thread(|runtime| {
       let window = crate::window::Window::create(crate::window::WindowInit { title: "rt r3".into(), frame: true, resizable: true, no_activate: true, ..Default::default() }).expect("window");
       let handle = window.handle();
-      let engine = Engine::create(false, Host::Fill(handle)).expect("webview");
+      let engine = Engine::create(false, Host::Fill(handle), crate::window::background_of(handle)).expect("webview");
       let container = engine.inner.with_live(|live| live.webview.hwnd().0 as isize).expect("live");
       let browser = BorrowedWindow::with_handle_value(container, |c| first_child(c)).flatten().expect("WebView2's window under the container");
       let order = Rc::new(std::cell::RefCell::new(Vec::new()));

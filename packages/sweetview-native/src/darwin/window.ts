@@ -55,6 +55,7 @@ import {
   type Id,
 } from "./objc";
 import { cursorPoint, fromCocoa, primary as primaryScreen, primaryHeight, rectOf, toCocoa } from "./screen";
+import { macosContentSize, macosMaximizeEvents } from "./held-back";
 
 const NSWindowStyleMaskBorderless = 0n;
 const NSWindowStyleMaskTitled = 1n;
@@ -551,7 +552,7 @@ export function createWindow(options: WindowOptions): WindowBackend {
   const resizable = options.resizable ?? frame;
   const appearance = options.appearance ?? "system";
   // With contentSize, initWithContentRect: makes the content area that size (points are CSS pixels) and the frame is AppKit's around it.
-  const content = options.contentSize;
+  const content = macosContentSize(options);
   const reqBounds = content ? { x: 0, y: 0, width: content.width, height: content.height } : (options.bounds ?? defaultBounds());
   const c = toCocoa(reqBounds);
 
@@ -728,7 +729,7 @@ function createVirtualTabbedWindow(options: WindowOptions): WindowBackend {
     disposed: false,
     pendingVisible: undefined,
     // contentSize is taken as the frame's size here until the macOS goal: a tab window's frame is set, and its content area is AppKit's.
-    bounds: options.bounds ?? (options.contentSize ? centredIn(options.contentSize.width, options.contentSize.height, primaryScreen().workArea) : { x: 100, y: 100, width: 1040, height: 720 }),
+    bounds: options.bounds ?? (macosContentSize(options) ? centredIn(options.contentSize!.width, options.contentSize!.height, primaryScreen().workArea) : { x: 100, y: 100, width: 1040, height: 720 }),
     boundsChanged: false,
     title: options.title ?? "",
     topmost: options.topmost ?? false,
@@ -798,7 +799,7 @@ function createVirtualTabbedWindow(options: WindowOptions): WindowBackend {
       bucket.resize.add(handler);
       return () => bucket.resize.delete(handler);
     },
-    onMaximizeChange: (handler) => maximizeFromResize(self, handler),
+    onMaximizeChange: (handler) => (macosMaximizeEvents() ? maximizeFromResize(self, handler) : () => {}),
     onMove(handler) {
       bucket.move.add(handler);
       return () => bucket.move.delete(handler);
@@ -1015,7 +1016,7 @@ function buildWindow(win: Id, options: WindowOptions, framed: boolean, owned: bo
     },
 
     onMaximizeChange(handler) {
-      return maximizeFromResize(self, handler);
+      return macosMaximizeEvents() ? maximizeFromResize(self, handler) : () => {};
     },
 
     onResize(handler) {

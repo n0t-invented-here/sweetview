@@ -430,6 +430,167 @@ describe.if(onWindows)("win32 Window", () => {
     }
   });
 
+  test("a window minimised and then hidden is still minimised (IsIconic), and show() restores it", async () => {
+    // Review N8: docs/native/windows.md said a hidden window reads false.
+    const { user32 } = await import("../../test/win32-os");
+    const win = new Window({ title: "minimised then hidden", noActivate: true, bounds: { x: 160, y: 160, width: 320, height: 240 } });
+    try {
+      win.show();
+      win.minimize();
+      win.hide();
+      expect({ visible: win.isVisible(), minimized: win.isMinimized(), iconic: user32.IsIconic(BigInt(win.handle!)) !== 0 }).toEqual({ visible: false, minimized: true, iconic: true });
+      win.show();
+      expect({ visible: win.isVisible(), minimized: win.isMinimized() }).toEqual({ visible: true, minimized: false });
+    } finally {
+      win.dispose();
+    }
+  });
+
+  test("the probe's screenPixel throws for a point no screen shows, rather than reading it as white", async () => {
+    // Review N10: GetPixel's CLR_INVALID became "#ffffff".
+    const { screenPixel } = await import("../../test/win32-os");
+    const far = Screen.bounds();
+    expect(() => screenPixel(far.x - 10_000, far.y - 10_000)).toThrow("GetPixel");
+  });
+
+  test("onMaximizeChange, two listeners of one Window: each change once and the last heard is the window's state; one removed, or the window disposed, during delivery hears nothing more; one added during delivery does not hear it", async () => {
+    // Round 3, measure B: onMaximizeChange's sentences 1 and 2, for the listeners of one Window
+    // (the fan-out of its one listener in the binding).
+    const at = { x: 160, y: 160, width: 320, height: 240 };
+    // 1: the first listener restores the window when it hears it was maximised.
+    {
+      const win = new Window({ title: "sentence 1", frame: false, noActivate: true, bounds: at });
+      const first: boolean[] = [];
+      const second: boolean[] = [];
+      let once = false;
+      win.onMaximizeChange((m) => {
+        first.push(m);
+        if (m && !once) {
+          once = true;
+          win.toggleMaximize();
+        }
+      });
+      win.onMaximizeChange((m) => second.push(m));
+      win.toggleMaximize();
+      const state = win.isMaximized();
+      expect({ state, firstLast: first.at(-1), secondLast: second.at(-1), second }).toEqual({ state: false, firstLast: false, secondLast: false, second: [false] });
+      win.dispose();
+    }
+    // 2: removed by the listener before it, and one added during delivery.
+    {
+      const win = new Window({ title: "sentence 2", frame: false, noActivate: true, bounds: at });
+      const second: boolean[] = [];
+      const late: boolean[] = [];
+      const offSecond = { off: () => {} };
+      win.onMaximizeChange(() => {
+        offSecond.off();
+        if (late.length === 0) win.onMaximizeChange((m) => late.push(m));
+      });
+      offSecond.off = win.onMaximizeChange((m) => second.push(m));
+      win.toggleMaximize();
+      expect({ second, late }).toEqual({ second: [], late: [] });
+      win.toggleMaximize();
+      expect({ second, late }).toEqual({ second: [], late: [false] });
+      win.dispose();
+    }
+    // 2: the window disposed by the listener before it.
+    {
+      const win = new Window({ title: "sentence 2 dispose", frame: false, noActivate: true, bounds: at });
+      const second: boolean[] = [];
+      win.onMaximizeChange(() => win.dispose());
+      win.onMaximizeChange((m) => second.push(m));
+      win.toggleMaximize();
+      expect(second).toEqual([]);
+    }
+    // 3: a listener that changes the state every time it is told does not hang the application,
+    // and the window stays usable (the refused change is printed by the binding).
+    {
+      const win = new Window({ title: "sentence 3", frame: false, noActivate: true, bounds: at });
+      let calls = 0;
+      const off = win.onMaximizeChange(() => {
+        calls++;
+        win.toggleMaximize();
+      });
+      win.toggleMaximize();
+      expect(calls).toBeLessThanOrEqual(2);
+      off();
+      const seen: boolean[] = [];
+      win.onMaximizeChange((m) => seen.push(m));
+      const before = win.isMaximized();
+      win.toggleMaximize();
+      expect(seen).toEqual([!before]);
+      win.dispose();
+    }
+  });
+
+  test("a frameless window maximised by toggleMaximize stays maximised when it is moved or sized, and its next toggle gives back the bounds it had before, as at the tag", async () => {
+    // Review round 3, measure A. At tag pre-rust-rewrite (win32/window.ts, toggleMaximize and
+    // isMaximized, lines 813 to 830) the saved rectangle stayed until the next toggle, whatever
+    // setBounds, moveTo, resize or startDrag did in between.
+    const start = { x: 150, y: 150, width: 320, height: 240 };
+    for (const [name, change] of [
+      ["setBounds", (w: Window) => w.setBounds({ x: 10, y: 20, width: 500, height: 400 })],
+      ["moveTo", (w: Window) => w.moveTo(30, 40)],
+      ["resize", (w: Window) => w.resize(600, 450)],
+    ] as const) {
+      const win = new Window({ title: `frameless ${name}`, frame: false, noActivate: true, bounds: start });
+      try {
+        win.toggleMaximize();
+        expect({ name, maximized: win.isMaximized() }).toEqual({ name, maximized: true });
+        change(win);
+        expect({ name, maximized: win.isMaximized() }).toEqual({ name, maximized: true });
+        win.toggleMaximize();
+        expect({ name, maximized: win.isMaximized(), bounds: win.bounds() }).toEqual({ name, maximized: false, bounds: start });
+      } finally {
+        win.dispose();
+      }
+    }
+  });
+
+  test("a resize or move raised inside a listener is delivered as at the tag: at once to every listener, then the outer delivery goes on with its bounds, for two listeners of one Window and for two wrappers", async () => {
+    // Review round 3, measure A. At tag pre-rust-rewrite (win32/window.ts, fireResize and fireMove,
+    // lines 173 to 197) a resize or move read its bounds once and went to a snapshot of the window's
+    // listeners in order; one raised inside a listener was delivered there, in full, and the outer
+    // delivery then carried on with the older bounds.
+    const start = { x: 180, y: 180, width: 320, height: 240 };
+    const size = (b: { width: number; height: number }) => `${b.width}x${b.height}`;
+    const at = (b: { x: number; y: number }) => `${b.x},${b.y}`;
+    for (const wrappers of [false, true]) {
+      const win = new Window({ title: `nested resize ${wrappers}`, noActivate: true, bounds: start });
+      const other = wrappers ? Window.fromHandle(win.handle) : win;
+      try {
+        const heard: string[] = [];
+        let once = false;
+        win.onResize((b) => {
+          heard.push(`1 ${size(b)}`);
+          if (!once) {
+            once = true;
+            win.resize(400, 300);
+          }
+        });
+        other.onResize((b) => heard.push(`2 ${size(b)}`));
+        win.resize(360, 260);
+        expect({ wrappers, heard }).toEqual({ wrappers, heard: ["1 360x260", "1 400x300", "2 400x300", "2 360x260"] });
+
+        const moved: string[] = [];
+        let first = false;
+        win.onMove((b) => {
+          moved.push(`1 ${at(b)}`);
+          if (!first) {
+            first = true;
+            win.moveTo(240, 240);
+          }
+        });
+        other.onMove((b) => moved.push(`2 ${at(b)}`));
+        win.moveTo(200, 200);
+        expect({ wrappers, moved }).toEqual({ wrappers, moved: ["1 200,200", "1 240,240", "2 240,240", "2 200,200"] });
+      } finally {
+        if (wrappers) other.dispose();
+        win.dispose();
+      }
+    }
+  });
+
   test("Window.fromHandle intercepts events non-mutatingly and dispose does not destroy the external HWND", async () => {
     const { ownWindow, user32, WM_CLOSE } = await import("../../test/win32-os");
     const msg = ownWindow();

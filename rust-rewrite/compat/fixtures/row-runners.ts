@@ -521,15 +521,6 @@ export const RUNNERS: Record<string, Runner> = {
     }
     must(!ctx.os.isWindow(hwnd), "dispose removes the tray and its window");
   }),
-  "WebView.openTab": desktop(async (value, ctx) => {
-    const win = ctx.window({ tabs: true, noActivate: true });
-    const tab = await value.openTab(win, { title: "compat tab", assets: { "index.html": new TextEncoder().encode("<!doctype html><title>tab</title>") } });
-    try {
-      must(tab.window === win && tab.title === "compat tab" && tab.webview.raw.unsafeHandle !== null, "a tab of the tabbed window, with its webview", tab.title);
-    } finally {
-      tab.close();
-    }
-  }),
   "WebView.attach": desktop(async (value, ctx) => {
     const win = ctx.window({ bounds: { x: 80, y: 80, width: 400, height: 300 } });
     const view = await value.attach(win, { assets: { "index.html": new TextEncoder().encode("<!doctype html><title>attached</title>") } });

@@ -8,6 +8,7 @@
 // the macOS goal of the rewrite replaces it; `./darwin/webview` is that seam.
 
 import { binding } from "./binding";
+import { reportCallbackError } from "./callback-errors";
 import type { Engine } from "../prebuilt/binding";
 import { releaseAtEnd } from "./lifetime";
 import type { WindowHandle } from "./types";
@@ -219,16 +220,39 @@ export function endWebviewResponse(handle: WebviewHandle, id: bigint) {
   check("webview_end_response", binding().endResponse(handle, id));
 }
 
-/** How a binding's thrown or rejected value reaches the page (see {@link Webview.bind}). */
-export function serializeBindingError(err: unknown): string {
+/**
+ * How a binding's thrown or rejected value reaches the page (see {@link Webview.bind}). As the
+ * main branch for every value it could read. Where its read threw (a Proxy whose `getPrototypeOf`
+ * throws, an `Error` whose `message` getter throws), the page's call is rejected all the same,
+ * the value described as any other, and `readFailed` is told what that read threw.
+ */
+export function serializeBindingError(err: unknown, readFailed?: (failure: unknown) => void): string {
   if (err === undefined) return "";
-  if (err instanceof Error) return JSON.stringify(err.message);
+  let isError: boolean;
+  try {
+    isError = err instanceof Error;
+  } catch (failure) {
+    readFailed?.(failure);
+    isError = false;
+  }
+  if (isError) {
+    try {
+      return JSON.stringify((err as Error).message);
+    } catch (failure) {
+      readFailed?.(failure);
+      return describedForPage(err);
+    }
+  }
   try {
     const json = JSON.stringify(err);
     if (json !== undefined) return json;
   } catch {
     // Falls through to String().
   }
+  return describedForPage(err);
+}
+
+function describedForPage(err: unknown): string {
   try {
     return JSON.stringify(String(err));
   } catch {
@@ -246,20 +270,29 @@ export function engineOf(webview: Webview): Engine | undefined {
   return engines.get(webview);
 }
 
-// Set only while createChildWebview runs the constructor.
-let childBounds: { x: number; y: number; width: number; height: number } | undefined;
+/**
+ * How `createChildWebview` asks the constructor for a child: passed with the call, in place of a
+ * size, so nothing is held across the creation (which pumps messages: a webview made meanwhile
+ * takes nothing of it). Not exported: only this module makes one.
+ */
+class ChildMount {
+  constructor(
+    readonly bounds: { x: number; y: number; width: number; height: number },
+    readonly pageBackground: boolean,
+  ) {}
+}
+
+/** The size a webview made without one gets. */
+const DEFAULT_SIZE: Size = { width: 1024, height: 768, hint: SizeHint.NONE };
 
 /**
  * Internal, Windows: a webview made as a child of `window` at `bounds` (its
  * client coordinates, physical pixels), for the tabs library's strip and tabs.
+ * With `pageBackground`, the child is a page of the window (a tab), and starts
+ * with the window's `backgroundColor`; the strip keeps its own.
  */
-export function createChildWebview(debug: boolean, window: bigint, bounds: { x: number; y: number; width: number; height: number }): Webview {
-  childBounds = bounds;
-  try {
-    return new Webview(debug, undefined, window);
-  } finally {
-    childBounds = undefined;
-  }
+export function createChildWebview(debug: boolean, window: bigint, bounds: { x: number; y: number; width: number; height: number }, pageBackground = false): Webview {
+  return new Webview(debug, new ChildMount(bounds, pageBackground) as unknown as Size, window);
 }
 
 /**
@@ -324,9 +357,12 @@ export class Webview {
   constructor(debug?: boolean, size?: Size, window?: WindowHandle);
   constructor(
     debugOrHandle: boolean | WebviewHandle = false,
-    size: Size | undefined = { width: 1024, height: 768, hint: SizeHint.NONE },
+    sizeOrMount: Size | undefined = DEFAULT_SIZE,
     window: WindowHandle = null,
   ) {
+    const mount = sizeOrMount instanceof ChildMount ? sizeOrMount : undefined;
+    // A child gets the size a webview made without one gets, as it always has.
+    const size = mount ? DEFAULT_SIZE : sizeOrMount;
     // The macOS seam: there the instance is the webview library's own class, with this same API.
     if (onDarwin) return darwin().createWebview(debugOrHandle, size, window) as unknown as Webview;
     const native = binding();
@@ -339,8 +375,8 @@ export class Webview {
       const host = window === null || window === 0 || window === 0n ? null : BigInt(window);
       try {
         this.#engine =
-          childBounds !== undefined && host !== null
-            ? native.Engine.createChild(Boolean(debugOrHandle), host, childBounds)
+          mount !== undefined && host !== null
+            ? native.Engine.createChild(Boolean(debugOrHandle), host, mount.bounds, mount.pageBackground)
             : native.Engine.create(Boolean(debugOrHandle), host);
       } catch (err) {
         throw Object.assign(new WebviewError("webview_create", -1), { cause: err });
@@ -502,19 +538,36 @@ export class Webview {
         let result: ReturnType<RequestHandler>;
         try {
           result = handler(request);
-        } catch {
+        } catch (err) {
+          reportCallbackError("webview.setRequestHandler", err, null);
           this.#completeQuietly(request.id, { status: 500 });
           return;
         }
-        if (result instanceof Promise) {
-          result.then(
-            (response) => {
-              if (response) this.#completeQuietly(request.id, response);
-            },
-            () => this.#completeQuietly(request.id, { status: 500 }),
-          );
-        } else if (result) {
-          this.#completeQuietly(request.id, result);
+        // As the main branch: a Promise is awaited, through its own `then`, and anything else
+        // that is truthy (a thenable that is no Promise included) is the response. The checks are
+        // part of the call: a value whose `instanceof` or `then` throws fails it, as a handler
+        // that throws does, with 500.
+        try {
+          if (result instanceof Promise) {
+            result.then(
+              (response) => {
+                if (response) this.#completeQuietly(request.id, response);
+              },
+              (err: unknown) => {
+                reportCallbackError("webview.setRequestHandler", err, null);
+                this.#completeQuietly(request.id, { status: 500 });
+              },
+            );
+          } else if (result) {
+            this.#completeQuietly(request.id, result);
+          }
+        } catch (err) {
+          // The main branch let this escape to the binding's own catch, which printed
+          // `sweetview: a request handler threw:` and answered 500: with no listener it still does.
+          let asBefore = false;
+          reportCallbackError("webview.setRequestHandler", err, () => void (asBefore = true));
+          if (asBefore) throw err;
+          this.#completeQuietly(request.id, { status: 500 });
         }
       }),
     );
@@ -591,8 +644,9 @@ export class Webview {
         if (!this.#engine) return;
         try {
           handler(paths);
-        } catch {
-          // A drop handler's exception goes nowhere, as before.
+        } catch (err) {
+          // Printed nowhere, as before; told to an onCallbackError listener.
+          reportCallbackError("webview.setFileDropHandler", err, null);
         }
       }),
     );
@@ -714,7 +768,9 @@ export class Webview {
         if (!this.#engine) return;
         this.return(seq, status, json);
       };
-      const reject = (err: unknown) => reply(1, serializeBindingError(err));
+      // What reading a thrown value for the page threw, the first time (see serializeBindingError).
+      let readFailure: { error: unknown } | undefined;
+      const reject = (err: unknown) => reply(1, serializeBindingError(err, (error) => void (readFailure ??= { error })));
       const fulfill = (value: unknown) => {
         let json: string | undefined;
         try {
@@ -726,17 +782,51 @@ export class Webview {
         // "" is the page's undefined; JSON.stringify gives undefined for a function or a symbol.
         reply(0, json ?? "");
       };
+      // The bound function's own failure (it throws, or its promise rejects) is told to an
+      // onCallbackError listener and rejects the page's call; an unreadable request only rejects.
+      // Reported first, as every catch of the package does: the reply's text reads the value
+      // (its `message`, its `toJSON`), which can add or remove a listener.
+      // With no listener, and when the call failed while this callback runs, a read of the thrown
+      // value that threw leaves it for the binding's own catch, after the page's call was
+      // rejected: the main branch printed `sweetview: a binding threw:` for it there.
+      const failed = (err: unknown, synchronous = false) => {
+        let asBefore = false;
+        reportCallbackError("webview.bind", err, () => void (asBefore = true), name);
+        reject(err);
+        if (asBefore && synchronous && readFailure) throw readFailure.error;
+      };
+      let args: unknown[];
       try {
-        const args = JSON.parse(req);
-        const result = callback(...args);
-        if (result !== null && (typeof result === "object" || typeof result === "function") && typeof (result as PromiseLike<unknown>).then === "function") {
-          Promise.resolve(result as PromiseLike<unknown>).then(fulfill, reject);
-        } else {
-          fulfill(result);
-        }
+        args = JSON.parse(req);
       } catch (err) {
         reject(err);
+        return;
       }
+      let result: unknown;
+      try {
+        result = callback(...args);
+      } catch (err) {
+        failed(err, true);
+        return;
+      }
+      let fulfilledNow = false;
+      try {
+        // As the main branch: a value whose `then` is a function is awaited. Reading `then` is
+        // part of the call: a getter that throws fails it, and the page's call is rejected.
+        if (result !== null && (typeof result === "object" || typeof result === "function") && typeof (result as PromiseLike<unknown>).then === "function") {
+          Promise.resolve(result as PromiseLike<unknown>).then(fulfill, (err: unknown) => failed(err));
+        } else {
+          fulfill(result);
+          fulfilledNow = true;
+        }
+      } catch (err) {
+        failed(err, true);
+        return;
+      }
+      // A value returned now whose JSON throws a value that cannot be read: rejected, and, as on
+      // the main branch, what the read threw leaves for the binding's own catch (no listener is
+      // told of a value's JSON either way).
+      if (fulfilledNow && readFailure) throw readFailure.error;
     });
   }
 

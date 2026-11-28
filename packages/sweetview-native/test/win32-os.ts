@@ -53,6 +53,8 @@ export const user32 = dlopen("user32.dll", {
   PostQuitMessage: { args: [i32], returns: FFIType.void },
   RegisterWindowMessageW: { args: [FFIType.ptr], returns: u32 },
   GetMenuItemCount: { args: [u64], returns: i32 },
+  GetSystemMenu: { args: [u64, i32], returns: u64 },
+  EnableMenuItem: { args: [u64, u32, u32], returns: i32 },
   GetMenuState: { args: [u64, u32, u32], returns: u32 },
   GetMenuStringW: { args: [u64, u32, FFIType.ptr, i32, u32], returns: i32 },
   GetSubMenu: { args: [u64, i32], returns: u64 },
@@ -158,6 +160,22 @@ export function ownMessageWindows(className: string): bigint[] {
   return windowsOf(HWND_MESSAGE, className);
 }
 
+/**
+ * Hands `payload` to this process's single-instance window for `appId`, as a second instance does:
+ * WM_COPYDATA tagged "SWV1". Returns what the window answered (1 for a payload it took), or -1
+ * when there is no such window.
+ */
+export function handOffToInstance(appId: string, payload: unknown): number {
+  const hwnd = windowsOf(HWND_MESSAGE, "SweetviewSingleInstanceWindow", `sweetview.instance.${appId}`)[0];
+  if (hwnd === undefined) return -1;
+  const bytes = new Uint8Array(Buffer.from(JSON.stringify(payload), "utf8"));
+  const data = new DataView(new ArrayBuffer(24)); // COPYDATASTRUCT on x64
+  data.setBigUint64(0, 0x53575631n, true); // dwData: "SWV1"
+  data.setUint32(8, bytes.length, true);
+  data.setBigUint64(16, BigInt(ptr(bytes)), true);
+  return Number(user32.SendMessageW(hwnd, 0x004a /* WM_COPYDATA */, 0n, BigInt(ptr(data.buffer))));
+}
+
 function windowsOf(parent: bigint, className: string, title?: string): bigint[] {
   const cls = wide(className);
   const name = title === undefined ? null : wide(title);
@@ -204,6 +222,8 @@ export function screenPixel(x: number, y: number): string {
   const dc = user32.GetDC(0n);
   try {
     const bgr = gdi32.GetPixel(dc, x, y);
+    // CLR_INVALID: the point is outside what the screen shows; a colour read from nothing is no colour.
+    if (bgr === 0xffffffff) throw new Error(`GetPixel(${x}, ${y}) failed: CLR_INVALID`);
     const rgb = ((bgr & 0xff) << 16) | (bgr & 0xff00) | ((bgr >> 16) & 0xff);
     return `#${rgb.toString(16).padStart(6, "0")}`;
   } finally {
@@ -501,6 +521,7 @@ export function postTrayMouse(trayWindow: bigint, ...messages: number[]): void {
 // ---- popup menus ------------------------------------------------------------------------
 
 const MN_GETHMENU = 0x01e1;
+const MN_SELECTITEM = 0x01e5;
 const MF_BYPOSITION = 0x400;
 const WM_KEYDOWN = 0x0100;
 export const VK = { RETURN: 0x0d, ESCAPE: 0x1b, RIGHT: 0x27, DOWN: 0x28 } as const;
@@ -560,6 +581,12 @@ export function menuItemRect(hmenu: bigint, position: number): { left: number; t
 export const menuItemId = (hmenu: bigint, position: number): number => user32.GetMenuItemID(hmenu, position);
 
 /** Posts key presses to a popup menu window, which its menu loop takes as the keyboard. */
+/** Selects the item at `position` of an open menu and presses Enter on it, as the keyboard would, through messages to the menu's own window. */
+export function chooseMenuItem(menuWindow: bigint, position: number): void {
+  user32.SendMessageW(menuWindow, MN_SELECTITEM, BigInt(position), 0n);
+  post(menuWindow, WM_KEYDOWN, BigInt(VK.RETURN), 1n);
+}
+
 export function pressKeys(menuWindow: bigint, ...keys: number[]): void {
   for (const key of keys) post(menuWindow, WM_KEYDOWN, BigInt(key), 1n);
 }

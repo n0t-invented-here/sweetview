@@ -9,6 +9,7 @@ import { appendFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { createHitRelay, createNotifier, createTray, Screen, setAppIcon, unpackRegions, Window, type MenuTemplate, type Notifier } from "@n1h/sweetview/native";
 import { indexHtml, WebView, windowChromeEvents, windowChromeMethods, type Asset } from "@n1h/sweetview";
+import { demoWindowSize } from "../window-size";
 import { SettingsStore } from "@n1h/sweetview/settings-store";
 import petCss from "./build/frontend/main.css" with { type: "file" };
 import petJs from "./build/frontend/main.js" with { type: "file" };
@@ -86,7 +87,13 @@ const petAssets: Record<string, Asset> = {
 // ---- the settings window ---------------------------------------------------------
 
 // The page's size in CSS pixels; Sweetview sizes the frame around it at the screen's scale and centres it.
+// macOS, until its goal: the tag's outer frame, centred on the primary screen.
 const SETTINGS_SIZE = { width: 460, height: 560 };
+const settingsSize = demoWindowSize(SETTINGS_SIZE, () => ({
+  x: area.x + Math.round((area.width - SETTINGS_SIZE.width) / 2),
+  y: area.y + Math.round((area.height - SETTINGS_SIZE.height) / 2),
+  ...SETTINGS_SIZE,
+}));
 const settingsWindow =
   SETTINGS_CHROME === "os"
     ? new Window({
@@ -94,7 +101,7 @@ const settingsWindow =
         frame: true,
         appearance: "dark",
         title: `${APP_NAME} Settings`,
-        contentSize: SETTINGS_SIZE,
+        ...settingsSize,
         icon: petIcon(pet),
         onClose: () => settingsWindow.hide(),
       })
@@ -103,7 +110,7 @@ const settingsWindow =
         frame: false,
         transparent: true,
         title: `${APP_NAME} Settings`,
-        contentSize: SETTINGS_SIZE,
+        ...settingsSize,
         icon: petIcon(pet),
         onClose: () => settingsWindow.hide(),
       });
@@ -185,8 +192,9 @@ if (process.platform === "darwin") {
   overlay.show();
   if (process.env.PET_SETTINGS === "1") settingsWindow.show();
 }
-// The settings page's own title bar follows the window's maximised state as it changes.
-windowChromeEvents(settingsWindow, settingsView);
+// The settings page's own title bar follows the window's maximised state as it changes. macOS, until
+// its goal, keeps the tag's path: no event, the page asks again after its own toggle (Chrome.tsx).
+if (process.platform !== "darwin") windowChromeEvents(settingsWindow, settingsView);
 
 hits.apply();
 
