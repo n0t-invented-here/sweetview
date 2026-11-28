@@ -204,3 +204,42 @@ Twenty-eight places.
 - The evidence files line by line, the commit history as a process, and the verifier's bookkeeping. They were set aside as paperwork.
 - The repository's appearance-and-feel rule: its file is generated and is not present in this checkout.
 - The results of the real applications' upgrades, which are outside the repository.
+
+## Answers
+
+### 6
+
+Done, on branch `rust-rewrite-fix-webview-behaviour` (DECISIONS D44). The table, read back from WebView2 by `crates/sweetview-platform-webview/tests/settings.rs` on WebView2 Runtime 158.0.4370.45. "Old" is what the C++ library had: it set only the developer tools, so the rest is WebView2's default (the tree records no other setting; the reference's tab strip had to swallow the browser's zoom keys itself).
+
+| Setting | Old (C++ library) | Before this change (`wry` 0.58.2) | Now |
+|---|---|---|---|
+| Zoom: Ctrl+wheel, Ctrl+plus/minus/0 (`IsZoomControlEnabled`) | on | **off** | on |
+| Pinch zoom (`IsPinchZoomEnabled`) | on | **off** | on |
+| Swipe back and forward (`IsSwipeNavigationEnabled`) | on | **off** | on |
+| Status bar on link hover (`IsStatusBarEnabled`) | on | **off** | on |
+| CSS `app-region` (`IsNonClientRegionSupportEnabled`) | off | **on** | off |
+| Default context menus | on | on | on |
+| Developer tools | `debug` | `debug` | `debug` |
+| Browser accelerator keys (Ctrl+F, Ctrl+P, F5) | on | on | on |
+| Built-in error page, script dialogs, script, web messages, host objects | on | on | on |
+| General autofill / password autosave | on / off | on / off | on / off |
+| SmartScreen (`IsReputationCheckingRequired`) | on | on | on |
+| User agent | WebView2's | WebView2's | WebView2's |
+| Environment options | none | none (the project creates the environment, D15) | none |
+
+Zoom, pinch and swipe go back through `wry`'s own builder options (`with_page_behaviour`); the status bar and `app-region` through `ICoreWebView2Settings` and `Settings9` in `WebviewExtras::attach` (3 new `unsafe` blocks, in the ledger). `app-region` on can bite: a page with `-webkit-app-region: drag` in a stylesheet shared with another shell (Electron reads the same property) would drag the window and lose that area's mouse events, and a page that never uses it gains nothing; so it is off, as it was.
+
+What an application cannot choose today (no public option): zoom on or off (an application-like page usually wants it off), pinch zoom, swipe navigation, the status bar, the browser's context menu, the browser's keys, `app-region` on, autofill and password saving, the user agent. The developer tools follow `debug`.
+
+`docs/upgrading.md` ("The page behaves as it did") and `docs/webview-library.md` ("Page behaviour") say this.
+
+### 7
+
+Measured, then changed, on WebView2 Runtime 158.0.4370.45 (`crates/sweetview-platform-webview/tests/streaming.rs`, `packages/sweetview/src/request-handler.test.ts` "pace"):
+
+- Before: WebView2 calls `Read` for 32 KiB; `Read` waited for 32 KiB or the end, so a 10-byte chunk stayed in the binding; the page's reader got nothing while the response was open (UI thread and another thread alike) and everything at the end.
+- Now: `Read` returns what is there at once (`S_OK` short read, `S_FALSE` only at the end), and WebView2 takes a 10-byte chunk within 35 µs. The page still gets nothing before the end: `fetch()` itself does not resolve until `Read` returns `S_FALSE`, with `text/event-stream`, `Transfer-Encoding: chunked` or a `Content-Length` alike, and the first byte of a 24 MiB body arrives after the end. WebView2 keeps an intercepted response until EOF (WebView2Feedback #3519, which the docs already named), so real streaming is disproved for this path; no `Read` can fix it. The live tests assert this as measured, and fail if a runtime starts streaming.
+- The bound: 1 MiB unread makes a response backlogged until it is down to 512 KiB. A writer on any thread but the UI thread waits for room (condition variable, no spinning; released by reading, the end, the page letting go, teardown). The UI thread never waits; the application's worker path pauses reading that one body in the worker while it is backlogged. Measured: at most 1,048,695 bytes held by the binding for a 24 MiB fast writer, at most 1 MiB for the worker path, every byte in order. What is not bounded is WebView2's own copy: the whole body waits in WebView2 until the end, so an endless or huge streamed body on Windows grows WebView2's memory.
+- The old contract kept: `writeResponseChunk` still copies and returns `0` for a live chunk, never drops or reorders one; it now may wait off the UI thread.
+
+What streaming guarantees is in D44 and `docs/webview-library.md` "Streaming responses". Real-time push on Windows stays IPC events. An application's own writer on the UI thread has no way to pace itself (no public backlog signal): listed for the owner.
