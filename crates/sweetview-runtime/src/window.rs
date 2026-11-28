@@ -802,8 +802,13 @@ impl Window {
       return Err(Error::state("sweetview: window handle is NULL"));
     }
     if let Some(core) = core_of(handle) {
-      let detected = Some(core.chrome);
-      return Ok(Self::wrap(core, false, detected));
+      // A window Sweetview did not make has no subclass while it has no listener, so nothing
+      // saw it destroyed: its record is reused only while the handle still names a window.
+      if core.owned || BorrowedWindow::with_handle_value(handle, |_| ()).is_some() {
+        let detected = Some(core.chrome);
+        return Ok(Self::wrap(core, false, detected));
+      }
+      core.destroy();
     }
     let chrome = BorrowedWindow::with_handle_value(handle, |window| platform::chrome(window))
       .ok_or_else(|| Error::state(format!("sweetview: not a window: {handle:#x}")))?;
