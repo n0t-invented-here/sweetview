@@ -19,7 +19,7 @@
 //! each call, so it may remove itself, replace itself or destroy its owner
 //! from inside its own call.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use napi::bindgen_prelude::{FnArgs, FromNapiValue, Function, FunctionRef, JsValuesTupleIntoVec};
@@ -54,32 +54,55 @@ impl<Args: JsValuesTupleIntoVec, Return: FromNapiValue> JsCallback<Args, Return>
 }
 
 /// The application's sink for the exceptions caught here, with the env of the thread that set it.
-/// `onCallbackError` of `@n1h/sweetview-native` sets one while it has a listener. Kept per thread,
-/// as the callbacks are: only the thread that set it is called.
+/// `onCallbackError` of `@n1h/sweetview-native` sets one while it has a listener, on the UI thread
+/// only (`set_callback_error_sink` checks it).
 struct ErrorSink {
   env: Env,
   function: Rc<FunctionRef<FnArgs<(String, String)>, ()>>,
 }
 
+/// The thread's sink. The reference is released by the environment's cleanup hook
+/// (`set_error_sink` adds it), while the environment is alive. If the slot still holds a sink
+/// when the thread's storage is destroyed, the environment is gone and the reference cannot be
+/// deleted any more: it is left as it is, and a line says the release was missed.
+struct SinkSlot(RefCell<Option<ErrorSink>>);
+
+impl Drop for SinkSlot {
+  fn drop(&mut self) {
+    if let Some(sink) = self.0.get_mut().take() {
+      std::mem::forget(sink);
+      eprintln!("sweetview: the callback error sink outlived its JavaScript environment");
+    }
+  }
+}
+
 thread_local! {
-  static ERROR_SINK: RefCell<Option<ErrorSink>> = const { RefCell::new(None) };
+  static ERROR_SINK: SinkSlot = const { SinkSlot(RefCell::new(None)) };
+  /// Whether the cleanup hook that releases the sink is added for this thread's environment.
+  static RELEASED_AT_CLEANUP: Cell<bool> = const { Cell::new(false) };
 }
 
 /// Makes `sink` where a caught exception's kind and reason go on this thread, in place of the
-/// stderr line, or puts the stderr line back with `None`.
+/// stderr line, or puts the stderr line back with `None`. The first sink a thread sets adds the
+/// environment cleanup hook that releases it when the environment ends, whatever else the
+/// application made.
 pub(crate) fn set_error_sink(env: Env, sink: Option<&Function<'_, FnArgs<(String, String)>, ()>>) -> napi::Result<()> {
   let sink = match sink {
     Some(function) => Some(ErrorSink { env, function: Rc::new(function.create_ref()?) }),
     None => None,
   };
-  ERROR_SINK.with(|slot| *slot.borrow_mut() = sink);
+  if sink.is_some() && !RELEASED_AT_CLEANUP.get() {
+    env.add_env_cleanup_hook((), |()| clear_error_sink())?;
+    RELEASED_AT_CLEANUP.set(true);
+  }
+  let previous = ERROR_SINK.with(|slot| slot.0.replace(sink));
+  drop(previous);
   Ok(())
 }
 
-/// Forgets this thread's sink, at the end of the application: the reference is released while
-/// the JavaScript environment is still alive, not by the thread's own end.
-pub(crate) fn clear_error_sink() {
-  let sink = ERROR_SINK.with(|slot| slot.borrow_mut().take());
+/// Releases this thread's sink, when its environment ends (the cleanup hook).
+fn clear_error_sink() {
+  let sink = ERROR_SINK.with(|slot| slot.0.borrow_mut().take());
   drop(sink);
 }
 
@@ -87,7 +110,7 @@ pub(crate) fn clear_error_sink() {
 /// itself throws, both lines are printed.
 fn report(kind: &'static str, reason: &str) {
   // Cloned out of the slot, so the sink may replace or remove itself from inside its own call.
-  let sink = ERROR_SINK.with(|slot| slot.borrow().as_ref().map(|sink| (sink.env, Rc::clone(&sink.function))));
+  let sink = ERROR_SINK.with(|slot| slot.0.borrow().as_ref().map(|sink| (sink.env, Rc::clone(&sink.function))));
   let Some((env, function)) = sink else {
     eprintln!("sweetview: {kind} threw: {reason}");
     return;

@@ -77,7 +77,9 @@ type CallbackErrorSource = { readonly kind: CallbackKind; readonly name?: string
 It is also exported by `@n1h/sweetview` and `@n1h/sweetview-native`, with
 the types `CallbackErrorHandler`, `CallbackErrorSource` and `CallbackKind`.
 It returns the function that removes the listener; any number can be set,
-and each is called in the order it was added, on the UI thread.
+and each is called in the order it was added, on the UI thread. It is a
+call of the UI thread: from a `Worker`, where no callback of the native
+module runs, it throws `sweetview: this call must be made on the UI thread`.
 
 - With no listener set, Sweetview does what it always did: the
   `console.error` line in the table below.

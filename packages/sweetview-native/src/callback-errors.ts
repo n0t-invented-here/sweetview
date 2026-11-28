@@ -10,6 +10,7 @@
 // the worker's faults) do not reach this module: it is no entry point of the package, and an
 // application must not be able to call it to fabricate a fault (D44).
 
+import { isMainThread } from "node:worker_threads";
 import { binding } from "./binding";
 import { macosKeepsTagPath } from "./platform";
 
@@ -168,6 +169,7 @@ const BINDING_KINDS: Record<string, CallbackKind> = {
 export const kindOfBindingCallback = (bindingKind: string): CallbackKind => BINDING_KINDS[bindingKind] ?? "internal";
 
 let sinkRegistered = false;
+let releasedAtExit = false;
 
 /**
  * Routes the binding's own last-resort catch (`sweetview: <kind> threw: <reason>` on stderr, from
@@ -175,16 +177,21 @@ let sinkRegistered = false;
  */
 function setBindingSink(on: boolean): void {
   if (process.platform !== "win32" || on === sinkRegistered) return;
-  try {
-    binding().setCallbackErrorSink(
-      on
-        ? (bindingKind: string, reason: string) =>
-            reportCallbackError(kindOfBindingCallback(bindingKind), new Error(reason), () => console.error(`sweetview: ${bindingKind} threw: ${reason}`), bindingKind)
-        : null,
-    );
-    sinkRegistered = on;
-  } catch {
-    // The binding cannot load here; its own calls will say why. Its line stays on stderr.
+  // A binding that cannot load, or one without this export (an older build named by
+  // SWEETVIEW_NATIVE_PATH), throws here, as any call of the package does in that case.
+  binding().setCallbackErrorSink(
+    on
+      ? (bindingKind: string, reason: string) =>
+          reportCallbackError(kindOfBindingCallback(bindingKind), new Error(reason), () => console.error(`sweetview: ${bindingKind} threw: ${reason}`), bindingKind)
+      : null,
+  );
+  sinkRegistered = on;
+  // The application's end, by the end of its script or by process.exit() (also from inside a
+  // callback, where the environment's cleanup hook does not run): the sink is removed while the
+  // environment is alive, so the binding holds no reference to a JavaScript function past it.
+  if (on && !releasedAtExit) {
+    releasedAtExit = true;
+    process.once("exit", () => setBindingSink(false));
   }
 }
 
@@ -205,8 +212,11 @@ function setBindingSink(on: boolean): void {
  * Returns a function that removes this handler. With none left, Sweetview prints its lines again.
  */
 export function onCallbackError(handler: CallbackErrorHandler): () => void {
-  listeners.add(handler);
+  // The callbacks it hears of run on the UI thread, Bun's main thread; a Worker would hear of
+  // none. Decided before anything loads, so a Worker never becomes the binding's UI thread.
+  if (!isMainThread) throw new Error("sweetview: this call must be made on the UI thread");
   setBindingSink(true);
+  listeners.add(handler);
   return () => {
     listeners.delete(handler);
     if (listeners.size === 0) setBindingSink(false);

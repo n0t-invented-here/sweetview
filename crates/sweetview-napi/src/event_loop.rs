@@ -38,8 +38,10 @@ pub fn is_loop_blocking() -> napi::Result<bool> {
 
 /// Makes `sink` where an exception a JavaScript callback threw goes on this thread, with the
 /// callback's kind and the exception's message, in place of the `sweetview: <kind> threw:` line on
-/// stderr; `null` puts the line back. `onCallbackError` sets it while it has a listener.
+/// stderr; `null` puts the line back. `onCallbackError` sets it while it has a listener. On the UI
+/// thread only: no other thread runs the callbacks it would hear of.
 pub fn set_callback_error_sink(env: Env, sink: Option<Function<'_, FnArgs<(String, String)>, ()>>) -> napi::Result<()> {
+  sweetview_runtime::threads::require_ui_thread().or_throw()?;
   crate::callback::set_error_sink(env, sink.as_ref())
 }
 

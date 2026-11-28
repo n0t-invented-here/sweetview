@@ -1244,3 +1244,41 @@ describe.if(onWindows)("onCallbackError", () => {
     }, 60_000);
   }
 });
+
+// The sink onCallbackError registers with the binding (review F1, F8, N4, F9), from
+// test/fixtures/callback-sink.ts in a process of its own each.
+describe.if(onWindows)("onCallbackError's sink in the binding", () => {
+  const UI_THREAD = "sweetview: this call must be made on the UI thread";
+  const spawnSink = async (mode: string) => {
+    const child = Bun.spawn([process.execPath, fileURLToPath(new URL("../test/fixtures/callback-sink.ts", import.meta.url)), mode], { stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+    const line = stdout.split(/\r?\n/).find((l) => l.startsWith("RESULT "));
+    return { r: line ? JSON.parse(line.slice("RESULT ".length)) : undefined, stderr, exitCode };
+  };
+
+  test("a Worker that calls onCallbackError first is refused, loads nothing, and the main thread stays the UI thread", async () => {
+    const { r, exitCode } = await spawnSink("worker-first");
+    expect({ exitCode, worker: r.worker, windowOnThisThread: r.windowOnThisThread }).toEqual({ exitCode: 0, worker: UI_THREAD, windowOnThisThread: null });
+  });
+
+  test("the binding refuses a sink from a thread that is not the UI thread", async () => {
+    const { r, exitCode } = await spawnSink("worker-raw");
+    expect({ exitCode, worker: r.worker }).toEqual({ exitCode: 0, worker: UI_THREAD });
+  });
+
+  test("a binding without setCallbackErrorSink makes onCallbackError throw, as any missing export does", async () => {
+    const { r, exitCode } = await spawnSink("missing-export");
+    expect(exitCode).toBe(0);
+    expect(r.registration).toContain("setCallbackErrorSink");
+  });
+
+  test("after releaseAll() a listener still hears of the binding's own catches", async () => {
+    const { r, exitCode } = await spawnSink("after-release");
+    expect({ exitCode, told: r.told }).toEqual({ exitCode: 0, told: ["interval (a native interval): Error: interval after release"] });
+  });
+
+  test("a sink set by an application that makes nothing else is released when its environment ends, and nothing is printed", async () => {
+    const { exitCode, stderr } = await spawnSink("at-end");
+    expect({ exitCode, stderr: stderr.trim() }).toEqual({ exitCode: 0, stderr: "" });
+  });
+});

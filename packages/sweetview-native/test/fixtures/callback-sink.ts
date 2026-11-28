@@ -1,0 +1,84 @@
+// The thread and the lifetime of onCallbackError's sink in the binding (review F1, F8, N4). Run by
+// src/callbacks.test.ts in a process of its own, which reads this process's stderr and exit code.
+// No window is shown and no input is injected.
+//
+//   bun callback-sink.ts worker-first    a Worker calls onCallbackError before this thread loads
+//                                        the binding; then this thread makes a Window
+//   bun callback-sink.ts worker-raw      a Worker calls the binding's setCallbackErrorSink itself
+//   bun callback-sink.ts missing-export  the binding has no setCallbackErrorSink (an older build)
+//   bun callback-sink.ts after-release   a listener set, then releaseAll(); the binding's own catch
+//   bun callback-sink.ts at-end          a listener set, and nothing else made; the process ends
+//
+// Prints `RESULT <json>` (at-end prints nothing and only ends).
+
+const mode = process.argv[2];
+const result: Record<string, unknown> = {};
+const errorOf = async (run: () => unknown): Promise<string | null> => {
+  try {
+    await run();
+    return null;
+  } catch (err) {
+    return err instanceof Error ? err.message : String(err);
+  }
+};
+
+if (mode === "worker-first" || mode === "worker-raw") {
+  const source =
+    mode === "worker-first"
+      ? `const { onCallbackError } = await import(${JSON.stringify(new URL("../../src/callback-errors.ts", import.meta.url).href)});
+         try { onCallbackError(() => {}); postMessage("registered"); } catch (err) { postMessage(String(err && err.message)); }`
+      : `const { binding } = await import(${JSON.stringify(new URL("../../src/binding.ts", import.meta.url).href)});
+         try { binding().setCallbackErrorSink(() => {}); postMessage("set"); } catch (err) { postMessage(String(err && err.message)); }`;
+  const url = URL.createObjectURL(new Blob([source], { type: "application/typescript" }));
+  if (mode === "worker-raw") {
+    // This thread loads the binding first, so it is the UI thread; the worker is not.
+    (await import("../../src/binding")).binding();
+  }
+  const worker = new Worker(url);
+  result.worker = await new Promise<string>((resolve) => {
+    worker.onmessage = (event) => resolve(String(event.data));
+    worker.onerror = (event) => resolve(`worker error: ${event.message}`);
+  });
+  worker.terminate();
+  if (mode === "worker-first") {
+    const { Window } = await import("../../src/window");
+    result.windowOnThisThread = await errorOf(() => new Window({ title: "callback-sink" }).dispose());
+  }
+}
+
+if (mode === "missing-export") {
+  const { binding } = await import("../../src/binding");
+  const native = binding() as unknown as Record<string, unknown>;
+  delete native.setCallbackErrorSink;
+  const { onCallbackError } = await import("../../src/callback-errors");
+  result.registration = await errorOf(() => onCallbackError(() => {}));
+}
+
+if (mode === "after-release") {
+  const { binding } = await import("../../src/binding");
+  const { onCallbackError } = await import("../../src/callback-errors");
+  const { releaseAll } = await import("../../src/lifetime");
+  const told: string[] = [];
+  onCallbackError((error, source) => void told.push(`${source.kind} (${source.name}): ${error.message}`));
+  releaseAll();
+  const native = binding();
+  const interval = native.scheduleInterval(5, () => {
+    native.cancelTimeout(interval);
+    throw new Error("interval after release");
+  });
+  const deadline = Date.now() + 3000;
+  while (told.length === 0 && Date.now() < deadline) {
+    native.pumpEvents();
+    await Bun.sleep(5);
+  }
+  result.told = told;
+}
+
+if (mode === "at-end") {
+  const { onCallbackError } = await import("../../src/callback-errors");
+  onCallbackError(() => {});
+  // Nothing else is made, so nothing registers a release at exit: the process just ends.
+} else {
+  console.log("RESULT " + JSON.stringify(result));
+  process.exit(0);
+}
