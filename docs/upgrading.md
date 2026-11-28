@@ -614,7 +614,7 @@ The same names come from `@n1h/sweetview/native` now. Part C has the details of 
 | `installMouseHook` | `import { installMouseHook } from "@n1h/sweetview/native"`; `installMouseHook(handler)` | unchanged |
 | `modifiersFrom` | `import { modifiersFrom } from "@n1h/sweetview/native"`; `modifiersFrom(bits)` | unchanged |
 | `permissions` | `import { permissions } from "@n1h/sweetview/native"` | unchanged |
-| `unload` | `import type { App } from "@n1h/sweetview"`; `App#dispose` | On Windows delete the call: the end of the application destroys every live webview itself, and `app.dispose()` destroys one the application is done with earlier; there is no library to unload. On macOS, until the macOS goal, keep it: it still closes the webview library there |
+| `unload` | `import { unload } from "@n1h/sweetview/native"`; `unload()` | On macOS, until the macOS goal, keep the call: it still closes the webview library there. On Windows delete it: the end of the application destroys every live webview itself, and `app.dispose()` (or `Webview#destroy()`) destroys one the application is done with earlier; there is no library to unload |
 
 ### Members
 
@@ -1243,8 +1243,8 @@ Windows and macOS alike, nothing tells an application to keep importing it.
 | `emitWindowTabSelect` | no public call in 1.0 | raising a window's tab-select event from the application's own code: no public call in 1.0; `Window#onTabSelect(handler)` observes the tabs the strip selects |
 | `forwardWindowTabEvents` | no public call in 1.0 | forwarding one window's tab events to another window's listeners: no public call in 1.0; `Window#onNewTab(handler)`, `Window#onTabSelect(handler)` and `Window#onTabClose(handler)` observe each window's own |
 | `getWindowBackend` | no public call in 1.0 | a window's platform backend object: no public call in 1.0; the `Window` methods are what an application calls |
-| `getWindowMeta` | no public call in 1.0 | the options a `Window` was made with, as Sweetview keeps them: no public call in 1.0; of those, a `Window` gives its bounds (`Window#bounds()`) |
-| `holdWindowNativeDispose` | no public call in 1.0 | keeping a window's native window after `Window#dispose()` until a hold is released: no public call in 1.0; `Window#dispose()` releases it at once, except while a `WebView#run()` of the window is in progress, when the release waits until that loop has unwound |
+| `getWindowMeta` | no public call in 1.0 | the options a `Window` was made with, as Sweetview keeps them: no public call in 1.0; `Window#bounds()` reads a window's current frame, not the options it was made with |
+| `holdWindowNativeDispose` | no public call in 1.0 | keeping a window's native window after `Window#dispose()` until a hold is released: no public call in 1.0; `Window#dispose()` releases it at once, except while a webview is being made in the window (`WebView.attach`, while WebView2 creates it) or a `WebView#run()` of the window is in progress: the release then waits until that has finished |
 | `isWindowDisposed` | no public call in 1.0 | whether `Window#dispose()` has run: no public call in 1.0 |
 | `onWindowDispose` | no public call in 1.0 | a function run just before a window is disposed: no public call in 1.0; `Window#onClose(handler)` observes a close request |
 | `onWindowFileDropListenersChange` | no public call in 1.0 | notice that a window's file-drop listeners changed: no public call in 1.0; `Window#onFileDrop(handler)` returns the function that removes its own listener |
@@ -1749,7 +1749,7 @@ for an application that depends on `@n1h/sweetview`.
 | `installMouseHook` | `import { installMouseHook } from "@n1h/sweetview-native"`; `installMouseHook(handler)` | unchanged; installed and disposed of on the UI thread |
 | `modifiersFrom` | `import { modifiersFrom } from "@n1h/sweetview-native"`; `modifiersFrom(bits)` | unchanged |
 | `permissions` | `import { permissions } from "@n1h/sweetview-native"` | unchanged |
-| `unload` | `import type { App } from "@n1h/sweetview"`; `App#dispose` | On Windows delete the call: the end of the application destroys every live webview itself, and `app.dispose()` destroys one the application is done with earlier; there is no library to unload. On macOS, until the macOS goal, keep it: it still closes the webview library there |
+| `unload` | `import { unload } from "@n1h/sweetview-native"`; `unload()` | On macOS, until the macOS goal, keep the call: it still closes the webview library there. On Windows delete it: the end of the application destroys every live webview itself, and `app.dispose()` (or `Webview#destroy()`) destroys one the application is done with earlier; there is no library to unload |
 | `writeWebviewResponseChunk` | `import { writeWebviewResponseChunk } from "@n1h/sweetview-native"`; `writeWebviewResponseChunk(handle, id, chunk)` | `handle` is the opaque number of `Webview.unsafeHandle`, not a pointer; still callable from any thread |
 
 ### `Webview` members that changed

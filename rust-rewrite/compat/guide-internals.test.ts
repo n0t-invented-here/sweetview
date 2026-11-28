@@ -88,15 +88,24 @@ describe("one recipe for each thing", () => {
     }).toEqual({ overlayHides: false, overlayCloseToTray: true, appCloseToTray: true, appHideOnlyNeverClose: true });
   });
 
-  test("unload: on Windows the call is deleted, on macOS it is kept until its goal; no Write now tells a Windows reader to call it", () => {
-    const rows = guideLines.filter((l) => l.startsWith("| `unload` |"));
+  test("unload: each row's Write now is the macOS form an application on the bindings keeps, and its Change says to delete the call on Windows", () => {
+    const partA = row("`@n1h/sweetview-webview-bun` 2.x, as a 0.x application imports it", "`unload`");
+    const partCRow = row("`@n1h/sweetview-webview-bun`", "`unload`");
     const partC = guideLines.slice(guideLines.indexOf("### C. The bindings package, imported directly")).join(" ");
+    const says = (l: string) => /On macOS, until the macOS goal, keep the call/.test(l) && /On Windows delete it/.test(l);
     expect({
-      rows: rows.length,
-      writeNowCalls: rows.filter((l) => l.split(" | ")[1]!.includes("unload()")).length,
-      saysBoth: rows.filter((l) => /On Windows delete the call/.test(l) && /on macOS, until the macOS goal, keep it/i.test(l)).length,
+      partAWriteNow: partA.split(" | ")[1],
+      partCWriteNow: partCRow.split(" | ")[1],
+      partASays: says(partA),
+      partCSays: says(partCRow),
       stepSaysBoth: /Delete the `unload\(\)` call on Windows/.test(partC) && /On macOS, until the macOS goal, keep it/.test(partC),
-    }).toEqual({ rows: 2, writeNowCalls: 0, saysBoth: 2, stepSaysBoth: true });
+    }).toEqual({
+      partAWriteNow: '`import { unload } from "@n1h/sweetview/native"`; `unload()`',
+      partCWriteNow: '`import { unload } from "@n1h/sweetview-native"`; `unload()`',
+      partASays: true,
+      partCSays: true,
+      stepSaysBoth: true,
+    });
   });
 });
 
@@ -110,8 +119,8 @@ describe("rows and paragraphs say what the code does, no more", () => {
     const attach = read("docs/app.md").replace(/\s+/g, " ");
     const attachPara = attach.slice(attach.indexOf("Mounts a webview inside an existing `Window`"), attach.indexOf("Mounts a webview inside an existing `Window`") + 900);
     expect({
-      metaTabsField: /`tabs` field/.test(meta),
-      holdSaysWhenItWaits: /while a `WebView#run\(\)`/.test(hold) && !/releases it at once \|/.test(hold),
+      metaTabsField: /`tabs` field/.test(meta) || /of those, a `Window` gives its bounds/.test(meta) || !/reads a window's current frame, not the options it was made with/.test(meta),
+      holdSaysWhenItWaits: /a `WebView#run\(\)` of the window is in progress/.test(hold) && /`WebView\.attach`, while WebView2 creates it/.test(hold) && !/releases it at once \|/.test(hold),
       trayClickAtConstruction: /click handler, given when it is made/.test(tray),
       pumpsSayWindows: pumps.length === 5 && pumps.every((l) => /On Windows/.test(l) && /on macOS/.test(l)),
       attachKeepsShown: /already shown stays shown/.test(attachPara),
