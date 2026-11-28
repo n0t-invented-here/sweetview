@@ -71,7 +71,9 @@ mod imp {
       Err(ShellError(format!("sweetview: OpenClipboard failed ({error})")))
     }
 
-    fn empty(&self) -> Result<(), ShellError> {
+    /// Empties the clipboard, which frees the block it held. Takes `self` exclusively, so no
+    /// lock of the clipboard's block (`Block::ClipboardText`) can be alive across it.
+    fn empty(&mut self) -> Result<(), ShellError> {
       // SAFETY: the clipboard is open on this thread while `self` lives.
       let emptied = unsafe { EmptyClipboard() };
       emptied.map_err(|_| ShellError(format!("sweetview: EmptyClipboard failed ({})", last_error())))
@@ -87,33 +89,35 @@ mod imp {
   }
 
   /// The owner of a global block that a [`LockedGlobal`] borrows for as long as it is locked.
-  pub(super) enum Block<'a> {
+  pub(super) enum Block<'a, 'o> {
     /// A block this process allocated and has not handed over, borrowed exclusively:
     /// no other lock of it, and no free, while this one lives.
     Owned(&'a mut OwnedGlobal),
-    /// The clipboard's `CF_UNICODETEXT` block, which the clipboard keeps allocated
-    /// while it stays open, which the borrow of the open clipboard guarantees.
-    ClipboardText(&'a OpenedClipboard<'a>),
+    /// The clipboard's `CF_UNICODETEXT` block, which the clipboard keeps allocated while it
+    /// stays open and is not emptied. The open clipboard is borrowed exclusively, which
+    /// guarantees both, and that no second lock of the block exists while this one lives.
+    ClipboardText(&'a mut OpenedClipboard<'o>),
   }
 
   /// A global memory block locked until dropped. It borrows the block's owner
   /// (see [`Block`]), so the block stays allocated for as long as it is locked.
-  pub(super) struct LockedGlobal<'a> {
+  pub(super) struct LockedGlobal<'a, 'o> {
     memory: HGLOBAL,
     address: *mut u8,
     /// The block's length, as `GlobalSize` reported it once the block was locked.
     size: usize,
-    _block: PhantomData<Block<'a>>,
+    _block: PhantomData<Block<'a, 'o>>,
   }
 
-  impl<'a> LockedGlobal<'a> {
+  impl<'a, 'o> LockedGlobal<'a, 'o> {
     /// Locks the block `block` names; `None` when the clipboard holds no text.
-    pub(super) fn lock(block: Block<'a>) -> Result<Option<Self>, ShellError> {
+    pub(super) fn lock(block: Block<'a, 'o>) -> Result<Option<Self>, ShellError> {
       let memory = match block {
         Block::Owned(owned) => owned.handle(),
         Block::ClipboardText(_open) => {
           // SAFETY: the clipboard is open on this thread for as long as `_open` is borrowed,
-          // which is `'a`, the life of this lock and of every use of the handle.
+          // which is `'a`, the life of this lock and of every use of the handle; the borrow is
+          // exclusive, so the clipboard is not emptied meanwhile.
           let data = unsafe { GetClipboardData(u32::from(CF_UNICODETEXT.0)) };
           let Ok(handle) = data else { return Ok(None) };
           HGLOBAL(handle.0)
@@ -146,14 +150,15 @@ mod imp {
         return Err(ShellError(format!("sweetview: GlobalAlloc returned {size} bytes for {}", data.len())));
       }
       // SAFETY: the block is locked at `address` and at least `data.len()` bytes long (checked
-      // just above), `data` is a separate Rust buffer, so the ranges do not overlap, and the
-      // exclusive borrow of `self` keeps any other view of the block from existing.
+      // just above), `data` is a separate Rust buffer, so the ranges do not overlap. No other
+      // view of the block exists: a lock borrows its block's owner exclusively (`Block`), so
+      // this is the block's only lock, and `bytes` needs a shared borrow of `self`.
       unsafe { std::ptr::copy_nonoverlapping(data.as_ptr(), self.address, data.len()) };
       Ok(())
     }
   }
 
-  impl Drop for LockedGlobal<'_> {
+  impl Drop for LockedGlobal<'_, '_> {
     fn drop(&mut self) {
       // SAFETY: balances the GlobalLock of `lock` on the same block, which is still allocated.
       let unlocked = unsafe { GlobalUnlock(self.memory) };
@@ -196,9 +201,9 @@ mod imp {
   }
 
   pub fn read_text() -> Result<Option<String>, ShellError> {
-    let open = OpenedClipboard::open(None)?;
+    let mut open = OpenedClipboard::open(None)?;
     // The clipboard owns the block and keeps it while `open` is borrowed.
-    let Some(lock) = LockedGlobal::lock(Block::ClipboardText(&open))? else { return Ok(None) };
+    let Some(lock) = LockedGlobal::lock(Block::ClipboardText(&mut open))? else { return Ok(None) };
     // GlobalSize bounds the scan. Padding after the terminator is not text.
     decode_unicode_text(lock.bytes()).map(Some)
   }
@@ -207,7 +212,7 @@ mod imp {
     // EmptyClipboard assigns the open window as owner. No window cannot own new data.
     let owner = MessageWindow::new("SweetviewClipboardOwner", "sweetview.clipboard", |_, _, _| None)
       .map_err(|e| ShellError(format!("sweetview: {}(SweetviewClipboardOwner) failed ({})", e.call(), e.code())))?;
-    let open = OpenedClipboard::open(Some(&owner))?;
+    let mut open = OpenedClipboard::open(Some(&owner))?;
     let data = encode_unicode_text(text);
     let mut memory = OwnedGlobal::alloc(data.len())?;
     if let Some(mut lock) = LockedGlobal::lock(Block::Owned(&mut memory))? {
