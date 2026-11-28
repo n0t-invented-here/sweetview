@@ -10,7 +10,6 @@
 // when the binding is first loaded.
 
 import type * as Binding from "../prebuilt/binding";
-import { messageOf } from "./thrown";
 
 export type NativeBinding = typeof Binding;
 
@@ -28,7 +27,7 @@ const NOT_BUILT =
   "package, so its absence means a broken install: install the package again.";
 
 function fail(file: string, cause: unknown, hint?: string): never {
-  const reason = messageOf(cause);
+  const reason = cause instanceof Error ? cause.message : String(cause);
   const message = `sweetview: the native binding could not be loaded from ${file}: ${reason}`;
   throw new Error(hint === undefined ? message : `${message}\n${hint}`);
 }
