@@ -237,6 +237,34 @@ export function unrefWorker(worker: Worker | undefined): void {
   (worker as (Worker & { unref(): void }) | undefined)?.unref();
 }
 
+/**
+ * Internal. Calls each `onEvent` listener with one event of the worker's. On Windows each runs in
+ * its own `try`, and what one throws is added to `errors` (the drain throws them when it ends).
+ * Until the macOS goal, macOS keeps the tag's loop: a listener's throw leaves the drain at once.
+ */
+export function callEventListeners(listeners: Iterable<(event: { name: string; payload: unknown }) => void>, name: string, payload: unknown, errors: unknown[]): void {
+  if (macosKeepsTagPath()) {
+    for (const fn of listeners) fn({ name, payload });
+    return;
+  }
+  for (const fn of listeners) {
+    try {
+      fn({ name, payload });
+    } catch (err) {
+      errors.push(err);
+    }
+  }
+}
+
+/**
+ * Internal. Whether a path that sees the worker fail prints its line. On Windows only the first
+ * path does, so one failure is printed once. Until the macOS goal, macOS prints from every path,
+ * as at the tag.
+ */
+export function printsWorkerFailure(alreadyFailed: boolean, down: boolean): boolean {
+  return macosKeepsTagPath() || !(alreadyFailed || down);
+}
+
 export class WebView<M extends MethodMap = MethodMap, E extends EventMap = EventMap> {
   readonly raw: RawWebview;
   readonly window: Window;
@@ -494,13 +522,7 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
             if (frame.ok) raw.return(frame.seq, 0, JSON.stringify(frame.result ?? null));
             else raw.return(frame.seq, 1, JSON.stringify({ message: frame.error }));
           } else if (frame.kind === "event") {
-            for (const fn of taps) {
-              try {
-                fn({ name: frame.name, payload: frame.payload });
-              } catch (err) {
-                listenerErrors.push(err);
-              }
-            }
+            callEventListeners(taps, frame.name, frame.payload, listenerErrors);
             if (isLive()) emit(frame.name, frame.payload);
           }
         }
@@ -512,7 +534,7 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
       // The worker ended. The first path to see it (its crash frame in the drain, Worker.onerror,
       // Worker.onmessageerror) prints the line and fails the worker; the others print nothing.
       const workerFailed = (reason: string, line: unknown[]) => {
-        if (workerFailure !== undefined || down) return;
+        if (!printsWorkerFailure(workerFailure !== undefined, down)) return;
         console.error(...line);
         failWorker(reason);
       };
