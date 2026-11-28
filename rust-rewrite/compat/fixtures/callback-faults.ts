@@ -1,52 +1,29 @@
-// "What changed for every application" and step A of docs/upgrading.md, and "Exceptions thrown by
-// your callbacks" in docs/native.md, run for real: an exception thrown by an application's handler
-// on the UI thread is caught by Sweetview and never reaches `process.on("uncaughtException")`. A
-// tray click, a tray menu item's click and a `Window` `onClose` listener are logged on stderr with
-// the stated messages; a `deferredUiMethods` method that throws becomes the page call's rejected
-// reply, which a page that does not await it never reads, and nothing is printed. An application
-// that replaces `console.error` receives the logged ones, with the error. The documented wrapper,
-// `reported`, delivers every one of them to the application's `uncaughtException` listeners, and an
-// application whose listener exits ends the process from inside the call.
+// "Exceptions thrown by your callbacks" in docs/native.md and docs/app.md, and the bullet and step
+// of docs/upgrading.md, run for real: an exception an application's handler throws on the UI
+// thread never reaches `process.on("uncaughtException")` by itself; with no `onCallbackError`
+// listener Sweetview logs it as before (and a page call, a request and a worker method's rejection
+// stay silent); with one, every one of them reaches the listener with its kind, nothing is printed,
+// and the fallbacks still apply. A listener that hands the error to the process's own
+// `uncaughtException` listeners, or exits, is the whole of what an application writes.
 //
-// Each callback is driven by what the OS would deliver, posted to this process's own windows: the
-// shell's tray messages, keys posted to the open menu's window, WM_CLOSE. No input is injected.
+// The callbacks are driven by what the OS or the page would deliver: the shell's tray messages and
+// keys posted to the open menu's window, WM_CLOSE, and a page that calls its methods and fetches a
+// dynamic path without awaiting anything. No input is injected.
 //
 //   bun callback-faults.ts            prints one JSON line; the parent reads stderr too
 //   bun callback-faults.ts exit       the listener calls process.exit(3) from inside a tray click
 
 import { createApp } from "@n1h/sweetview";
-import { Menu, Tray, Window } from "@n1h/sweetview/native";
+import { Menu, Tray, Window, onCallbackError, type CallbackErrorSource } from "@n1h/sweetview/native";
 import { binding } from "../../../packages/sweetview-native/src/binding";
 import { currentTray } from "../../../packages/sweetview-native/src/win32/tray";
 import { TRAY, VK, WM_CLOSE, doubleClickTime, openPopupMenu, postTrayMouse, pressKeys, user32 } from "../../../packages/sweetview-native/test/win32-os";
 
-// The wrapper of docs/native.md, "Exceptions thrown by your callbacks", as an application copies it.
-// upgrade-guide's behaviour test checks this block is the documented one, character for character.
-// --- reported: begin ---
-/**
- * Wraps a handler Sweetview calls (a click, a listener, a UI-thread method). An exception it throws
- * goes to the process's "uncaughtException" listeners, as an unhandled exception would, then on to
- * Sweetview as before (logged; a page call is rejected; a hook lets the event through).
- */
-function reported<A extends unknown[], R>(handler: (...args: A) => R): (...args: A) => R {
-  return (...args: A): R => {
-    try {
-      return handler(...args);
-    } catch (err) {
-      const error = err instanceof Error ? err : new Error(String(err));
-      if (!process.emit("uncaughtException", error, "uncaughtException")) console.error(error);
-      throw err;
-    }
-  };
-}
-// --- reported: end ---
-
 const native = binding();
 const mode = process.argv[2] ?? "report";
-const reached: string[] = [];
+const reachedUncaught: string[] = [];
 process.on("uncaughtException", (err) => {
-  reached.push(err.message);
-  if (mode === "exit") process.exit(3);
+  reachedUncaught.push(err.message);
 });
 
 async function pumpUntil(done: () => boolean, ms = 5000): Promise<boolean> {
@@ -69,32 +46,30 @@ async function chooseFirstItem(trayWindow: bigint, chosen: () => boolean): Promi
       pressKeys(menu, VK.DOWN, VK.RETURN);
     });
     postTrayMouse(trayWindow, TRAY.RBUTTONDOWN, TRAY.RBUTTONUP);
-    await pumpUntil(() => chosen() || false, 3000);
+    await pumpUntil(chosen, 3000);
     native.cancelTimeout(watcher);
     await pumpUntil(() => openPopupMenu() === 0n, 1000);
   }
   return chosen();
 }
 
-type Wrap = <A extends unknown[], R>(handler: (...args: A) => R) => (...args: A) => R;
-
-/** Throws from each kind once, through `wrap`; returns what ran. */
-async function throwFromEach(label: string, wrap: Wrap): Promise<Record<string, boolean>> {
-  const ran = { trayClick: false, menuItem: false, onClose: false, deferredUiMethod: false };
+/** Throws once from each kind, every message starting with `label`; returns what ran and what the page saw. */
+async function throwFromEach(label: string): Promise<Record<string, unknown>> {
+  const ran = { trayClick: false, menuItem: false, onClose: false, uiMethod: false, deferredUiMethod: false, onRequest: false, onReady: false };
 
   const tray = new Tray({
     tooltip: `sweetview compat faults ${label} ${process.pid}`,
-    onClick: wrap(() => {
+    onClick: () => {
       ran.trayClick = true;
       throw new Error(`${label}: tray click`);
-    }),
+    },
     menu: () => [
       {
         label: "Boom",
-        click: wrap(() => {
+        click: () => {
           ran.menuItem = true;
           throw new Error(`${label}: tray menu item`);
-        }),
+        },
       },
     ],
   });
@@ -107,41 +82,68 @@ async function throwFromEach(label: string, wrap: Wrap): Promise<Record<string, 
   const win = new Window({
     title: `sweetview compat faults ${label}`,
     noActivate: true,
-    onClose: wrap(() => {
+    onClose: () => {
       ran.onClose = true;
       throw new Error(`${label}: window onClose`);
-    }),
+    },
   });
   user32.SendMessageW(BigInt(win.handle!), WM_CLOSE, 0n, 0n);
   win.dispose();
 
-  // The page calls the method and does not await the call.
-  const page = `<!doctype html><title>compat faults</title><script>window.__sweetview_rpc("fault.deferred", null);</script>`;
+  // The page calls each method and fetches a dynamic path, awaiting nothing; it reports what came back.
+  const page = `<!doctype html><title>compat faults</title><script>
+    const rpc = window.__sweetview_rpc;
+    const seen = {};
+    const note = (name, p) => p.then(() => (seen[name] = "resolved"), (e) => (seen[name] = "rejected: " + (e && e.message)));
+    note("ui", rpc("fault.ui", null));
+    note("deferred", rpc("fault.deferred", null));
+    note("worker", rpc("fault.reject", ${JSON.stringify(label)}));
+    fetch("/dynamic").then((r) => (seen.request = r.status));
+    rpc("__sweetview.ready", null);
+    setTimeout(() => rpc("fault.crash", ${JSON.stringify(label)}), 300);
+    setTimeout(() => rpc("fault.seen", seen), 1500);
+  </script>`;
+  let seen: unknown;
   const app = await createApp({
     title: `sweetview compat faults page ${label}`,
     noActivate: true,
     assets: { "index.html": new TextEncoder().encode(page) },
+    worker: new URL("./callback-faults.worker.ts", import.meta.url),
+    onRequest: () => {
+      ran.onRequest = true;
+      throw new Error(`${label}: onRequest`);
+    },
+    onReady: () => {
+      ran.onReady = true;
+      throw new Error(`${label}: onReady`);
+    },
+    uiMethods: {
+      "fault.ui": () => {
+        ran.uiMethod = true;
+        throw new Error(`${label}: uiMethods`);
+      },
+      "fault.seen": (value: unknown) => void (seen = value),
+    },
     deferredUiMethods: {
-      "fault.deferred": wrap(() => {
+      "fault.deferred": () => {
         ran.deferredUiMethod = true;
         throw new Error(`${label}: deferredUiMethods`);
-      }),
+      },
     },
   });
-  await pumpUntil(() => ran.deferredUiMethod, 20_000);
-  await pumpUntil(() => false, 200); // the rejected reply goes back to the page
+  await pumpUntil(() => seen !== undefined, 30_000);
+  await pumpUntil(() => false, 300);
   app.dispose();
-  return ran;
+  return { ran, page: seen };
 }
 
-const identity: Wrap = (handler) => handler;
-
 if (mode === "exit") {
+  onCallbackError(() => process.exit(3));
   const tray = new Tray({
     tooltip: `sweetview compat faults exit ${process.pid}`,
-    onClick: reported(() => {
+    onClick: () => {
       throw new Error("exit: tray click");
-    }),
+    },
   });
   postTrayMouse(currentTray()!.windowHandle(), TRAY.LBUTTONDOWN, TRAY.LBUTTONUP);
   await pumpUntil(() => false, doubleClickTime() + 3000);
@@ -152,11 +154,18 @@ if (mode === "exit") {
 
 const report: Record<string, unknown> = {};
 
-// 1. Unwrapped: Sweetview catches each one; none reaches the listener. stderr has the logged lines.
-report.unwrapped = { ran: await throwFromEach("unwrapped", identity), reached: reached.splice(0) };
+// 1. No listener: as before. Nothing reaches uncaughtException; the parent reads the logged lines.
+report.withoutListener = { ...(await throwFromEach("without")), reachedUncaught: reachedUncaught.splice(0) };
 
-// Menu.popup runs the chosen item's click after the menu has closed, inside Menu.popup: its
-// exception comes out of Menu.popup, to the code that called it.
+// 2. A listener: every kind arrives, with its kind; nothing is printed (the parent checks stderr).
+const arrivals: string[] = [];
+const off = onCallbackError((error: Error, source: CallbackErrorSource) => {
+  arrivals.push(`${source.kind}${source.name ? ` (${source.name})` : ""}: ${error.message}`);
+});
+report.withListener = { ...(await throwFromEach("with")), arrivals: arrivals.splice(0), reachedUncaught: reachedUncaught.splice(0) };
+
+// A Menu.popup item's click runs inside Menu.popup, after the menu has closed: it is not a callback
+// boundary, and its exception comes out of Menu.popup to the code that called it.
 {
   const owner = new Window({ title: "sweetview compat faults popup", noActivate: true });
   let thrownFromPopup = "";
@@ -175,19 +184,27 @@ report.unwrapped = { ran: await throwFromEach("unwrapped", identity), reached: r
     native.cancelTimeout(watcher);
   }
   owner.dispose();
-  report.menuPopup = { thrownFromPopup, reached: reached.splice(0) };
+  report.menuPopup = { thrownFromPopup, arrivals: arrivals.splice(0) };
 }
+off();
 
-// 2. An application that replaces console.error receives what Sweetview logs, with the error.
-const logged: string[] = [];
-const originalError = console.error;
-console.error = (...args: unknown[]) => void logged.push(`${String(args[0])} ${args[1] instanceof Error ? `[Error] ${args[1].message}` : String(args[1])}`);
-const ranWithConsole = await throwFromEach("console", identity);
-console.error = originalError;
-report.consoleError = { ran: ranWithConsole, logged, reached: reached.splice(0) };
-
-// 3. Wrapped with `reported`: each one reaches the listener.
-report.reported = { ran: await throwFromEach("reported", reported), reached: reached.splice(0) };
+// 3. The application's own uncaughtException listeners, from one onCallbackError listener.
+const offEmit = onCallbackError((error) => void process.emit("uncaughtException", error, "uncaughtException"));
+{
+  let clicked = false;
+  const tray = new Tray({
+    tooltip: `sweetview compat faults emit ${process.pid}`,
+    onClick: () => {
+      clicked = true;
+      throw new Error("emit: tray click");
+    },
+  });
+  postTrayMouse(currentTray()!.windowHandle(), TRAY.LBUTTONDOWN, TRAY.LBUTTONUP);
+  await pumpUntil(() => clicked && reachedUncaught.length > 0, doubleClickTime() + 2000);
+  tray.dispose();
+}
+offEmit();
+report.emitted = { reachedUncaught: reachedUncaught.splice(0) };
 
 console.log(JSON.stringify(report));
 process.exit(0);

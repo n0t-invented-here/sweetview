@@ -285,10 +285,11 @@ describe.skipIf(!onWindows)("Windows behaviour an application notices", () => {
   }, 300_000);
 
   // "Exceptions thrown by your callbacks" (docs/native.md, docs/app.md) and its bullet and step in
-  // docs/upgrading.md: a handler that throws never reaches uncaughtException; the logged ones are on
-  // stderr with the stated messages, a deferredUiMethods method's is not printed at all; a replaced
-  // console.error receives the logged ones; the documented `reported` wrapper delivers every one.
-  test("an exception from a handler Sweetview calls never reaches uncaughtException; it is logged as the docs say, and the documented wrapper delivers it", async () => {
+  // docs/upgrading.md: a handler's exception never reaches uncaughtException by itself; with no
+  // onCallbackError listener it is logged as before (a page call, a request and a worker method's
+  // rejection print nothing); with one, every kind reaches it with its kind and nothing is printed,
+  // the fallbacks still apply; one listener line hands it to uncaughtException, or exits.
+  test("onCallbackError: without it, faults are logged as before and never reach uncaughtException; with it, every kind arrives, nothing is printed, and one line hands them on", async () => {
     const run = async (args: string[]) => {
       const child = Bun.spawn([process.execPath, fixture("callback-faults.ts"), ...args], {
         cwd: root,
@@ -296,46 +297,62 @@ describe.skipIf(!onWindows)("Windows behaviour an application notices", () => {
         stdout: "pipe",
         stderr: "pipe",
       });
-      const timer = setTimeout(() => child.kill(), 150_000);
+      const timer = setTimeout(() => child.kill(), 200_000);
       const [stdout, stderr, exit] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
       clearTimeout(timer);
       return { stdout, stderr, exit };
     };
-    const ranAll = { trayClick: true, menuItem: true, onClose: true, deferredUiMethod: true };
     const { stdout, stderr, exit } = await run([]);
     expect({ exit, last: stdout.trim().split(/\r?\n/).at(-1)?.startsWith("{") }).toEqual({ exit: 0, last: true });
     const report = JSON.parse(stdout.trim().split(/\r?\n/).at(-1)!);
-    expect(report).toEqual({
-      unwrapped: { ran: ranAll, reached: [] },
-      menuPopup: { thrownFromPopup: "popup item", reached: [] },
-      consoleError: {
-        ran: ranAll,
-        logged: [
-          "sweetview: message window handler threw: [Error] console: tray click",
-          "sweetview: message window handler threw: [Error] console: tray menu item",
-          "sweetview: onClose handler threw: [Error] console: window onClose",
-        ],
-        reached: [],
-      },
-      reported: { ran: ranAll, reached: ["reported: tray click", "reported: tray menu item", "reported: window onClose", "reported: deferredUiMethods"] },
+    const ranAll = { trayClick: true, menuItem: true, onClose: true, uiMethod: true, deferredUiMethod: true, onRequest: true, onReady: true };
+    const page = (label: string) => ({
+      ui: `rejected: ${label}: uiMethods`,
+      deferred: `rejected: ${label}: deferredUiMethods`,
+      worker: `rejected: ${label}: worker method`,
+      request: 500,
     });
-    // What the unwrapped handlers left on stderr: each logged line with its message and error; nothing for the page's method.
-    const errorsOf = (label: string) => [...stderr.matchAll(new RegExp(`^error: ${label}: (.+)$`, "gm"))].map((m) => m[1]!.trim());
-    expect(errorsOf("unwrapped")).toEqual(["tray click", "tray menu item", "window onClose"]);
-    expect(stderr.match(/^sweetview: message window handler threw:/gm)?.length).toBe(4); // two unwrapped, two rethrown by `reported`
-    expect(stderr.match(/^sweetview: onClose handler threw:/gm)?.length).toBe(2);
-    expect(stderr).not.toContain("deferredUiMethods");
+    expect(report.withoutListener).toEqual({ ran: ranAll, page: page("without"), reachedUncaught: [] });
+    expect(report.withListener.ran).toEqual(ranAll);
+    expect(report.withListener.page).toEqual(page("with"));
+    expect(report.withListener.reachedUncaught).toEqual([]);
+    const arrivals = report.withListener.arrivals as string[];
+    const crash = arrivals.filter((a) => a.startsWith("worker: ") && a.includes("with: worker crash"));
+    expect(crash.length).toBe(1);
+    expect(arrivals.filter((a) => !crash.includes(a)).sort()).toEqual(
+      [
+        "tray.onClick: with: tray click",
+        "menu.click: with: tray menu item",
+        "window.onClose: with: window onClose",
+        "uiMethods (fault.ui): with: uiMethods",
+        "deferredUiMethods (fault.deferred): with: deferredUiMethods",
+        "onRequest: with: onRequest",
+        "onReady: with: onReady",
+        "worker (fault.reject): with: worker method",
+      ].sort(),
+    );
+    expect(report.menuPopup).toEqual({ thrownFromPopup: "popup item", arrivals: [] });
+    expect(report.emitted).toEqual({ reachedUncaught: ["emit: tray click"] });
 
-    // An application whose listener exits ends the process from inside Sweetview's call.
+    // stderr: the lines Sweetview logs with no listener, and none of the listener's phase.
+    const errorsOf = (label: string) => [...stderr.matchAll(new RegExp(`^error: ${label}: (.+)$`, "gm"))].map((m) => m[1]!.trim());
+    expect(errorsOf("without")).toEqual(["tray click", "tray menu item", "window onClose", "onReady"]);
+    expect(stderr.match(/^sweetview: message window handler threw:/gm)?.length).toBe(2);
+    expect(stderr.match(/^sweetview: onClose handler threw:/gm)?.length).toBe(1);
+    expect(stderr.match(/^sweetview: onReady handler threw:/gm)?.length).toBe(1);
+    expect(stderr.match(/^sweetview: the worker failed:.*without: worker crash/gm)?.length).toBe(1);
+    expect(stderr).not.toContain("with: ");
+    expect(stderr).not.toContain("emit: ");
+    for (const silent of ["uiMethods", "deferredUiMethods", "worker method", "onRequest"]) expect(stderr).not.toContain(`without: ${silent}`);
+
+    // A listener that exits ends the process from inside Sweetview's call.
     expect((await run(["exit"])).exit).toBe(3);
 
-    // The fixture's wrapper is the one docs/native.md shows, character for character.
-    const fixtureText = readFileSync(fixture("callback-faults.ts"), "utf8").replace(/\r\n/g, "\n");
-    const block = /\/\/ --- reported: begin ---\n([\s\S]*?)\/\/ --- reported: end ---/.exec(fixtureText)?.[1];
-    const documented = readFileSync(join(root, "docs", "native.md"), "utf8").replace(/\r\n/g, "\n").replace(/^ {2}/gm, "");
-    expect(block).toBeDefined();
-    expect(documented).toContain(block!);
-  }, 320_000);
+    // The docs teach the hook, not a wrapper.
+    const native = readFileSync(join(root, "docs", "native.md"), "utf8");
+    expect(native).toContain("onCallbackError(");
+    expect(native).not.toContain("function reported");
+  }, 420_000);
 });
 
 // Part A, "Scripts run by path" and the subpaths of `@n1h/sweetview-native`: what an installed

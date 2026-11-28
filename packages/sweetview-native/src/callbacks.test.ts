@@ -1147,3 +1147,72 @@ describe.if(onWindows)("W1.3 the binding's backstop, straight through the bindin
     for (const line of lines) expect(expected).toContain(line);
   }, 60_000);
 });
+
+// onCallbackError (src/callback-errors.ts): the same kinds, with a listener set. Each exception
+// arrives once with its kind and the handler's error, Sweetview prints nothing, the fallback still
+// applies; a listener that throws, a thrown non-error, the binding's sink, and today's lines back
+// once the listener is removed. Run in a process of its own (test/fixtures/callback-errors.ts),
+// whose stderr carries the binding's own lines. No input is injected.
+describe.if(onWindows)("onCallbackError", () => {
+  test("with a listener, every kind arrives once with its kind and error, nothing is printed, and each fallback applies", async () => {
+    const { r, stderr, exitCode } = await runFixture("callback-errors.ts", ["listener"]);
+    expect({ exitCode, timedOut: r.timedOut }).toEqual({ exitCode: 0, timedOut: undefined });
+    const arrived = (r.arrivals as { kind: string; name?: string; message: string; isError: boolean }[]).map((a) => `${a.kind}${a.name ? ` (${a.name})` : ""}: ${a.message}${a.isError ? "" : " (not an Error)"}`);
+    expect([...arrived].sort()).toEqual(
+      [
+        "deferred: deferred boom",
+        "timeout: timeout boom",
+        "interval (a native interval): interval boom",
+        "worker: drain boom",
+        "window.onMove: onMove boom",
+        "window.onResize: onResize boom",
+        "window.onClose: onClose boom",
+        "window.onFileDrop: onFileDrop boom",
+        "window.onNewTab: onNewTab boom",
+        "window.onTabSelect: onTabSelect boom",
+        "window.onTabClose: onTabClose boom",
+        "hitRegions.refine: refine boom",
+        "mouseHook: mouse hook boom",
+        "keyboardHook: keyboard hook boom",
+        "internal: dispose hook boom",
+        "tray.onClick: tray click boom",
+        "tray.onDoubleClick: tray double click boom",
+        "tray.menu: tray menu boom",
+        "menu.click: menu item boom",
+        "notifier.onClick: notification click boom",
+        "onOpenUrl: open url boom",
+        "singleInstance.onSecondInstance: second instance boom",
+      ].sort(),
+    );
+    expect(r.printedWithListener).toEqual([]);
+    expect(r.steps).toEqual({
+      intervalKeptItsSchedule: true,
+      closeRequestStillTaken: true,
+      mouseHookNotSwallowed: true,
+      keyboardHookNotSwallowed: true,
+      throwingMenuOpensNoMenu: true,
+      handedOff: 1,
+    });
+    expect(r.throwingListener).toEqual({
+      printed: ["sweetview: UI dispatch failed: deferred again boom", "sweetview: an onCallbackError handler threw: listener boom"],
+      nextListener: ["deferred: deferred again boom"],
+      recorded: ["deferred: deferred again boom"],
+    });
+    expect(r.nonError).toEqual([{ kind: "deferred", message: "a string", isError: true, cause: "a string" }]);
+    expect(r.printedWithoutListener).toEqual(["sweetview: UI dispatch failed: deferred without listener boom"]);
+    expect(r.arrivalsWithoutListener).toBe(0);
+    // The binding's own lines: none while Sweetview's sink was set; both when a raw sink threw; today's line once nothing is set.
+    expect(stderr.split(/\r?\n/).filter((line) => line.startsWith("sweetview:"))).toEqual([
+      "sweetview: a native interval threw: raw interval boom",
+      "sweetview: the callback error sink threw: raw sink boom",
+      "sweetview: a native interval threw: interval without listener",
+    ]);
+  }, 120_000);
+
+  for (const mode of ["exit-blocking", "exit-pumped"]) {
+    test(`a listener that calls process.exit(3) from inside a native callback ends the process with 3 (${mode === "exit-blocking" ? "the blocking loop" : "the loop pumped from a Bun timer"}), and the end of the application releases cleanly`, async () => {
+      const { stdout, stderr, exitCode } = await runFixture("callback-errors.ts", [mode]);
+      expect({ exitCode, result: stdout.includes("RESULT"), sweetviewLines: stderr.split(/\r?\n/).filter((line) => /sweetview|panic|error/i.test(line)) }).toEqual({ exitCode: 3, result: false, sweetviewLines: [] });
+    }, 60_000);
+  }
+});
