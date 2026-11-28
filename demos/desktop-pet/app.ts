@@ -198,9 +198,3 @@ const tray = createTray({
 notifier = createNotifier();
 
 petView.run();
-notifier.dispose();
-tray.dispose();
-settingsView.dispose();
-settingsWindow.dispose();
-overlay.dispose();
-process.exit(0);

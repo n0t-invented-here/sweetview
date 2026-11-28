@@ -92,7 +92,7 @@ const notifyChanges = (changes: FsChange[]) => {
   sendNotification(folder, body, true);
 };
 
-const tray = createTray({
+createTray({
   tooltip: APP_NAME,
   icon: TRAY_ICON,
   // A left click toggles the window (Windows: after the double-click interval, so a double click toggles once).
@@ -142,8 +142,3 @@ setAppMenu({
 
 app.window.show();
 app.run(); // blocks until Quit
-
-notifier.dispose();
-tray.dispose();
-app.dispose();
-process.exit(0);

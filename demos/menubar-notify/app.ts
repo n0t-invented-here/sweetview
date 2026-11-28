@@ -87,7 +87,7 @@ const app: App<Methods, Events> = await createApp<Methods, Events>({
   },
 });
 
-const tray = createTray({ tooltip: APP_NAME, icon: TRAY_ICON, menu: () => menu() });
+createTray({ tooltip: APP_NAME, icon: TRAY_ICON, menu: () => menu() });
 const notifier = createNotifier({
   onClick: ({ id, data }) => {
     const sentAt = (data as { sentAt?: string } | undefined)?.sentAt;
@@ -123,9 +123,4 @@ const menu = (): MenuTemplate => [
 
 logLine(`started; log at ${LOG_PATH}`);
 app.run(); // the OS loop, until Quit
-
 logLine("quit");
-notifier.dispose();
-tray.dispose();
-app.dispose();
-process.exit(0);
