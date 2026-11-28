@@ -6,7 +6,7 @@
 //! starts, so a webview can be mounted in any window the runtime makes.
 //!
 //! The process also keeps COM itself loaded for as long as it lives, whatever
-//! apartments come and go (D48). The `windows` crate caches every agile WinRT
+//! apartments come and go (D49). The `windows` crate caches every agile WinRT
 //! activation factory it loads in a process-wide static, for good
 //! (`FactoryCache` in `windows-core`): `UISettings` (the system theme),
 //! `ToastNotificationManager`. When the last apartment of the process is left,
@@ -152,7 +152,7 @@ mod tests {
     assert!(refused.is_some_and(|e| e.0.contains("multi-threaded")));
   }
 
-  /// R4 of D48's first review: what the process's MTA usage changes for another thread, as
+  /// R4 of D49's first review: what the process's MTA usage changes for another thread, as
   /// `CoIncrementMTAUsage` is documented to: once an apartment has been entered, a thread that
   /// never initialised COM reads as in the implicit MTA, where it read as not initialised.
   #[test]

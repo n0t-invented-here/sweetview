@@ -360,7 +360,7 @@ pub fn show(window: &impl NativeWindow, no_activate: bool, topmost: bool) {
 /// A window kept off the screen while it is shown (DWM's cloak, `DWMWA_CLOAK`): it is visible
 /// to itself and to what it holds, so a webview in it draws, and DWM puts none of it on the
 /// screen until this guard goes, which uncloaks it. Sweetview reveals a window this way when its
-/// page has to draw first (D48). Only a top-level window of this process can be cloaked.
+/// page has to draw first (D49). Only a top-level window of this process can be cloaked.
 pub struct Cloak {
   hwnd: HWND,
 }

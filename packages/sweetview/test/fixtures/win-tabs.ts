@@ -565,7 +565,7 @@ try {
   await until(() => user32.IsWindow(BigInt(last.handle!)) === 0, 2000);
   check("last tab: with no listener the window closes with it", user32.IsWindow(BigInt(last.handle!)) === 0 && only.webview.raw.unsafeHandle === null);
 
-  // ---- forcing the last tab closed with no listener: the window goes from the screen first (D48, R2) -----
+  // ---- forcing the last tab closed with no listener: the window goes from the screen first (D49, R2) -----
   for (const how of ["tab.dispose()", "tab.webview.dispose()"] as const) {
     const forced = make({ tabs: true });
     const tab = await WebView.openTab(forced, page("forced"));

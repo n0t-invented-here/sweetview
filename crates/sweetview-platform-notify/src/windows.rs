@@ -429,7 +429,7 @@ struct Toasts {
 impl Toasts {
   fn new(options: &NotifierOptions) -> Result<Self, NotifyError> {
     // `windows` caches the agile factories of the toast classes for the process; the notifier
-    // balances `RoInitialize` with `RoUninitialize`, so the process's hold keeps their DLLs (D48).
+    // balances `RoInitialize` with `RoUninitialize`, so the process's hold keeps their DLLs (D49).
     sweetview_platform_loop::hold_com_for_the_process();
     let ro = RoInit::new()?;
     let app_id = crate::toast_xml::app_id(options.app_id.as_deref());

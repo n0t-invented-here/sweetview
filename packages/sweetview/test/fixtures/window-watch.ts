@@ -12,7 +12,7 @@
 // It prints `WATCHING` once it runs, then writes one JSON line per sample to
 // `out.jsonl` and prints `DONE <samples>` when the process has gone (or after
 // `maxMs`, default 60 s). `summarize` reads such a file; the tests and the
-// measurement of decision D48 use it.
+// measurement of decision D49 use it.
 
 import { FFIType, JSCallback, dlopen, ptr } from "bun:ffi";
 import { writeFileSync } from "node:fs";
@@ -41,7 +41,7 @@ export type Sample = {
   /**
    * Whether the pixels read are this window's. A read of the screen waits for the next
    * composition, so what is known of the window just before it can be older than the pixels
-   * (D48). Before the read the window was visible and the OS named it (its root) as the window
+   * (D49). Before the read the window was visible and the OS named it (its root) as the window
    * at five points of its client area (the centre and four points near the corners); then:
    * still so after the read, the pixels are its own; gone from there after the read (hidden or
    * destroyed meanwhile), the same rectangle is read again once the window is off the screen,

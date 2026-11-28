@@ -1,6 +1,6 @@
 // A window is never seen with its webview gone and its client area empty, and
 // what shows where no page is painted is the window's backdrop, not white
-// (decision D48). Each test runs test/fixtures/quit-flash.ts in a process of
+// (decision D49). Each test runs test/fixtures/quit-flash.ts in a process of
 // its own, with a WebView2 profile of its own, and test/fixtures/window-watch.ts
 // in a second process, started before the window appears, which samples the
 // screen as fast as it can read it until the fixture has exited:
@@ -119,7 +119,7 @@ function explain(run: Watched, flagged: Sample[]): void {
 }
 
 /**
- * A run that could not judge what it was there to judge does not pass (R7 and S5 of D48's first
+ * A run that could not judge what it was there to judge does not pass (R7 and S5 of D49's first
  * review): a read that failed; a read of the window, visible before and after it, that was not
  * the window's with nothing over it (it moved, or showed the backstop); the window outside the
  * backstop. (Whether a presented frame went unread between two reads is not judged: on this
@@ -160,7 +160,7 @@ function expectEndedCleanly(run: Watched) {
   expect(run.stdout).toContain('"windowExists":false');
 }
 
-describe.if(process.platform === "win32")("a window on its way out (D48)", () => {
+describe.if(process.platform === "win32")("a window on its way out (D49)", () => {
   for (const mode of ["blocking", "pumped", "dispose", "window-dispose", "run-twice"]) {
     test(
       `${mode}: once its webview is gone, the window is never on the screen, and never flat and light`,
@@ -177,7 +177,7 @@ describe.if(process.platform === "win32")("a window on its way out (D48)", () =>
         expect(summary.lastOnScreen! <= summary.lastWebview!).toBe(true);
         if (mode === "run-twice") {
           // Hidden and alive right after the first run(), and shown again by the second with a
-          // view that does not use showOnReady (R8 of D48's first review).
+          // view that does not use showOnReady (R8 of D49's first review).
           expect(run.stdout).toContain('AFTER-FIRST {"visible":false,"alive":true,"listed":false}');
           expect(run.stdout).toContain('SECOND {"visible":true}');
         }

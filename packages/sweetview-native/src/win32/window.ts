@@ -97,7 +97,7 @@ function subscription<T>(register: (listener: ((value: T) => void) | null) => vo
 function wrap(native: NativeWindow, owned: boolean, tabbed = false): WindowBackend {
   let disposed = false;
   let ownerDispose: (() => void) | undefined;
-  // Set when the end of a blocking run() hid the window (D48); the application's own show(), hide() or toggle() clears it.
+  // Set when the end of a blocking run() hid the window (D49); the application's own show(), hide() or toggle() clears it.
   let hiddenAtRunEnd = false;
   const live = () => !disposed;
 

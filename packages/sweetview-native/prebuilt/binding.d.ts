@@ -331,7 +331,7 @@ export declare class Window {
   show(): void
   hide(): void
   /**
-   * Shows a hidden window off the screen until `uncloak`: the webviews in it draw first (D48).
+   * Shows a hidden window off the screen until `uncloak`: the webviews in it draw first (D49).
    * True when it is cloaked; false when it was shown at once or was already visible.
    */
   showCloaked(): boolean

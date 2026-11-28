@@ -20,7 +20,7 @@ fn alive(handle: isize) -> bool {
   BorrowedWindow::with_handle_value(handle, |_| ()).is_some()
 }
 
-/// D48: Sweetview's reveal shows a hidden window cloaked, visible to what it holds and off the
+/// D49: Sweetview's reveal shows a hidden window cloaked, visible to what it holds and off the
 /// screen, until `uncloak`. The application's own `show()` and `hide()` let the cloak go, and a
 /// window already visible is left as it is.
 #[test]

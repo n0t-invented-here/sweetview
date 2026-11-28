@@ -1,4 +1,4 @@
-// What a person sees of a window on its way out (decision D48): an
+// What a person sees of a window on its way out (decision D49): an
 // application in a process of its own shows a framed window with a dark page
 // (revealed on ready, topmost so the screen shows it), and then, by
 // SWEETVIEW_FLASH_TEST:

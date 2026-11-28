@@ -204,12 +204,12 @@ struct Core {
   /// the one further delivery of a change a listener made during the first.
   maximize_telling: Cell<u32>,
   /// What the window paints where no webview covers it (red, green, blue): its `backgroundColor`,
-  /// or with none its appearance's page colour (D48). `None` for a transparent window, a
+  /// or with none its appearance's page colour (D49). `None` for a transparent window, a
   /// colour-keyed one given no colour, and a tab frame (its `TabState` has its colours). A
   /// webview made in the window starts with it (`background_of`).
   background: Cell<Option<(u8, u8, u8)>>,
   /// Set while the window is shown and kept off the screen until its page has drawn
-  /// (`show_cloaked`, D48); `uncloak`, `show()` and `hide()` let it go.
+  /// (`show_cloaked`, D49); `uncloak`, `show()` and `hide()` let it go.
   cloak: RefCell<Option<platform::Cloak>>,
   icons: RefCell<Option<WindowIcons>>,
   /// Live wrappers of this window.
@@ -236,7 +236,7 @@ pub fn background_of(handle: isize) -> Option<(u8, u8, u8)> {
     return None;
   }
   match &core.tab {
-    // A tab frame's page colour: its `backgroundColor`, or its appearance's (D48).
+    // A tab frame's page colour: its `backgroundColor`, or its appearance's (D49).
     Some(tab) => {
       let (red, green, blue, _) = tab.backdrop();
       Some((red, green, blue))
@@ -560,7 +560,7 @@ impl Core {
     let tao = self.tao.borrow_mut().take();
     // A webview made in this window whose drop waits for a later turn (it was destroyed from
     // inside a webview callback) goes first: the window is hidden now and destroyed after it, by
-    // a job queued behind the webview's own (D48, R3 of its first review).
+    // a job queued behind the webview's own (D49, R3 of its first review).
     let tao = match tao {
       Some(tao) if crate::engine::drop_waits_in(self.handle) => match Runtime::existing() {
         Some(runtime) => {
@@ -757,7 +757,7 @@ impl Window {
     let tao = runtime.with_target(|target| builder.build(target))?.map_err(|e| Error::os("the window could not be made", e))?;
     // Where no webview covers it (before its page paints, or once its webview is gone) a window
     // shows its `backgroundColor`, or with none its appearance's page colour: never the white of a
-    // client area nothing paints (D48). A transparent window, and a colour-keyed one given no
+    // client area nothing paints (D49). A transparent window, and a colour-keyed one given no
     // colour, show through there instead, as they always have. Set here, on the window still
     // hidden, for `System` to read the theme `tao` gave it. A tab frame paints its own (`TabState`).
     let backdrop = if tabbed {
@@ -899,7 +899,7 @@ impl Window {
 
   /// Shows a hidden window cloaked (`platform::Cloak`): visible to the webviews in it, so they
   /// draw, and off the screen until `uncloak`. Sweetview's reveal of a window whose page has to
-  /// draw first (D48). True when it is cloaked; false when it was shown at once (DWM refused the
+  /// draw first (D49). True when it is cloaked; false when it was shown at once (DWM refused the
   /// cloak) or was already visible, which it leaves as it is.
   pub fn show_cloaked(&self) -> Result<bool> {
     if !self.live() || self.core.is_visible() {
@@ -1412,7 +1412,7 @@ fn destroy_undestroyed() {
 }
 
 /// Hides every visible window Sweetview made on this thread, so none is on the screen while the
-/// webviews in it go and before it is destroyed: the step of the end of the application before the webviews (D48).
+/// webviews in it go and before it is destroyed: the step of the end of the application before the webviews (D49).
 pub(crate) fn hide_all() {
   let cores: Vec<Rc<Core>> = WINDOWS.try_with(|w| w.borrow().values().cloned().collect()).unwrap_or_default();
   for core in cores {

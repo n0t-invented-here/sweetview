@@ -1,5 +1,5 @@
 // A window that closes is destroyed and what it held is given back (decision
-// D48): an application in a process of its own keeps a main window with a
+// D49): an application in a process of its own keeps a main window with a
 // webview open under runEventLoop, and opens and closes a second window with a
 // webview of its own many times (SWEETVIEW_RECLAIM_ROUNDS, default 30) by each
 // path, SWEETVIEW_RECLAIM_PATHS (comma-separated, default all):

@@ -231,7 +231,7 @@ function unlistTab(record: WinTabRecord): WinTabHost {
 /**
  * Hides the window when `record`, its last tab, is going and its default close will destroy
  * it (no `onClose` listener can keep it): the window leaves the screen before the page goes,
- * not after (D48, R2 of its first review).
+ * not after (D49, R2 of its first review).
  */
 function concealBeforeLastTabGoes(record: WinTabRecord): void {
   const host = record.window;
@@ -489,7 +489,7 @@ function showContextMenu(host: WinTabHost, record: WinTabRecord | undefined): vo
 function disposeHost(host: WinTabHost): void {
   if (host.closed) return;
   host.closed = true;
-  // Off the screen before its tabs' webviews and its strip go, then destroyed with them (D48).
+  // Off the screen before its tabs' webviews and its strip go, then destroyed with them (D49).
   if (!isWindowDisposed(host.window) && host.window.isVisible()) host.window.hide();
   hosts.delete(host.window);
   const idx = hostOrder.indexOf(host);
@@ -763,7 +763,7 @@ export const winTabsDriver: TabsDriver = {
       // Hidden until present() shows it as the selected tab.
       // A tab is a page of the frame: it starts with the tabbed window's backgroundColor, as the frame's page area shows.
       mountChild: () => ({ window: host.frame.hwnd, bounds: host.frame.pageRect(), visible: false, pageBackground: true }),
-      // The ready signal's reveal waits for the tab's page and the strip to draw (D48).
+      // The ready signal's reveal waits for the tab's page and the strip to draw (D49).
       revealWindow: (drawn, fallbackMs) => {
         const h = logicalHost();
         if (h.closed || isWindowDisposed(h.window) || h.window.isVisible()) return;

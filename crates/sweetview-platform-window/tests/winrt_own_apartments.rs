@@ -1,4 +1,4 @@
-//! S2 of D48's first review: a WinRT read that does not pass through `ComApartment` (a thread that
+//! S2 of D49's first review: a WinRT read that does not pass through `ComApartment` (a thread that
 //! entered its apartment itself, as a host, `tao` or WebView2 can) is safe too. Two threads one
 //! after the other each enter a single-threaded apartment with `CoInitializeEx`, read the system
 //! theme and the double-click time (WinRT's `UISettings`), and leave. Before the hold was taken by

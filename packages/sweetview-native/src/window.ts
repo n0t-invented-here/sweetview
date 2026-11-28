@@ -199,14 +199,14 @@ export interface WindowBackend {
   /** Internal: whether an `onClose` listener is registered, so a close request would not destroy the window. */
   hasCloseListeners?(): boolean;
   /**
-   * Internal, for the end of a blocking `run()` (D48): hides the window and marks it hidden by
+   * Internal, for the end of a blocking `run()` (D49): hides the window and marks it hidden by
    * Sweetview. Any `show()`, `hide()` or `toggle()` of the application's own clears the mark.
    */
   hideAtRunEnd?(): void;
   /** Internal: whether the mark of `hideAtRunEnd` is still there, nothing else having shown or hidden the window since; clears it. */
   takeHiddenAtRunEnd?(): boolean;
   /**
-   * Internal, for Sweetview's reveal of a window whose page has to draw first (D48): shows a
+   * Internal, for Sweetview's reveal of a window whose page has to draw first (D49): shows a
    * hidden window off the screen (DWM's cloak), visible to its webviews so they draw, until
    * `uncloak`. True when it is cloaked; false when it was shown at once or was already visible.
    * An application's own `show()` or `hide()` lets the cloak go.
@@ -348,7 +348,7 @@ export function holdWindowNativeDispose(win: Window): () => void {
 
 /**
  * Hides a visible window this process made, as the first instant of its teardown, so no window
- * is on the screen with its webview gone and its client area empty (D48): its webviews and the
+ * is on the screen with its webview gone and its client area empty (D49): its webviews and the
  * window are destroyed right after. A failure is logged and the teardown goes on.
  */
 function concealWindow(win: Window): boolean {
@@ -492,7 +492,7 @@ export class Window {
     windowBackendMap.set(this, this.#inner);
     windowTabListeners.set(this, this.#tabListeners);
     // Disposed when the application ends, after its webviews and trays; hidden before any of
-    // them goes, so no window is seen with its webview gone (D48).
+    // them goes, so no window is seen with its webview gone (D49).
     this.#unregister = releaseAtEnd("window", () => this.dispose());
     this.#unregisterConceal = releaseAtEnd("conceal", () => void concealWindow(this));
   }
@@ -671,7 +671,7 @@ export class Window {
   dispose(): void {
     if (windowDisposed.has(this)) return;
     // Off the screen first, then its webviews (the dispose hooks), then the window: never a
-    // window on the screen with its webview gone and its client area empty (D48).
+    // window on the screen with its webview gone and its client area empty (D49).
     concealWindow(this);
     windowDisposed.add(this);
     this.#unregister();
