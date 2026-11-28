@@ -21,7 +21,8 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
   KEYEVENTF_KEYUP, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEINPUT, VIRTUAL_KEY, VK_LBUTTON, VK_MBUTTON, VK_RBUTTON,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-  AppendMenuW, BringWindowToTop, GetClientRect, GetGUIThreadInfo, GetWindowTextW, SendMessageW, GUITHREADINFO, GUI_INMOVESIZE, MINMAXINFO,
+  AppendMenuW, BringWindowToTop, GetClientRect, GetMenuItemCount, GetMenuItemID, GetMenuItemInfoW, GetMenuItemRect, GetMenuState,
+  GetMenuStringW, GetSubMenu, IsMenu, RegisterWindowMessageW, MENUITEMINFOW, MF_BYPOSITION, MIIM_BITMAP, TPM_RIGHTBUTTON, GetGUIThreadInfo, GetWindowTextW, SendMessageW, GUITHREADINFO, GUI_INMOVESIZE, MINMAXINFO,
   WM_DROPFILES, WM_GETMINMAXINFO, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DestroyWindow, FindWindowExW,
   FindWindowW, GetCursorPos, GetForegroundWindow, GetIconInfo, GetWindowThreadProcessId, IsWindowVisible, MessageBoxW, PostMessageW,
   RegisterClassW, SetCursorPos, SetForegroundWindow, SetWindowPos, TrackPopupMenu, WindowFromPoint, HICON, HMENU, HWND_TOPMOST, ICONINFO,
@@ -127,30 +128,6 @@ pub fn window_titled(title: &str) -> isize {
 pub fn window_at(x: i32, y: i32) -> isize {
   // SAFETY: the point is passed by value.
   unsafe { WindowFromPoint(POINT { x, y }) }.0 as isize
-}
-
-/// How many visible popup menu windows this process has: open menus, the application's own or
-/// Sweetview's.
-pub fn popup_menus_open() -> usize {
-  // SAFETY: takes nothing and reads no memory.
-  let process = unsafe { GetCurrentProcessId() };
-  let mut open = 0;
-  let mut after: Option<HWND> = None;
-  loop {
-    // SAFETY: the class name is a static wide string and no window name is passed; `after` is
-    // none or a handle value the previous call returned, which the OS validates.
-    let found = unsafe { FindWindowExW(None, after, w!("#32768"), PCWSTR::null()) };
-    let Ok(menu) = found else { break };
-    let mut owner = 0u32;
-    // SAFETY: `menu` is a handle value the OS just returned and validates again; `owner` is a u32
-    // owned by this frame for the call to fill.
-    let _thread = unsafe { GetWindowThreadProcessId(menu, Some(&mut owner)) };
-    // SAFETY: as above, the OS validates the handle value.
-    let visible = unsafe { IsWindowVisible(menu) }.as_bool();
-    open += usize::from(owner == process && visible);
-    after = Some(menu);
-  }
-  open
 }
 
 // ---- input ---------------------------------------------------------------------------
@@ -504,4 +481,149 @@ pub fn send_file_drop(window: isize, paths: &[&str]) -> bool {
   // names no block; nothing of ours is read or written.
   let size = unsafe { GlobalSize(drop) };
   size == 0
+}
+
+// ---- menus ---------------------------------------------------------------------------
+
+/// The visible popup menu windows (`#32768`) of this process, by handle value.
+fn popup_menu_windows() -> Vec<isize> {
+  // SAFETY: takes nothing and reads no memory.
+  let process = unsafe { GetCurrentProcessId() };
+  let mut open = Vec::new();
+  let mut after: Option<HWND> = None;
+  loop {
+    // SAFETY: the class name is a static wide string and no window name is passed; `after` is
+    // none or a handle value the previous call returned, which the OS validates.
+    let found = unsafe { FindWindowExW(None, after, w!("#32768"), PCWSTR::null()) };
+    let Ok(menu) = found else { break };
+    let mut owner = 0u32;
+    // SAFETY: `menu` is a handle value the OS just returned and validates again; `owner` is a u32
+    // owned by this frame for the call to fill.
+    let _thread = unsafe { GetWindowThreadProcessId(menu, Some(&mut owner)) };
+    // SAFETY: as above, the OS validates the handle value.
+    let visible = unsafe { IsWindowVisible(menu) }.as_bool();
+    if owner == process && visible {
+      open.push(menu.0 as isize);
+    }
+    after = Some(menu);
+  }
+  open
+}
+
+/// How many visible popup menu windows this process has: open menus, the application's own or
+/// Sweetview's.
+pub fn popup_menus_open() -> usize {
+  popup_menu_windows().len()
+}
+
+/// The handle value of a visible popup menu window of this process; 0 when none is open.
+pub fn open_popup_menu() -> isize {
+  popup_menu_windows().first().copied().unwrap_or(0)
+}
+
+/// The menu a popup menu window shows (`MN_GETHMENU`), as a handle value.
+pub fn menu_of_window(menu_window: isize) -> isize {
+  send(menu_window, 0x01e1, 0, 0)
+}
+
+fn hmenu_of(menu: isize) -> HMENU {
+  HMENU(menu as *mut c_void)
+}
+
+/// One entry of a menu as the OS holds it.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct MenuEntry {
+  pub label: String,
+  pub separator: bool,
+  pub checked: bool,
+  pub disabled: bool,
+  /// The item draws a bitmap of its own (`hbmpItem`): an icon.
+  pub has_bitmap: bool,
+  pub submenu: Option<Vec<MenuEntry>>,
+}
+
+/// Reads a menu back from the OS: what each entry shows and its state, submenus included.
+pub fn read_menu(menu: isize) -> Vec<MenuEntry> {
+  let hmenu = hmenu_of(menu);
+  // SAFETY: the OS validates the handle value; -1 for one that names no menu.
+  let count = unsafe { GetMenuItemCount(Some(hmenu)) };
+  (0..u32::try_from(count).unwrap_or(0))
+    .map(|position| {
+      // SAFETY: as above; the position is one the count covers.
+      let state = unsafe { GetMenuState(hmenu, position, MF_BYPOSITION) };
+      let mut text = [0u16; 256];
+      // SAFETY: `text` is a buffer owned by this frame for the call; its length comes from the slice.
+      let length = unsafe { GetMenuStringW(hmenu, position, Some(&mut text), MF_BYPOSITION) };
+      let mut info = MENUITEMINFOW { cbSize: size_of::<MENUITEMINFOW>() as u32, fMask: MIIM_BITMAP, ..Default::default() };
+      // SAFETY: `info` is a MENUITEMINFOW owned by this frame for the call, its size set.
+      let _read = unsafe { GetMenuItemInfoW(hmenu, position, true, &mut info) };
+      // SAFETY: as above; a null handle for an item with no submenu.
+      let sub = unsafe { GetSubMenu(hmenu, position as i32) };
+      MenuEntry {
+        label: String::from_utf16_lossy(&text[..usize::try_from(length).unwrap_or(0)]),
+        separator: state & 0x800 != 0,
+        checked: state & 0x8 != 0,
+        disabled: state & 0x3 != 0,
+        has_bitmap: !info.hbmpItem.is_invalid(),
+        submenu: (!sub.is_invalid()).then(|| read_menu(sub.0 as isize)),
+      }
+    })
+    .collect()
+}
+
+/// Posts key presses to a popup menu window, which its menu loop takes as the keyboard.
+pub fn press_keys(menu_window: isize, keys: &[u16]) {
+  for &key in keys {
+    post(menu_window, 0x0100, usize::from(key), 1); // WM_KEYDOWN
+  }
+}
+
+/// The screen rectangle (left, top, right, bottom) of the item at `position` of `menu`, while a
+/// popup menu window shows it.
+pub fn menu_item_rect(menu: isize, position: u32) -> Option<(i32, i32, i32, i32)> {
+  let mut rect = RECT::default();
+  // SAFETY: `rect` is a RECT owned by this frame for the call to fill; the OS validates the menu.
+  unsafe { GetMenuItemRect(None, hmenu_of(menu), position, &mut rect) }.ok()?;
+  Some((rect.left, rect.top, rect.right, rect.bottom))
+}
+
+/// The command id the OS keeps for the item at `position` of `menu` (`u32::MAX` for a submenu).
+pub fn menu_item_id(menu: isize, position: i32) -> u32 {
+  // SAFETY: the OS validates the menu handle value and the position.
+  unsafe { GetMenuItemID(hmenu_of(menu), position) }
+}
+
+/// The submenu at `position` of `menu`, as a handle value; 0 when there is none.
+pub fn sub_menu(menu: isize, position: i32) -> isize {
+  // SAFETY: the OS validates the menu handle value and the position.
+  unsafe { GetSubMenu(hmenu_of(menu), position) }.0 as isize
+}
+
+/// Whether `menu` names a live menu.
+pub fn is_menu(menu: isize) -> bool {
+  // SAFETY: the OS validates the handle value.
+  unsafe { IsMenu(hmenu_of(menu)) }.as_bool()
+}
+
+/// Tracks `menu` owned by the window with handle value `owner` at a point, as an application's own
+/// `TrackPopupMenu` with `TPM_RETURNCMD | TPM_RIGHTBUTTON` does, and returns the chosen command id
+/// (0 when dismissed).
+pub fn track_menu(menu: isize, x: i32, y: i32, owner: isize) -> i32 {
+  // SAFETY: the OS validates the menu and the owner's handle values; no rectangle is passed.
+  unsafe { TrackPopupMenu(hmenu_of(menu), TPM_RETURNCMD | TPM_RIGHTBUTTON, x, y, None, hwnd_of(owner), None) }.0
+}
+
+/// Presses or releases the right mouse button where the pointer is, as real input.
+pub fn send_right_button(down: bool) -> bool {
+  use windows::Win32::UI::Input::KeyboardAndMouse::{MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP};
+  let flags = if down { MOUSEEVENTF_RIGHTDOWN } else { MOUSEEVENTF_RIGHTUP };
+  let mi = MOUSEINPUT { dx: 0, dy: 0, mouseData: 0, dwFlags: flags, time: 0, dwExtraInfo: 0 };
+  send_input(&[INPUT { r#type: INPUT_MOUSE, Anonymous: INPUT_0 { mi } }])
+}
+
+/// The number the OS gives a registered window message, as Explorer broadcasts `TaskbarCreated`.
+pub fn registered_message(name: &str) -> u32 {
+  let name = HSTRING::from(name);
+  // SAFETY: `name` is a NUL-terminated wide string owned by this frame for the call.
+  unsafe { RegisterWindowMessageW(&name) }
 }

@@ -604,7 +604,7 @@ export type ShellIcon =
  * only when the shared desktop's mouse is free; otherwise the answer is `{ skip }`.
  */
 export async function trayFromShell(tooltip: string): Promise<ShellIcon> {
-  const script = fileURLToPath(new URL("./tray-shell.ps1", import.meta.url));
+  const script = fileURLToPath(new URL("../../../crates/sweetview-runtime/src/tray-shell.ps1", import.meta.url));
   const child = Bun.spawn(["pwsh", "-NoProfile", "-NonInteractive", "-File", script, "-Tooltip", tooltip], { stdout: "pipe", stderr: "pipe" });
   // A last resort only: the script releases every button it presses in a `finally`, which a kill would skip.
   const killer = setTimeout(() => child.kill(), 120_000);
