@@ -697,12 +697,10 @@ the shared ring to the native response without collecting the whole body in
 the worker or UI thread. A macOS library with request interception but
 without streaming symbols buffers on the UI thread and completes the request
 once. What the page then gets differs by engine. WKWebView hands it each
-chunk as it is written. On Windows the page gets the whole response at once,
-when the stream ends: WebView2 takes each chunk from Sweetview as it is
-written and keeps it, and the page's `fetch()` does not resolve before the
-end. The C++ library behaved the same, and Microsoft documents it
-(`ICoreWebView2WebResourceResponse` content must be complete when the
-request's deferral completes). For real-time SSE-style updates and other desktop
+chunk as it is written. On Windows, in every case measured (WebView2 Runtime
+158, small text chunks and a 24 MiB body), the page got the whole response
+when the stream ended and nothing before, as under the C++ library
+([the webview](webview-library.md#streaming-responses)). For real-time SSE-style updates and other desktop
 push, use Sweetview IPC events (`emit` and `onEvent`, or `bridge.on` in the
 page). [WebView2 Feedback #3519](https://github.com/MicrosoftEdge/WebView2Feedback/issues/3519).
 

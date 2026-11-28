@@ -152,8 +152,13 @@ this page: it imports each new form and checks that it is what the row says.
   `app-region` (`-webkit-app-region: drag`, from a stylesheet written for
   another shell) does nothing, so such an area gets its mouse events and does
   not drag the window: drag a frameless window with `Window.startDrag`
-  ([window chrome](window-chrome.md)). Sweetview has no option to change any of
-  these yet; zoom cannot be turned off for an application-like page.
+  ([window chrome](window-chrome.md)). A webview made in a window the
+  application gives it does not take the keyboard focus; a page's
+  `window.close()` does nothing; a download shows WebView2's own download
+  interface and goes to the user's downloads folder; making a webview leaves
+  the profile's autofill preference as it was ([page behaviour](webview-library.md#page-behaviour)).
+  Sweetview has no option to change any of these yet; zoom cannot be turned
+  off for an application-like page.
 - **Your own `bun:ffi` calls keep working.** An application's own `dlopen`
   tables, including its own modal dialogs and popup menus, run inside
   Sweetview's event loop in both of its modes (the blocking `run()` and the

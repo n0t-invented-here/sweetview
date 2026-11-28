@@ -209,52 +209,40 @@ Twenty-eight places.
 
 ### 6
 
-Done, on branch `rust-rewrite-fix-webview-behaviour` (DECISIONS D45). The table, read back from WebView2 by `crates/sweetview-platform-webview/tests/settings.rs` on WebView2 Runtime 158.0.4370.45. "Old" is what the C++ library had: it set the developer tools from `debug` and the status bar off (`win32_edge.hh` of `sweetview-webview`, branch `v1-drafting`, lines 1909-1923), and left the rest at WebView2's defaults.
+Done, on branch `rust-rewrite-fix-webview-behaviour` (DECISIONS D45), after two adversarial reviews. "Old" is the C++ library (`sweetview-webview`, branch `v1-drafting`, `win32_edge.hh`): it set the developer tools from `debug` and the status bar off (lines 1909 to 1923) and left the rest at WebView2's defaults. Each row is read back from WebView2, on Runtime 158.0.4370.45, for webviews made through `Engine::create` in a window of the engine's own, a given window and a child (`crates/sweetview-runtime/src/engine_tests.rs`); the middle column from a webview `wry` builds with nothing set (`crates/sweetview-platform-webview/tests/settings.rs`).
 
-| Setting | Old (C++ library) | Before this change (`wry` 0.58.2) | Now |
+| Setting or behaviour | Old (C++ library) | `wry` 0.58.2 alone | Now |
 |---|---|---|---|
 | Zoom: Ctrl+wheel, Ctrl+plus/minus/0 (`IsZoomControlEnabled`) | on | **off** | on |
 | Pinch zoom (`IsPinchZoomEnabled`) | on | **off** | on |
 | Swipe back and forward (`IsSwipeNavigationEnabled`) | on | **off** | on |
 | Status bar on link hover (`IsStatusBarEnabled`) | off | off | off |
 | CSS `app-region` (`IsNonClientRegionSupportEnabled`) | off | **on** | off |
-| Default context menus | on | on | on |
+| General autofill (one preference for the profile) | left as the profile had it | **written on, on every build** | left as the profile has it (except the first webview of a process) |
+| Focus when a webview is made | only in a window the library made | **every webview** | only in a window the engine makes |
+| A page's `window.close()` | nothing | **the webview's window destroyed** | nothing |
+| A download | WebView2's own interface | **marked handled: no interface** | WebView2's own interface |
+| Default context menus, browser keys, script dialogs, built-in error page, script, web messages, host objects, SmartScreen | on | on | on |
+| Password autosave | off | off | off |
 | Developer tools | `debug` | `debug` | `debug` |
-| Browser accelerator keys (Ctrl+F, Ctrl+P, F5) | on | on | on |
-| Built-in error page, script dialogs, script, web messages, host objects | on | on | on |
-| General autofill / password autosave | on / off | on / off | on / off |
-| SmartScreen (`IsReputationCheckingRequired`) | on | on | on |
-| User agent | WebView2's | WebView2's | WebView2's |
-| Environment options | none | none (the project creates the environment, D15) | none |
+| User agent, environment options | WebView2's, none | WebView2's, `wry`'s arguments (not used: D15) | WebView2's, none |
 
-Zoom, pinch and swipe go back through `wry`'s own builder options (`with_page_behaviour`); `app-region` through `ICoreWebView2Settings9` in `WebviewExtras::attach` (2 new `unsafe` blocks, in the ledger). The status bar stays off, as the C++ library set it. `app-region` on can bite, and the real-input run below shows it: a page with `-webkit-app-region: drag` in a stylesheet shared with another shell (Electron reads the same property) drags the window and loses that area's mouse events, and a page that never uses it gains nothing; so it is off, as it was.
+Zoom, pinch and swipe go back through `wry`'s own builder options (`with_page_behaviour`), the focus through `wry`'s `with_focused`, autofill through `wry`'s `with_general_autofill_enabled` with the value read from the profile; `app-region` through `ICoreWebView2Settings9`, the download through a `DownloadStarting` handler after `wry`'s, and `window.close()` through a document script, because `wry` has no option for those. `app-region` on can bite, as the real-input run shows: on a webview `wry` built alone, a press on a `-webkit-app-region: drag` area moved the window by (82, 2) and the page saw no `mousedown`.
 
-What an application cannot choose today (no public option): zoom on or off (an application-like page usually wants it off), pinch zoom, swipe navigation, the status bar on, the browser's context menu, the browser's keys, `app-region` on, autofill and password saving, the user agent. The developer tools follow `debug`.
+What an application cannot choose today (no public option): zoom on or off (an application-like page usually wants it off), pinch zoom, swipe navigation, the status bar on, the browser's context menu, the browser's keys, `app-region` on, autofill and password saving, the user agent, downloads. The developer tools follow `debug`.
 
 `docs/upgrading.md` ("The page behaves as it did") and `docs/webview-library.md` ("Page behaviour") say this.
 
-Real input (`crates/sweetview-platform-webview/tests/real_input.rs`, run with `--ignored`; the mouse and keyboard injected with `SendInput` by `rust-rewrite/checks/webview-real-input.ps1`, so they travel through the OS input queue; under the shared desktop's input lock), on a webview built as the runtime builds it:
-
-| Step | Seen |
-|---|---|
-| Ctrl+wheel one notch up over the page | `ZoomFactor` 1 to 1.1; the page's `devicePixelRatio` 1 to 1.1, `innerWidth` 480 to 436 |
-| Ctrl+0, Ctrl+plus, Ctrl+0 | `ZoomFactor` 1, 1.1, 1; the page resized each time |
-| A press on a `-webkit-app-region: drag` area, moved 80 px, released | the page got the `mousedown`; the window did not move (0, 0) |
-| An HTML drag of a `draggable` element onto a drop zone in the page, with the file drop handler set | the page got `dragstart` and `drop` with its `text/plain` data; no file was involved |
-
-The same steps on a webview `wry` built on its own: the press on the `app-region` area moved the window by (82, 2) and the page got no `mousedown`; Ctrl+wheel left `ZoomFactor` at 1 and the page unchanged. That is the behaviour change the fix removes.
-
 ### 7
 
-Measured, then changed, on WebView2 Runtime 158.0.4370.45 (`crates/sweetview-platform-webview/tests/streaming.rs`, `packages/sweetview/src/request-handler.test.ts` "pace"):
+The answer, after two adversarial reviews: on Windows a streamed response reaches the page whole, when it ends, as it did under the C++ library. The rewrite lost nothing, and the contract is the C++ library's again.
 
-- Before: WebView2 calls `Read` for 32 KiB; `Read` waited for 32 KiB or the end, so a 10-byte chunk stayed in the binding; the page's reader got nothing while the response was open (UI thread and another thread alike) and everything at the end.
-- Now: `Read` returns what is there at once (`S_OK` short read, `S_FALSE` only at the end), and WebView2 takes a 10-byte chunk within 35 µs. The page still gets nothing before the end: `fetch()` itself does not resolve until `Read` returns `S_FALSE`, with `text/event-stream`, `Transfer-Encoding: chunked` or a `Content-Length` alike, and the first byte of a 24 MiB body arrives after the end. WebView2 keeps an intercepted response until EOF (WebView2Feedback #3519, which the docs already named), so real streaming is disproved for this path; no `Read` can fix it. The live tests assert this as measured, and fail if a runtime starts streaming.
-- Same as before the rewrite: the C++ library's `Read` blocked until full, its docs say the page receives the body at `webview_end_response`, and its bindings' live test asserts on win32 that the page cannot acknowledge an event before the next is written. Microsoft's `ICoreWebView2WebResourceResponse` reference requires all content to be available when the request's deferral completes and offers no incremental delivery. The rewrite lost nothing; `docs/` now says exactly what an application gets.
-- The bound: 1 MiB unread makes a response backlogged until it is down to 512 KiB. A writer on any thread but the UI thread waits for room (condition variable, no spinning; released by reading, the end, the page letting go, teardown). The UI thread never waits, and Sweetview's worker path writes there. Measured: at most 1,048,695 bytes held by the binding for a 24 MiB fast writer, every byte in order. What is not bounded is WebView2's own copy: the whole body waits in WebView2 until the end, so an endless or huge streamed body on Windows grows WebView2's memory.
-- The old contract kept: `writeResponseChunk` still copies and returns `0` for a live chunk, never drops or reorders one; it now may wait off the UI thread.
+- The C++ library: its `Read` filled the buffer WebView2 asked for (copying what was there, then waiting for the rest) or returned what was left at the end; its `writeResponseChunk` copied and returned; its docs say the page receives the body at `webview_end_response`; its bindings' live test asserts on Windows that the page never acknowledged an event before the next was written and that its first event came at or after the last write.
+- Measured here, on WebView2 Runtime 158.0.4370.45 (`crates/sweetview-platform-webview/tests/streaming.rs`, the app-level "pace" test): for 10-byte text chunks (sent as `text/plain`, `text/event-stream`, with `Transfer-Encoding: chunked` and with a `Content-Length`) and a 24 MiB `application/octet-stream` body, from the UI thread or another thread, the page's `fetch()` did not resolve and its reader got no byte before the end; every byte arrived, in order, after it. A `Read` that returned each chunk at once (7f543ab) did no better, and it broke the `ISequentialStream` contract, so it was taken back.
+- Microsoft's `ICoreWebView2WebResourceResponse` reference requires the stream to have all its content available when the deferral completes; it says nothing of when the page gets the bytes (WebView2Feedback #3519).
+- The bound the audit asked for: the C++ library had none, and a first version that held writers off the UI thread could park a worker for good, so it was taken out (7f543ab, 3513b39, fc9b472). A bound is listed for the owner: a writer on the UI thread, Sweetview's worker path included, has no signal to pace itself by.
 
-What streaming guarantees is in D45 and `docs/webview-library.md` "Streaming responses". Real-time push on Windows stays IPC events. A writer on the UI thread, Sweetview's own worker path included, has no way to pace itself: listed for the owner.
+What streaming guarantees is in D45 and `docs/webview-library.md` "Streaming responses". Real-time push on Windows stays IPC events.
 
 ### 11
 
@@ -270,4 +258,4 @@ One predicate, `macosKeepsTagPath()` in `packages/sweetview-native/src/platform.
 
 ### 13, the Explorer drop (this branch's part)
 
-Driven for real: an Explorer window opened on a scratch folder with one file, its item found through UI Automation, the left button pressed on the icon, the cursor moved in 40 steps onto the Sweetview webview in another process, the button released, all with `SendInput`. OLE drag and drop ran between the two processes: the file drop handler received exactly the file's real path (`...\sweetview-real-drop-<pid>\sweetview real drop.txt`), once. The Explorer window was closed afterwards. Not driven: a drop onto a part of a native window that the webview does not cover (`Window.onFileDrop` through `WM_DROPFILES`): in this test the webview fills the window.
+See the real-input run below (`engine_tests::real_input`).

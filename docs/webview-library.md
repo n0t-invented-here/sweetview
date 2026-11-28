@@ -227,30 +227,29 @@ webview_error_t webview_end_response(webview_t w, uint64_t request_id);
 - macOS calls the `WKURLSchemeTask` with the response head, successive
   `didReceiveData:` calls and `didFinish`, so the page receives bytes as
   they arrive. Frames for a stopped task are discarded.
-- Windows hands WebView2 an `IStream` that holds unread bytes in the
-  binding. Its `Read` waits only while nothing is unread and returns what
-  there is at once (a short read), so WebView2 takes each chunk as it is
-  written. WebView2 then keeps the whole body itself and gives the response
-  to the page only once the stream has ended: the page's `fetch()` does not
-  even resolve before that, and an `EventSource` gets every event at the end
-  (measured on WebView2 Runtime 158; the tests fail if a later runtime hands
-  the page bytes sooner). Microsoft documents this: the content of an
-  `ICoreWebView2WebResourceResponse` "must have all the content data
-  available by the time the `WebResourceRequested` event deferral of this
-  response is completed". The C++ library's `Read` waited for WebView2's
-  whole 32 KiB buffer instead, with the same result at the page, which its
-  own live test asserted. So a streamed response arrives all at once, and a
-  large or endless one grows WebView2's memory until it ends. Use IPC events
-  for real-time desktop push.
-  [WebView2 Feedback #3519](https://github.com/MicrosoftEdge/WebView2Feedback/issues/3519).
-- Windows bounds what the binding holds: a response with 1 MiB unread is
-  backlogged until it is read down to 512 KiB. While it is, a
-  `webview_write_response_chunk` (`writeResponseChunk`) on any thread but
-  the UI thread waits for room, so that writer never has more than 1 MiB and
-  one chunk unread, and nothing is dropped or reordered; one on the UI thread
-  never waits (Sweetview's own worker path writes there). With WebView2
-  taking every chunk at once, the limit is seldom reached: a 24 MiB body
-  written as fast as possible kept at most 1 MiB in the binding.
+- Windows hands WebView2 an `IStream` over the bytes the binding keeps.
+  `webview_write_response_chunk` (`writeResponseChunk`) copies the chunk and
+  returns at once, on any thread, however far behind the reader is. `Read`
+  fills the buffer WebView2 asks for (32 KiB in the measured runtime),
+  copying what is there and waiting for the rest, or returns what is left
+  with `S_FALSE` at the end, as the C++ library's did.
+- What the page gets before the end, measured on WebView2 Runtime
+  158.0.4370.45: nothing. For a body of 10-byte text chunks (sent as
+  `text/plain`, as `text/event-stream`, with `Transfer-Encoding: chunked`
+  and with a `Content-Length`) and for a 24 MiB `application/octet-stream`
+  body, the page's `fetch()` did not resolve and its reader got no byte
+  until the response had ended, written from the UI thread or from another
+  thread; a `Read` that returned each chunk at once did no better (tried
+  and taken back). The C++ library's own live test showed the same on
+  Windows: the page never acknowledged an event before the next was
+  written, and its first event came at or after the last write. Microsoft's
+  reference requires the response stream to have all its content available
+  when the request's deferral completes, and says nothing of when the page
+  gets it ([WebView2 Feedback #3519](https://github.com/MicrosoftEdge/WebView2Feedback/issues/3519)).
+  The live tests fail if a runtime starts handing the page bytes sooner.
+  So on Windows a streamed response reaches the page whole, when it ends:
+  use IPC events for real-time desktop push, and do not stream a body that
+  never ends.
 
 ### External drops
 
@@ -320,7 +319,8 @@ tests read each one back from WebView2. The result is the C++ library's:
 | Back and forward by a horizontal swipe (`IsSwipeNavigationEnabled`) | on | off | on |
 | The status bar: a link's address while the pointer is over it (`IsStatusBarEnabled`; WebView2's default is on) | off | off | off |
 | CSS `app-region` (`IsNonClientRegionSupportEnabled`) | off | on | off |
-| The browser's context menu, its keys (Ctrl+F, Ctrl+P, F5), autofill, script dialogs, the built-in error page, host objects, web messages, SmartScreen (`IsReputationCheckingRequired`) | on | on | on |
+| The browser's context menu, its keys (Ctrl+F, Ctrl+P, F5), script dialogs, the built-in error page, host objects, web messages, SmartScreen (`IsReputationCheckingRequired`) | on | on | on |
+| General autofill (`IsGeneralAutofillEnabled`, one preference for the whole profile) | left as the profile has it (on unless changed) | set on, on every webview made | left as the profile has it |
 | Saving passwords (`IsPasswordAutosaveEnabled`) | off | off | off |
 | The developer tools (`AreDevToolsEnabled`) | `debug` | `debug` | `debug` |
 
@@ -331,6 +331,28 @@ The environment is created as the C++ library created it, with no options
 drag the window here and take that area's mouse events from the page, so it
 stays off; a frameless window is dragged with `Window.startDrag`. No option
 changes any of these yet.
+
+Three more things `wry` does when it makes a webview, each put back to the
+C++ library's behaviour, and each tested through `Engine::create` for a
+window of the engine's own, a given window and a child:
+
+- Focus: `wry` moves the keyboard focus into every webview it makes. The
+  C++ library did that only for a window it made itself, so a webview made
+  in a given window, or beside a native control that has the focus, leaves
+  the focus where it was.
+- A page's `window.close()`: `wry` destroys the webview's container window
+  when WebView2 reports the request, which left the window empty. The C++
+  library did not handle the request, so nothing happened; a document
+  script now keeps `window.close()` from making it, in every frame.
+- Downloads: `wry` marks every download handled, which keeps it out of
+  WebView2's own download interface. The C++ library never handled
+  downloads, so WebView2 showed its interface and saved to the user's
+  downloads folder; it does again.
+
+One exception: the first webview a process makes is built with `wry`'s
+value for general autofill, on, because `wry` writes it before anything can
+be read from the profile. Whether WebView2 keeps that preference in the
+profile from one process to the next was not measured.
 
 ### Teardown
 

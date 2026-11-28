@@ -206,12 +206,12 @@ response with the bytes already sent. With a macOS library that only has
 `webview_complete_request`, the UI thread buffers the body and answers 500 on
 reader failure. Disposal discards partial responses.
 
-WKWebView hands streamed bytes to the page as they arrive. On Windows the
-page gets the whole response at once, when the stream ends: WebView2 takes
-each chunk as it is written and keeps it until then, as it did under the C++
-library. So for real-time push on Windows use IPC events (`emit` in the
-Service, `bridge.on` in the page), and do not stream an endless body there:
-it waits in WebView2's memory ([the webview](webview-library.md#streaming-responses)).
+WKWebView hands streamed bytes to the page as they arrive. On Windows, in
+every case measured, the page got the whole response when the stream ended
+and nothing before, as under the C++ library
+([the webview](webview-library.md#streaming-responses)). So for real-time
+push on Windows use IPC events (`emit` in the Service, `bridge.on` in the
+page), and do not stream a body that never ends there.
 [WebView2 Feedback #3519](https://github.com/MicrosoftEdge/WebView2Feedback/issues/3519).
 
 ## writeWorkerFrame
