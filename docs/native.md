@@ -85,9 +85,10 @@ module runs, it throws `sweetview: this call must be made on the UI thread`.
 
 - With no listener set, Sweetview does what it always did: the
   `console.error` line in the table below.
-- With a listener set, the listener is called in place of that line. The
-  callback's fallback still applies: a hook lets the event through, a menu
-  function that throws opens no menu, a close request is still taken.
+- With a listener set, the listener is called in place of that line, and
+  before the callback's fallback, which still applies: a hook lets the event
+  through, a menu function that throws opens no menu, a close request is
+  still taken.
 - A listener that throws never takes the application down: Sweetview
   catches it, prints its own line for the original error and
   `sweetview: an onCallbackError handler threw:` for the listener's, and
