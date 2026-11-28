@@ -115,8 +115,10 @@ pub struct Chrome {
 pub enum WindowEvent {
   /// The window's outer bounds after a size change; not sent while it is minimised.
   Resized(Rect),
-  /// The window's outer bounds after a move; not sent while it is minimised.
-  Moved(Rect),
+  /// The window's outer bounds after a move, and whether it is minimised
+  /// (its bounds are then the OS's iconic position): a tab frame tells its
+  /// move listeners then too, any other window does not.
+  Moved { bounds: Rect, minimized: bool },
   /// The user asked to close the window (close button, Alt+F4, `WM_CLOSE`).
   CloseRequested,
   /// Files were dropped on the window: every path of one drop, in order.

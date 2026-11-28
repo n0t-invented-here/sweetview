@@ -728,6 +728,8 @@ struct SubclassState {
   policy: Cell<ExStylePolicy>,
   fill_child: Cell<bool>,
   hold_visibility: Cell<bool>,
+  /// Size and move events are delivered before the message reaches the window's own procedure.
+  listen_first: Cell<bool>,
   /// `GWL_STYLE` bits kept on through every style rewrite.
   forced_style: Cell<u32>,
   /// Set once the window is destroyed and the subclass removed (`WM_NCDESTROY`).
@@ -795,6 +797,7 @@ impl WindowSubclass {
       policy: Cell::new(ExStylePolicy::default()),
       fill_child: Cell::new(false),
       hold_visibility: Cell::new(false),
+      listen_first: Cell::new(false),
       forced_style: Cell::new(0),
       gone: Cell::new(false),
     });
@@ -836,6 +839,15 @@ impl WindowSubclass {
   /// is stale after a show it did not make.
   pub fn set_hold_visibility(&self, on: bool) {
     self.state.hold_visibility.set(on);
+  }
+
+  /// When on, [`WindowEvent::Resized`] and [`WindowEvent::Moved`] are delivered
+  /// before `WM_SIZE` and `WM_MOVE` reach the window's own procedure, as tag
+  /// `pre-rust-rewrite`'s subclass of a window it did not make did; when off
+  /// (the default), after. A window `tao` made has its procedure run first, so
+  /// `tao`'s state is current when the listeners run.
+  pub fn set_listen_first(&self, on: bool) {
+    self.state.listen_first.set(on);
   }
 
   /// Keeps the `GWL_STYLE` bits `bits` on from now on, through every later
@@ -938,7 +950,8 @@ fn handle(hwnd: HWND, message: u32, wparam: WPARAM, mut lparam: LPARAM) -> Optio
   let state = state_of(hwnd)?;
   match message {
     WM_SIZE => {
-      let result = forward(hwnd, message, wparam, lparam);
+      let listen_first = state.listen_first.get();
+      let forwarded = (!listen_first).then(|| forward(hwnd, message, wparam, lparam));
       if wparam.0 != SIZE_MINIMIZED as usize {
         if state.fill_child.get() {
           fill_first_child_of(hwnd);
@@ -947,16 +960,15 @@ fn handle(hwnd: HWND, message: u32, wparam: WPARAM, mut lparam: LPARAM) -> Optio
           deliver(&state, &WindowEvent::Resized(bounds));
         }
       }
-      Some(result)
+      Some(forwarded.unwrap_or_else(|| forward(hwnd, message, wparam, lparam)))
     }
     WM_MOVE => {
-      let result = forward(hwnd, message, wparam, lparam);
-      if !is_iconic(hwnd) {
-        if let Some(bounds) = outer_bounds_of(hwnd) {
-          deliver(&state, &WindowEvent::Moved(bounds));
-        }
+      let listen_first = state.listen_first.get();
+      let forwarded = (!listen_first).then(|| forward(hwnd, message, wparam, lparam));
+      if let Some(bounds) = outer_bounds_of(hwnd) {
+        deliver(&state, &WindowEvent::Moved { bounds, minimized: is_iconic(hwnd) });
       }
-      Some(result)
+      Some(forwarded.unwrap_or_else(|| forward(hwnd, message, wparam, lparam)))
     }
     WM_CLOSE => deliver(&state, &WindowEvent::CloseRequested).then_some(LRESULT(0)),
     WM_ACTIVATE => {

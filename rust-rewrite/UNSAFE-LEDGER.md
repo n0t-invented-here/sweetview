@@ -1,6 +1,6 @@
 # Unsafe ledger
 
-Rewritten by `bun rust-rewrite/verify.ts <platform> --ledger`. 255 uses in 21 files.
+Rewritten by `bun rust-rewrite/verify.ts <platform> --ledger`. 257 uses in 21 files.
 
 | File | Uses of `unsafe` |
 |---|---|
@@ -24,7 +24,7 @@ Rewritten by `bun rust-rewrite/verify.ts <platform> --ledger`. 255 uses in 21 fi
 | `crates/sweetview-platform-window/src/tab_frame_tests.rs` | 12 |
 | `crates/sweetview-platform-window/src/test_support.rs` | 4 |
 | `crates/sweetview-platform-window/src/windows.rs` | 39 |
-| `crates/sweetview-platform-window/src/windows_tests.rs` | 14 |
+| `crates/sweetview-platform-window/src/windows_tests.rs` | 16 |
 
 ## Reasons
 
@@ -163,9 +163,9 @@ The double-click time is the safe WinRT `UISettings::DoubleClickTime` of `window
 
 - **The frame for a client size at a DPI** (1: `AdjustWindowRectExForDpi`). `tao` computes frames only inside its own window creation. The rectangle is a local.
 
-### `crates/sweetview-platform-window/src/windows_tests.rs` (14, test)
+### `crates/sweetview-platform-window/src/windows_tests.rs` (16, test)
 
-`TestWindow`, a plain `STATIC` window an application would hand over (`CreateWindowExW`, `DestroyWindow`, `SendMessageW`), a second `DestroyWindow` that destroys a lent window from inside the call it is lent to, and a shell file drop built as the shell builds one (`GlobalAlloc`, `GlobalLock`, the `DROPFILES` write, the path copy, `GlobalUnlock`, and `GlobalSize` to see that `DragFinish` freed it), and a thread of the test's own that pumps its window and then stops answering (`PeekMessageW`, `DispatchMessageW`), for the parked icons' limit (D41), and a second such thread with six windows, for the sweep's budget (D41).
+`TestWindow`, a plain `STATIC` window an application would hand over (`CreateWindowExW`, `DestroyWindow`, `SendMessageW`), the application's own subclass of it, installed before Sweetview's to see which runs first (`SetWindowSubclass`, `RemoveWindowSubclass`), a second `DestroyWindow` that destroys a lent window from inside the call it is lent to, and a shell file drop built as the shell builds one (`GlobalAlloc`, `GlobalLock`, the `DROPFILES` write, the path copy, `GlobalUnlock`, and `GlobalSize` to see that `DragFinish` freed it), and a thread of the test's own that pumps its window and then stops answering (`PeekMessageW`, `DispatchMessageW`), for the parked icons' limit (D41), and a second such thread with six windows, for the sweep's budget (D41).
 
 ### `crates/sweetview-platform-window/src/test_support.rs` (4, test)
 

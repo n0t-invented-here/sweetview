@@ -151,26 +151,28 @@ impl Window {
     self.0.answer_hit(seq, solid)
   }
 
-  /// This wrapper's resize listener, with the outer bounds; `null` removes it.
+  /// A resize listener of the window, with the outer bounds, under `key`, the
+  /// number the caller gives the function it was made from (the same function
+  /// is one listener, through any wrapper); `null` takes the one under `key` out.
   // The callback types are spelled out so the generated declarations name their arguments.
   #[allow(clippy::type_complexity)]
   #[napi(catch_unwind)]
-  pub fn on_resize(&self, env: Env, listener: Option<Function<'_, FnArgs<(i32, i32, i32, i32)>, ()>>) -> napi::Result<()> {
-    self.0.on_resize(env, listener)
+  pub fn on_resize(&self, env: Env, key: u32, listener: Option<Function<'_, FnArgs<(i32, i32, i32, i32)>, ()>>) -> napi::Result<()> {
+    self.0.on_resize(env, key, listener)
   }
 
-  /// This wrapper's maximise listener: `true` when the window becomes maximised, `false` when it is restored; `null` removes it.
+  /// A maximise listener of the window under `key` (as `onResize`): `true` when the window becomes maximised, `false` when it is restored; `null` takes it out.
   #[napi(catch_unwind)]
-  pub fn on_maximize_change(&self, env: Env, listener: Option<Function<'_, bool, ()>>) -> napi::Result<()> {
-    self.0.on_maximize_change(env, listener)
+  pub fn on_maximize_change(&self, env: Env, key: u32, listener: Option<Function<'_, bool, ()>>) -> napi::Result<()> {
+    self.0.on_maximize_change(env, key, listener)
   }
 
-  /// This wrapper's move listener, with the outer bounds; `null` removes it.
+  /// A move listener of the window, with the outer bounds, under `key` (as `onResize`); `null` takes it out.
   // The callback types are spelled out so the generated declarations name their arguments.
   #[allow(clippy::type_complexity)]
   #[napi(catch_unwind)]
-  pub fn on_move(&self, env: Env, listener: Option<Function<'_, FnArgs<(i32, i32, i32, i32)>, ()>>) -> napi::Result<()> {
-    self.0.on_move(env, listener)
+  pub fn on_move(&self, env: Env, key: u32, listener: Option<Function<'_, FnArgs<(i32, i32, i32, i32)>, ()>>) -> napi::Result<()> {
+    self.0.on_move(env, key, listener)
   }
 
   /// This wrapper's close listener; while any wrapper has one, the window stays open on a close request.

@@ -161,6 +161,7 @@ impl WindowSubclass {
   }
   pub fn set_policy(&self, _policy: ExStylePolicy) {}
   pub fn set_hold_visibility(&self, _on: bool) {}
+  pub fn set_listen_first(&self, _on: bool) {}
   pub fn set_fill_child(&self, _on: bool) {}
   pub fn force_style(&self, _bits: u32) {}
 }
