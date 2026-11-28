@@ -1,22 +1,18 @@
 // The end of the application. Whatever Sweetview made for an application is
-// released by Sweetview when the application ends, so its last line is
-// `run()` (or the end of its script under `runEventLoop`) and nothing after
-// it is required (decision D36 in rust-rewrite/DECISIONS.md).
+// released by Sweetview when the application's process ends, so its last line
+// is `run()` (or the end of its script under `runEventLoop`) and nothing after
+// it is required (decision D36 in rust-rewrite/DECISIONS.md). Nothing is
+// released while the process runs: code after `run()`, a second loop, a
+// nested one all keep what the application made.
 //
-// Each object registers its own idempotent dispose here when it is made and
-// takes it back when it is disposed by hand. `releaseAll` runs what is left,
-// kind by kind in a safe order, newest first within a kind, and then, on
-// Windows, the binding's own `releaseAll`, which releases whatever the binding
-// still holds in the same order. It runs:
+// Each object registers its own release here when it is made and takes it
+// back when it is disposed by hand. `releaseAll` runs what is left, kind by
+// kind in a safe order, newest first within a kind, and then, on Windows, the
+// binding's own `releaseAll`, which releases whatever the binding still holds
+// in the same order. It runs on Bun's `exit` event, which fires on this thread
+// when the script ends, on `process.exit` and after an uncaught exception.
 //
-// - when a blocking `run()` of a WebView (`app.run()` on a single-window app)
-//   has returned: the application has quit;
-// - when the process exits for any other reason JavaScript sees: the script
-//   ends (the pumped loop), `process.exit`, an uncaught exception
-//   (Bun's `exit` event, which fires on each of them, on this thread).
-//
-// A release that throws is logged and the others still run. Objects made
-// after a release work as usual and are released at the next end.
+// A release that throws is logged and the others still run.
 
 import { binding } from "./binding";
 

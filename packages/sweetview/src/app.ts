@@ -11,7 +11,7 @@ import { createFrameAssembler, type AnyEvent, type EventMap, type MethodMap, typ
 import { RequestResponseAssembler, requestError, runNativeRequest, type NativeRequestResponse, type StreamingResponseFrame } from "./request-response";
 import type { HttpRequestMessage, InitMessage, NativeRequest, NativeResponse, WorkerCrashFrame } from "./messages";
 import { RawWebview, SizeHint, Window, quitEventLoop, runEventLoop, signalReady, type Rect, type TabHandle, type WindowOptions } from "@n1h/sweetview-native";
-import { createChildWebview, discardQuit, emitWindowFileDrop, engineOf, getWindowMeta, holdWindowNativeDispose, isWindowDisposed, onWindowDispose, onWindowFileDropListenersChange, preserveWindowGeometry, releaseAll, releaseAtEnd, scheduleNativeTimeout, windowFileDropCount } from "@n1h/sweetview-native/internal";
+import { createChildWebview, discardQuit, emitWindowFileDrop, engineOf, getWindowMeta, holdWindowNativeDispose, isWindowDisposed, onWindowDispose, onWindowFileDropListenersChange, preserveWindowGeometry, releaseAtEnd, scheduleNativeTimeout, windowFileDropCount } from "@n1h/sweetview-native/internal";
 import { Ring } from "./ring";
 import { webviewEngine, type WebviewHost, type WorkerWake } from "./webview-host";
 import { ASSET_ORIGIN } from "./webview-lib";
@@ -851,8 +851,6 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
               releaseWindowDispose?.();
             }
             discardQuit();
-            // The application has quit: everything Sweetview made for it goes now.
-            releaseAll();
           }
         },
         quit,

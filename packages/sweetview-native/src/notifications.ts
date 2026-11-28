@@ -35,6 +35,12 @@ export type NotifierOptions = {
 export interface NotifierBackend {
   notify(notification: NotificationOptions): boolean;
   dispose(): void;
+  /**
+   * The release at the end of the application: lets go of the notifier as
+   * `dispose()` does but leaves alone what it showed. Windows only; macOS's
+   * `dispose()` already leaves its delivered notifications in place.
+   */
+  release?(): void;
 }
 
 let nextId = 1;
@@ -52,8 +58,10 @@ export class Notifier {
   readonly #unregister: () => void;
 
   constructor(options: NotifierOptions = {}) {
-    this.#inner = impl().createNotifier(options);
-    this.#unregister = releaseAtEnd("notifier", () => this.dispose());
+    const inner = (this.#inner = impl().createNotifier(options));
+    backends.set(this, inner);
+    // At the end the notifications it showed stay for the user to read; only dispose() withdraws them.
+    this.#unregister = releaseAtEnd("notifier", () => (inner.release ? inner.release() : inner.dispose()));
   }
 
   notify(notification: NotificationOptions): boolean {
@@ -65,6 +73,13 @@ export class Notifier {
     this.#unregister();
     this.#inner.dispose();
   }
+}
+
+const backends = new WeakMap<Notifier, NotifierBackend>();
+
+/** Internal, for tests: the platform backend behind a `Notifier`. */
+export function notifierBackend(notifier: Notifier): NotifierBackend | undefined {
+  return backends.get(notifier);
 }
 
 export function createNotifier(options: NotifierOptions = {}): Notifier {

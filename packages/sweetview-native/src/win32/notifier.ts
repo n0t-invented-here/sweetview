@@ -90,6 +90,13 @@ export function createNotifier(options: NotifierOptions = {}): NotifierBackend {
       rawData.clear();
       native.dispose();
     },
+    release() {
+      if (disposed) return;
+      disposed = true;
+      stopIcon();
+      rawData.clear();
+      native.release();
+    },
   };
   nativeOf.set(backend, native);
   return backend;
