@@ -18,6 +18,7 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { untilDesktopIsOurs } from "../../../packages/sweetview-native/test/desktop";
 
 /** What a desktop runner gets from rows-desktop.ts. */
 export type DesktopCtx = {
@@ -640,7 +641,8 @@ export const RUNNERS: Record<string, Runner> = {
     // A 10 ms poll follows the cursor: over the region the window takes clicks, elsewhere they pass (WS_EX_TRANSPARENT).
     const win = ctx.window({ frame: false, topmost: true, bounds: { x: 260, y: 240, width: 300, height: 200 } });
     win.show();
-    if (ctx.os.buttonsDown()) return "not judged: a mouse button was down on the shared desktop";
+    // A button held on the shared desktop is waited out, and a row it never lets run fails as not run.
+    await untilDesktopIsOurs("every mouse button up on the shared desktop", () => !ctx.os.buttonsDown());
     const passing = () => (BigInt(ctx.os.user32.GetWindowLongPtrW(hwndOf(win), ctx.os.GWL_EXSTYLE)) & 0x20n) !== 0n;
     const original = ctx.os.cursor();
     try {
@@ -661,15 +663,17 @@ export const RUNNERS: Record<string, Runner> = {
     must((BigInt(ctx.os.user32.GetWindowLongPtrW(hwndOf(win), ctx.os.GWL_EXSTYLE)) & 0x8n) !== 0n, "WS_EX_TOPMOST");
     win.setTopmost(false);
   }),
-  "Window#startDrag": desktop((_value, ctx) => {
+  "Window#startDrag": desktop(async (_value, ctx) => {
     const win = ctx.window({ bounds: { x: 100, y: 100, width: 300, height: 200 } });
-    if (ctx.os.buttonsDown()) return "not judged: a mouse button was down on the shared desktop";
+    // A button held on the shared desktop is waited out, and a row it never lets run fails as not run.
+    await untilDesktopIsOurs("every mouse button up on the shared desktop", () => !ctx.os.buttonsDown());
     win.startDrag();
     must(same(win.bounds(), { x: 100, y: 100, width: 300, height: 200 }), "with the button up, no drag starts", win.bounds());
   }),
-  "Window#startResize": desktop((_value, ctx) => {
+  "Window#startResize": desktop(async (_value, ctx) => {
     const win = ctx.window({ bounds: { x: 100, y: 100, width: 300, height: 200 } });
-    if (ctx.os.buttonsDown()) return "not judged: a mouse button was down on the shared desktop";
+    // A button held on the shared desktop is waited out, and a row it never lets run fails as not run.
+    await untilDesktopIsOurs("every mouse button up on the shared desktop", () => !ctx.os.buttonsDown());
     win.startResize("bottom-right");
     must(same(win.bounds(), { x: 100, y: 100, width: 300, height: 200 }), "with the button up, no resize starts", win.bounds());
   }),

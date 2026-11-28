@@ -50,6 +50,56 @@ async function runFixture(mode: "blocking" | "pumped") {
   }
 }
 
+/** Runs `test/fixtures/timers-in-tray-menu.ts` in a process of its own, in `mode`. */
+async function runTrayMenuTimers(mode: "blocking" | "pumped", rounds: number) {
+  const fixture = fileURLToPath(new URL("../test/fixtures/timers-in-tray-menu.ts", import.meta.url));
+  const proc = Bun.spawn([process.execPath, fixture, String(rounds)], {
+    timeout: 120_000,
+    env: { ...process.env, SWEETVIEW_LOOP_MODE: mode },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [code, stdout, stderr] = await Promise.all([proc.exited, new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
+  const line = stdout.split(/\r?\n/).find((l) => l.startsWith("RESULT "));
+  if (code !== 0 || !line) throw new Error(`tray-menu timer fixture exit ${code}\n${stdout}\n${stderr}`);
+  return JSON.parse(line.slice("RESULT ".length)) as { mode: string; rounds: number; ticked: number[]; firstTickMs: number[]; rescued: number; timedOut?: boolean };
+}
+
+// Decision D38 (the second review's G1): with the loop's native timers on WM_TIMER, a tray menu
+// opened from a deferred job, with every timer already due when its loop first looked at the
+// queue, took `tao`'s paint request for idle and waited with the timers due, until something
+// else woke the thread or a watchdog's Escape closed it. The interval's period is 10 ms, so each
+// menu's first tick must come within 250 ms of its opening.
+describe.if(onWindows)("native timers inside a tray menu opened from a deferred job (D38)", () => {
+  for (const mode of ["blocking", "pumped"] as const) {
+    test(`${mode} loop: an interval set just before the right click ticks inside every menu`, async () => {
+      const rounds = 8;
+      const report = await runTrayMenuTimers(mode, rounds);
+      expect(report.timedOut).toBeUndefined();
+      expect(report.mode).toBe(mode);
+      expect(report.ticked.length).toBe(rounds);
+      expect(report.rescued).toBe(0);
+      for (const ticks of report.ticked) expect(ticks).toBeGreaterThanOrEqual(3);
+      expect(report.firstTickMs.length).toBe(rounds);
+      for (const ms of report.firstTickMs) {
+        expect(ms).toBeGreaterThanOrEqual(0);
+        expect(ms).toBeLessThanOrEqual(250);
+      }
+    }, 150_000);
+  }
+
+  test("a process that exits with a native interval still set ends cleanly", async () => {
+    const fixture = fileURLToPath(new URL("../test/fixtures/exit-with-timer.ts", import.meta.url));
+    const proc = Bun.spawn([process.execPath, fixture], { timeout: 30_000, stdout: "pipe", stderr: "pipe" });
+    const [code, stdout, stderr] = await Promise.all([proc.exited, new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
+    expect(stderr).not.toContain("fatal runtime error");
+    expect(stderr).not.toContain("panicked");
+    expect(code).toBe(0);
+    const ticked = Number(/TICKED (\d+)/.exec(stdout)?.[1] ?? -1);
+    expect(ticked).toBeGreaterThanOrEqual(5);
+  }, 60_000);
+});
+
 describe.if(onWindows)("a modal loop opened by a handler (W1.8)", () => {
   for (const mode of ["blocking", "pumped"] as const) {
     test(`${mode} loop: page calls are answered, a worker's wake drains and a native timeout fires while the dialog is open`, async () => {

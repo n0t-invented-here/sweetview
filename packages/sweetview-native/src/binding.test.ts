@@ -17,6 +17,16 @@ const UI_THREAD_ERROR = "sweetview: this call must be made on the UI thread";
 // process cannot load it (ERROR_BAD_EXE_FORMAT).
 const x86Pe = join(process.env.SystemRoot ?? "C:\\Windows", "SysWOW64", "kernel32.dll");
 const haveX86Pe = onWindows && existsSync(x86Pe);
+// An ELF header, what a Linux binding starts with: the binary for another platform on a Windows
+// without WOW64, so the tests below always run (the second review's G8).
+const ELF_STUB = new Uint8Array([0x7f, 0x45, 0x4c, 0x46, 2, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+/** A binary built for another platform: the i386 PE file where Windows has one, the ELF stub otherwise. */
+function otherPlatformBinary(): Uint8Array {
+  if (!haveX86Pe) return ELF_STUB;
+  const bytes = new Uint8Array(readFileSync(x86Pe));
+  expect(peMachine(bytes)).toBe(0x14c);
+  return bytes;
+}
 /** The machine field of a PE file's COFF header: 0x14c is i386, 0x8664 is x64. */
 function peMachine(bytes: Uint8Array): number {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -74,13 +84,11 @@ describe.if(onWindows)("native binding: loading (W1.1)", () => {
     expect(() => loadBindingFrom(missing)).toThrow(`sweetview: the native binding could not be loaded from ${missing}`);
   });
 
-  test.skipIf(!haveX86Pe)("a binary for another platform fails with a message that names the file looked for", () => {
+  test("a binary for another platform fails with a message that names the file looked for", () => {
     const dir = mkdtempSync(join(tmpdir(), "sweetview-binding-"));
-    const wrong = join(dir, "sweetview.win32-ia32-msvc.node");
-    // A real PE file for another architecture (i386), not a stub.
-    const bytes = new Uint8Array(readFileSync(x86Pe));
-    expect(peMachine(bytes)).toBe(0x14c);
-    writeFileSync(wrong, bytes);
+    const wrong = join(dir, haveX86Pe ? "sweetview.win32-ia32-msvc.node" : "sweetview.linux-x64-gnu.node");
+    // A real PE file for another architecture (i386) where there is one, the ELF stub otherwise.
+    writeFileSync(wrong, otherPlatformBinary());
     expect(() => loadBindingFrom(wrong)).toThrow(`sweetview: the native binding could not be loaded from ${wrong}: `);
   });
 
@@ -99,10 +107,9 @@ describe.if(onWindows)("native binding: loading (W1.1)", () => {
     for (const part of NOT_BUILT) expect(hint).toContain(part);
   });
 
-  test.skipIf(!haveX86Pe)("the literal require: with an i386 PE file in its place, binding() fails with a message that names the file looked for", () => {
-    const bytes = new Uint8Array(readFileSync(x86Pe));
-    expect(peMachine(bytes)).toBe(0x14c);
-    const { outcome, exitCode } = loadInFolderOfItsOwn(bytes);
+  // Without WOW64 the binary in its place is the ELF stub, so the test still runs.
+  test("the literal require: with an i386 PE file in its place, binding() fails with a message that names the file looked for", () => {
+    const { outcome, exitCode } = loadInFolderOfItsOwn(otherPlatformBinary());
     expect(exitCode).toBe(0);
     expect(outcome.startsWith(LOOKED_FOR)).toBe(true);
     expect(outcome.length).toBeGreaterThan(LOOKED_FOR.length);

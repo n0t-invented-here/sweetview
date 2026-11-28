@@ -29,7 +29,8 @@ use windows::Win32::UI::Shell::{DefSubclassProc, DragFinish, DragQueryFileW, Rem
 use windows::Win32::UI::WindowsAndMessaging::{
   CreateIconFromResourceEx, DestroyIcon, DestroyWindow, GetClientRect, GetSystemMetrics, GetWindow, GetWindowLongPtrW,
   GetWindowRect, GetWindowThreadProcessId, IsIconic, IsWindow, IsWindowVisible, IsZoomed, LoadIconW, MoveWindow,
-  PostMessageW, SendMessageW, SetForegroundWindow, SetLayeredWindowAttributes, SetWindowLongPtrW, SetWindowPos, SetWindowTextW,
+  PostMessageW, SendMessageTimeoutW, SendMessageW, SetForegroundWindow, SetLayeredWindowAttributes, SetWindowLongPtrW, SetWindowPos,
+  SetWindowTextW, SMTO_ABORTIFHUNG, SMTO_BLOCK,
   ShowWindow, GWL_EXSTYLE, GWL_STYLE, GW_CHILD, HICON, HTCAPTION, HWND_NOTOPMOST, HWND_TOPMOST, ICON_BIG, ICON_SMALL,
   IDI_APPLICATION, LAYERED_WINDOW_ATTRIBUTES_FLAGS, LR_DEFAULTCOLOR, LWA_ALPHA, LWA_COLORKEY, SET_WINDOW_POS_FLAGS,
   SHOW_WINDOW_CMD, SIZE_MINIMIZED, SM_CXICON, SM_CXSMICON, STYLESTRUCT, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE,
@@ -589,15 +590,36 @@ impl WindowIcons {
     Ok(icons)
   }
 
-  /// True while the window still exists and shows one of these icons.
+  /// True while the window still exists and shows one of these icons, or does
+  /// not answer the question: a window lent by its handle value may belong to
+  /// another process, and one that is hung or slow keeps its icons parked.
   fn still_shown(&self) -> bool {
     let hwnd = HWND(self.window as *mut c_void);
     if !is_window_handle(hwnd) {
       return false;
     }
-    let shows = |kind, mine: &Option<OwnedIcon>| mine.as_ref().is_some_and(|icon| icon_message(hwnd, WM_GETICON, kind, None) == icon.0 .0 as isize);
+    let shows = |kind, mine: &Option<OwnedIcon>| {
+      mine.as_ref().is_some_and(|icon| shown_icon(hwnd, kind).is_none_or(|shown| shown == icon.0 .0 as isize))
+    };
     shows(ICON_SMALL, &self.small) || shows(ICON_BIG, &self.big)
   }
+}
+
+/// How long a parked window may take to answer `WM_GETICON`.
+const ICON_QUERY_MS: u32 = 100;
+
+/// The icon `hwnd` answers `WM_GETICON` with for `kind`, or `None` when it did not answer
+/// within [`ICON_QUERY_MS`] or the OS reports its thread hung, so no `setIcon` waits on a window
+/// of another process. A window of this thread answers at once, as a plain send does.
+fn shown_icon(hwnd: HWND, kind: u32) -> Option<isize> {
+  let mut shown = 0usize;
+  // SAFETY: `WM_GETICON` carries an integer each way; `hwnd` is a parked window's value, which
+  // the OS validates; `shown` is a usize owned by this frame for the call to fill. `SMTO_BLOCK`
+  // keeps this thread from handling other messages while it waits, so nothing runs re-entrantly.
+  let answered = unsafe {
+    SendMessageTimeoutW(hwnd, WM_GETICON, WPARAM(kind as usize), LPARAM(0), SMTO_ABORTIFHUNG | SMTO_BLOCK, ICON_QUERY_MS, Some(&mut shown))
+  };
+  (answered.0 != 0).then_some(shown as isize)
 }
 
 /// Destroys the parked icons whose window is gone or shows other icons now.

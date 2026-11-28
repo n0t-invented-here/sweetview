@@ -84,20 +84,28 @@ afterEach(() => {
  * Runs `step` from inside the popup menu's own modal loop once a popup menu of
  * this process is open, on a native interval (which the menu loop dispatches).
  * A menu still open 3 s later is closed, so a failing test never leaves one up.
- * The watcher is disarmed when it has seen a menu, after five seconds, and when its test ends.
+ * The watcher, and its closer, are disarmed when its test ends; the watcher also after five seconds.
  */
 function whenMenuOpens(step: (menuWindow: bigint) => void): void {
   const native = binding();
   const started = Date.now();
+  // The 3 s closer is kept with the watcher, so the test's end disarms it too: one left behind
+  // would end whichever menu is open when it fires, the next test's included (review G10).
+  let closer: number | undefined;
   const cancel = () => {
     native.cancelTimeout(id);
+    if (closer !== undefined) native.cancelTimeout(closer);
     menuWatchers.delete(cancel);
   };
   const id = native.scheduleInterval(10, () => {
     const menuWindow = openPopupMenu();
     if (menuWindow !== 0n) {
-      cancel();
-      native.scheduleTimeout(3000, () => void (openPopupMenu() !== 0n && endMenu()));
+      native.cancelTimeout(id);
+      closer = native.scheduleTimeout(3000, () => {
+        closer = undefined;
+        menuWatchers.delete(cancel);
+        void (openPopupMenu() !== 0n && endMenu());
+      });
       step(menuWindow);
     } else if (Date.now() - started > 5000) {
       cancel();

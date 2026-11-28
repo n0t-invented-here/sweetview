@@ -257,6 +257,59 @@ fn icons_a_live_window_shows_outlive_their_owner_and_go_with_the_window() {
   });
 }
 
+/// A parked window of another thread that stops answering does not hold up a later
+/// `WindowIcons::set`, and its icons stay parked until it is gone (the review's G5).
+#[test]
+fn a_parked_window_that_does_not_answer_keeps_its_icons_and_holds_up_nothing() {
+  use std::sync::mpsc;
+  use std::time::{Duration, Instant};
+  use windows::Win32::UI::WindowsAndMessaging::{DispatchMessageW, PeekMessageW, MSG, PM_REMOVE};
+  let _serial = serial();
+  let ico = test_ico();
+  let (orders, order) = mpsc::channel::<&'static str>();
+  let (made, window_value) = mpsc::channel::<isize>();
+  let other = std::thread::spawn(move || {
+    let window = TestWindow::new();
+    made.send(window.0 .0 as isize).expect("the test waits for the window");
+    let pump = || {
+      let mut message = MSG::default();
+      // SAFETY: `message` is a MSG owned by this frame for the call to fill; this thread's queue.
+      while unsafe { PeekMessageW(&mut message, None, 0, 0, PM_REMOVE) }.as_bool() {
+        // SAFETY: a message the OS just took off this thread's queue.
+        unsafe { DispatchMessageW(&message) };
+      }
+    };
+    loop {
+      pump();
+      match order.try_recv() {
+        Ok("hang") => std::thread::sleep(Duration::from_millis(1500)),
+        Ok(_) => break,
+        Err(_) => std::thread::sleep(Duration::from_millis(1)),
+      }
+    }
+    drop(window);
+  });
+  let value = window_value.recv().expect("the other thread's window");
+  let theirs = BorrowedWindow { hwnd: HWND(value as *mut c_void), _window: PhantomData, _not_send: PhantomData };
+  drop(WindowIcons::set(&theirs, Some(&ico)).expect("icons"));
+  let parked = || PARKED.with(|list| list.borrow().iter().any(|icons| icons.window == value));
+  assert!(parked(), "the other thread's window shows them, so they are parked");
+
+  orders.send("hang").expect("the other thread is pumping");
+  std::thread::sleep(Duration::from_millis(50));
+  let mine = TestWindow::new();
+  let started = Instant::now();
+  drop(WindowIcons::set(&mine.foreign(), Some(&ico)).expect("icons of this thread's window"));
+  let took = started.elapsed();
+  assert!(took < Duration::from_millis(1000), "setIcon waited {took:?} for a window that did not answer");
+  assert!(parked(), "a window that did not answer keeps its icons parked");
+
+  orders.send("end").expect("the other thread");
+  other.join().expect("the other thread");
+  drop(WindowIcons::set(&mine.foreign(), None).expect("stock icons"));
+  assert!(!parked(), "the icons went with their window");
+}
+
 #[test]
 fn a_bad_ico_is_an_error() {
   let _serial = serial();

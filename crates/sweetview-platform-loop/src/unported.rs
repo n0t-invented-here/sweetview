@@ -35,6 +35,8 @@ impl SignalWindow {
   pub fn cancel_timer(&self, _timer: TimerId) {}
 
   pub fn dispatch_due_timers(&self) {}
+
+  pub fn stop_ticker_if_idle(&self) {}
 }
 
 impl Waker {

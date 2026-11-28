@@ -36,9 +36,14 @@ pub struct PopupAt {
 #[cfg(windows)]
 mod imp {
   use muda::ContextMenu;
+  use windows::core::{w, PCWSTR};
+  use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
+  use windows::Win32::System::Threading::GetCurrentProcessId;
+  use windows::Win32::UI::Input::KeyboardAndMouse::VK_ESCAPE;
   use windows::Win32::UI::WindowsAndMessaging::{
-    GetSubMenu, SetMenuItemInfoW, TrackPopupMenu, HMENU, MENUITEMINFOW, MENU_ITEM_STATE, MFS_CHECKED, MFS_DISABLED,
-    MIIM_ID, MIIM_STATE, TPM_BOTTOMALIGN, TPM_RETURNCMD, TPM_RIGHTBUTTON, TRACK_POPUP_MENU_FLAGS,
+    EndMenu, FindWindowExW, GetSubMenu, GetWindowThreadProcessId, IsWindowVisible, PostMessageW, SetMenuItemInfoW, TrackPopupMenu,
+    HMENU, MENUITEMINFOW, MENU_ITEM_STATE, MFS_CHECKED, MFS_DISABLED, MIIM_ID, MIIM_STATE, TPM_BOTTOMALIGN, TPM_RETURNCMD,
+    TPM_RIGHTBUTTON, TRACK_POPUP_MENU_FLAGS, WM_KEYDOWN,
   };
 
   use super::{PopupAt, PopupCorner};
@@ -111,6 +116,37 @@ mod imp {
     let info = MENUITEMINFOW { cbSize: size_of::<MENUITEMINFOW>() as u32, fMask: MIIM_ID, wID: id, ..Default::default() };
     set_item_info(menu, path, &info)
   }
+
+  pub fn end_menu() -> bool {
+    // SAFETY: `EndMenu` takes nothing; it ends the menu this thread is tracking, if any.
+    unsafe { EndMenu() }.is_ok()
+  }
+
+  pub fn escape_menus() -> usize {
+    // SAFETY: `GetCurrentProcessId` takes nothing and reads no memory.
+    let process = unsafe { GetCurrentProcessId() };
+    let mut escaped = 0;
+    let mut after: Option<HWND> = None;
+    loop {
+      // SAFETY: the class name is a static wide string and no window name is passed; `after` is
+      // none or a handle value the previous call returned, which the OS validates.
+      let found = unsafe { FindWindowExW(None, after, w!("#32768"), PCWSTR::null()) };
+      let Ok(menu) = found else { break };
+      let mut owner = 0u32;
+      // SAFETY: `menu` is a handle value the OS just returned and validates again; `owner` is a
+      // u32 owned by this frame for the call to fill.
+      let _thread = unsafe { GetWindowThreadProcessId(menu, Some(&mut owner)) };
+      // SAFETY: as above, the OS validates the handle value.
+      let visible = unsafe { IsWindowVisible(menu) }.as_bool();
+      if owner == process && visible {
+        // SAFETY: as above; the parameters are integers, the Escape key's code and a repeat count of 1.
+        let posted = unsafe { PostMessageW(Some(menu), WM_KEYDOWN, WPARAM(usize::from(VK_ESCAPE.0)), LPARAM(1)) };
+        escaped += usize::from(posted.is_ok());
+      }
+      after = Some(menu);
+    }
+    escaped
+  }
 }
 
 #[cfg(not(windows))]
@@ -137,6 +173,32 @@ mod imp {
   pub fn set_command_id(_menu: &muda::Menu, _path: &[u32], _id: u32) -> bool {
     false
   }
+
+  /// Not ported: no menu is tracked.
+  pub fn end_menu() -> bool {
+    false
+  }
+
+  /// Not ported: no menu is tracked.
+  pub fn escape_menus() -> usize {
+    0
+  }
+}
+
+/// Ends the popup menu this thread is tracking, as `EndMenu` does; true when
+/// the call succeeded. For tests: a native interval that ticks inside a menu
+/// closes it this way.
+#[doc(hidden)]
+pub fn end_menu_for_tests() -> bool {
+  imp::end_menu()
+}
+
+/// Posts Escape to every visible popup menu window of this process, from any
+/// thread, and returns how many. For a test's watchdog: a menu whose loop
+/// delivers nothing is closed so the test fails instead of waiting for good.
+#[doc(hidden)]
+pub fn escape_menus_of_this_process_for_tests() -> usize {
+  imp::escape_menus()
 }
 
 /// Shows `menu` as a popup menu owned by `owner`, at `at`, and returns after it

@@ -157,15 +157,23 @@ async function whenMenuOpens(step: (menuWindow: bigint) => void): Promise<() => 
   const { endMenu, openPopupMenu } = await import("../test/win32-os");
   const native = binding();
   const started = Date.now();
+  // The 3 s closer is kept with the watcher, so the test's end disarms it too: one left behind
+  // would end whichever menu is open when it fires, the next test's included (review G10).
+  let closer: number | undefined;
   const cancel = () => {
     native.cancelTimeout(id);
+    if (closer !== undefined) native.cancelTimeout(closer);
     menuWatchers.delete(cancel);
   };
   const id = native.scheduleInterval(10, () => {
     const menuWindow = openPopupMenu();
     if (menuWindow !== 0n) {
-      cancel();
-      native.scheduleTimeout(3000, () => void (openPopupMenu() !== 0n && endMenu()));
+      native.cancelTimeout(id);
+      closer = native.scheduleTimeout(3000, () => {
+        closer = undefined;
+        menuWatchers.delete(cancel);
+        void (openPopupMenu() !== 0n && endMenu());
+      });
       step(menuWindow);
     } else if (Date.now() - started > 5000) {
       cancel();
