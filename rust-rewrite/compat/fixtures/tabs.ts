@@ -4,11 +4,11 @@
 // the strip and the page are rectangles for child webviews; a close request
 // reaches `Window.onClose`; `showTabPopupMenu` and `windowMenu` act on any
 // window of this thread, as before the rewrite (a second process works each
-// menu while this thread is inside it); and `tab.webview.window` wraps the
-// frame while `tab.window` is the logical window. Prints one JSON line.
+// menu while this thread is inside it); and `tab.webview.window` is the window
+// the tab is in (`tab.window`), after a tear-off and a merge too. Prints one JSON line.
 
 import { fileURLToPath } from "node:url";
-import { WebView } from "@n1h/sweetview";
+import { createApp, WebView } from "@n1h/sweetview";
 import { Window } from "@n1h/sweetview-native";
 import { createChildWebview, engineOf, isWindowDisposed } from "@n1h/sweetview-native/internal";
 import { getTabFrame, showTabPopupMenu, windowMenu } from "@n1h/sweetview-native/win32/tab-window";
@@ -66,10 +66,22 @@ report.requestCloseReachesOnClose = closes === 1;
 report.windowKeptByListener = !isWindowDisposed(win); // the listener took the request
 offClose();
 
-// tab.webview.window wraps the frame the tab opened in; tab.window is the logical window.
-const tab = await WebView.openTab(win, { title: "compat", assets: { "index.html": new TextEncoder().encode("<!doctype html><title>compat</title>") } });
+// tab.window is the logical window, and tab.webview.window the same window, the one the tab is in
+// now: where it opened, in the window it is torn off into, in the window it is merged into.
+const assets = { "index.html": new TextEncoder().encode("<!doctype html><title>compat</title>") };
+await WebView.openTab(win, { title: "kept", assets });
+const tab = await WebView.openTab(win, { title: "compat", assets });
 report.tabWindowIsLogical = tab.window === win;
-report.tabWebviewWindowWrapsFrame = tab.webview.window !== win && BigInt(tab.webview.window.handle!) === frame!.hwnd;
+const opened = tab.webview.window === win;
+const torn = await tab.moveToNewWindow();
+const tornOff = tab.window === torn && tab.webview.window === torn;
+const app = await createApp({ tabs: true, title: "compat merge", noActivate: true });
+await app.openTab({ title: "home", assets });
+app.mergeAllWindows();
+const merged = tab.window === app.window && tab.webview.window === app.window;
+report.tabWebviewWindowIsTheTabsWindow = { opened, tornOff, merged };
+app.dispose();
+torn.dispose();
 
 win.dispose();
 plain.dispose();

@@ -149,7 +149,7 @@ describe.skipIf(!onWindows)("Windows behaviour an application notices", () => {
     });
   }, 60_000);
 
-  test("tabs: the frame is a Window with tabs, getTabFrame gives its strip and page, close requests reach onClose, the tab menus act on any window of the thread, tab.webview.window wraps the frame", async () => {
+  test("tabs: the frame is a Window with tabs, getTabFrame gives its strip and page, close requests reach onClose, the tab menus act on any window of the thread, tab.webview.window is the window the tab is in, after a tear-off and a merge too", async () => {
     expect(await runChild(fixture("tabs.ts"))).toEqual({
       frameOfTabbedWindow: true,
       frameOfPlainWindow: true,
@@ -165,7 +165,7 @@ describe.skipIf(!onWindows)("Windows behaviour an application notices", () => {
       requestCloseReachesOnClose: true,
       windowKeptByListener: true,
       tabWindowIsLogical: true,
-      tabWebviewWindowWrapsFrame: true,
+      tabWebviewWindowIsTheTabsWindow: { opened: true, tornOff: true, merged: true },
     });
   }, 120_000);
 
