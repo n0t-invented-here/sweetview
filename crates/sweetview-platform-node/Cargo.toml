@@ -13,7 +13,7 @@ crate-type = ["cdylib"]
 
 [features]
 # On: the binding `@n1h/sweetview` ships, with the webview. Off (`--no-default-features`): the
-# binding `@n1h/sweetview-native` ships, which links no webview (D48).
+# binding `@n1h/sweetview-native` ships, which links no webview (D50).
 default = ["webview"]
 webview = ["sweetview-napi/webview", "sweetview-runtime/webview"]
 

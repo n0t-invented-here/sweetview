@@ -91,7 +91,7 @@ const result: Record<string, unknown> = { platform: process.platform, importErro
 
 if (native && internal) {
   const { installMouseHook, installKeyboardHook, permissions } = native;
-  // The webview is @n1h/sweetview's (D48).
+  // The webview is @n1h/sweetview's (D50).
   const { RawWebview, SizeHint, completeWebviewRequest } = await import("../../../sweetview/src/raw-webview");
   const size = { width: 300, height: 200, hint: SizeHint.NONE };
 

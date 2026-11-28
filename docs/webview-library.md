@@ -6,16 +6,18 @@ does not call it directly; `WebView.attach` and `createApp` do, through the
 `RawWebview` class ([app reference](app.md)). This page is for understanding
 what happens underneath, choosing a build, and working on it.
 
-- On Windows the webview is WebView2 driven by Rust: [`wry`](https://github.com/tauri-apps/wry)
-  creates it, and this project's `sweetview-platform-webview` crate adds what
-  `wry` has no API for (the request handler with streamed bodies, file drops,
-  external drop control, the transparent background, removable user scripts),
-  with the request rules in `sweetview-http`. Both are compiled into the
+- On Windows the webview is WebView2 driven by Rust: this project's
+  `sweetview-platform-webview` crate makes it as the C++ library made it (its
+  container window, the WebView2 controller, the two settings the C++
+  library set: see [Page behaviour](#page-behaviour)) and adds the request
+  handler with streamed bodies, file drops, external drop control, the
+  background colour and removable user scripts, through the typed WebView2
+  interfaces of `webview2-com`, with the request rules in `sweetview-http`. Both are compiled into the
   N-API binding that ships inside `@n1h/sweetview`. The binding
   `@n1h/sweetview-native` ships is built without them, so an application of
   the native package alone takes no webview; once `@n1h/sweetview` is
   imported, the process loads its binding only, which has every native call
-  too. Nothing else is installed, and `bun:ffi` is not involved.
+  too (D50). Nothing else is installed, and `bun:ffi` is not involved.
 - On macOS, until the macOS goal of the Rust rewrite, the webview is the C++
   webview library: a fork of upstream webview with Sweetview's additions,
   shipped in the optional peer `@n1h/sweetview-webview-bun` and called through
@@ -37,6 +39,7 @@ Windows binding provides the same behaviour as methods of `RawWebview`
   - [Streaming responses](#streaming-responses)
   - [External drops](#external-drops)
   - [File drops over the webview](#file-drops-over-the-webview)
+  - [Page behaviour](#page-behaviour)
   - [Teardown](#teardown)
 - [Library selection and symbol probing](#library-selection-and-symbol-probing)
 - [Source](#source)
@@ -230,11 +233,29 @@ webview_error_t webview_end_response(webview_t w, uint64_t request_id);
 - macOS calls the `WKURLSchemeTask` with the response head, successive
   `didReceiveData:` calls and `didFinish`, so the page receives bytes as
   they arrive. Frames for a stopped task are discarded.
-- Windows hands WebView2 an `IStream` that holds unread bytes in the
-  binding, whose `Read` waits for the next chunk. WebView2 reads that stream to its end before giving the response
-  to the page, so a streamed response arrives all at once. Use IPC events
-  for real-time desktop push.
-  [WebView2 Feedback #3519](https://github.com/MicrosoftEdge/WebView2Feedback/issues/3519).
+- Windows hands WebView2 an `IStream` over the bytes the binding keeps.
+  `webview_write_response_chunk` (`writeResponseChunk`) copies the chunk and
+  returns at once, on any thread, however far behind the reader is. `Read`
+  fills the buffer WebView2 asks for (32 KiB in the measured runtime),
+  copying what is there and waiting for the rest, or returns what is left
+  with `S_FALSE` at the end, as the C++ library's did.
+- What the page gets before the end, measured on WebView2 Runtime
+  158.0.4370.45: nothing. For a body of 10-byte text chunks (sent as
+  `text/plain`, as `text/event-stream`, with `Transfer-Encoding: chunked`
+  and with a `Content-Length`) and for a 24 MiB `application/octet-stream`
+  body, the page's `fetch()` did not resolve and its reader got no byte
+  until the response had ended, written from the UI thread or from another
+  thread; a `Read` that returned each chunk at once did no better (tried
+  and taken back). The C++ library's own live test showed the same on
+  Windows: the page never acknowledged an event before the next was
+  written, and its first event came at or after the last write. Microsoft's
+  reference requires the response stream to have all its content available
+  when the request's deferral completes, and says nothing of when the page
+  gets it ([WebView2 Feedback #3519](https://github.com/MicrosoftEdge/WebView2Feedback/issues/3519)).
+  The live tests fail if a runtime starts handing the page bytes sooner.
+  So on Windows a streamed response reaches the page whole, when it ends:
+  use IPC events for real-time desktop push, and do not stream a body that
+  never ends.
 
 ### External drops
 
@@ -287,6 +308,31 @@ one `onFileDrop` listener ([file drops](native/windows.md#file-drops)).
   iframes included. A drag from Finder is an external drag, so external
   drops must be allowed here too.
 - Linux: accepted, does nothing.
+
+### Page behaviour
+
+Not a C function: what the page does for the person using it. On Windows
+the webview is made as the C++ library's `win32_edge.hh` made it, step by
+step (`crates/sweetview-platform-webview/src/windows/host.rs` names the
+lines), so the page behaves as it did. The project used `wry` for this at
+first, and `wry` sets and registers things the C++ library never did, with
+no way to leave them out; that is why it is not used (DECISIONS D48).
+
+| | The C++ library, and Sweetview 1.0 on Windows |
+|---|---|
+| Settings | WebView2's defaults, except the developer tools (`debug`) and the status bar (off). So zoom with Ctrl+wheel, Ctrl+plus, Ctrl+minus, Ctrl+0 and a pinch, swipe navigation, the browser's context menu and keys, script dialogs, the built-in error page and SmartScreen are on; CSS `app-region` support and password saving are off; general autofill is whatever the profile has, never written |
+| The environment | created once, with no options (no extra browser arguments, no language, the default scroll bars), on `%APPDATA%\<executable file name>` |
+| The page's container | a child window of class `webview_widget` with `WS_EX_CONTROLPARENT`, destroyed with the webview |
+| Focus | given to the page in a window Sweetview made itself, at creation and when that window is activated; a page filling a Sweetview `Window` (as `createApp`'s does) gets it when that window is activated. A webview in a window of the application's own, or beside a control that has the focus, takes nothing |
+| A page's `window.close()`, from any document or frame, and the DevTools protocol's `Page.close` | nothing happens |
+| A download | WebView2's own: its interface, the profile's download folder, a file already there kept (the new one is named `name (1).ext`) |
+| A popup (`window.open`, `target="_blank"`) | WebView2 opens its own window, unless the tabs library has a handler set, which then gets the address |
+| The page's globals | nothing but `window.chrome.webview` (WebView2's) and Sweetview's bridge; a page may define its own `window.ipc` |
+
+The tests read each of these back from WebView2 for a webview made the way
+an application's is (`crates/sweetview-runtime/src/engine_tests.rs`), in a
+window of its own, a given window, a child and a child moved to another
+window. No option changes any of them yet.
 
 ### Teardown
 
@@ -351,9 +397,9 @@ the page is running.
 ## Source
 
 - Windows: this repository, `n0t-invented-here/sweetview`. The webview is
-  `crates/sweetview-platform-webview` (what WebView2 needs beyond `wry`) and
-  `crates/sweetview-http` (the request rules, ported with the C++ library's
-  tests); `crates/sweetview-runtime` creates it with `wry`; the binding is
+  `crates/sweetview-platform-webview` (the webview itself and what Sweetview
+  adds to it) and `crates/sweetview-http` (the request rules, ported with the
+  C++ library's tests); `crates/sweetview-runtime` creates it; the binding is
   `crates/sweetview-napi` and `crates/sweetview-platform-node`. Each crate's
   `README.md` states its job.
 - macOS: the C++ library and browser integrations,

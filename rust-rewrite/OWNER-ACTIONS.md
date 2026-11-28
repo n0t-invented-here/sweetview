@@ -16,8 +16,8 @@ Nothing was published. Eight packages are at version 1.0.0 in their `package.jso
 
 | Package | What changed for a consumer |
 |---|---|
-| `@n1h/sweetview-native` | ships `prebuilt/sweetview.win32-x64-msvc.node`, a binding with no webview, and `prebuilt/binding.d.ts`; it no longer exports the webview (D48); `@n1h/sweetview-webview-bun` is now an optional peer dependency, needed on macOS only |
-| `@n1h/sweetview` | ships `prebuilt/sweetview-webview.win32-x64-msvc.node`, the binding with the webview, and its `prebuilt/binding.d.ts`; exports the webview and its companions (D48); `docs/upgrading.md` has the rows |
+| `@n1h/sweetview-native` | ships `prebuilt/sweetview.win32-x64-msvc.node`, a binding with no webview, and `prebuilt/binding.d.ts`; it no longer exports the webview (D50); `@n1h/sweetview-webview-bun` is now an optional peer dependency, needed on macOS only |
+| `@n1h/sweetview` | ships `prebuilt/sweetview-webview.win32-x64-msvc.node`, the binding with the webview, and its `prebuilt/binding.d.ts`; exports the webview and its companions (D50); `docs/upgrading.md` has the rows |
 | `@n1h/sweetview-build` | `refreshWindowsIcons` goes through the binding |
 | `@n1h/sweetview-ipc`, `@n1h/sweetview-ipc-ws`, `@n1h/sweetview-settings` | no change of behaviour |
 | `@n1h/sweetview-ipc-electron`, `@n1h/sweetview-ipc-tauri` | new packages (checklist group WT) |

@@ -8,7 +8,7 @@ use sweetview_napi::engine::{KeyData, RawRequest};
 
 use crate::types::Rect;
 
-/// One webview: `wry` on the platform's web view, plus Sweetview's request handling.
+/// One webview: on Windows WebView2, made as the C++ library made it, plus Sweetview's request handling.
 /// Numeric results are `webview_error_t` codes.
 #[napi]
 pub struct Engine(imp::Engine);
@@ -16,14 +16,14 @@ pub struct Engine(imp::Engine);
 #[napi]
 impl Engine {
   /// Fills `window` with a webview; with `null`, in a window of the webview's own. In a
-  /// Sweetview window with a `backgroundColor`, the browser has that colour from its start on a WebView2 Runtime with `ICoreWebView2ControllerOptions3` (and right after it is made on an older one; see `docs/native/windows.md`).
+  /// Sweetview window with a `backgroundColor`, the browser has that colour before it is first shown (see `docs/native/windows.md`).
   #[napi(factory, catch_unwind)]
   pub fn create(debug: bool, window: Option<BigInt>) -> napi::Result<Engine> {
     imp::Engine::create(debug, window).map(Engine)
   }
 
   /// A child of `window`, at a rectangle of its client area in physical pixels. With
-  /// `pageBackground`, a page of the window (a tab) has the window's `backgroundColor` from its start on a WebView2 Runtime with `ICoreWebView2ControllerOptions3` (and right after it is made on an older one; see `docs/native/windows.md`).
+  /// `pageBackground`, a page of the window (a tab) has the window's `backgroundColor` before it is first shown (see `docs/native/windows.md`).
   #[napi(factory, catch_unwind)]
   pub fn create_child(debug: bool, window: BigInt, bounds: Rect, page_background: Option<bool>) -> napi::Result<Engine> {
     imp::Engine::create_child(debug, window, bounds.into(), page_background).map(Engine)

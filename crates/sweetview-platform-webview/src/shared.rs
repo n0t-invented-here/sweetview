@@ -251,8 +251,12 @@ impl Responder {
     }
 
     /// Appends body bytes (at most 4 GiB - 1) to a streamed answer; copied
-    /// before it returns, with no trip to the UI thread. A chunk for a stream
-    /// that ended, was never begun, or that the browser let go of does nothing.
+    /// before it returns, with no trip to the UI thread, and never waiting for
+    /// the page, from any thread, as the C++ fork's writer did. A chunk for a
+    /// stream that ended, was never begun, or that the browser let go of does
+    /// nothing. The bytes are appended under the table's lock, so an `end` on
+    /// another thread comes wholly before (the chunk is dropped, as after an
+    /// end) or wholly after (the chunk is read before the end).
     pub fn write_chunk(&self, id: u64, chunk: &[u8]) -> ErrorCode {
         if !self.shared.is_alive() {
             return ErrorCode::InvalidState;
@@ -263,19 +267,16 @@ impl Responder {
         if chunk.is_empty() {
             return ErrorCode::Ok;
         }
-        let stream = {
-            let mut streams = lock(&self.shared.streams);
-            let Some(stream) = streams.get(&id) else {
-                return ErrorCode::Ok;
-            };
-            if stream.is_abandoned() {
-                // Nobody will read these bytes: stop keeping them.
-                stream.abort();
-                streams.remove(&id);
-                return ErrorCode::Ok;
-            }
-            stream.clone()
+        let mut streams = lock(&self.shared.streams);
+        let Some(stream) = streams.get(&id) else {
+            return ErrorCode::Ok;
         };
+        if stream.is_abandoned() {
+            // Nobody will read these bytes: stop keeping them.
+            stream.abort();
+            streams.remove(&id);
+            return ErrorCode::Ok;
+        }
         stream.push(chunk);
         ErrorCode::Ok
     }
@@ -373,6 +374,29 @@ mod tests {
         assert_eq!(stream.read(&mut buf), (ReadEnd::Ended, 2));
         assert_eq!(&buf[..2], b"ab");
         assert_eq!(shared.open_stream_count(), 0);
+    }
+
+    // The C++ writer appended and returned, from any thread, however far behind the reader
+    // was: a worker that writes a stream's head and body before the UI thread has run the head
+    // (so WebView2 has nothing to read yet) never waits.
+    #[test]
+    fn a_writer_off_the_ui_thread_never_waits_for_the_reader() {
+        let (shared, r, _) = setup();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let writer = {
+            let r = r.clone();
+            std::thread::spawn(move || {
+                assert_eq!(r.begin(21, 200, None), ErrorCode::Ok);
+                let chunk = vec![3u8; 1 << 20];
+                let codes: Vec<ErrorCode> = (0..4).map(|_| r.write_chunk(21, &chunk)).collect();
+                done_tx.send(codes).unwrap();
+            })
+        };
+        let codes = done_rx.recv_timeout(std::time::Duration::from_secs(5));
+        assert_eq!(codes, Ok(vec![ErrorCode::Ok; 4]), "4 MiB written off the UI thread with nobody reading, at once");
+        writer.join().unwrap();
+        let Some(Job::BeginStream { stream, .. }) = shared.next_job() else { panic!("expected a stream head") };
+        assert_eq!(stream.buffered(), 4 << 20, "every byte kept for the reader");
     }
 
     // streaming_istream.hh: a body WebView2 let go of is forgotten on the UI

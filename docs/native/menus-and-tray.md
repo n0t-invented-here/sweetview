@@ -101,10 +101,6 @@ another library), or a raw handle. The platforms use it differently:
 - Windows: `TrackPopupMenu` needs an owner `HWND` to receive the menu's
   messages, and the owner is brought to the foreground first so the menu
   closes when the user clicks elsewhere. Pass the window the menu belongs to.
-  When the menu closes, the window that was in front before it opened is in
-  front again: a `noActivate` owner (an overlay) is never left active, and an
-  owner that was already in front keeps the foreground. A window the chosen
-  item's `click` shows or focuses stays in front.
   An item is chosen with either mouse button (letting go of the right button
   over it, so a menu opened by a right click is worked in one gesture) or
   from the keyboard.

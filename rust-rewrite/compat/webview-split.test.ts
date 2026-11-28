@@ -1,4 +1,4 @@
-// D48: the webview is not in the native package. An application that imports only the native
+// D50: the webview is not in the native package. An application that imports only the native
 // package (here `demos/menubar-only`, through `@n1h/sweetview/native`, which is the native package)
 // bundles no webview module and no reference to the webview binding; the binding the native package
 // ships holds no WebView2 code; and the running demo loads that binding and no other. Each proof has
@@ -67,7 +67,7 @@ async function bindingsLoadedBy(args: string[], cwd: string): Promise<string[]> 
   }
 }
 
-describe("the webview is not in the native package (D48)", () => {
+describe("the webview is not in the native package (D50)", () => {
   test("the bundle of demos/menubar-only holds no webview module and no reference to the webview binding; an application of @n1h/sweetview holds both", async () => {
     expect({ menubarOnly: await bundleOf("demos/menubar-only/app.ts"), facade: await bundleOf("rust-rewrite/compat/fixtures/facade-binding.ts") }).toEqual({
       menubarOnly: { webviewModules: [], bindings: ["native"] },

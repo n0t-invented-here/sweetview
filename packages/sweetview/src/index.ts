@@ -50,7 +50,7 @@ export {
   type SingleInstanceOptions,
 } from "@n1h/sweetview-native";
 export { defineAppIdentity, type AppIdentity, type AppIdentityInput } from "@n1h/sweetview-settings";
-// The webview and its companions: this package's, not the native package's (D48).
+// The webview and its companions: this package's, not the native package's (D50).
 export {
   beginWebviewResponse,
   completeWebviewRequest,

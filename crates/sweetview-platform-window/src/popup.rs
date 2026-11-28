@@ -47,7 +47,7 @@ mod imp {
   };
 
   use super::{PopupAt, PopupCorner};
-  use crate::platform::{after_popup_menu, foreground_window, give_back_foreground, set_foreground, sealed::Sealed};
+  use crate::platform::{after_popup_menu, set_foreground, sealed::Sealed};
   use crate::BorrowedWindow;
 
   /// The popup menu `menu` owns, valid while `menu` is borrowed (`muda`'s `hpopupmenu`).
@@ -62,9 +62,7 @@ mod imp {
       PopupCorner::TopLeft => TRACK_POPUP_MENU_FLAGS(0),
       PopupCorner::BottomLeft => TPM_BOTTOMALIGN,
     };
-    // The owner must be the foreground window or the menu does not close when the user clicks elsewhere;
-    // the window in front now is put back when the menu closes.
-    let before = foreground_window();
+    // The owner must be the foreground window or the menu does not close when the user clicks elsewhere.
     set_foreground(hwnd);
     // SAFETY: the menu handle is `menu`'s popup menu, owned by `menu` and alive while `menu` is borrowed
     // for this whole call. `hwnd` is the handle of the window `owner` lends for this call; TrackPopupMenu
@@ -74,7 +72,6 @@ mod imp {
     let chosen = unsafe { TrackPopupMenu(popup_handle(menu), TPM_RIGHTBUTTON | TPM_RETURNCMD | corner, at.x, at.y, None, hwnd, None) };
     // The nudge the shell asks for after such a menu, so the next one closes properly.
     after_popup_menu(hwnd);
-    give_back_foreground(hwnd, before);
     u32::try_from(chosen.0).unwrap_or(0)
   }
 
@@ -209,11 +206,7 @@ pub fn escape_menus_of_this_process_for_tests() -> usize {
 /// menu was dismissed. Releasing either mouse button over an item chooses it.
 ///
 /// The owner is brought to the foreground first so the menu closes when the user
-/// clicks elsewhere, and is posted `WM_NULL` afterwards, as the shell asks. When the
-/// menu closes the window that was in front before is put back in front, unless the
-/// owner was that window or something else took the foreground meanwhile: a menu
-/// leaves the foreground where it found it, and an owner shown without activation is
-/// not left active. Every popup menu goes through here: `Menu.popup`'s, the tray's.
+/// clicks elsewhere, and is posted `WM_NULL` afterwards, as the shell asks.
 pub fn show_popup(menu: &muda::Menu, owner: &crate::BorrowedWindow<'_>, at: PopupAt) -> u32 {
   imp::show_popup(menu, owner, at)
 }

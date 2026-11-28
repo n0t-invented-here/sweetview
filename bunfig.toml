@@ -1,4 +1,4 @@
 # Each test process loads one binding, the one with the webview, as an application of
-# @n1h/sweetview does: it is handed to the native package before any test calls it (D48).
+# @n1h/sweetview does: it is handed to the native package before any test calls it (D50).
 [test]
 preload = ["./packages/sweetview/src/binding.ts"]

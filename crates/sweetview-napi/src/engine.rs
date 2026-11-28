@@ -66,7 +66,7 @@ pub struct Engine {
 
 impl Engine {
   /// Fills `window` with a webview; with `null`, in a window of the webview's own. In a
-  /// Sweetview window with a `backgroundColor`, the browser has that colour from its start on a WebView2 Runtime with `ICoreWebView2ControllerOptions3` (and right after it is made on an older one; see `docs/native/windows.md`).
+  /// Sweetview window with a `backgroundColor`, the browser has that colour before it is first shown (see `docs/native/windows.md`).
   pub fn create(debug: bool, window: Option<BigInt>) -> napi::Result<Engine> {
     let host = window.as_ref().map_or(Host::Own, |window| Host::Fill(handle_value(window)));
     let background = window.as_ref().and_then(|window| sweetview_runtime::window::background_of(handle_value(window)));
@@ -74,7 +74,7 @@ impl Engine {
   }
 
   /// A child of `window`, at a rectangle of its client area. With `page_background`, a page of
-  /// the window (a tab of its tabbed window) has the window's `backgroundColor` from its start on a WebView2 Runtime with `ICoreWebView2ControllerOptions3` (and right after it is made on an older one; see `docs/native/windows.md`); any
+  /// the window (a tab of its tabbed window) has the window's `backgroundColor` before it is first shown (see `docs/native/windows.md`); any
   /// other child (the tab strip) keeps its own.
   pub fn create_child(debug: bool, window: BigInt, bounds: Rect, page_background: Option<bool>) -> napi::Result<Engine> {
     let handle = handle_value(&window);

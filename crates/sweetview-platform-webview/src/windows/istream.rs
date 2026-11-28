@@ -43,11 +43,17 @@ impl StreamingIStream {
         if pv.is_null() {
             return E_POINTER;
         }
-        // SAFETY: `pv` is non-null, and the `ISequentialStream::Read` contract makes
-        // it a writable buffer of at least `cb` bytes for the duration of the call;
-        // the slice does not outlive this function.
-        let out = unsafe { std::slice::from_raw_parts_mut(pv.cast::<u8>(), cb as usize) };
-        let (end, n) = self.state.read(out);
+        // The caller's buffer may hold uninitialised bytes (WebView2 lends its own
+        // storage), so no `&mut [u8]` is formed over it: each piece is copied to it by pointer.
+        let out = pv.cast::<u8>();
+        let (end, n) = self.state.read_with(cb as usize, |offset, bytes| {
+            // SAFETY: the `ISequentialStream::Read` contract makes `pv` (non-null, checked
+            // above) writable for `cb` bytes for the call, and `read_with` keeps
+            // `offset + bytes.len()` within `cb`, so the destination range is inside it;
+            // `bytes` borrows the stream's own buffer, a different allocation, so the two
+            // do not overlap. `wrapping_add` stays inside the same allocation.
+            unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), out.wrapping_add(offset), bytes.len()) };
+        });
         if end == ReadEnd::Aborted {
             return E_ABORT; // *pcbread is already 0
         }
@@ -87,7 +93,8 @@ impl ISequentialStream_Impl for StreamingIStream_Impl {
     /// Fills `pv` with exactly `cb` bytes (`S_OK`), waiting for them as needed,
     /// unless the stream ends first: then what was left (`S_FALSE`, possibly 0
     /// bytes). `E_ABORT`, nothing read, once the stream is aborted. A zero-byte
-    /// read never waits.
+    /// read never waits. As `ISequentialStream::Read` is documented: `S_OK`
+    /// only when every byte asked for was read.
     fn Read(&self, pv: *mut c_void, cb: u32, pcbread: *mut u32) -> HRESULT {
         catch_unwind(AssertUnwindSafe(|| self.read(pv, cb, pcbread))).unwrap_or(E_UNEXPECTED)
     }
@@ -206,6 +213,92 @@ mod tests {
         assert!(aborted.push(b"kept?"));
         aborted.abort();
         assert_eq!(read(&stream, &mut buf), (E_ABORT, 0));
+    }
+
+    // Every result `Read` gives, through the COM vtable. Each data supplier is another thread,
+    // so a `Read` that returned early (a short read of an open stream) fails here instead of
+    // hanging: `S_OK` means every byte asked for, as `ISequentialStream::Read` is documented.
+    #[test]
+    fn every_read_result_at_the_com_surface() {
+        // Each supplier pushes only once the read is waiting for bytes (no sleep stages it), so
+        // a read that returned early with what it had is seen.
+        let later = |state: &Arc<StreamState>, bytes: &'static [u8], end: bool| {
+            let state = state.clone();
+            std::thread::spawn(move || {
+                assert!(state.wait_for_waiting_reader(std::time::Duration::from_secs(10)), "the read waits for the rest");
+                assert!(state.push(bytes));
+                if end {
+                    state.finish();
+                }
+            })
+        };
+        let mut buf = [0u8; 8];
+
+        let state = Arc::new(StreamState::new());
+        let stream = StreamingIStream::create(state.clone());
+        assert!(state.push(b"12345678"));
+        assert_eq!(read(&stream, &mut buf), (S_OK, 8), "filled from what is there");
+        assert_eq!(&buf, b"12345678");
+
+        assert!(state.push(b"ab"));
+        let supplier = later(&state, b"cdefghij", false);
+        assert_eq!(read(&stream, &mut buf), (S_OK, 8), "filled once the rest is written, never short while open");
+        supplier.join().unwrap();
+        assert_eq!(&buf, b"abcdefgh");
+
+        let supplier = later(&state, b"k", true);
+        assert_eq!(read(&stream, &mut buf), (S_FALSE, 3), "the end comes first: what was left");
+        supplier.join().unwrap();
+        assert_eq!(&buf[..3], b"ijk");
+        assert_eq!(read(&stream, &mut buf), (S_FALSE, 0), "after the end: nothing");
+
+        let cut = Arc::new(StreamState::new());
+        let stream = StreamingIStream::create(cut.clone());
+        assert!(cut.push(b"abc"));
+        let aborter = {
+            let cut = cut.clone();
+            std::thread::spawn(move || {
+                assert!(cut.wait_for_waiting_reader(std::time::Duration::from_secs(10)), "the read waits for the rest");
+                cut.abort();
+            })
+        };
+        assert_eq!(read(&stream, &mut buf), (E_ABORT, 0), "aborted while waiting: nothing counts as read");
+        aborter.join().unwrap();
+    }
+
+    // A COM caller may hand `Read` writable storage it has not initialised (WebView2's own
+    // buffer is such storage). Run under Miri with `-Zmiri-recursive-validation`, which checks
+    // what a reference points at, so a `&mut [u8]` formed over these bytes is reported.
+    #[test]
+    fn a_read_into_uninitialised_storage_writes_only_the_bytes_read() {
+        let state = Arc::new(StreamState::new());
+        let stream = StreamingIStream::create(state.clone());
+        assert!(state.push(b"abc"));
+        state.finish();
+        let mut storage = [std::mem::MaybeUninit::<u8>::uninit(); 8];
+        let mut n = 99u32;
+        // SAFETY: `storage` is 8 writable bytes owned by this frame for the call, and `n` a local
+        // u32 for the count; `Read` writes at most `cb` bytes and initialises what it reports.
+        let hr = unsafe { stream.Read(storage.as_mut_ptr().cast(), 8, Some(&mut n)) };
+        assert_eq!((hr, n), (S_FALSE, 3));
+        // SAFETY: `Read` reported 3 bytes written, so the first 3 are initialised.
+        let read = unsafe { std::slice::from_raw_parts(storage.as_ptr().cast::<u8>(), 3) };
+        assert_eq!(read, b"abc");
+    }
+
+    // `Read` writes the bytes it reports and nothing after them: the caller's buffer past them
+    // is as it was (here a pattern, where `a_read_into_uninitialised_storage...` has storage
+    // that may not be read).
+    #[test]
+    fn a_read_leaves_the_rest_of_the_buffer_untouched() {
+        let state = Arc::new(StreamState::new());
+        let stream = StreamingIStream::create(state.clone());
+        assert!(state.push(b"abc"));
+        state.finish();
+        let mut buf = [0xA5u8; 8];
+        assert_eq!(read(&stream, &mut buf), (S_FALSE, 3));
+        assert_eq!(&buf[..3], b"abc");
+        assert_eq!(&buf[3..], &[0xA5; 5], "nothing written past the bytes read");
     }
 
     // Nothing unwinds out of the last `Release`: a panic in what the stream's release runs

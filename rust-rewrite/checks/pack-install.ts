@@ -33,7 +33,7 @@ try {
   }
   const files = readdirSync(tarballs).sort();
   console.log(`packed ${files.length} packages: ${files.join(", ")}`);
-  // The two bindings (D48): the native package's, with no webview, and the facade's, with it.
+  // The two bindings (D50): the native package's, with no webview, and the facade's, with it.
   const carried: string[][] = [];
   for (const tarball of [files.find((f) => f.includes("sweetview-native"))!, files.find((f) => /^n1h-sweetview-\d/.test(f))!]) {
     const listing = run(["tar", "-tzf", tarball], tarballs).out.split(/\r?\n/).filter((l) => l.includes("prebuilt/"));

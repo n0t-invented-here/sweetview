@@ -33,7 +33,7 @@ popup menus included, keep working inside Sweetview's event loop.
 
 A tray-only or menu-bar-only app uses the native module without a webview, a
 worker or a page: the webview is `RawWebview` of `@n1h/sweetview`, and on
-Windows the binding this package ships has no webview in it (D48). On macOS the module does not need the webview library
+Windows the binding this package ships has no webview in it (D50). On macOS the module does not need the webview library
 (`@n1h/sweetview-webview-bun`) for these: it loads the library when imported
 if it is installed, and only the input hooks and `permissions` (and
 `@n1h/sweetview`'s `RawWebview`) throw without it, when used.

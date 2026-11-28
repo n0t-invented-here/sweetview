@@ -1,5 +1,5 @@
 // The binding of `@n1h/sweetview`: every call of `@n1h/sweetview-native`'s binding and the
-// webview's (D48). It is handed to the native package when this module loads, so one binding is
+// webview's (D50). It is handed to the native package when this module loads, so one binding is
 // loaded in the process, this one; an application that imports only the native package loads that
 // package's own, which has no webview.
 

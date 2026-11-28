@@ -108,8 +108,8 @@ after them give every export its row.
   after Quit: `unref()` or clear it ([the end of the application](app.md#the-end-of-the-application)).
   On macOS, until the macOS goal of the rewrite, keep those lines: macOS still
   runs the code it ran before 1.0, which releases nothing at exit.
-- **The engine on Windows.** The webview is WebView2 driven by Rust (`wry`
-  and Sweetview's own additions), and windows, the tray, menus, dialogs,
+- **The engine on Windows.** The webview is WebView2 driven by Rust (this
+  project's own crates, which make it as the C++ library made it), and windows, the tray, menus, dialogs,
   notifications, input hooks and the event loop are Rust too. The native
   code is one file per target in `@n1h/sweetview-native`:
   `prebuilt/sweetview.win32-x64-msvc.node`. It is loaded with `require`, so
@@ -218,6 +218,22 @@ after them give every export its row.
   `%APPDATA%\<exe file name>` (for example `%APPDATA%\bun.exe` under `bun`,
   or `%APPDATA%\my-app.exe` for a compiled executable), so cookies, storage
   and caches carry over. `WEBVIEW2_USER_DATA_FOLDER` still overrides it.
+- **The page behaves as it did.** A webview on Windows has the settings the
+  C++ library gave it: Ctrl+wheel, Ctrl+plus, Ctrl+minus, Ctrl+0 and a touch
+  pinch zoom the page; a horizontal swipe on a touch screen goes back and
+  forward; no status bar shows a link's address while the pointer is over it;
+  the right-click menu is the browser's; the browser's keys (Ctrl+F, Ctrl+P,
+  F5) work; the developer tools follow `debug`. CSS
+  `app-region` (`-webkit-app-region: drag`, from a stylesheet written for
+  another shell) does nothing, so such an area gets its mouse events and does
+  not drag the window: drag a frameless window with `Window.startDrag`
+  ([window chrome](window-chrome.md)). A webview made in a window the
+  application gives it does not take the keyboard focus; a page's
+  `window.close()` does nothing; a download shows WebView2's own download
+  interface and goes to the user's downloads folder; making a webview leaves
+  the profile's autofill preference as it was ([page behaviour](webview-library.md#page-behaviour)).
+  Sweetview has no option to change any of these yet; zoom cannot be turned
+  off for an application-like page.
 - **Your own `bun:ffi` calls keep working.** An application's own `dlopen`
   tables, including its own modal dialogs and popup menus, run inside
   Sweetview's event loop in both of its modes (the blocking `run()` and the
@@ -333,7 +349,7 @@ after them give every export its row.
 
 1. In `package.json`, replace `@n1h/sweetview-webview-bun` with
    `@n1h/sweetview` if the application uses the webview, which only it
-   exports (D48), or with `@n1h/sweetview-native` if it uses only the input
+   exports (D50), or with `@n1h/sweetview-native` if it uses only the input
    hooks and `permissions`. On macOS keep `@n1h/sweetview-webview-bun`
    installed as well: `@n1h/sweetview-native` loads it there, and a Windows
    executable leaves it out ([What changed for every
@@ -602,7 +618,7 @@ cover old types and classes whose members have new names.
 
 ### `@n1h/sweetview-webview-bun` 2.x, as a 0.x application imports it
 
-The webview and its companions come from `@n1h/sweetview` now, the input hooks, `permissions` and `unload` from `@n1h/sweetview/native` (D48). Part C has the details of each.
+The webview and its companions come from `@n1h/sweetview` now, the input hooks, `permissions` and `unload` from `@n1h/sweetview/native` (D50). Part C has the details of each.
 
 | Old | Write now | Change |
 |---|---|---|
@@ -622,7 +638,7 @@ The webview and its companions come from `@n1h/sweetview` now, the input hooks, 
 | `Size` | `import type { Size } from "@n1h/sweetview"` | unchanged |
 | `SizeHint` | `import { SizeHint } from "@n1h/sweetview"`; `SizeHint.NONE === 0`; `SizeHint.MIN === 1`; `SizeHint.MAX === 2`; `SizeHint.FIXED === 3` | an ordinary `enum` now (it was a `const enum`): its members are values at run time |
 | `WEBVIEW_VERSION` | `import { WEBVIEW_VERSION } from "@n1h/sweetview"`; `WEBVIEW_VERSION === "0.12.0"` | unchanged |
-| `Webview` | `import { RawWebview } from "@n1h/sweetview"`; `new RawWebview(debug, size, window)` | the same class, as `RawWebview` of `@n1h/sweetview`, which has the webview (the native package has none: D48); `unsafeHandle` is an opaque number (Part C, `Webview` members) |
+| `Webview` | `import { RawWebview } from "@n1h/sweetview"`; `new RawWebview(debug, size, window)` | the same class, as `RawWebview` of `@n1h/sweetview`, which has the webview (the native package has none: D50); `unsafeHandle` is an opaque number (Part C, `Webview` members) |
 | `installKeyboardHook` | `import { installKeyboardHook } from "@n1h/sweetview/native"`; `installKeyboardHook(handler)` | unchanged |
 | `installMouseHook` | `import { installMouseHook } from "@n1h/sweetview/native"`; `installMouseHook(handler)` | unchanged |
 | `modifiersFrom` | `import { modifiersFrom } from "@n1h/sweetview/native"`; `modifiersFrom(bits)` | unchanged |
@@ -1727,7 +1743,7 @@ it loads.
 Every export of `@n1h/sweetview-webview-bun` (2.x, up to 2.8.0) and what an
 application imports instead. The webview and its companions are exported by
 `@n1h/sweetview`, so that an application of `@n1h/sweetview-native` alone takes
-no webview (D48); the input hooks, `permissions` and `unload` by
+no webview (D50); the input hooks, `permissions` and `unload` by
 `@n1h/sweetview-native`, and by `@n1h/sweetview/native` for an application that
 depends on `@n1h/sweetview`.
 
@@ -1753,7 +1769,7 @@ depends on `@n1h/sweetview`.
 | `Size` | `import type { Size } from "@n1h/sweetview"` | unchanged |
 | `SizeHint` | `import { SizeHint } from "@n1h/sweetview"`; `SizeHint.NONE === 0`; `SizeHint.MIN === 1`; `SizeHint.MAX === 2`; `SizeHint.FIXED === 3` | an ordinary `enum` now (it was a `const enum`): its members are values at run time |
 | `WEBVIEW_VERSION` | `import { WEBVIEW_VERSION } from "@n1h/sweetview"`; `WEBVIEW_VERSION === "0.12.0"` | unchanged: the C API version whose calls and error codes the class keeps |
-| `Webview` | `import { RawWebview } from "@n1h/sweetview"`; `new RawWebview(debug, size, window)` | the same class, as `RawWebview` of `@n1h/sweetview`, which has the webview (the native package has none: D48); the members that changed are in the next table |
+| `Webview` | `import { RawWebview } from "@n1h/sweetview"`; `new RawWebview(debug, size, window)` | the same class, as `RawWebview` of `@n1h/sweetview`, which has the webview (the native package has none: D50); the members that changed are in the next table |
 | `WebviewError` | `import { WebviewError } from "@n1h/sweetview"`; `new WebviewError(fn, code)` | unchanged |
 | `WebviewRequest` | `import type { WebviewRequest } from "@n1h/sweetview"` | unchanged |
 | `WebviewResponse` | `import type { WebviewResponse } from "@n1h/sweetview"` | unchanged |

@@ -29,7 +29,7 @@ Running an application in its own repository against a Sweetview checkout, befor
 | [`@n1h/sweetview/settings-store`](settings-store.md) | a JSON settings file in the user's application data folder; `defineAppIdentity` and `validateUrlScheme` |
 | [`@n1h/sweetview/window-chrome`](window-chrome.md) | a page-drawn title bar and resize handles backed by OS moves and resizes |
 | [`@n1h/sweetview/build`](build.md) | `writeIconFiles`, `makeMacApp` and `refreshWindowsIcons`; the page also covers the `make-app.ts` script and the `/file-imports` types |
-| [the webview](webview-library.md) | what the webview is on each OS (WebView2 through `wry` and the Rust binding on Windows, the C++ webview library on macOS), the additions over upstream webview, intercepted origins, drop control, loading the binding and the macOS library's symbol probing, the macOS `^2.7.0` peer range, companion repositories, and building the binding and the library |
+| [the webview](webview-library.md) | what the webview is on each OS (WebView2 made by this project's Rust crates and the Rust binding on Windows, the C++ webview library on macOS), the additions over upstream webview, intercepted origins, drop control, loading the binding and the macOS library's symbol probing, the macOS `^2.7.0` peer range, companion repositories, and building the binding and the library |
 
 The [workspace table](../README.md#documentation) maps each facade subpath
 to its publishing package under `packages/`. Direct package imports are

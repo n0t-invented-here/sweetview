@@ -1,4 +1,4 @@
-// How `@n1h/sweetview`, which holds the webview (D48), connects to this package.
+// How `@n1h/sweetview`, which holds the webview (D50), connects to this package.
 
 import { provideBinding, type NativeBinding } from "./binding";
 import { reportCallbackError } from "./callback-errors";

@@ -16,7 +16,7 @@ export type NativeBinding = typeof Binding;
 const customPath = process.env.SWEETVIEW_NATIVE_PATH || undefined;
 
 let loaded: NativeBinding | undefined;
-/** The loader `@n1h/sweetview` handed over: its binding, which has these calls and the webview's (D48). */
+/** The loader `@n1h/sweetview` handed over: its binding, which has these calls and the webview's (D50). */
 let provided: (() => NativeBinding) | undefined;
 
 // Follows the message when the package's own file is not there. In a checkout of the repository it
@@ -81,7 +81,7 @@ export function binding(): NativeBinding {
 
 /**
  * Internal: `@n1h/sweetview` hands over its own binding, which has every call of this package's and
- * the webview's, when it loads (D48). One binding is then loaded in the process, the facade's; an
+ * the webview's, when it loads (D50). One binding is then loaded in the process, the facade's; an
  * application that imports only this package loads this package's, which has no webview.
  * @throws {Error} When this package's binding was loaded already, by a call made before
  * `@n1h/sweetview` was imported.

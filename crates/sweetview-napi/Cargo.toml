@@ -9,7 +9,7 @@ repository.workspace = true
 publish.workspace = true
 
 [features]
-# The webview's calls (`engine`): the binding of `@n1h/sweetview` has them (D48).
+# The webview's calls (`engine`): the binding of `@n1h/sweetview` has them (D50).
 default = ["webview"]
 webview = ["sweetview-runtime/webview"]
 

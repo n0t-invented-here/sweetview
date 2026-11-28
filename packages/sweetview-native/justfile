@@ -11,7 +11,7 @@ install:
     bun install --cwd ../..
 
 # Also regenerates each prebuilt/binding.d.ts from the Rust. Needs cargo (the Rust toolchain, from rustup).
-# Builds the two Rust bindings for this machine (D48): the native package's, which links no webview,
+# Builds the two Rust bindings for this machine (D50): the native package's, which links no webview,
 # into this package's prebuilt/, and the one with the webview into packages/sweetview/prebuilt/
 build: install
     @if (!(Get-Command cargo -ErrorAction SilentlyContinue)) { [Console]::Error.WriteLine("just native build: cargo is not on PATH. The Rust binding is built from source with the Rust toolchain: install it with rustup (https://rustup.rs; on Windows it also asks for the Visual Studio C++ build tools), open a new terminal, and run this again."); exit 1 }
