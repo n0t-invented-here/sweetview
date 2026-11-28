@@ -11,7 +11,7 @@ import { createFrameAssembler, type AnyEvent, type EventMap, type MethodMap, typ
 import { RequestResponseAssembler, requestError, runNativeRequest, type NativeRequestResponse, type StreamingResponseFrame } from "./request-response";
 import type { HttpRequestMessage, InitMessage, NativeRequest, NativeResponse, WorkerCrashFrame } from "./messages";
 import { RawWebview, SizeHint, Window, quitEventLoop, runEventLoop, signalReady, type Rect, type TabHandle, type WindowOptions } from "@n1h/sweetview-native";
-import { createChildWebview, discardQuit, emitWindowFileDrop, engineOf, getWindowMeta, holdWindowNativeDispose, isWindowDisposed, onWindowDispose, onWindowFileDropListenersChange, preserveWindowGeometry, releaseAtEnd, scheduleNativeTimeout, windowFileDropCount } from "@n1h/sweetview-native/internal";
+import { createChildWebview, discardQuit, emitWindowFileDrop, reportCallbackError, engineOf, getWindowMeta, holdWindowNativeDispose, isWindowDisposed, onWindowDispose, onWindowFileDropListenersChange, preserveWindowGeometry, releaseAtEnd, scheduleNativeTimeout, windowFileDropCount } from "@n1h/sweetview-native/internal";
 import { Ring } from "./ring";
 import { webviewEngine, type WebviewHost, type WorkerWake } from "./webview-host";
 import { ASSET_ORIGIN } from "./webview-lib";
@@ -222,7 +222,7 @@ const startupErrorHtml = `<!doctype html>
 <h1>The app took too long to start</h1><p>Close this window and reopen the app to try again.</p></html>`;
 
 type UiHandler = (params: unknown) => unknown;
-type UiJob = { seq: string; method: string; fn: UiHandler; params: unknown };
+type UiJob = { kind: "uiMethods" | "deferredUiMethods"; seq: string; method: string; fn: UiHandler; params: unknown };
 
 export class WebView<M extends MethodMap = MethodMap, E extends EventMap = EventMap> {
   readonly raw: RawWebview;
@@ -409,7 +409,8 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
       const activeStreams = new Set<string>();
       // Work handed to the worker and not answered yet: page RPC seqs and native request ids.
       // If the worker dies, each is failed so neither a page RPC nor a fetch() hangs forever.
-      const pendingWorkerCalls = new Set<string>();
+      // The calls waiting on the worker, by seq, with their method's name.
+      const pendingWorkerCalls = new Map<string, string>();
       const pendingWorkerRequests = new Set<bigint>();
       let workerFailure: string | undefined;
       const decoder = new TextDecoder();
@@ -472,16 +473,22 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
           if (!frame) continue;
           if (frame.kind === "reply") {
             // A reply for a call already failed (the worker was declared dead) is not answered twice.
-            if (!pendingWorkerCalls.delete(frame.seq)) continue;
+            const method = pendingWorkerCalls.get(frame.seq);
+            if (method === undefined) continue;
+            pendingWorkerCalls.delete(frame.seq);
             if (frame.ok) raw.return(frame.seq, 0, JSON.stringify(frame.result ?? null));
-            else raw.return(frame.seq, 1, JSON.stringify({ message: frame.error }));
+            else {
+              raw.return(frame.seq, 1, JSON.stringify({ message: frame.error }));
+              // The worker's method threw: the page has its rejection; the application learns of it here.
+              reportCallbackError("worker", new Error(frame.error), null, method);
+            }
           } else if (frame.kind === "event") {
             for (const fn of taps) fn({ name: frame.name, payload: frame.payload });
             if (isLive()) emit(frame.name, frame.payload);
           }
         }
         if (crashed !== undefined) {
-          console.error("sweetview: the worker failed:", crashed);
+          reportCallbackError("worker", crashed, "sweetview: the worker failed:");
           failWorker(`worker crashed: ${crashed}`);
         }
       };
@@ -610,7 +617,7 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
           try {
             tabHooks?.beforeDestroy?.();
           } catch (err) {
-            console.error("sweetview: a tab driver's beforeDestroy hook threw:", err);
+            reportCallbackError("internal", err, "sweetview: a tab driver's beforeDestroy hook threw:");
           }
           raw.destroy();
         }
@@ -635,11 +642,11 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
         try {
           if (isLive()) drain();
         } catch (err) {
-          console.error("sweetview: draining the failed worker's replies threw:", err);
+          reportCallbackError("worker", err, "sweetview: draining the failed worker's replies threw:");
         }
         closeWorkerDrain();
         worker?.terminate();
-        for (const seq of [...pendingWorkerCalls]) replyError(seq, reason);
+        for (const seq of [...pendingWorkerCalls.keys()]) replyError(seq, reason);
         pendingWorkerCalls.clear();
         for (const id of [...pendingWorkerRequests]) {
           const key = String(id);
@@ -658,7 +665,7 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
         assembler.clear();
         requestResponses.clear();
       };
-      const invoke = ({ seq, method, fn, params }: UiJob) => {
+      const invoke = ({ kind, seq, method, fn, params }: UiJob) => {
         try {
           const result = fn(params);
           if ((typeof result === "object" && result !== null || typeof result === "function")
@@ -670,6 +677,7 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
           respond(seq, 0, result);
         } catch (err) {
           replyError(seq, err);
+          reportCallbackError(kind, err, null, method);
         }
       };
       const scheduleDeferred = () => {
@@ -694,6 +702,7 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
           cancelDispatch = undefined;
           deferScheduled = false;
           for (const { seq } of queue.splice(0)) replyError(seq, err);
+          reportCallbackError("internal", err, null);
         }
       };
       const showWhenReady = () => {
@@ -701,11 +710,11 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
         if (tabHooks?.revealWindow) tabHooks.revealWindow();
         else if (!window.isVisible()) window.show();
       };
-      const callReadyHook = (name: string, hook: (() => void) | undefined) => {
+      const callReadyHook = (name: "onReady" | "onReadyTimeout", hook: (() => void) | undefined) => {
         try {
           hook?.();
         } catch (err) {
-          console.error(`sweetview: ${name} handler threw:`, err);
+          reportCallbackError(name, err, `sweetview: ${name} handler threw:`);
         }
       };
 
@@ -717,11 +726,13 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
           const init: InitMessage = { kind: "init", ring: sab, wake: workerDrain.wake };
           worker.postMessage(init);
           worker.onerror = (e) => {
-            console.error("sweetview: the worker failed:", e.message ?? e);
+            reportCallbackError("worker", e.message ?? e, "sweetview: the worker failed:");
             failWorker(`worker crashed: ${e.message ?? String(e)}`);
           };
           worker.onmessageerror = () => {
-            console.error("sweetview: the worker sent a message that could not be deserialized");
+            reportCallbackError("worker", new Error("the worker sent a message that could not be deserialized"), () =>
+              console.error("sweetview: the worker sent a message that could not be deserialized"),
+            );
             failWorker("worker crashed: a message from the worker could not be deserialized");
           };
         }
@@ -739,9 +750,10 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
                   pendingWorkerRequests.add(id);
                   worker!.postMessage(msg, request.body.byteLength ? [request.body.buffer] : []);
                 } else {
-                  completeRequest(runNativeRequest(onRequest, request));
+                  completeRequest(runNativeRequest(onRequest, request, (err) => reportCallbackError("onRequest", err, null)));
                 }
-              } catch {
+              } catch (err) {
+                reportCallbackError("onRequest", err, null);
                 completeRequest(requestError(id, 500, "Internal Server Error"));
               }
           });
@@ -775,20 +787,21 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
             }
             const local = Object.hasOwn(uiMethods, method) ? uiMethods[method] : undefined;
             const deferred = Object.hasOwn(deferredUiMethods, method) ? deferredUiMethods[method] : undefined;
-            if (local) invoke({ seq, method, fn: local, params });
+            if (local) invoke({ kind: "uiMethods", seq, method, fn: local, params });
             else if (deferred) {
-              queue.push({ seq, method, fn: deferred, params });
+              queue.push({ kind: "deferredUiMethods", seq, method, fn: deferred, params });
               scheduleDeferred();
             } else if (worker) {
               if (workerFailure !== undefined) {
                 replyError(seq, workerFailure);
                 return;
               }
-              pendingWorkerCalls.add(seq);
+              pendingWorkerCalls.set(seq, method);
               worker.postMessage({ kind: "call", seq, method, params });
             } else replyError(seq,`${method}: this window has no worker and no UI-thread method of that name`);
           } catch (err) {
             replyError(seq, err);
+            reportCallbackError("internal", err, null);
           }
         });
 

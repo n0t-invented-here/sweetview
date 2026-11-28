@@ -5,7 +5,7 @@
 // Lives in src/tabs/ (webview layer), never in the native package.
 
 import type { RawWebview } from "@n1h/sweetview-native";
-import { engineOf, type NativeEngine } from "@n1h/sweetview-native/internal";
+import { engineOf, reportCallbackError, type NativeEngine } from "@n1h/sweetview-native/internal";
 import type { Key } from "@n1h/sweetview-native/win32/shortcuts";
 
 /** A live webview's engine: what the tab driver holds for as long as the tab's webview exists. */
@@ -40,7 +40,7 @@ export function onAcceleratorKey(controller: Controller, taken: (key: Key) => bo
     try {
       return taken(key) === true;
     } catch (err) {
-      console.error("sweetview: an accelerator key handler threw:", err);
+      reportCallbackError("internal", err, "sweetview: an accelerator key handler threw:");
       return false;
     }
   });
@@ -56,7 +56,7 @@ export function onNewWindowRequested(controller: Controller, opened: (address: s
     try {
       opened(address);
     } catch (err) {
-      console.error("sweetview: a new-window handler threw:", err);
+      reportCallbackError("internal", err, "sweetview: a new-window handler threw:");
     }
   });
   return () => {
@@ -97,7 +97,7 @@ export function onNavigationFailed(
     try {
       onFailed({ url, reason, isCurrent: () => hostNavEpoch === undefined || hostNavEpoch() === epoch });
     } catch (err) {
-      console.error("sweetview: a navigation-failed handler threw:", err);
+      reportCallbackError("internal", err, "sweetview: a navigation-failed handler threw:");
     }
   });
   if (code !== 0) throw failed("add_NavigationCompleted", code);
