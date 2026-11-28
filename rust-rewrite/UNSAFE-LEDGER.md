@@ -1,6 +1,6 @@
 # Unsafe ledger
 
-Rewritten by `bun rust-rewrite/verify.ts <platform> --ledger`. 254 uses in 21 files.
+Rewritten by `bun rust-rewrite/verify.ts <platform> --ledger`. 263 uses in 22 files.
 
 | File | Uses of `unsafe` |
 |---|---|
@@ -17,6 +17,7 @@ Rewritten by `bun rust-rewrite/verify.ts <platform> --ledger`. 254 uses in 21 fi
 | `crates/sweetview-platform-webview/src/windows/handlers.rs` | 16 |
 | `crates/sweetview-platform-webview/src/windows/istream.rs` | 11 |
 | `crates/sweetview-platform-webview/src/windows/mod.rs` | 40 |
+| `crates/sweetview-platform-window/src/folder_dialog.rs` | 9 |
 | `crates/sweetview-platform-window/src/metrics.rs` | 1 |
 | `crates/sweetview-platform-window/src/popup.rs` | 9 |
 | `crates/sweetview-platform-window/src/size_hint.rs` | 1 |
@@ -154,6 +155,10 @@ All of it reaches WebView2 through the objects `wry` 0.58.2 hands out (`WebViewE
 - **Tracking a `muda` menu for a window** (1: `TrackPopupMenu`). Looked for: `muda` 0.22.0 `ContextMenu::show_context_menu_for_hwnd` (https://docs.rs/muda/0.22.0/muda/trait.ContextMenu.html), which is itself `unsafe` (`muda-0.22.0/src/context_menu.rs:30`), passes `TPM_LEFTALIGN | TPM_RETURNCMD` only (`src/platform_impl/windows/mod.rs:951`), so a right-button release does not choose and the tray's menu cannot open above the cursor, and reports the item through the process-wide `MenuEvent` rather than as the call's result. The menu is `muda`'s popup menu, borrowed for the call; the window is a `BorrowedWindow` lent for the call, whose handle the OS validates on the call (a stale handle, or a window of another thread, makes it fail and return 0). The `ScreenToClient` the old call needed is gone: `TrackPopupMenu` takes the screen point.
 - **Test hooks** (6: `EndMenu` in `end_menu`, and `GetCurrentProcessId`, `FindWindowExW`, `GetWindowThreadProcessId`, `IsWindowVisible`, `PostMessageW` in `escape_menus`), behind the doc-hidden `end_menu_for_tests` and `escape_menus_of_this_process_for_tests`, which the runtime's test of timers inside a popup menu needs (D38) and which the runtime cannot make itself (`unsafe` is forbidden there). No crate ends a menu: `muda` 0.22.0 has no `EndMenu` (https://docs.rs/muda/0.22.0/muda/). Nothing is passed by pointer but a local `u32` and a static class name; every handle value is one the OS just returned and validates again, and the post carries integers.
 - **The state and command id of an item** (2: `GetSubMenu`, `SetMenuItemInfoW`, shared by `check_item` and `set_command_id`). `muda` has no item with both an icon and a check mark (D14), and no API sets an item's command id; the caller's number is the id so `TrackPopupMenu` answers with it, and an application tracking a handed-out menu gets ids from 1 as before. The menus are `muda`'s, borrowed for the call.
+
+### `crates/sweetview-platform-window/src/folder_dialog.rs` (9)
+
+- **The folder dialog** (9: `CoCreateInstance`, `GetOptions`, `SetOptions`, `SetTitle`, `Show`, `GetResult`, `GetDisplayName`, `PWSTR::as_wide`, `CoTaskMemFree`). Looked for: `rfd` 0.18.0 `FileDialog::pick_folder` (https://docs.rs/rfd/0.18.0/rfd/struct.FileDialog.html#method.pick_folder), which answers `None` for a COM failure as for a cancel, so `pickFolder` could not throw as it did at tag `pre-rust-rewrite` (D44). `windows` 0.62.2 has the typed `IFileOpenDialog` (https://docs.rs/windows/0.62.2/windows/Win32/UI/Shell/struct.IFileOpenDialog.html) and marks its methods `unsafe`. The interfaces are owned values released on drop; the path COM allocates is read once and freed once, after the read.
 
 ### `crates/sweetview-platform-window/src/metrics.rs` (1, test)
 

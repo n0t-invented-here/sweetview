@@ -134,6 +134,8 @@ pub use sweetview_platform_loop::ResourceCounts as HandleCounts;
 /// Tests that count the process's handles run one at a time.
 #[cfg(test)]
 pub(crate) static TEST_SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+#[cfg(windows)]
+mod folder_dialog;
 mod metrics;
 mod popup;
 
@@ -143,5 +145,7 @@ mod popup;
 #[path = "test_support.rs"]
 pub mod test_support;
 
+#[cfg(windows)]
+pub use folder_dialog::{pick_folder, FolderDialogError};
 pub use metrics::{double_click_time_ms, small_icon_size};
 pub use popup::{check_item, end_menu_for_tests, escape_menus_of_this_process_for_tests, menu_handle_value, set_command_id, show_popup, PopupAt, PopupCorner};

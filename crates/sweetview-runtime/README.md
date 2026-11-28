@@ -15,5 +15,5 @@ It is safe Rust: `#![forbid(unsafe_code)]`. What needs an OS call no crate wraps
 | `tray` | the tray icon on `tray-icon`: the single and double click rule, the menu built from data on each right click, events queued out of `tray-icon`'s window procedure before any callback runs |
 | `menu` | menus as data, built into `muda` menus on each showing, each item carrying the caller's number as its command id; `Menu.popup` at a point or at the cursor (opening downward, or upward for the tray), answering with the chosen item's number; menus handed to the application for its own `TrackPopupMenu` until it frees them; the system menu of any window of the thread |
 | `icon` | `.ico` and PNG bytes decoded to RGBA at the size the tray or a menu draws |
-| `dialogs` | the folder dialog on `rfd` |
+| `dialogs` | the folder dialog: on Windows the platform crate's `IFileOpenDialog` (D44), elsewhere `rfd` |
 | `app` | the application menu, the app icon and the activation policy, which do nothing on Windows |

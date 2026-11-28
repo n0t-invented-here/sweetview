@@ -978,7 +978,7 @@ describe.if(onWindows)("Tray (binding: tray-icon)", () => {
   }, 20_000);
 });
 
-describe.if(onWindows)("pickFolder (binding: rfd)", () => {
+describe.if(onWindows)("pickFolder (binding)", () => {
   /**
    * Runs `step` on the folder dialog titled `title` from inside the dialog's own loop, every
    * 20 ms until it returns true. A dialog still up after 10 s is closed, so a failing test never leaves one open.
