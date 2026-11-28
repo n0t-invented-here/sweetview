@@ -5,6 +5,7 @@ export { createChildWebview, engineOf } from "./webview";
 export type { Engine as NativeEngine } from "../prebuilt/binding";
 export { deferNative, openNativeDrain, quitNativeLoop, runNativeLoop, wakeNative } from "./ui-thread";
 export {
+  concealWindow,
   emitWindowFileDrop,
   emitWindowNewTab,
   emitWindowTabClose,
@@ -14,8 +15,10 @@ export {
   getWindowMeta,
   holdWindowNativeDispose,
   isWindowDisposed,
+  markHiddenAtRunEnd,
   onWindowDispose,
   onWindowFileDropListenersChange,
   preserveWindowGeometry,
+  takeHiddenAtRunEnd,
   windowFileDropCount,
 } from "./window";

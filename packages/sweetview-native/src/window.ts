@@ -191,6 +191,9 @@ const ownedWindows = new Set<Window>();
 // waits for the last hold to be released.
 const windowNativeDisposeHolds = new WeakMap<Window, number>();
 const windowPendingNativeDispose = new WeakSet<Window>();
+// Windows the end of a blocking run() hid before its webview went (D42), to be shown again when
+// a webview in the same window runs next. The application's own show() or hide() forgets the mark.
+const windowsHiddenAtRunEnd = new WeakSet<Window>();
 
 type FileDropListener = (paths: string[]) => void;
 type FileDropChange = (hasListeners: boolean) => void;
@@ -290,6 +293,36 @@ export function holdWindowNativeDispose(win: Window): () => void {
   };
 }
 
+/**
+ * Internal: hides a visible window this process made, without touching its run-end mark. It is
+ * the first instant of a teardown, so no window is on the screen with its webview gone and its
+ * client area empty (D42): the window and its webviews are destroyed right after. A failure is
+ * logged and the teardown goes on. Returns whether it hid the window.
+ */
+export function concealWindow(win: Window): boolean {
+  if (!windowMetaMap.get(win)?.owned) return false;
+  const inner = windowBackendMap.get(win);
+  if (!inner) return false;
+  try {
+    if (!inner.isVisible()) return false;
+    inner.hide();
+    return true;
+  } catch (err) {
+    console.error("sweetview: hiding a window before its teardown threw:", err);
+    return false;
+  }
+}
+
+/** Internal: the end of a blocking run() hid this window before its webview went (D42). */
+export function markHiddenAtRunEnd(win: Window): void {
+  windowsHiddenAtRunEnd.add(win);
+}
+
+/** Internal: whether the end of a blocking run() hid this window and nothing has shown or hidden it since; forgets the mark. */
+export function takeHiddenAtRunEnd(win: Window): boolean {
+  return windowsHiddenAtRunEnd.delete(win);
+}
+
 /** Internal check for whether Window.dispose() has already run. */
 export function isWindowDisposed(win: Window): boolean {
   return windowDisposed.has(win);
@@ -353,6 +386,8 @@ export class Window {
   readonly #fileDropListeners = new Set<FileDropListener>();
   #unsubscribeNativeDrop?: () => void;
   readonly #unregister: () => void;
+  readonly #unregisterConceal: () => void;
+  readonly #closeHandlers = new Set<() => void>();
   readonly #tabListeners: TabListeners = {
     newTab: new Set(),
     tabSelect: new Set(),
@@ -406,8 +441,10 @@ export class Window {
     windowMetaMap.set(this, this.#meta);
     windowBackendMap.set(this, this.#inner);
     windowTabListeners.set(this, this.#tabListeners);
-    // Disposed when the application ends, after its webviews and trays.
+    // Disposed when the application ends, after its webviews and trays; hidden before any of
+    // them goes, so no window is seen with its webview gone (D42).
     this.#unregister = releaseAtEnd("window", () => this.dispose());
+    this.#unregisterConceal = releaseAtEnd("conceal", () => void concealWindow(this));
   }
 
   /** Non-mutating wrapper around an existing HWND or NSWindow*. */
@@ -435,12 +472,15 @@ export class Window {
     return this.#inner.isVisible();
   }
   show(): void {
+    windowsHiddenAtRunEnd.delete(this);
     this.#inner.show();
   }
   hide(): void {
+    windowsHiddenAtRunEnd.delete(this);
     this.#inner.hide();
   }
   toggle(): void {
+    windowsHiddenAtRunEnd.delete(this);
     this.#inner.toggle();
   }
 
@@ -505,7 +545,33 @@ export class Window {
     return this.#inner.onMove(handler);
   }
   onClose(handler: () => void): () => void {
-    return this.#inner.onClose(handler);
+    if (windowDisposed.has(this)) return () => {};
+    const entry = () => handler();
+    const unsubscribe = this.#inner.onClose(entry);
+    this.#closeHandlers.add(entry);
+    return () => {
+      if (!this.#closeHandlers.delete(entry)) return;
+      unsubscribe();
+    };
+  }
+
+  /**
+   * Asks the window to close, as its close button does: its `onClose` listeners run, or, when it
+   * has none, a window this process made is disposed (destroyed) and an adopted one is left alone.
+   */
+  close(): void {
+    if (windowDisposed.has(this)) return;
+    if (this.#closeHandlers.size === 0) {
+      if (this.#meta.owned) this.dispose();
+      return;
+    }
+    for (const handler of [...this.#closeHandlers]) {
+      try {
+        handler();
+      } catch (err) {
+        console.error("sweetview: onClose handler threw:", err);
+      }
+    }
   }
   onFileDrop(handler: (paths: string[]) => void): () => void {
     if (windowDisposed.has(this)) return () => {};
@@ -546,8 +612,14 @@ export class Window {
    */
   dispose(): void {
     if (windowDisposed.has(this)) return;
+    // Off the screen first, then its webviews (the dispose hooks), then the window: never a
+    // window on the screen with its webview gone and its client area empty (D42).
+    concealWindow(this);
+    windowsHiddenAtRunEnd.delete(this);
     windowDisposed.add(this);
     this.#unregister();
+    this.#unregisterConceal();
+    this.#closeHandlers.clear();
     ownedWindows.delete(this);
     const hooks = windowDisposeHooks.get(this);
     if (hooks) {

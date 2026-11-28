@@ -44,14 +44,18 @@ export type WindowChromeMethodTable = { [K in keyof WindowChromeMethods]: (param
 export type WindowChromeOptions = {
   /** What `window.info` reports; the page renders bare when it says "os". Default "page". */
   chrome?: WindowChromeKind;
-  /** What the close button does. Default: hide the window (a tray or a menu shows it again); pass `() => app.quit()` for a main window. */
+  /**
+   * What the close button does. Default: `window.close()`, what the OS close button does: the
+   * window's `onClose` listeners run, or, with none, the window is disposed. Pass `() => app.quit()`
+   * for a main window.
+   */
   onClose?: () => void;
 };
 
 /** The UI-thread half: the `window.*` methods, answered by the window they are given. Spread into `uiMethods`. */
-export function windowChromeMethods(window: Pick<Window, "hide" | "isMaximized" | "startDrag" | "startResize" | "minimize" | "toggleMaximize">, options: WindowChromeOptions = {}): WindowChromeMethodTable {
+export function windowChromeMethods(window: Pick<Window, "close" | "isMaximized" | "startDrag" | "startResize" | "minimize" | "toggleMaximize">, options: WindowChromeOptions = {}): WindowChromeMethodTable {
   const chrome = options.chrome ?? "page";
-  const onClose = options.onClose ?? (() => window.hide());
+  const onClose = options.onClose ?? (() => window.close());
   return {
     "window.info": () => ({ chrome, maximized: window.isMaximized() }),
     "window.drag": () => window.startDrag(),

@@ -17,13 +17,15 @@
 import { binding } from "./binding";
 
 /** The kinds of object, in the order they are released. */
-const ORDER = ["hook", "app", "webview", "tray", "notifier", "lock", "window"] as const;
+const ORDER = ["hook", "conceal", "app", "webview", "tray", "notifier", "lock", "window"] as const;
 
 /**
- * What a release entry is for: `hook` an input hook, `app` a WebView of
- * `@n1h/sweetview` (it stops the worker and destroys its webview), `webview`
- * a raw webview, `tray`, `notifier`, `lock` a single-instance lock, `window`
- * a `Window`. A webview goes before its window, a tray before the windows.
+ * What a release entry is for: `hook` an input hook, `conceal` hiding a
+ * visible `Window` (D42), `app` a WebView of `@n1h/sweetview` (it stops the
+ * worker and destroys its webview), `webview` a raw webview, `tray`,
+ * `notifier`, `lock` a single-instance lock, `window` a `Window`. Every
+ * window is off the screen before any webview goes, a webview goes before
+ * its window, a tray before the windows.
  */
 export type ReleaseKind = (typeof ORDER)[number];
 
