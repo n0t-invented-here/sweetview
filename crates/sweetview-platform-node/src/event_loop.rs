@@ -1,6 +1,6 @@
 //! Exports of `sweetview_napi::event_loop`.
 
-use napi::bindgen_prelude::Function;
+use napi::bindgen_prelude::{FnArgs, Function};
 use napi::Env;
 use napi_derive::napi;
 use sweetview_napi::event_loop as imp;
@@ -36,6 +36,14 @@ pub fn discard_quit() -> napi::Result<bool> {
 #[napi(catch_unwind)]
 pub fn is_loop_blocking() -> napi::Result<bool> {
   imp::is_loop_blocking()
+}
+
+/// Makes `sink` where an exception a JavaScript callback threw goes on this thread, as
+/// `(kind, message)`, in place of the `sweetview: <kind> threw:` line on stderr; `null` puts the
+/// line back. `onCallbackError` sets it while it has a listener.
+#[napi(catch_unwind)]
+pub fn set_callback_error_sink(env: Env, sink: Option<Function<'_, FnArgs<(String, String)>, ()>>) -> napi::Result<()> {
+  imp::set_callback_error_sink(env, sink)
 }
 
 /// Calls `job` on a later turn of whichever loop the UI thread is in, a modal one included.

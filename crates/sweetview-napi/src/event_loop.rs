@@ -1,6 +1,6 @@
 //! Both loop modes, deferred jobs, native timeouts, and the wake a `Worker` calls.
 
-use napi::bindgen_prelude::Function;
+use napi::bindgen_prelude::{FnArgs, Function};
 use napi::Env;
 use sweetview_runtime::{Runtime, TimeoutId};
 
@@ -34,6 +34,13 @@ pub fn discard_quit() -> napi::Result<bool> {
 /// True while `runLoop()` is on the stack.
 pub fn is_loop_blocking() -> napi::Result<bool> {
   Ok(Runtime::get().or_throw()?.is_blocking())
+}
+
+/// Makes `sink` where an exception a JavaScript callback threw goes on this thread, with the
+/// callback's kind and the exception's message, in place of the `sweetview: <kind> threw:` line on
+/// stderr; `null` puts the line back. `onCallbackError` sets it while it has a listener.
+pub fn set_callback_error_sink(env: Env, sink: Option<Function<'_, FnArgs<(String, String)>, ()>>) -> napi::Result<()> {
+  crate::callback::set_error_sink(env, sink.as_ref())
 }
 
 /// Calls `job` on a later turn of whichever loop the UI thread is in, a modal one included.
