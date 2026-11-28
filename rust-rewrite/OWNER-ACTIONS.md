@@ -16,8 +16,8 @@ Nothing was published. Eight packages are at version 1.0.0 in their `package.jso
 
 | Package | What changed for a consumer |
 |---|---|
-| `@n1h/sweetview-native` | ships `prebuilt/sweetview.win32-x64-msvc.node` and `prebuilt/binding.d.ts`; `@n1h/sweetview-webview-bun` is now an optional peer dependency, needed on macOS only |
-| `@n1h/sweetview` | the webview on Windows comes from the native package; `docs/upgrading.md` has the rows |
+| `@n1h/sweetview-native` | ships `prebuilt/sweetview.win32-x64-msvc.node`, a binding with no webview, and `prebuilt/binding.d.ts`; it no longer exports the webview (D48); `@n1h/sweetview-webview-bun` is now an optional peer dependency, needed on macOS only |
+| `@n1h/sweetview` | ships `prebuilt/sweetview-webview.win32-x64-msvc.node`, the binding with the webview, and its `prebuilt/binding.d.ts`; exports the webview and its companions (D48); `docs/upgrading.md` has the rows |
 | `@n1h/sweetview-build` | `refreshWindowsIcons` goes through the binding |
 | `@n1h/sweetview-ipc`, `@n1h/sweetview-ipc-ws`, `@n1h/sweetview-settings` | no change of behaviour |
 | `@n1h/sweetview-ipc-electron`, `@n1h/sweetview-ipc-tauri` | new packages (checklist group WT) |
@@ -25,7 +25,7 @@ Nothing was published. Eight packages are at version 1.0.0 in their `package.jso
 Before publishing:
 
 - `just pack` builds the binding and lists what each tarball would hold. `bun rust-rewrite/checks/pack-install.ts` packs all eight, installs the tarballs into an empty project and runs a script there (checklist item W8.1).
-- The binding is built on the machine that publishes (`just publish` runs `just native build` first). The `.node` file is not tracked (decision D5). The published native package holds the Windows x64 binding only; macOS and Linux binaries are added by their goals.
+- The bindings are built on the machine that publishes (`just publish` runs `just native build` first, which builds both). The `.node` files are not tracked (decision D5). The published native package and `@n1h/sweetview` each hold their Windows x64 binding only; macOS and Linux binaries are added by their goals.
 - The names `@n1h/sweetview-ipc-electron` and `@n1h/sweetview-ipc-tauri` were chosen by this work, after the existing `@n1h/sweetview-ipc-ws`. They are public names of something the owner owns: to change one before its first publish, rename `packages/sweetview-ipc-<name>/package.json`, the imports in `demos/web-app*`, and the pages `docs/ipc-electron.md`, `docs/ipc-tauri.md`, `docs/ipc.md`, `docs/upgrading.md` and the root `README.md`.
 - The Tauri event name `sweetview-ipc:event` and command name `sweetview_ipc`, and the Electron channel names in `packages/sweetview-ipc-electron/src/channel.ts`, are wire names an application's Rust backend or preload script depends on once published.
 

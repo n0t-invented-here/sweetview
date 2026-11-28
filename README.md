@@ -84,9 +84,10 @@ An application in its own repository that depends on `@n1h/sweetview`
 ### From npm, once 1.0.0 is published
 
 Name the major version, so the command cannot fall back to 0.2.1. On
-Windows a desktop application installs the package alone: the native
-binding, WebView2 driven by Rust, ships inside `@n1h/sweetview-native`, which
-`@n1h/sweetview` depends on.
+Windows a desktop application installs the package alone: the webview's
+binding, WebView2 driven by Rust, ships inside `@n1h/sweetview`, and the
+native package it depends on ships a binding of its own with no webview, which
+an application of `@n1h/sweetview-native` alone takes (D48).
 
 ```bash
 bun add @n1h/sweetview@^1.0.0
