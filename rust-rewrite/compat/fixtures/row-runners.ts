@@ -80,23 +80,7 @@ const icnsTypes = (icns: Uint8Array) => {
 };
 const sorted = (sizes: number[]) => [...sizes].sort((a, b) => a - b).join();
 const isPng = (bytes: Uint8Array) => same([...bytes.subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10]);
-/** The strip script's own value of a constant: what the strip lays its tabs out with. */
-const stripScriptConstant = async (name: string) => {
-  const { STRIP_JS } = await import("../../../packages/sweetview/src/tabs/win-strip-assets");
-  const m = new RegExp(`const ${name} = (\\d+);`).exec(STRIP_JS);
-  must(m !== null, `the strip script declares ${name}`);
-  return Number(m![1]);
-};
-const stripConstant = (name: string) =>
-  here(async (value: number) => {
-    must(value === (await stripScriptConstant(name)), `${name} is the value the strip script lays out with`, { value, script: await stripScriptConstant(name) });
-  });
 const registry = (key: string) => Bun.spawnSync(["reg", "query", key], { stdout: "pipe", stderr: "pipe" });
-const registryDark = () => {
-  const out = registry("HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize").stdout.toString();
-  const m = /AppsUseLightTheme\s+REG_DWORD\s+0x([0-9a-f]+)/i.exec(out);
-  return m !== null && Number.parseInt(m[1]!, 16) === 0;
-};
 /**
  * Runs `work` with a notifier app id of the tests' own (`Sweetview.NotifierTest.<uuid>`) and then
  * removes the two registry entries a notifier leaves for it, as notifier.test.ts does: the
@@ -169,17 +153,6 @@ const popupRun = async (ctx: DesktopCtx, open: () => unknown) => {
 const trayWindow = (): bigint => require("../../../packages/sweetview-native/src/win32/tray").currentTray()?.windowHandle() ?? 0n;
 const MENU = [{ label: "One", click() {} }, { type: "separator" as const }, { label: "Two", click() {} }];
 
-// A window event, emitted through the internal call, reaches the window's own listener.
-const emitted = (listen: (win: any, got: unknown[]) => void, emit: (fn: any, win: any) => void, expected: (win: any) => unknown) =>
-  desktop(async (fn, ctx) => {
-    const win = ctx.window({ tabs: true });
-    const got: unknown[] = [];
-    listen(win, got);
-    emit(fn, win);
-    const want = expected(win);
-    must(got.length === 1 && (got[0] === want || (Array.isArray(want) && same(got[0], want))), "the window's listener got what was emitted", got.length);
-  });
-
 export const RUNNERS: Record<string, Runner> = {
   // ---- constants ------------------------------------------------------------------------------------
   APP_ICO_SIZES: here(async (value: number[]) => {
@@ -193,23 +166,6 @@ export const RUNNERS: Record<string, Runner> = {
     must(ctx.webview().assetOrigin === value, "the webview's assetOrigin is ASSET_ORIGIN");
   }),
   FRAMES_ORIGIN: desktop((value: string, ctx) => must(ctx.webview().framesOrigin === value, "the webview's framesOrigin is FRAMES_ORIGIN", ctx.webview().framesOrigin)),
-  CAPTION_WIDTH: stripConstant("CAPTION_WIDTH"),
-  DRAG_ROOM: stripConstant("DRAG_ROOM"),
-  NEW_TAB_WIDTH: stripConstant("NEW_TAB_WIDTH"),
-  STRIP_HEIGHT: desktop(async (value: number, ctx) => {
-    must(value === (await stripScriptConstant("STRIP_HEIGHT")), "the strip script lays out STRIP_HEIGHT");
-    const { getTabFrame } = await import("../../../packages/sweetview-native/src/win32/tab-window");
-    const win = ctx.window({ tabs: true });
-    const frame = getTabFrame(hwndOf(win))!;
-    must(frame.stripBounds().height === Math.round(value * frame.scale()), "the frame's strip is STRIP_HEIGHT high at its scale", frame.stripBounds());
-  }),
-  TABS_LEFT: stripConstant("TABS_LEFT"),
-  TAB_MAX_WIDTH: stripConstant("TAB_MAX_WIDTH"),
-  TAB_MIN_WIDTH: stripConstant("TAB_MIN_WIDTH"),
-  LAST_TAB: here(async (value: number) => {
-    const { shortcutFor } = await import("../../../packages/sweetview-native/src/win32/shortcuts");
-    must(same(shortcutFor({ virtualKey: 0x39, control: true, shift: false, alt: false }), { select: value }), "Ctrl+9 selects LAST_TAB");
-  }),
   WEBVIEW_VERSION: here((value: string) => {
     // Nothing sends it: it names the webview library API level the bindings package had.
     must(/^\d+\.\d+\.\d+$/.test(value) && value === "0.12.0", "WEBVIEW_VERSION is the version string 0.12.0", value);
@@ -818,47 +774,10 @@ export const RUNNERS: Record<string, Runner> = {
   }),
 
   // ---- functions: the UI thread, windows and webviews ----------------------------------------------------------
-  _debugTrackedCount: desktop((fn, ctx) => {
-    const win = ctx.window();
-    must(fn(hwndOf(win)) >= 1 && fn(0x1234n) === 0, "a window this process made is tracked; a non-window is not", fn(hwndOf(win)));
-  }),
-  asHwnd: here((fn) => {
-    must(fn(0x1234) === 0x1234n && fn(0x1234n) === 0x1234n, "a number or bigint handle as a bigint");
-    let threw = false;
-    try {
-      fn(null);
-    } catch {
-      threw = true;
-    }
-    must(threw, "a null handle throws");
-  }),
-  systemIsDark: here((fn) => must(fn() === registryDark(), "the system theme as the registry has it (AppsUseLightTheme)", fn())),
-  getTabFrame: desktop((fn, ctx) => {
-    const tabbed = ctx.window({ tabs: true });
-    const plain = ctx.window();
-    const frame = fn(hwndOf(tabbed));
-    must(frame !== undefined && frame.hwnd === hwndOf(tabbed) && fn(hwndOf(plain)) === undefined, "a tab frame for a tabbed window only");
-  }),
   popupMenuAtCursor: desktop(async (fn, ctx) => {
     const owner = ctx.window();
     const { result, seen } = await popupRun(ctx, () => fn(hwndOf(owner), MENU));
     must(seen && result === false, "the menu opened and, dismissed, chose nothing", { seen, result });
-  }),
-  buildMenu: desktop((fn, ctx) => {
-    const built = fn(MENU);
-    try {
-      must(typeof built.hmenu === "bigint" && ctx.os.user32.IsMenu(built.hmenu) !== 0, "an HMENU the OS knows", built.hmenu);
-      must(same([...built.commands.keys()], [1, 2]) && same(built.bitmaps, []), "command ids from 1 in template order, no bitmaps to free", [...built.commands.keys()]);
-      must(ctx.os.menuItemId(built.hmenu, 0) === 1 && ctx.os.menuItemId(built.hmenu, 2) === 2, "the OS items carry those ids", [ctx.os.menuItemId(built.hmenu, 0), ctx.os.menuItemId(built.hmenu, 2)]);
-    } finally {
-      require("../../../packages/sweetview-native/src/win32/menu").destroyMenu(built);
-    }
-  }),
-  destroyMenu: desktop((fn, ctx) => {
-    const built = require("../../../packages/sweetview-native/src/win32/menu").buildMenu(MENU);
-    fn(built);
-    must(ctx.os.user32.IsMenu(built.hmenu) === 0, "the menu is gone");
-    fn(built); // safe twice
   }),
   windowMenu: desktop(async (fn, ctx) => {
     const win = ctx.window();
@@ -949,88 +868,6 @@ export const RUNNERS: Record<string, Runner> = {
     const { keys, keyCodes } = await ctx.hookRun();
     must(keys.length === 3 && keyCodes.every((c) => c === "F24"), "the hook saw the injected F24", { keys, keyCodes });
   }),
-  holdWindowNativeDispose: desktop((fn, ctx) => {
-    const win = ctx.window();
-    const hwnd = hwndOf(win);
-    const release = fn(win);
-    win.dispose();
-    const keptWhileHeld = ctx.os.isWindow(hwnd);
-    release();
-    must(keptWhileHeld && !ctx.os.isWindow(hwnd), "the native window goes when the hold is released", { keptWhileHeld });
-  }),
-  isWindowDisposed: desktop((fn, ctx) => {
-    const win = ctx.window();
-    const before = fn(win);
-    win.dispose();
-    must(!before && fn(win), "false, then true after dispose");
-  }),
-  onWindowDispose: desktop((fn, ctx) => {
-    const win = ctx.window();
-    let ran = 0;
-    fn(win, () => ran++);
-    win.dispose();
-    must(ran === 1, "the hook runs once on dispose", ran);
-  }),
-  getWindowMeta: desktop((fn, ctx) => {
-    const win = ctx.window({ title: "meta title", tabs: true, topmost: true });
-    const meta = fn(win);
-    must(meta.title === "meta title" && meta.tabs === true && meta.topmost === true, "the options the window was made with", meta);
-  }),
-  getWindowBackend: desktop((fn, ctx) => {
-    const win = ctx.window({ bounds: { x: 100, y: 100, width: 260, height: 190 } });
-    must(same(fn(win).bounds(), win.bounds()), "the backend behind the window");
-  }),
-  preserveWindowGeometry: desktop((fn, ctx) => {
-    const win = ctx.window({ bounds: { x: 100, y: 100, width: 260, height: 190 } });
-    const restore = fn(win);
-    win.setBounds({ x: 150, y: 160, width: 300, height: 220 });
-    restore();
-    must(same(win.bounds(), { x: 100, y: 100, width: 260, height: 190 }), "the bounds are put back", win.bounds());
-  }),
-  windowFileDropCount: desktop((fn, ctx) => {
-    const win = ctx.window();
-    const off = win.onFileDrop(() => {});
-    const one = fn(win);
-    off();
-    must(one === 1 && fn(win) === 0, "one listener, then none", one);
-  }),
-  onWindowFileDropListenersChange: desktop((fn, ctx) => {
-    const win = ctx.window();
-    const seen: unknown[] = [];
-    fn(win, (...args: unknown[]) => seen.push(args));
-    const off = win.onFileDrop(() => {});
-    off();
-    must(seen.length === 2, "told when the first listener comes and the last goes", seen);
-  }),
-  emitWindowFileDrop: emitted((win, got) => win.onFileDrop((p: string[]) => got.push(p)), (fn, win) => fn(win, ["C:\\x.txt"]), () => ["C:\\x.txt"]),
-  emitWindowNewTab: emitted((win, got) => win.onNewTab((o: unknown) => got.push(o)), (fn, win) => fn(win, win), (win) => win),
-  emitWindowTabSelect: emitted((win, got) => win.onTabSelect((t: unknown) => got.push(t)), (fn, win) => fn(win, TAB), () => TAB),
-  emitWindowTabClose: emitted((win, got) => win.onTabClose((t: unknown) => got.push(t)), (fn, win) => fn(win, TAB), () => TAB),
-  forwardWindowTabEvents: desktop((fn, ctx) => {
-    const { emitWindowTabSelect } = require("../../../packages/sweetview-native/src/internal");
-    const from = ctx.window({ tabs: true });
-    const to = ctx.window({ tabs: true });
-    const got: unknown[] = [];
-    to.onTabSelect((t: unknown) => got.push(t));
-    fn(from, to);
-    emitWindowTabSelect(from, TAB);
-    must(got[0] === TAB, "a tab event of one window reaches the other", got.length);
-  }),
-  scheduleNativeTimeout: desktop(async (fn, ctx) => {
-    let fired = 0;
-    fn(20, () => fired++);
-    const cancel = fn(20, () => fired += 10);
-    cancel();
-    await ctx.until(() => fired > 0, 2000);
-    await Bun.sleep(100);
-    must(fired === 1, "fires once; a cancelled one does not", fired);
-  }),
-  discardQuit: desktop((fn, ctx) => {
-    const { pumpEvents } = require("@n1h/sweetview-native");
-    ctx.os.user32.PostQuitMessage(0);
-    fn();
-    must(pumpEvents() === true, "the quit request is gone: the loop goes on");
-  }),
   pumpEvents: desktop((fn) => must(fn() === true, "true while no quit was asked for")),
   // runEventLoop and quitEventLoop are the run's own loop (rows-desktop.ts records them).
   runEventLoop: desktop(() => "recorded by rows-desktop.ts"),
@@ -1110,15 +947,6 @@ export const RUNNERS: Record<string, Runner> = {
     emitActivationUrl("sweetview-compat-row://open");
     off();
     must(same(got, ["sweetview-compat-row://open"]), "the handler gets the URL", got);
-  }),
-  emitActivationUrl: desktop((fn) => {
-    const { onOpenUrl, signalReady } = require("@n1h/sweetview-native");
-    signalReady();
-    const got: string[] = [];
-    const off = onOpenUrl((url: string) => got.push(url));
-    fn("sweetview-compat-row://emitted");
-    off();
-    must(same(got, ["sweetview-compat-row://emitted"]), "the URL reaches onOpenUrl", got);
   }),
   singleInstance: desktop(async (fn, ctx) => {
     const appId = `sweetview.compat.rows.${process.pid}`;
@@ -1249,13 +1077,6 @@ export const RUNNERS: Record<string, Runner> = {
     must(written.length === 2 && written.every((p: string) => existsSync(p)), "app.ico and AppIcon.icns", written);
   }),
   refreshWindowsIcons: here((fn) => must(fn() === undefined, "the shell is told; nothing on the computer changes")),
-  shortcutFor: here((fn) => {
-    must(fn({ virtualKey: 0x54, control: true, shift: false, alt: false }) === "new" && fn({ virtualKey: 0x58, control: true, shift: false, alt: false }) === undefined, "Ctrl+T is new; Ctrl+X is the page's");
-  }),
-  tabWidth: here((fn) => must(fn(1040, 1) === 240 && fn(1040, 200) === 72, "as wide as a tab gets, never narrower than the least")),
-  tabsViewport: here((fn) => must(fn(1040) === 1040 - 138 - 8 - 40 - 56, "the strip less the caption, the margin, the + and the drag room", fn(1040))),
-  scrollToShow: here((fn) => must(fn(1040, 3, 2) === 0 && fn(1040, 40, 39) > 0, "unscrolled when the tabs fit; scrolled to show the last of many")),
-  dropIndex: here((fn) => must(fn(1040, 3, 8 + 240 * 0.6) === 1 && fn(1040, 40, 8, 72) === 1, "after the tab whose right half it lands on; counting the scrolled tabs")),
   modifiersFrom: here((fn) => must(same(fn(0b0101), { shift: true, ctrl: false, alt: true, meta: false }), "the mask's keys")),
   convexHull: here((fn) => {
     const hull = fn([{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 5, y: 5 }, { x: 10, y: 10 }, { x: 0, y: 10 }]);
@@ -1378,8 +1199,6 @@ export const RUNNERS: Record<string, Runner> = {
   }),
 };
 
-/** A tab handle for the emit runners: any object the listeners get back as it is. */
-const TAB = { title: "a tab handle" };
 
 /** A scratch folder for one run, removed with `dispose`. */
 export function scratch(): { tmp: string; dispose(): void } {

@@ -19,6 +19,29 @@ const row = (section: string, old: string) => {
   throw new Error(`no row ${old} under ${section}`);
 };
 
+describe("an internal the guide now says the true thing about", () => {
+  test("discardQuit says the same in Part A and Part B: App#dispose for a webview of createApp or WebView, no public call for a raw Webview#destroy()", () => {
+    const partA = row("`src/native/event-loop.ts`, `src/native/win32/color-ref.ts`", "`discardQuit`");
+    const partB = row("`@n1h/sweetview-native/internal`", "`discardQuit`");
+    const said = (line: string) => ({
+      writeNow: line.split(" | ")[1],
+      appAndWebView: /`App#dispose\(\)`, and `WebView#dispose\(\)`, take back the quit/.test(line),
+      rawGap: /for a raw `Webview#destroy\(\)` under `runEventLoop` there is no public call in 1\.0/.test(line),
+    });
+    const want = { writeNow: '`import type { App } from "@n1h/sweetview"`; `App#dispose`', appAndWebView: true, rawGap: true };
+    expect({ partA: said(partA), partB: said(partB) }).toEqual({ partA: want, partB: want });
+  });
+
+  test("the shell's icon refresh is named by its public call, refreshWindowsIcons, with its failure contract", () => {
+    const added = guideLines.slice(guideLines.indexOf("## Added since `v1-drafting`")).join(" ");
+    expect({
+      namesTheEntry: added.includes("sweetview-native/shell-icons"),
+      namesThePublicCall: added.includes("`refreshWindowsIcons()` of `@n1h/sweetview/build`"),
+      saysItSwallowsErrors: /never throws: an error of the\s+native binding is swallowed/.test(added),
+    }).toEqual({ namesTheEntry: false, namesThePublicCall: true, saysItSwallowsErrors: true });
+  });
+});
+
 describe("the system menu of a window by its handle (the tag's windowMenu(hwnd))", () => {
   const page = read("docs/native/menus-and-tray.md");
   const guideRow = row("`@n1h/sweetview-native/win32/tab-window`", "`windowMenu`");

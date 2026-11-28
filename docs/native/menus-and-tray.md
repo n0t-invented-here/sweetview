@@ -109,27 +109,13 @@ another library), or a raw handle. The platforms use it differently:
   screen coordinates. AppKit menus are not owned by windows, so `owner` is
   ignored and may be `null`.
 
-### Windows: a built menu, and a window's system menu
+### Windows: the menu handle, and a window's system menu
 
-`@n1h/sweetview-native/win32/menu` also hands an application the menu itself,
-for its own `TrackPopupMenu`:
-
-```ts
-import { buildMenu, destroyMenu } from "@n1h/sweetview-native/win32/menu";
-
-const built = buildMenu(contextMenu()); // { hmenu, commands, bitmaps }
-// const id = TrackPopupMenu(built.hmenu, TPM_RETURNCMD, x, y, 0, hwnd, null) from your own bun:ffi table
-// built.commands.get(id)?.();
-destroyMenu(built);
-```
-
-`built.hmenu` is the `HMENU`, with the same check marks, icons, submenus,
-separators and disabled items `Menu.popup` shows. Each item's command id is
-its number in `built.commands`, counted from 1 in template order (depth
-first, separators and submenus not counted), so the id `TrackPopupMenu`
-returns, or a `WM_COMMAND` carries, names the item's `click`. Sweetview owns
-the menu, its submenus and its item bitmaps until `destroyMenu(built)`, which
-is safe to call twice; `built.bitmaps` is always empty.
+`Menu.popup` owns its menu from start to end: it builds the native menu from
+the template (check marks, icons, submenus, separators, disabled items),
+shows it, tracks it until it closes, runs the chosen item's `click` and frees
+the menu. An `HMENU` that the application tracks itself, with its own
+`TrackPopupMenu`, or sets as a window's menu bar, has no public call in 1.0.
 
 [`Window#showSystemMenu()`](windows.md#window-members) shows a `Window`'s
 system menu (Restore, Move, Size, Minimize, Maximize, Close) at the cursor,

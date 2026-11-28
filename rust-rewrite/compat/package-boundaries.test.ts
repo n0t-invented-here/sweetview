@@ -20,17 +20,7 @@ import { dirname, join, relative, resolve, sep } from "node:path";
 const root = join(import.meta.dir, "..", "..");
 const posix = (p: string) => p.split(sep).join("/");
 
-/** The entry points an application is meant to import. Each is documented in docs/ (a standalone package's subpath as the facade subpath it mirrors). */
-const PUBLIC: Record<string, string[]> = {
-  "@n1h/sweetview": [".", "./worker", "./page", "./build", "./settings-store", "./window-chrome", "./ipc", "./ipc-ws", "./ipc-ws/server", "./ipc-ws/client", "./ipc-electron", "./ipc-electron/client", "./ipc-electron/preload", "./ipc-electron/server", "./ipc-tauri", "./ipc-tauri/client", "./native", "./native/hit-regions", "./file-imports"],
-  "@n1h/sweetview-build": [".", "./make-app", "./refresh-icons"],
-  "@n1h/sweetview-ipc": ["."],
-  "@n1h/sweetview-ipc-electron": [".", "./client", "./preload", "./server"],
-  "@n1h/sweetview-ipc-tauri": [".", "./client"],
-  "@n1h/sweetview-ipc-ws": [".", "./server", "./client"],
-  "@n1h/sweetview-native": [".", "./hit-regions"],
-  "@n1h/sweetview-settings": [".", "./settings-store", "./app-identity"],
-};
+import { PUBLIC } from "./public-entries";
 
 const FACADE = "imported across the boundary by @n1h/sweetview (createApp, WebView, the tabs, the worker wake), and no arrangement that exposes nothing exists for it yet";
 const MACOS = "macOS: Sweetview's own AppKit wrappers, until the macOS goal (D42)";
@@ -39,7 +29,7 @@ const MACOS = "macOS: Sweetview's own AppKit wrappers, until the macOS goal (D42
 const PENDING_ENTRIES: Record<string, Record<string, string>> = {
   "@n1h/sweetview-native": {
     "./internal": `${FACADE}; also the macOS facade files; scheduleNativeTimeout is item I3`,
-    "./shell-icons": "imported across the boundary by @n1h/sweetview-build (build.ts); refreshShellIcons has no public call",
+    "./shell-icons": "imported across the boundary by @n1h/sweetview-build (build.ts), inside refreshWindowsIcons(), the public call",
     "./win32/shortcuts": `${FACADE} (the Windows tabs)`,
     "./win32/strip-shared": `${FACADE} (the Windows tabs)`,
     "./win32/tab-window": `${FACADE} (the Windows tabs); getTabFrame and FrameWindow are item I2`,
@@ -69,48 +59,12 @@ const PENDING_IMPORTS: Record<string, string[]> = {
   "demos/native-tabs/scripts/mac-drive.ts": ["@n1h/sweetview-native/darwin/objc", "@n1h/sweetview-native/internal"],
 };
 
-const I7 = "I7: Sweetview's own wiring, no public call; the row keeps an application on the internal";
-/** Rows of docs/upgrading.md (`section | Old`) that still name an internal import, each with its item on the owner's list. */
-const PENDING_ROWS: Record<string, string> = {
-  ...Object.fromEntries(
-    ["discardQuit", "emitActivationUrl", "emitWindowFileDrop", "emitWindowNewTab", "emitWindowTabClose", "emitWindowTabSelect", "forwardWindowTabEvents", "getWindowBackend", "getWindowMeta", "holdWindowNativeDispose", "isWindowDisposed", "onWindowDispose", "onWindowFileDropListenersChange", "preserveWindowGeometry", "windowFileDropCount"].map((name) => [
-      `\`@n1h/sweetview-native/internal\` | \`${name}\``,
-      I7,
-    ]),
-  ),
-  "`@n1h/sweetview-native/internal` | `scheduleNativeTimeout`": "I3: a timer that fires inside the native loop",
-  ...Object.fromEntries(["Key", "LAST_TAB", "Shortcut", "shortcutFor"].map((name) => [`\`@n1h/sweetview-native/win32/shortcuts\` | \`${name}\``, I7])),
-  ...Object.fromEntries(
-    ["CAPTION_WIDTH", "DRAG_ROOM", "NEW_TAB_WIDTH", "STRIP_HEIGHT", "StripEvents", "StripMethods", "StripPoint", "StripState", "StripTab", "TABS_LEFT", "TAB_MAX_WIDTH", "TAB_MIN_WIDTH", "dropIndex", "scrollToShow", "tabWidth", "tabsViewport"].map((name) => [
-      `\`@n1h/sweetview-native/win32/strip-shared\` | \`${name}\``,
-      I7,
-    ]),
-  ),
-  ...Object.fromEntries(["FrameCallbacks", "FrameWindow", "createFrameWindow", "getTabFrame"].map((name) => [`\`@n1h/sweetview-native/win32/tab-window\` | \`${name}\``, "I2: the tab frame's strip and page rectangles"])),
-  ...Object.fromEntries(["stripPane", "layout()", "stripRect()"].map((name) => [`\`FrameWindow\` and \`FrameCallbacks\` members that changed | \`${name}\``, "I2: the tab frame's strip and page rectangles"])),
-  "`@n1h/sweetview-native/win32/window` | `_debugTrackedCount`": I7,
-  "`@n1h/sweetview-native/win32/window` | `asHwnd`": I7,
-  "`@n1h/sweetview-native/win32/window` | `systemIsDark`": "I4: whether the system is dark",
-  "`@n1h/sweetview-native/win32/menu` | `buildMenu`": "I1: an HMENU for the application's own TrackPopupMenu",
-  "`@n1h/sweetview-native/win32/menu` | `destroyMenu`": "I1: an HMENU for the application's own TrackPopupMenu",
-};
-
-/** Lines of docs/upgrading.md outside its tables that name an internal subpath, each with why it stays. */
-const GUIDE_PROSE: Record<string, string> = {
-  "tables (`@n1h/sweetview-native/win32/api` and": "names a removed internal module (the Old side)",
-  "`@n1h/sweetview-native/win32/message-window`) were internal, and the": "names a removed internal module (the Old side)",
-  "`@n1h/sweetview-native/win32/api` and `/win32/message-window` has a row": "names a removed internal module (the Old side)",
-  "application imports one of its subpaths (`@n1h/sweetview-native/win32/menu`,": "I1: the dependency an application on buildMenu needs",
-  "The other `src/native/win32/*.ts` files map as `@n1h/sweetview-native/win32/*` does in Part B": "points a 0.x file-path import at its Part B section (the Old side)",
-  "(`popupMenuAtCursor` of `win32/menu.ts`, say, is the `@n1h/sweetview-native/win32/menu` row).": "points a 0.x file-path import at its Part B section (the Old side)",
-  "subpaths), and `@n1h/sweetview-native/shell-icons`. See the [reference](README.md).": "the guide lists ./shell-icons as added; whether it stays exported is the owner's (D44)",
-};
-
-/** Lines of the other pages (docs/, README.md, the demos' pages) that name an internal subpath, each with its item. */
-const PAGE_LINES: Record<string, string> = {
-  "docs/native/menus-and-tray.md: `@n1h/sweetview-native/win32/menu` also hands an application the menu itself,": "I1",
-  'docs/native/menus-and-tray.md: import { buildMenu, destroyMenu } from "@n1h/sweetview-native/win32/menu";': "I1",
-};
+// None: every guide row and page line that sent an application to an internal now names the public
+// call, or says that 1.0 has no public call for the capability (the owner's ruling, D44). A row or line
+// added back fails the two tests at the end.
+const PENDING_ROWS: Record<string, string> = {};
+const GUIDE_PROSE: Record<string, string> = {};
+const PAGE_LINES: Record<string, string> = {};
 
 /** An internal subpath of either package, as a page would name it. `/darwin/` is left to the macOS goal (D42). */
 const INTERNAL_SPEC = /@n1h\/sweetview(?:-native\/(?:internal|shell-icons|win32\/[\w*-]+)|\/native\/(?:internal|win32\/[\w*-]+))/;

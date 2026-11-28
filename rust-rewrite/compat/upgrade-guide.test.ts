@@ -62,7 +62,10 @@ const typesPath = join(import.meta.dir, "upgrade-types.ts");
 const guide = readFileSync(guidePath, "utf8");
 const typesFile = readFileSync(typesPath, "utf8");
 
-type Row = { section: string; line: number; old: string; spans: string[] };
+type Row = { section: string; line: number; old: string; write: string; change: string; spans: string[] };
+
+/** The Write now of a row whose capability 1.0 has no public call for: no code (D44). */
+const NO_PUBLIC_CALL = "no public call in 1.0";
 
 function splitCells(line: string): string[] {
   const cells: string[] = [];
@@ -91,8 +94,8 @@ function parseGuide(text: string): Row[] {
     if (/^#{2,4} /.test(line)) section = line.replace(/^#+ /, "");
     if (line.trim() !== "| Old | Write now | Change |") continue;
     for (i += 2; i < lines.length && lines[i]!.startsWith("|"); i++) {
-      const [old, write] = splitCells(lines[i]!);
-      rows.push({ section, line: i + 1, old: old ?? "", spans: [...(write ?? "").matchAll(/`([^`]+)`/g)].map((m) => m[1]!) });
+      const [old, write, change] = splitCells(lines[i]!);
+      rows.push({ section, line: i + 1, old: old ?? "", write: write ?? "", change: change ?? "", spans: [...(write ?? "").matchAll(/`([^`]+)`/g)].map((m) => m[1]!) });
     }
   }
   return rows;
@@ -138,6 +141,7 @@ const literal = (text: string): unknown => new Function(`return (${text});`)();
 /** Checks one row; returns what is wrong with it, or nothing. Collects the libraries of own-table rows. */
 async function checkRow(row: Row, ownLibraries: Set<string>): Promise<string[]> {
   const problems: string[] = [];
+  if (row.write === NO_PUBLIC_CALL) return [];
   const [first, ...checks] = row.spans;
   if (!first) return ["no code in the Write now column"];
 
@@ -245,6 +249,7 @@ function valueRows(): { row: Row; name: string; spec: string; targets: string[] 
 
 /** A row's kind, from its first span after the import (or the import alone). */
 function rowKind(row: Row): string {
+  if (row.write === NO_PUBLIC_CALL) return NO_PUBLIC_CALL;
   const first = row.spans[0] ?? "";
   if (first.startsWith("type ")) return "type";
   const m = IMPORT.exec(first);
@@ -275,8 +280,92 @@ describe("docs/upgrading.md", () => {
   });
 
   test("every row names an old export in backticks and a new form", () => {
-    const bad = rows.filter((r) => !/`[^`]+`/.test(r.old) || r.spans.length === 0).map((r) => `line ${r.line}`);
+    const bad = rows.filter((r) => !/`[^`]+`/.test(r.old) || (r.spans.length === 0 && r.write !== NO_PUBLIC_CALL)).map((r) => `line ${r.line}`);
     expect(bad).toEqual([]);
+  });
+
+  // The capabilities an application reached only through an internal, which 1.0 has no public call for (D44).
+  // Each is on the owner's list; a row added here is a decision, not a slip.
+  const internalSource: Record<string, string> = {
+    "`@n1h/sweetview-native/internal`": "internal",
+    "`@n1h/sweetview-native/win32/shortcuts`": "win32/shortcuts",
+    "`@n1h/sweetview-native/win32/strip-shared`": "win32/strip-shared",
+    "`@n1h/sweetview-native/win32/tab-window`": "win32/tab-window",
+    "`FrameWindow` and `FrameCallbacks` members that changed": "win32/tab-window",
+    "`@n1h/sweetview-native/win32/window`": "win32/window",
+    "`@n1h/sweetview-native/win32/menu`": "win32/menu",
+  };
+  const NO_PUBLIC_ROWS = [
+    ...["emitActivationUrl", "emitWindowFileDrop", "emitWindowNewTab", "emitWindowTabClose", "emitWindowTabSelect", "forwardWindowTabEvents", "getWindowBackend", "getWindowMeta", "holdWindowNativeDispose", "isWindowDisposed", "onWindowDispose", "onWindowFileDropListenersChange", "preserveWindowGeometry", "scheduleNativeTimeout", "windowFileDropCount"].map((n) => `\`@n1h/sweetview-native/internal\` | \`${n}\``),
+    ...["Key", "LAST_TAB", "Shortcut", "shortcutFor"].map((n) => `\`@n1h/sweetview-native/win32/shortcuts\` | \`${n}\``),
+    ...["CAPTION_WIDTH", "DRAG_ROOM", "NEW_TAB_WIDTH", "STRIP_HEIGHT", "StripEvents", "StripMethods", "StripPoint", "StripState", "StripTab", "TABS_LEFT", "TAB_MAX_WIDTH", "TAB_MIN_WIDTH", "dropIndex", "scrollToShow", "tabWidth", "tabsViewport"].map((n) => `\`@n1h/sweetview-native/win32/strip-shared\` | \`${n}\``),
+    ...["FrameCallbacks", "FrameWindow", "getTabFrame"].map((n) => `\`@n1h/sweetview-native/win32/tab-window\` | \`${n}\``),
+    ...["stripPane", "layout()", "stripRect()"].map((n) => `\`FrameWindow\` and \`FrameCallbacks\` members that changed | \`${n}\``),
+    ...["_debugTrackedCount", "asHwnd", "systemIsDark"].map((n) => `\`@n1h/sweetview-native/win32/window\` | \`${n}\``),
+    ...["buildMenu", "destroyMenu"].map((n) => `\`@n1h/sweetview-native/win32/menu\` | \`${n}\``),
+  ];
+  const noPublic = () => rows.filter((r) => r.write === NO_PUBLIC_CALL);
+  /** The export a no-public-call row is about: the Old name, or for a member row the type it is a member of. */
+  const exportOf = (r: Row) => (r.section.startsWith("`FrameWindow`") ? "FrameWindow" : r.old.replace(/`/g, "").replace(/\(\)$/, ""));
+
+  test("the capabilities 1.0 has no public call for are these rows, each saying which capability", () => {
+    expect(noPublic().map((r) => `${r.section} | ${r.old}`).sort()).toEqual([...NO_PUBLIC_ROWS].sort());
+    const unsaid = noPublic().filter((r) => !/no public call in 1\.0/.test(r.change) || r.change.length < 40);
+    expect(unsaid.map((r) => r.old)).toEqual([]);
+  });
+
+  test("no public entry point exports what a no-public-call row names (values at run time, types through upgrade-types.ts)", async () => {
+    const { NOT_MODULES, publicSpecifiers } = await import("./public-entries");
+    const modules = await Promise.all(publicSpecifiers().filter((s) => !NOT_MODULES.has(s)).map(async (s) => [s, (await import(s)) as Record<string, unknown>] as const));
+    const exported: string[] = [];
+    const missingTypeCheck: string[] = [];
+    for (const r of noPublic()) {
+      const name = exportOf(r);
+      const source = (await import(`../../packages/sweetview-native/src/${internalSource[r.section]}`)) as Record<string, unknown>;
+      if (name in source) {
+        for (const [spec, mod] of modules) if (name in mod) exported.push(`${name} (${r.section}) from ${spec}`);
+      } else {
+        // A type: upgrade-types.ts must fail to import it from the two public entries an application would look in.
+        for (const spec of ["@n1h/sweetview", "@n1h/sweetview-native"]) {
+          const line = `// @ts-expect-error no public call in 1.0\nimport type { ${name} as NoPublic_${name}__${spec.replace(/\W+/g, "_")} } from "${spec}";`;
+          if (!typesFile.replace(/\r\n/g, "\n").includes(line)) missingTypeCheck.push(line);
+        }
+      }
+    }
+    expect({ exported, missingTypeCheck: [...new Set(missingTypeCheck)] }).toEqual({ exported: [], missingTypeCheck: [] });
+  });
+
+  test("each public call a row names for the part 1.0 covers is a row of this guide, or a member of a public export", async () => {
+    const { NOT_MODULES, publicSpecifiers } = await import("./public-entries");
+    const modules = await Promise.all(publicSpecifiers().filter((s) => !NOT_MODULES.has(s)).map(async (s) => (await import(s)) as Record<string, unknown>));
+    /** A class or function some public entry exports, with the member named (`#m` on its prototype, `.m` on itself). */
+    const publicMember = (name: string, member: string | undefined) =>
+      modules.some((mod) => {
+        const value: unknown = mod[name];
+        if (typeof value !== "function") return false;
+        if (!member) return true;
+        const key = member.slice(1);
+        return member.startsWith("#") ? key in ((value as { prototype?: object }).prototype ?? {}) : key in value;
+      });
+    const targets = new Set<string>();
+    for (const r of rows) {
+      const m = IMPORT.exec(r.spans[0] ?? "");
+      if (!m) continue;
+      for (const c of r.spans.slice(1)) {
+        const t = targetOf(c, m[2]!);
+        if (t) targets.add(t.replace(/^new /, ""));
+      }
+    }
+    const unknown: string[] = [];
+    for (const r of [...noPublic(), ...rows.filter((x) => /no public call in 1\.0/.test(x.change) && x.write !== NO_PUBLIC_CALL)]) {
+      for (const [, span] of r.change.matchAll(/`([^`]+)`/g)) {
+        const call = /^([A-Za-z_$][\w$]*)(?:([.#]\w+))?\(.*\)$/.exec(span!) ?? /^([A-Z][\w$]*)([.#]\w+)$/.exec(span!);
+        if (!call) continue;
+        const target = `${call[1]}${call[2] ?? ""}`;
+        if (!targets.has(target) && !publicMember(call[1]!, call[2])) unknown.push(`${r.old}: ${span}`);
+      }
+    }
+    expect(unknown).toEqual([]);
   });
 
   test("every row's new form imports and is what the row says", async () => {
