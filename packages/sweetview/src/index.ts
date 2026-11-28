@@ -15,7 +15,9 @@ export {
 } from "./app";
 export { assetMime, indexHtml, indexHtmlText, type IndexHtmlOptions } from "./html";
 export {
+  windowChromeEvents,
   windowChromeMethods,
+  type WindowChromeEvents,
   type WindowChromeInfo,
   type WindowChromeKind,
   type WindowChromeMethodTable,

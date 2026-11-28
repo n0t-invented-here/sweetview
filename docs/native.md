@@ -32,9 +32,10 @@ application's own `bun:ffi` calls on the UI thread, its own modal dialogs and
 popup menus included, keep working inside Sweetview's event loop.
 
 A tray-only or menu-bar-only app uses the native module without a webview, a
-worker or a page. On macOS the module never loads the webview library
-(`@n1h/sweetview-webview-bun`) for these; the `RawWebview` class and the
-input hooks it exports for macOS do.
+worker or a page. On macOS the module does not need the webview library
+(`@n1h/sweetview-webview-bun`) for these: it loads the library when imported
+if it is installed, and only the `RawWebview` class, the input hooks and
+`permissions` throw without it, when used.
 
 ## Windows start-up initialization
 
@@ -56,7 +57,7 @@ initialized when the shared `NSApplication` is first touched.
 |---|---|
 | [Windows and screens](native/windows.md) | `Window`, `createWindow`, `WindowOptions`, coordinates, framed / frameless / transparent / tabbed windows, `Window.fromHandle`, dragging and resizing, closing, file drops, `Screen` |
 | [Overlays and hit regions](native/overlays-and-hit-regions.md) | click-through overlays, `setClickThrough`, `setHitRegions`, `HitRelay` and the geometry helpers, `colorKey` vs `transparent` |
-| [Menus and the tray](native/menus-and-tray.md) | `Menu.popup`, `MenuTemplate`, `resolveMenu`, `Tray`, `setAppMenu`, `setActivationPolicy` |
+| [Menus and the tray](native/menus-and-tray.md) | `Menu.popup` (and `MenuPopupOptions`, for a menu that opens upward), `MenuTemplate`, `resolveMenu`, `Tray`, `setAppMenu`, `setActivationPolicy` |
 | [Notifications](native/notifications.md) | `Notifier`, `NotificationOptions`, WinRT toasts vs `UNUserNotificationCenter` |
 | [Activation and single instance](native/activation-and-single-instance.md) | `registerUrlScheme`, `singleInstance`, `onOpenUrl`, `extractUrlFromArgs`, `signalReady` |
 | [Dialogs, clipboard and files](native/dialogs-clipboard-files.md) | `pickFolder`, `Clipboard`, `readTextFile`, `readFileBytes`, chunked file handles |

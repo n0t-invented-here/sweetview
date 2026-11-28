@@ -1,4 +1,4 @@
-//! What a streamed response does on a real WebView2 (DECISIONS D44): the page
+//! What a streamed response does on a real WebView2 (DECISIONS D45): the page
 //! reads the body with a `ReadableStream` reader while the response is open,
 //! written from the UI thread and from another thread, small chunks and a
 //! large fast body. Every byte arrives, in order; the binding never holds more
@@ -10,7 +10,7 @@
 //! page none of the body before the response has ended (WebView2Feedback
 //! #3519). That is asserted as measured, so a WebView2 Runtime that starts
 //! handing the page bytes before the end fails here: then streaming works, and
-//! D44, `docs/webview-library.md` and these assertions are updated.
+//! D45, `docs/webview-library.md` and these assertions are updated.
 #![cfg(windows)]
 
 mod common;
@@ -271,7 +271,7 @@ fn a_streamed_body_arrives_whole_and_in_order_and_webview2_gives_it_to_the_page_
 
     // Whether the page saw anything before the end, asserted once every scenario has run and printed.
     eprintln!("-- the page saw bytes before the end: UI thread {first:?} {second:?} (fetch resolved {head_before_end}); another thread {acked:?}; the fast writer's body {bulk_first_before_end:?}");
-    let flipped = "WebView2 handed the page a response before its end: streaming works now; update D44, docs/webview-library.md and these assertions";
+    let flipped = "WebView2 handed the page a response before its end: streaming works now; update D45, docs/webview-library.md and these assertions";
     assert_eq!((first, second, head_before_end), (None, None, false), "{flipped}");
     assert_eq!(acked, vec![false, false, false], "{flipped}");
     assert_eq!(bulk_first_before_end, Some(false), "{flipped}");

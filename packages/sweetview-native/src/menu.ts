@@ -41,17 +41,30 @@ export const isSeparator = (item: MenuItem): item is { type: "separator" } => it
 export const isSubmenu = (item: MenuItem): item is Extract<MenuItem, { submenu: MenuTemplate }> =>
   !isSeparator(item) && "submenu" in item;
 
-type Backend = { popupMenu(owner: WindowHandle, template: MenuTemplate, at?: Point): boolean };
+/** How `Menu.popup` places the menu at its point. */
+export type MenuPopupOptions = {
+  /**
+   * The menu opens above the point: its bottom-left corner at the point, as a
+   * tray menu opens above the taskbar. Default `false`: its top-left corner at
+   * the point, so it opens downward. Windows only for now; macOS ignores it.
+   */
+  above?: boolean;
+};
+
+type Backend = { popupMenu(owner: WindowHandle, template: MenuTemplate, at?: Point, options?: MenuPopupOptions): boolean };
 const impl = backend<Backend>(
   () => require("./win32/menu"),
   () => require("./darwin/menu"),
 );
 
 export const Menu = {
-  /** Opens a native popup menu at `at` (default: cursor position). Returns true if an item was chosen. */
-  popup(owner: WindowRef, menu: MenuSource, at?: Point): boolean {
+  /**
+   * Opens a native popup menu at `at` (default: cursor position), below the
+   * point, or above it with `{ above: true }`. Returns true if an item was chosen.
+   */
+  popup(owner: WindowRef, menu: MenuSource, at?: Point, options?: MenuPopupOptions): boolean {
     const template = resolveMenu(menu);
     if (template.length === 0) return false;
-    return impl().popupMenu(unwrapHandle(owner), template, at);
+    return impl().popupMenu(unwrapHandle(owner), template, at, options);
   },
 };

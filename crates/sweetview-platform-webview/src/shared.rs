@@ -411,7 +411,7 @@ mod tests {
         assert_eq!(shared.open_stream_count(), 0);
     }
 
-    // D44: a writer on another thread is held to the page's reading; the UI thread is never held.
+    // D45: a writer on another thread is held to the page's reading; the UI thread is never held.
     #[test]
     fn writers_off_the_ui_thread_wait_while_backlogged() {
         let (shared, r, _) = setup();

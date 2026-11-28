@@ -49,9 +49,10 @@ Each webview has its own worker, so there is one session per worker.
 `hostService` never calls the Service's `endSession` or `dispose`; the UI
 thread terminates the worker when `run()` returns, when the webview is
 disposed, when the application ends, or when `WebView.attach` fails after
-starting it. The worker never keeps the process alive by itself: a timer or
-watcher inside it does not hold the process open after the application has
-quit ([the end of the application](app.md#the-end-of-the-application)).
+starting it. On Windows the worker never keeps the process alive by itself: a
+timer or watcher inside it does not hold the process open after the
+application has quit; on macOS, until the macOS goal of the Rust rewrite, it
+does, as before 1.0 ([the end of the application](app.md#the-end-of-the-application)).
 
 ## hostRequestHandler
 

@@ -130,7 +130,7 @@ fn the_page_behaves_as_webview2_does_by_default() {
         non_client_region: Some(true),
         ..webview2_defaults(false)
     };
-    assert_eq!(seen, expected, "what wry changes (a wry upgrade that changes this list needs this file and D44 revisited)");
+    assert_eq!(seen, expected, "what wry changes (a wry upgrade that changes this list needs this file and D45 revisited)");
     drop(wry_alone);
 
     // Built as the runtime builds a webview, without and with `debug`.

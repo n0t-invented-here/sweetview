@@ -400,6 +400,35 @@ describe.if(onWindows)("Menu.popup (binding: muda)", () => {
     }
   });
 
+  test("Menu.popup with { above: true } puts the menu's bottom-left corner at the point; without the option (or with above: false), its top-left", () => {
+    const owner = ownWindow();
+    const area = Screen.primary().workArea;
+    // The middle of the primary screen's work area: room above and below, so the OS moves neither menu.
+    const point = { x: area.x + (area.width >> 1), y: area.y + (area.height >> 1) };
+    const items: MenuTemplate = [{ label: "One" }, { label: "Two" }, { label: "Three" }];
+    const placed = (open: () => boolean) => {
+      let rect = { left: 0, top: 0, right: 0, bottom: 0 };
+      whenMenuOpens((menuWindow) => {
+        rect = windowRect(menuWindow);
+        pressKeys(menuWindow, VK.ESCAPE);
+      });
+      expect(open()).toBe(false);
+      return rect;
+    };
+    try {
+      const above = placed(() => Menu.popup(owner.hwnd, items, point, { above: true }));
+      expect({ left: above.left, bottom: above.bottom }).toEqual({ left: point.x, bottom: point.y });
+      expect(above.top).toBeLessThan(point.y);
+      for (const options of [undefined, {}, { above: false }]) {
+        const below = placed(() => Menu.popup(owner.hwnd, items, point, options));
+        expect({ options, left: below.left, top: below.top }).toEqual({ options, left: point.x, top: point.y });
+        expect(below.bottom).toBeGreaterThan(point.y);
+      }
+    } finally {
+      owner.destroy();
+    }
+  });
+
   test("buildMenu hands the application a menu for its own TrackPopupMenu: ids count from 1 in template order, a key chooses, destroyMenu frees it", () => {
     const owner = ownWindow();
     const icon = { windows: { ico: dotIco(RED) } };
@@ -478,6 +507,33 @@ describe.if(onWindows)("Menu.popup (binding: muda)", () => {
 
       // A value that names no window shows nothing and throws nothing.
       windowMenu(0x7fff_fff0n);
+      expect(openPopupMenu()).toBe(0n);
+    } finally {
+      win.dispose();
+    }
+  }, 30_000);
+});
+
+describe.if(onWindows)("Window#showSystemMenu", () => {
+  test("shows the window's system menu, read from a second process, and choosing Minimize minimises it", async () => {
+    const area = Screen.primary().workArea;
+    const win = new Window({ title: unique("public system menu"), bounds: { x: area.x + 80, y: area.y + 80, width: 420, height: 300 }, noActivate: true });
+    try {
+      win.show();
+      expect(win.isMinimized()).toBe(false);
+      // As for windowMenu above: a second process reads the menu while this thread is inside its
+      // modal loop, then selects the fourth item (Minimize) and presses Enter on the menu window.
+      const probe = new URL("../../../sweetview/test/fixtures/win-menu-probe.ts", import.meta.url);
+      const child = Bun.spawn([process.execPath, require("node:url").fileURLToPath(probe), String(process.pid), "pick:3"], { stdout: "pipe", stderr: "pipe" });
+      win.showSystemMenu();
+      await child.exited;
+      const report = JSON.parse((await new Response(child.stdout).text()).trim()) as { items?: { label?: string; enabled?: boolean; separator?: boolean }[]; error?: string };
+      expect(report.error).toBeUndefined();
+      expect(report.items?.map((item) => (item.separator ? "-" : item.enabled))).toEqual([false, true, true, true, true, "-", true]);
+      await pumpUntil(() => win.isMinimized(), 3000);
+      expect(win.isMinimized()).toBe(true);
+      win.dispose();
+      win.showSystemMenu(); // a disposed window shows nothing
       expect(openPopupMenu()).toBe(0n);
     } finally {
       win.dispose();

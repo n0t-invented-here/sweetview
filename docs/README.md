@@ -21,7 +21,7 @@ Running an application in its own repository against a Sweetview checkout, befor
 | [`@n1h/sweetview/native`](native.md) | overview of the native module; the hit-region helpers alone, without FFI, as `/native/hit-regions` |
 | [Windows and screens](native/windows.md) | `Window`, `createWindow`, `WindowOptions`, framed / frameless / transparent / tabbed windows, `Window.fromHandle`, closing, file drops, `Screen` |
 | [Overlays and hit regions](native/overlays-and-hit-regions.md) | `setClickThrough`, `setHitRegions`, `HitRelay`, geometry helpers, `colorKey` |
-| [Menus and the tray](native/menus-and-tray.md) | `Menu.popup`, `MenuTemplate`, `resolveMenu`, `Tray`, `setAppMenu`, `setActivationPolicy` |
+| [Menus and the tray](native/menus-and-tray.md) | `Menu.popup` (and `MenuPopupOptions`, for a menu that opens upward), `MenuTemplate`, `resolveMenu`, `Tray`, `setAppMenu`, `setActivationPolicy` |
 | [Notifications](native/notifications.md) | `Notifier`, `NotificationOptions` |
 | [Activation and single instance](native/activation-and-single-instance.md) | `registerUrlScheme`, `unregisterUrlScheme`, `singleInstance`, `onOpenUrl`, `extractUrlFromArgs`, `signalReady` |
 | [Dialogs, clipboard and files](native/dialogs-clipboard-files.md) | `pickFolder`, `Clipboard`, `readTextFile`, `readFileBytes`, chunked file handles |

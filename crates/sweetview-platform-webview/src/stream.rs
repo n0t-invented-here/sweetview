@@ -322,7 +322,7 @@ mod tests {
     }
 
     // C++: "Streaming IStream: Read contract", with the read returning what is
-    // there instead of waiting for the whole buffer (DECISIONS D44): it waits
+    // there instead of waiting for the whole buffer (DECISIONS D45): it waits
     // only while nothing is unread.
     #[test]
     fn read_contract() {

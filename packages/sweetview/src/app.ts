@@ -11,7 +11,7 @@ import { createFrameAssembler, type AnyEvent, type EventMap, type MethodMap, typ
 import { RequestResponseAssembler, requestError, runNativeRequest, type NativeRequestResponse, type StreamingResponseFrame } from "./request-response";
 import type { HttpRequestMessage, InitMessage, NativeRequest, NativeResponse, StreamPaceMessage, WorkerCrashFrame } from "./messages";
 import { RawWebview, SizeHint, Window, quitEventLoop, runEventLoop, signalReady, type Rect, type TabHandle, type WindowOptions } from "@n1h/sweetview-native";
-import { createChildWebview, discardQuit, emitWindowFileDrop, engineOf, getWindowMeta, holdWindowNativeDispose, isWindowDisposed, onWindowDispose, onWindowFileDropListenersChange, preserveWindowGeometry, releaseAtEnd, scheduleNativeTimeout, windowFileDropCount } from "@n1h/sweetview-native/internal";
+import { createChildWebview, discardQuit, emitWindowFileDrop, engineOf, getWindowMeta, holdWindowNativeDispose, isWindowDisposed, macosKeepsTagPath, onWindowDispose, onWindowFileDropListenersChange, preserveWindowGeometry, releaseAtEnd, scheduleNativeTimeout, windowFileDropCount } from "@n1h/sweetview-native/internal";
 import { Ring } from "./ring";
 import { webviewEngine, type WebviewHost, type WorkerWake } from "./webview-host";
 import { ASSET_ORIGIN } from "./webview-lib";
@@ -124,6 +124,8 @@ export type TabAttachHooks = {
    * tabbed window are such children of its frame.
    */
   mountChild?(): { window: bigint; bounds: Rect; visible: boolean };
+  /** The browser's background before the page paints, in place of the window's own `backgroundColor`: a tab's, from its tabbed window. */
+  backgroundColor?(): string | undefined;
 };
 
 /** Internal options key for `TabAttachHooks` (not exported from the package entry). */
@@ -225,6 +227,17 @@ const startupErrorHtml = `<!doctype html>
 
 type UiHandler = (params: unknown) => unknown;
 type UiJob = { seq: string; method: string; fn: UiHandler; params: unknown };
+
+/**
+ * Internal. Lets a webview's worker not keep the process alive by itself (see `WebView.attach`).
+ * Until the macOS goal of the Rust rewrite the worker keeps its reference on macOS, as it did at
+ * the tag `pre-rust-rewrite`: that path releases nothing at exit and has not been run on a Mac.
+ * (Bun's Worker has `unref`, as Node's does; its DOM-shaped type does not declare it.)
+ */
+export function unrefWorker(worker: Worker | undefined): void {
+  if (macosKeepsTagPath()) return;
+  (worker as (Worker & { unref(): void }) | undefined)?.unref();
+}
 
 export class WebView<M extends MethodMap = MethodMap, E extends EventMap = EventMap> {
   readonly raw: RawWebview;
@@ -390,6 +403,11 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
         } else if (err !== 0) {
           throw new Error(`sweetview: webview_set_background_color failed (${err})`);
         }
+      } else if ((tabHooks?.backgroundColor?.() ?? meta.backgroundColor) !== undefined && process.platform === "win32") {
+        // The window's backgroundColor is also what the browser paints before the page does (macOS: until its goal, nothing).
+        const rgb = Number.parseInt((tabHooks?.backgroundColor?.() ?? meta.backgroundColor)!.slice(1), 16);
+        const err = engineHost.setBackgroundColor((rgb >> 16) & 0xff, (rgb >> 8) & 0xff, rgb & 0xff, 255);
+        if (err !== undefined && err !== 0) throw new Error(`sweetview: webview_set_background_color failed (${err})`);
       }
       if (options.allowExternalDrop !== undefined) {
         const error = engineHost.setAllowExternalDrop(options.allowExternalDrop);
@@ -531,8 +549,7 @@ export class WebView<M extends MethodMap = MethodMap, E extends EventMap = Event
       // The worker never keeps the process alive by itself: the loop does while it runs, and once
       // the application has quit the process ends with its script. The worker is terminated
       // with the webview, by dispose() or at the end of the application.
-      // (Bun's Worker has `unref`, as Node's does; its DOM-shaped type does not declare it.)
-      (worker as (Worker & { unref(): void }) | undefined)?.unref();
+      unrefWorker(worker);
       let requestHandlerSet = false;
       let isReady = false;
       let cancelWatchdog: (() => void) | undefined;

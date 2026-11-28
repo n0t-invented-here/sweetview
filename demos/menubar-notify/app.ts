@@ -11,7 +11,7 @@
 import { appendFileSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { createNotifier, createTray, Screen, setActivationPolicy, type MenuTemplate } from "@n1h/sweetview/native";
+import { createNotifier, createTray, setActivationPolicy, type MenuTemplate } from "@n1h/sweetview/native";
 import { createApp, indexHtml, type App } from "@n1h/sweetview";
 import pageCss from "./build/frontend/main.css" with { type: "file" };
 import pageJs from "./build/frontend/main.js" with { type: "file" };
@@ -55,17 +55,11 @@ const happened = (text: string) => {
 
 setActivationPolicy("accessory"); // macOS: no Dock tile; the status item and the window are the whole app
 
-const screen = Screen.primary().bounds;
-const bounds = {
-  x: screen.x + Math.round((screen.width - WINDOW_SIZE.width) / 2),
-  y: screen.y + Math.round((screen.height - WINDOW_SIZE.height) / 2),
-  ...WINDOW_SIZE,
-};
-
 const app: App<Methods, Events> = await createApp<Methods, Events>({
   identity: IDENTITY,
   title: APP_NAME,
-  bounds,
+  // The page's size in CSS pixels, centred on the primary screen at its scale.
+  contentSize: WINDOW_SIZE,
   icon: TRAY_ICON,
   onClose: () => app.window.hide(),
   assets: {
@@ -89,7 +83,7 @@ const app: App<Methods, Events> = await createApp<Methods, Events>({
   },
 });
 
-createTray({ tooltip: APP_NAME, icon: TRAY_ICON, menu: () => menu() });
+const tray = createTray({ tooltip: APP_NAME, icon: TRAY_ICON, menu: () => menu() });
 // The toasts carry the demo's name, not Sweetview's.
 const notifier = createNotifier({
   identity: IDENTITY,
@@ -128,3 +122,11 @@ const menu = (): MenuTemplate => [
 logLine(`started; log at ${LOG_PATH}`);
 app.run(); // the OS loop, until Quit
 logLine("quit");
+// Until the macOS goal of the Rust rewrite, macOS runs the code it ran at the tag pre-rust-rewrite,
+// which releases nothing at exit: there the demo tears down and exits as it did then.
+if (process.platform === "darwin") {
+  notifier.dispose();
+  tray.dispose();
+  app.dispose();
+  process.exit(0);
+}

@@ -111,7 +111,8 @@ does once the loop has ended: after Quit the script ends, and Sweetview
 releases the tray, the webview and the window as the process exits
 ([the end of the application](#the-end-of-the-application)). A timer or
 other handle of the application's own still counts: `unref()` it, as above,
-or clear it.
+or clear it. That is Windows; macOS, until the macOS goal of the Rust rewrite,
+is under [the end of the application](#the-end-of-the-application).
 
 ### Choosing
 
@@ -121,7 +122,7 @@ or clear it.
 | Bun on the UI thread | blocked: timers, promises, I/O wait | alive |
 | App logic | in a worker | on the UI thread, or in a worker if you want one |
 | Ends when | `quit()` (or main window closes in `createApp`) | `quitEventLoop()`, or `WM_QUIT` |
-| Cleanup | automatic: on return, and at exit | automatic: when the script ends (at exit) |
+| Cleanup | automatic: on return, and at exit (Windows) | automatic: when the script ends, at exit (Windows) |
 | Idle cost | none | one wake per interval, about 0.5 % CPU at 16 ms |
 | Worker | required for async logic | optional |
 | Native tabs | no | yes (`createApp({ tabs: true }).run()` uses this) |
@@ -191,11 +192,11 @@ quitting releases nothing twice and logs nothing. When the process exits from
 inside a callback, a webview whose own callback is on the stack is left to the
 OS, which reclaims it with the process.
 
-On macOS, until the macOS goal of the Rust rewrite, a raw `Webview` an
-application makes itself with `new RawWebview(...)` is not released at the end
-(the webview library's own `destroy` is not known to be safe to call twice);
-the webviews of `WebView.attach`, `createApp` and tabs are. Destroy a raw one
-yourself before the process ends.
+On macOS, until the macOS goal of the Rust rewrite, none of this section
+applies: macOS runs the code it ran before 1.0, which releases nothing at exit,
+and a webview's worker keeps the process alive there, so a macOS application
+disposes what it made and calls `process.exit()` after its loop, as the demos
+do there.
 
 ## Reference
 
@@ -231,7 +232,7 @@ view.run();
 
 `WebView.attach(window, options: WebViewOptions<M>): Promise<WebView<M, E>>`
 
-Mounts a webview inside an existing `Window` created by `new Window(...)` or `Window.fromHandle(...)`. Geometry (in DIPs), DPI scale, `resizable`, `transparent`, and default `title` are read directly from `window`, so callers never duplicate window options. The window stays hidden; call `win.show()`, or set `showOnReady`.
+Mounts a webview inside an existing `Window` created by `new Window(...)` or `Window.fromHandle(...)`. Geometry (the window's own: its client area, in physical pixels on Windows and points on macOS), DPI scale, `resizable`, `transparent`, `backgroundColor`, and default `title` are read directly from `window`, so callers never duplicate window options. The window stays hidden; call `win.show()`, or set `showOnReady`.
 
 What `WebView.attach` does, in order:
 
@@ -242,7 +243,7 @@ What `WebView.attach` does, in order:
 5. Refuses a disposed window, or one whose handle is null, and checks `ringBytes`.
 6. Creates the `RawWebview` inside `window.handle` using the window's bounds, scale and `resizable` hint, then restores the window's styles and outer bounds in case the engine changed them.
 7. Applies `title` (and mirrors it onto an untitled owned `window`).
-8. Clears the browser background when `window` was created with `transparent: true`, and applies `allowExternalDrop` when it is set.
+8. Clears the browser background when `window` was created with `transparent: true`, or, on Windows, sets it to the window's `backgroundColor` when it has one (what shows before the page paints), and applies `allowExternalDrop` when it is set.
 9. Allocates the shared `Ring`, subscribes webview file drops to the window's `onFileDrop` listeners, and starts `worker` if configured.
 10. Registers the request handler when `onRequest` is set.
 11. Binds `__sweetview_rpc`: the reserved ready method first, then `uiMethods`, then `deferredUiMethods`, then the worker. The binding exists before the first navigation and dispatches by method name only; see [the trust boundary](#the-rpc-trust-boundary). A direct-URL webview with no UI methods, no worker and no ready options gets no binding.
@@ -389,10 +390,16 @@ only.
 import { createApp } from "@n1h/sweetview";
 import index from "./index.html";
 
-const app = await createApp({ title: "Notes", page: index, worker: "./worker.ts" });
+const app = await createApp({ title: "Notes", page: index, worker: "./worker.ts", contentSize: { width: 1100, height: 720 } });
 app.window.show();
 app.run();
 ```
+
+`contentSize` is the page's size in CSS pixels: the window is centred on the
+primary screen and its frame sized around the page at that screen's scale, so
+the page looks the same size at 100 % and at 150 %. `bounds` places the outer
+frame in physical pixels instead; give one or the other
+([WindowOptions](native/windows.md#windowoptions)).
 
 Layer 2 declarative helper that combines `new Window(options)` with `WebView.attach` (or native tab setup when `options.tabs` is `true`). `options` is both `WindowOptions` and `WebViewOptions`.
 
@@ -427,7 +434,7 @@ call `WebView.openTab(origin, ...)` to open the tab there
 | `onEvent(fn)` | `webview.onEvent(fn)`. | Registers nothing and returns an inert unsubscribe function; subscribe on each `tab.webview` instead. |
 | `run()` | Blocks in `webview.run()`; returns `void`. After a `dispose()` made inside the loop, it disposes the window once the loop unwinds. The window and everything else are released when the process ends ([the end of the application](#the-end-of-the-application)). | Returns the promise of `runEventLoop()`; `await` it. The tabs and windows are released when the process ends. |
 | `quit()` | `webview.quit()`. | `quitEventLoop()`. |
-| `dispose()` | Disposes the webview, then the window (inside `run()`, the window waits for `run()` to return). Not needed at the end of the application. Idempotent. | Closes `app.window` and the tabs in it. Torn-off windows created by `moveToNewWindow()` or tab tear-off have their own lifetime; dispose them (or their tabs) separately, or merge them back first with `mergeAllWindows()`. At the end of the application every window is released, torn-off ones included. Idempotent. |
+| `dispose()` | Disposes the webview, then the window (inside `run()`, the window waits for `run()` to return). Not needed at the end of the application on Windows (macOS: [the end of the application](#the-end-of-the-application)). Idempotent. | Closes `app.window` and the tabs in it. Torn-off windows created by `moveToNewWindow()` or tab tear-off have their own lifetime; dispose them (or their tabs) separately, or merge them back first with `mergeAllWindows()`. At the end of the application every window is released, torn-off ones included. Idempotent. |
 
 ### Asset
 
@@ -483,7 +490,7 @@ are HTML-escaped; `head` and `body` are inserted verbatim.
 
 ### windowChromeMethods
 
-Re-exported from [`@n1h/sweetview/window-chrome`](window-chrome.md) together with `WindowChromeInfo`, `WindowChromeKind`, `WindowChromeMethodTable`, `WindowChromeMethods`, and `WindowChromeOptions`.
+Re-exported from [`@n1h/sweetview/window-chrome`](window-chrome.md) together with `windowChromeEvents`, `WindowChromeEvents`, `WindowChromeInfo`, `WindowChromeKind`, `WindowChromeMethodTable`, `WindowChromeMethods`, and `WindowChromeOptions`.
 
 ### Ring
 

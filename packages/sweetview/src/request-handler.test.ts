@@ -246,12 +246,12 @@ test.if(live)("returns clean errors for synchronous Promises and absent worker h
   expect((await runLive("request-only")).report).toEqual({ status: 200, body: "<!doctype html><p id=dynamic>worker HTML</p>" });
 }, 70_000);
 
-// D44. A worker's streamed body on a live WebView2: every byte reaches the page in order, and the
+// D45. A worker's streamed body on a live WebView2: every byte reaches the page in order, and the
 // binding holds at most its backlog limit plus what was in flight for the page. WebView2 reads
 // each chunk out of the binding as it is written but hands the page none of the body before it
 // ends (WebView2Feedback #3519), so the page cannot acknowledge a part before the next is written,
 // and the whole body waits in WebView2 until the end. Both are asserted as measured: if a WebView2
-// Runtime starts handing the page bytes before the end, this fails, streaming works, and D44, the
+// Runtime starts handing the page bytes before the end, this fails, streaming works, and D45, the
 // docs and these assertions are updated.
 test.if(live && process.platform === "win32")("a worker's streamed body arrives whole and in order, the binding's backlog stays bounded, and WebView2 hands the page the body at its end", async () => {
   const { report, maxBacklog } = await runLive("pace");

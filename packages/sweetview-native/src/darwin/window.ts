@@ -505,6 +505,33 @@ export function stopDarwinWindowResize(win: Id): void {
 
 // ---- window construction --------------------------------------------------------
 
+/** A `width` x `height` rectangle centred in `area`, a side larger than the area's cut to it (the Windows rule, sweetview-window-logic `centred`). */
+function centredIn(width: number, height: number, area: Rect): Rect {
+  const w = Math.max(1, Math.min(width, area.width));
+  const h = Math.max(1, Math.min(height, area.height));
+  return { x: area.x + Math.max(0, Math.trunc((area.width - w) / 2)), y: area.y + Math.max(0, Math.trunc((area.height - h) / 2)), width: w, height: h };
+}
+
+/**
+ * `onMaximizeChange` from the resize notifications: AppKit's zoom resizes the
+ * window, so each resize compares `isZoomed` with the last state seen. A
+ * miniaturized window is not looked at.
+ */
+function maximizeFromResize(self: WindowBackend, handler: (maximized: boolean) => void): () => void {
+  let last = self.isMaximized();
+  return self.onResize(() => {
+    if (self.isMinimized()) return;
+    const now = self.isMaximized();
+    if (now === last) return;
+    last = now;
+    try {
+      handler(now);
+    } catch (err) {
+      console.error("sweetview: onMaximizeChange handler threw:", err);
+    }
+  });
+}
+
 function defaultBounds(): Rect {
   const area = primaryScreen().workArea;
   const width = 320;
@@ -523,7 +550,9 @@ export function createWindow(options: WindowOptions): WindowBackend {
   const frame = options.frame ?? true;
   const resizable = options.resizable ?? frame;
   const appearance = options.appearance ?? "system";
-  const reqBounds = options.bounds ?? defaultBounds();
+  // With contentSize, initWithContentRect: makes the content area that size (points are CSS pixels) and the frame is AppKit's around it.
+  const content = options.contentSize;
+  const reqBounds = content ? { x: 0, y: 0, width: content.width, height: content.height } : (options.bounds ?? defaultBounds());
   const c = toCocoa(reqBounds);
 
   let styleMask = frame ? NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskMiniaturizable : NSWindowStyleMaskBorderless;
@@ -550,8 +579,15 @@ export function createWindow(options: WindowOptions): WindowBackend {
 
   // Keep lifetime explicitly managed by dispose().
   sendBool(win, sel("setReleasedWhenClosed:"), false);
-  // Apply exact outer-frame bounds while hidden so initWithContentRect: never grows framed windows.
-  sendRectBool(win, sel("setFrame:display:"), c.x, c.y, c.w, c.h, false);
+  if (content) {
+    // The frame AppKit made around the content area, centred on the primary work area.
+    const made = fromCocoa(rectOf(win, "frame"));
+    const placed = toCocoa(centredIn(made.width, made.height, primaryScreen().workArea));
+    sendRectBool(win, sel("setFrame:display:"), placed.x, placed.y, placed.w, placed.h, false);
+  } else {
+    // Apply exact outer-frame bounds while hidden so initWithContentRect: never grows framed windows.
+    sendRectBool(win, sel("setFrame:display:"), c.x, c.y, c.w, c.h, false);
+  }
 
   if (options.minWidth !== undefined || options.minHeight !== undefined) {
     sendSize(win, sel("setMinSize:"), options.minWidth ?? 0, options.minHeight ?? 0);
@@ -576,6 +612,7 @@ export type DarwinTabGroupController = {
   minimize(): void;
   toggleMaximize(): void;
   isMaximized(): boolean;
+  isMinimized(): boolean;
   dispose(): void;
   setFileDropEnabled(enabled: boolean): void;
   /** Sets the window level of every tab NSWindow in the group. */
@@ -690,7 +727,8 @@ function createVirtualTabbedWindow(options: WindowOptions): WindowBackend {
   const state: VirtualTabState = {
     disposed: false,
     pendingVisible: undefined,
-    bounds: options.bounds ?? { x: 100, y: 100, width: 1040, height: 720 },
+    // contentSize is taken as the frame's size here until the macOS goal: a tab window's frame is set, and its content area is AppKit's.
+    bounds: options.bounds ?? (options.contentSize ? centredIn(options.contentSize.width, options.contentSize.height, primaryScreen().workArea) : { x: 100, y: 100, width: 1040, height: 720 }),
     boundsChanged: false,
     title: options.title ?? "",
     topmost: options.topmost ?? false,
@@ -744,6 +782,9 @@ function createVirtualTabbedWindow(options: WindowOptions): WindowBackend {
     minimize: () => controller()?.minimize(),
     toggleMaximize: () => controller()?.toggleMaximize(),
     isMaximized: () => controller()?.isMaximized() ?? false,
+    isMinimized: () => controller()?.isMinimized() ?? false,
+    // AppKit windows have no system menu.
+    showSystemMenu() {},
     setTopmost: (on) => {
       if (state.disposed) return;
       state.topmost = on;
@@ -757,6 +798,7 @@ function createVirtualTabbedWindow(options: WindowOptions): WindowBackend {
       bucket.resize.add(handler);
       return () => bucket.resize.delete(handler);
     },
+    onMaximizeChange: (handler) => maximizeFromResize(self, handler),
     onMove(handler) {
       bucket.move.add(handler);
       return () => bucket.move.delete(handler);
@@ -925,6 +967,15 @@ function buildWindow(win: Id, options: WindowOptions, framed: boolean, owned: bo
       return Boolean(sendRetBool(win, sel("isZoomed")));
     },
 
+    isMinimized() {
+      if (disposed) return false;
+      return Boolean(sendRetBool(win, sel("isMiniaturized")));
+    },
+
+    showSystemMenu() {
+      // AppKit windows have no system menu.
+    },
+
     setTopmost(on) {
       if (disposed) return;
       sendIntArg(win, sel("setLevel:"), on ? NSStatusWindowLevel : NSNormalWindowLevel);
@@ -961,6 +1012,10 @@ function buildWindow(win: Id, options: WindowOptions, framed: boolean, owned: bo
       hits.set(win, { packed: packRegions(polygons), refine, inPolygon: previous?.inPolygon ?? false, askSeq: previous?.askSeq ?? 0 });
       ensureHitTimer();
       pollHits();
+    },
+
+    onMaximizeChange(handler) {
+      return maximizeFromResize(self, handler);
     },
 
     onResize(handler) {

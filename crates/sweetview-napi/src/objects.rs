@@ -38,6 +38,19 @@ pub struct MenuEntryData {
   pub enabled: bool,
 }
 
+/// A size in device-independent pixels: CSS pixels of the page.
+#[napi(object)]
+pub struct Size {
+  pub width: f64,
+  pub height: f64,
+}
+
+impl From<Size> for rt::window::Dips {
+  fn from(s: Size) -> Self {
+    rt::window::Dips::new(s.width, s.height)
+  }
+}
+
 /// A point in screen coordinates.
 #[napi(object)]
 pub struct Point {
@@ -90,6 +103,10 @@ pub struct IconBytes {
 pub struct WindowInit {
   pub title: String,
   pub bounds: Option<Rect>,
+  /// The client area in device-independent pixels, centred on the primary work area; not with `bounds`.
+  pub content_size: Option<Size>,
+  /// `#rrggbb`: what the window shows where nothing has painted; not applied to a transparent window.
+  pub background_color: Option<String>,
   pub min_width: Option<f64>,
   pub min_height: Option<f64>,
   pub frame: bool,
@@ -118,6 +135,8 @@ impl From<WindowInit> for rt::window::WindowInit {
     rt::window::WindowInit {
       title: o.title,
       bounds: o.bounds.map(Into::into),
+      content_size: o.content_size.map(Into::into),
+      background_color: o.background_color,
       min_width: o.min_width.map(pixels),
       min_height: o.min_height.map(pixels),
       frame: o.frame,
@@ -144,6 +163,8 @@ mod tests {
     WindowInit {
       title: "t".into(),
       bounds: None,
+      content_size: None,
+      background_color: None,
       min_width,
       min_height: None,
       frame: true,

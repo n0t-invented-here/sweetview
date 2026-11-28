@@ -209,7 +209,7 @@ Twenty-eight places.
 
 ### 6
 
-Done, on branch `rust-rewrite-fix-webview-behaviour` (DECISIONS D44). The table, read back from WebView2 by `crates/sweetview-platform-webview/tests/settings.rs` on WebView2 Runtime 158.0.4370.45. "Old" is what the C++ library had: it set only the developer tools, so the rest is WebView2's default (the tree records no other setting; the reference's tab strip had to swallow the browser's zoom keys itself).
+Done, on branch `rust-rewrite-fix-webview-behaviour` (DECISIONS D45). The table, read back from WebView2 by `crates/sweetview-platform-webview/tests/settings.rs` on WebView2 Runtime 158.0.4370.45. "Old" is what the C++ library had: it set only the developer tools, so the rest is WebView2's default (the tree records no other setting; the reference's tab strip had to swallow the browser's zoom keys itself).
 
 | Setting | Old (C++ library) | Before this change (`wry` 0.58.2) | Now |
 |---|---|---|---|
@@ -242,4 +242,16 @@ Measured, then changed, on WebView2 Runtime 158.0.4370.45 (`crates/sweetview-pla
 - The bound: 1 MiB unread makes a response backlogged until it is down to 512 KiB. A writer on any thread but the UI thread waits for room (condition variable, no spinning; released by reading, the end, the page letting go, teardown). The UI thread never waits; the application's worker path pauses reading that one body in the worker while it is backlogged. Measured: at most 1,048,695 bytes held by the binding for a 24 MiB fast writer, at most 1 MiB for the worker path, every byte in order. What is not bounded is WebView2's own copy: the whole body waits in WebView2 until the end, so an endless or huge streamed body on Windows grows WebView2's memory.
 - The old contract kept: `writeResponseChunk` still copies and returns `0` for a live chunk, never drops or reorders one; it now may wait off the UI thread.
 
-What streaming guarantees is in D44 and `docs/webview-library.md` "Streaming responses". Real-time push on Windows stays IPC events. An application's own writer on the UI thread has no way to pace itself (no public backlog signal): listed for the owner.
+What streaming guarantees is in D45 and `docs/webview-library.md` "Streaming responses". Real-time push on Windows stays IPC events. An application's own writer on the UI thread has no way to pace itself (no public backlog signal): listed for the owner.
+
+### 11
+
+Agreed, and macOS is put back on the tag's path where the Windows goal changed what runs there (decision D42; `rust-rewrite/HANDOFF-macos.md` section 8 lists every seam for the macOS goal).
+
+- The bindings package: `import "@n1h/sweetview-native"` (and `@n1h/sweetview/native`) no longer needs `@n1h/sweetview-webview-bun` on macOS. `darwin/library.ts` keeps a failed load and throws it at the first use of `RawWebview`, an input hook or `permissions`, so it is the optional peer it was at the tag. With it installed, importing the native package alone now evaluates it (a `dlopen` of its library, no webview made); its top-level await allows no lazy synchronous load, so that one difference stays and is recorded.
+- The release at exit: `releaseAtEnd` registers nothing on macOS and adds no `exit` listener, so no AppKit or WebKit teardown runs from Bun's `exit` event there, inside a native callback or not.
+- The demos and the worker: a webview's worker is not `unref`'d on macOS (`unrefWorker` in `packages/sweetview/src/app.ts`), and each demo ends on macOS with the tag's disposes and `process.exit()`, in one block at its end.
+- The handle: the library's `webview_create` gets the window handle as a number again, as at the tag (`createWebview` in `darwin/webview.ts`).
+- Also found: a request the library hands over that cannot be read is answered with the tag's 500 again; `just check`, `pack`, `link` and `publish` need `cargo` on a Mac (left as D34 made them, and handed over).
+
+One predicate, `macosKeepsTagPath()` in `packages/sweetview-native/src/platform.ts`, marks each library seam. Windows runs the same code as before. `packages/sweetview-native/src/macos-seam.test.ts` and `packages/sweetview/src/macos-seam.test.ts` decide the seams on Windows with `process.platform` set to `darwin` and a stand-in for the bindings package; they show the old code's import error, release and bigint handle, and the new code's absence of them. None of it runs AppKit, and the right thing the finding names stands: `bun test` and each demo on a Mac before this reaches a Mac user.
