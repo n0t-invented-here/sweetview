@@ -732,3 +732,93 @@ fn the_window_s_start_colour_is_webview2_s_background_before_the_webview_is_firs
   });
 }
 
+#[test]
+fn a_webview_keeps_no_kernel_handle_beyond_webview2_s_own() {
+  on_ui_thread(|runtime| {
+    let _finish = Finish(&runtime);
+    // An application measured about one kernel handle kept per webview attached and disposed
+    // (1.02 over 40 cycles, GDI and USER flat). The same 40 lives two ways in one window: a
+    // webview made as an application's is (`Engine::create`, every handler Sweetview
+    // registers, the bridge, a page that calls it), and the bare webview (`Webview::create`:
+    // the widget, the controller and the two settings, no handler of Sweetview's). What the
+    // bare one keeps is WebView2's own; the engine may keep no more.
+    let window = host_window("engine test: kernel handles");
+    let handle = window.handle();
+    let engine_life = || {
+      let engine = Engine::create(false, Host::Fill(handle), None).expect("fill");
+      load(&runtime, &engine, PAGE);
+      engine.destroy();
+      settle(&runtime, Duration::from_millis(200));
+    };
+    let bare_life = || {
+      let webview = crate::window::with_mount_target(handle, |parent| Webview::create(parent, Layout::Fill, false, None))
+        .expect("the window")
+        .expect("a bare webview");
+      assert_eq!(webview.navigate_to_string("<script>document.title = 'ready'</script>").code(), 0);
+      assert!(pump_until(&runtime, Duration::from_secs(20), || test_support::document_title(&webview) == "ready"), "the bare page loaded");
+      drop(webview);
+      settle(&runtime, Duration::from_millis(200));
+    };
+    // Warm-up: WebView2's DLLs, its threads and the browser process are there before counting.
+    for _ in 0..2 {
+      engine_life();
+      bare_life();
+    }
+    let lives = 40;
+    let bare = sweetview_platform_loop::testing::smallest_growth(lives, bare_life);
+    let engine = sweetview_platform_loop::testing::smallest_growth(lives, engine_life);
+    eprintln!("-- over {lives} lives: bare webview {bare:?}, engine {engine:?}");
+    assert!(engine.user_objects <= 0 && engine.gdi_objects <= 0, "every window and GDI object given back: {engine:?}");
+    assert!(bare.kernel_handles > 0, "WebView2 itself keeps a kernel handle per webview: {bare:?}");
+    // Measured, three runs: bare 38, 41, 41; engine 40, 40, 40. WebView2's own count moves by a
+    // few from run to run; one handle of ours per life would add `lives` (40) to it.
+    let noise = lives as i64 / 8;
+    assert!(
+      engine.kernel_handles <= bare.kernel_handles + noise,
+      "the engine keeps no kernel handle beyond the bare webview's (WebView2's own): {engine:?} vs {bare:?}"
+    );
+    drop(window);
+  });
+}
+
+#[test]
+fn a_popup_is_registered_for_only_while_a_handler_is_set_and_then_goes_to_it_and_not_to_a_window() {
+  on_ui_thread(|runtime| {
+    let _finish = Finish(&runtime);
+    // With no handler, nothing of Sweetview's is registered for popups and WebView2 opens them
+    // itself, as under the C++ fork (`wry` registered a handler on every webview and took a
+    // deferral on every popup). With one (the tabs library's), a popup is reported to it on a
+    // later turn of the loop and opens nothing; unset, the registration goes.
+    let registered = |engine: &Engine| engine.inner.with_live(|live| test_support::new_window_registered(&live.extras)).expect("live");
+    for host in HOSTS {
+      let (engine, _windows) = make(host, |_| ());
+      if host == "own window" {
+        engine.show_own_window();
+      }
+      let reports = load(&runtime, &engine, PAGE);
+      assert!(!registered(&engine), "{host}: nothing registered for popups with no handler");
+      let popups: Rc<RefCell<Vec<String>>> = Rc::default();
+      let sink = popups.clone();
+      engine.set_new_window_handler(Some(Rc::new(move |url| sink.borrow_mut().push(url))));
+      assert!(registered(&engine), "{host}: registered while a handler is set");
+      engine.eval(
+        "document.body.insertAdjacentHTML('beforeend', '<a href=\"https://popup.invalid/opened\" target=\"_blank\" style=\"position:fixed;left:0;top:0;width:150px;height:80px;display:block\">pop</a>'); report('link')",
+      );
+      assert!(pump_until(&runtime, Duration::from_secs(3), || reports.borrow().iter().any(|r| r.contains("link"))), "{host}: the link is there");
+      let before = test_support::top_level_windows_of_process();
+      for kind in ["mousePressed", "mouseReleased"] {
+        let params = format!(r#"{{"type":"{kind}","x":40,"y":40,"button":"left","clickCount":1}}"#);
+        assert_eq!(engine.call_devtools_protocol_method("Input.dispatchMouseEvent", &params), ErrorCode::Ok);
+      }
+      assert!(pump_until(&runtime, Duration::from_secs(5), || !popups.borrow().is_empty()), "{host}: the handler got the popup");
+      settle(&runtime, Duration::from_millis(300));
+      eprintln!("-- {host}: popups {:?}", popups.borrow());
+      assert_eq!(*popups.borrow(), vec!["https://popup.invalid/opened".to_string()], "{host}: once, with its address");
+      assert_eq!(test_support::top_level_windows_of_process(), before, "{host}: no window was opened for it");
+      engine.set_new_window_handler(None);
+      assert!(!registered(&engine), "{host}: the registration goes with the handler");
+      engine.destroy();
+      settle(&runtime, Duration::from_millis(100));
+    }
+  });
+}

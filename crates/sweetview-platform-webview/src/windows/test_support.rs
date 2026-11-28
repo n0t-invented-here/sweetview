@@ -410,3 +410,33 @@ pub fn background_when_first_shown(webview: &Webview) -> Option<Option<(u8, u8, 
     super::host::background_when_first_shown(webview)
 }
 
+/// True while `extras` has a `NewWindowRequested` registration on its
+/// webview (only while a popup handler is set).
+pub fn new_window_registered(extras: &super::WebviewExtras) -> bool {
+    extras.inner.new_window_registration.borrow().is_some()
+}
+
+/// How many visible top-level windows this process has now.
+pub fn top_level_windows_of_process() -> usize {
+    use windows::Win32::UI::WindowsAndMessaging::{FindWindowExW, GetWindowThreadProcessId, IsWindowVisible};
+    let pid = std::process::id();
+    let mut count = 0;
+    let mut after: Option<HWND> = None;
+    loop {
+        // SAFETY: no parent (top-level windows), the previous window found or none, and no
+        // class or name; the system validates `after`.
+        let Ok(found) = (unsafe { FindWindowExW(None, after, windows::core::PCWSTR::null(), windows::core::PCWSTR::null()) }) else { break };
+        if found.is_invalid() {
+            break;
+        }
+        let mut owner = 0u32;
+        // SAFETY: `owner` is a local for the call to fill; the system validates the handle.
+        unsafe { GetWindowThreadProcessId(found, Some(&mut owner)) };
+        // SAFETY: the system validates the handle; no memory is read through it.
+        if owner == pid && unsafe { IsWindowVisible(found) }.as_bool() {
+            count += 1;
+        }
+        after = Some(found);
+    }
+    count
+}
